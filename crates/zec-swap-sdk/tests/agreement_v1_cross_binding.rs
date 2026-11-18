@@ -135,17 +135,48 @@ impl Fixture {
             taker_signer,
             high_s_maker: false,
         }
+        .with_taker_reveals_first_profile_when_selling_lez()
+    }
+
+    /// `TakerSellsLez` needs a Taker-reveals-first profile (deterministic-local-v3):
+    /// the LEZ deadline is the anchor (100 s) + 120 s, the Zcash refund the anchor
+    /// (116) + 8 blocks, and the Maker's earlier Zcash refund is declared to open
+    /// by the LEZ deadline minus the 30 s margin.
+    fn with_taker_reveals_first_profile_when_selling_lez(mut self) -> Self {
+        if self.direction == SwapDirection::TakerSellsLez {
+            self.body_profile = ZecProfileId::DeterministicLocalV3;
+            self.binding_profile = ZecProfileId::DeterministicLocalV3;
+            self.zcash_refund_lock = 124;
+            self.earlier_latest_ms = 190_000;
+            self.later_earliest = 220;
+        }
+        self
     }
 
     fn public(direction: SwapDirection) -> Self {
         let mut fixture = Self::new(direction);
-        fixture.body_profile = ZecProfileId::PublicTestnetV1;
-        fixture.binding_profile = ZecProfileId::PublicTestnetV1;
         fixture.environment = LezEnvironmentV1::PublicTestnetV0_2;
         fixture.zcash_anchor = 100;
-        fixture.zcash_refund_lock = 292;
-        fixture.earlier_latest_ms = 7_300_000;
-        fixture.later_earliest = 14_500;
+        match direction {
+            SwapDirection::TakerSellsForeign => {
+                fixture.body_profile = ZecProfileId::PublicTestnetV1;
+                fixture.binding_profile = ZecProfileId::PublicTestnetV1;
+                fixture.zcash_refund_lock = 292;
+                fixture.earlier_latest_ms = 7_300_000;
+                fixture.later_earliest = 14_500;
+            }
+            // public-testnet-v3: LEZ deadline 100 s + 14 400 s; Zcash refund at
+            // 100 + 95; the earlier Zcash refund's latest time is the anchor plus
+            // 96 blocks at 75 s, the 7 200 s margin before the LEZ deadline.
+            SwapDirection::TakerSellsLez => {
+                fixture.body_profile = ZecProfileId::PublicTestnetV3;
+                fixture.binding_profile = ZecProfileId::PublicTestnetV3;
+                fixture.zcash_refund_lock = 195;
+                fixture.earlier_latest_ms = 7_300_000;
+                fixture.later_earliest = 14_500;
+                fixture.expiry_delta = 120;
+            }
+        }
         fixture
     }
 
@@ -205,9 +236,14 @@ impl Fixture {
             | ZecProfileId::DeterministicLocalDevnetV4 => (NetworkType::Regtest, BranchId::Nu6_2),
             ZecProfileId::DeterministicLocalV2
             | ZecProfileId::DeterministicLocalDevnetV5
-            | ZecProfileId::DeterministicLocalDevnetV6 => (NetworkType::Regtest, BranchId::Nu7),
+            | ZecProfileId::DeterministicLocalDevnetV6
+            | ZecProfileId::DeterministicLocalV3
+            | ZecProfileId::DeterministicLocalDevnetV7
+            | ZecProfileId::DeterministicLocalDevnetV8 => (NetworkType::Regtest, BranchId::Nu7),
             ZecProfileId::PublicTestnetV1 => (NetworkType::Test, BranchId::Nu6_2),
-            ZecProfileId::PublicTestnetV2 => (NetworkType::Test, BranchId::Nu7),
+            ZecProfileId::PublicTestnetV2 | ZecProfileId::PublicTestnetV3 => {
+                (NetworkType::Test, BranchId::Nu7)
+            }
         };
         let output = ExpectedBip199Output::new(
             network,
@@ -378,7 +414,8 @@ fn maker_validates_and_signs_before_the_taker_countersigns_exact_wire() {
 
 #[test]
 fn devnet_profile_round_trips_on_the_wire_and_an_unknown_tag_is_rejected() {
-    let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+    // Legacy profiles admit only TakerSellsForeign.
+    let mut fixture = Fixture::new(SwapDirection::TakerSellsForeign);
     fixture.body_profile = ZecProfileId::DeterministicLocalDevnetV1;
     fixture.binding_profile = ZecProfileId::DeterministicLocalDevnetV1;
     // The fixture's bounds fit the 60 s delay; the devnet profile puts the LEZ
@@ -410,7 +447,7 @@ fn devnet_profile_round_trips_on_the_wire_and_an_unknown_tag_is_rejected() {
 
 #[test]
 fn devnet_v4_profile_is_wire_tag_five_with_its_own_deadlines() {
-    let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+    let mut fixture = Fixture::new(SwapDirection::TakerSellsForeign);
     fixture.body_profile = ZecProfileId::DeterministicLocalDevnetV4;
     fixture.binding_profile = ZecProfileId::DeterministicLocalDevnetV4;
     // 240 s after the LEZ anchor (100), eight blocks after the Zcash one (116).
@@ -429,13 +466,13 @@ fn devnet_v4_profile_is_wire_tag_five_with_its_own_deadlines() {
     let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
     assert_eq!(wire[profile_offset], 5, "the v4 profile is wire tag 5");
     let mut unknown = wire.clone();
-    unknown[profile_offset] = 10;
+    unknown[profile_offset] = 14;
     assert!(
         ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
         "a tag past the last profile must not decode"
     );
     // Only the profile's own Zcash window validates under its id.
-    let mut stale = Fixture::new(SwapDirection::TakerSellsLez);
+    let mut stale = Fixture::new(SwapDirection::TakerSellsForeign);
     stale.body_profile = ZecProfileId::DeterministicLocalDevnetV4;
     stale.binding_profile = ZecProfileId::DeterministicLocalDevnetV4;
     stale.earlier_latest_ms = 340_000;
@@ -449,7 +486,7 @@ fn devnet_v4_profile_is_wire_tag_five_with_its_own_deadlines() {
 
 #[test]
 fn public_testnet_v2_is_wire_tag_six_on_nu7_with_its_own_window() {
-    let mut fixture = Fixture::public(SwapDirection::TakerSellsLez);
+    let mut fixture = Fixture::public(SwapDirection::TakerSellsForeign);
     fixture.body_profile = ZecProfileId::PublicTestnetV2;
     fixture.binding_profile = ZecProfileId::PublicTestnetV2;
     // 3,700 blocks after the Zcash anchor (100); the LEZ side is V1's.
@@ -467,7 +504,7 @@ fn public_testnet_v2_is_wire_tag_six_on_nu7_with_its_own_window() {
     let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
     assert_eq!(wire[profile_offset], 6, "public-testnet-v2 is wire tag 6");
     let mut unknown = wire.clone();
-    unknown[profile_offset] = 10;
+    unknown[profile_offset] = 14;
     assert!(
         ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
         "a tag past the last profile must not decode"
@@ -475,12 +512,12 @@ fn public_testnet_v2_is_wire_tag_six_on_nu7_with_its_own_window() {
 
     // V1's 192-block window, or a deterministic LEZ environment, does not
     // validate under V2.
-    let mut v1_window = Fixture::public(SwapDirection::TakerSellsLez);
+    let mut v1_window = Fixture::public(SwapDirection::TakerSellsForeign);
     v1_window.body_profile = ZecProfileId::PublicTestnetV2;
     v1_window.binding_profile = ZecProfileId::PublicTestnetV2;
     v1_window.expiry_delta = 120;
     assert!(v1_window.validate().is_err());
-    let mut local_lez = Fixture::public(SwapDirection::TakerSellsLez);
+    let mut local_lez = Fixture::public(SwapDirection::TakerSellsForeign);
     local_lez.body_profile = ZecProfileId::PublicTestnetV2;
     local_lez.binding_profile = ZecProfileId::PublicTestnetV2;
     local_lez.zcash_refund_lock = 3_800;
@@ -498,7 +535,7 @@ fn nu7_regtest_profiles_are_wire_tags_seven_to_nine_and_sign_for_nu7() {
         (ZecProfileId::DeterministicLocalDevnetV5, 8, 720, 8),
         (ZecProfileId::DeterministicLocalDevnetV6, 9, 240, 8),
     ] {
-        let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+        let mut fixture = Fixture::new(SwapDirection::TakerSellsForeign);
         fixture.body_profile = profile;
         fixture.binding_profile = profile;
         fixture.earlier_latest_ms = (100 + delay) * 1_000;
@@ -529,7 +566,7 @@ fn nu7_regtest_profiles_are_wire_tags_seven_to_nine_and_sign_for_nu7() {
         };
         assert!(ZecAgreementV1::from_wire_at(&namesake, UnixSeconds::new(NOW)).is_err());
         let mut unknown = wire.clone();
-        unknown[profile_offset] = 10;
+        unknown[profile_offset] = 14;
         assert!(
             ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
             "a tag past the last profile must not decode"
@@ -645,8 +682,15 @@ fn both_directions_derive_roles_deadlines_amounts_and_fresh_coordinator() {
             agreement.lez_account(claimant),
             fixture_account(&fixture, claimant)
         );
-        assert_eq!(agreement.lez_refund_at_ms(), 160_000);
-        assert_eq!(agreement.zcash_refund_at_height(), 120);
+        // Each direction's fixture profile: deterministic-local-v1 selling ZEC,
+        // the Taker-reveals-first deterministic-local-v3 selling LEZ.
+        let (lez_refund_at_ms, zcash_refund_at_height) = match direction {
+            SwapDirection::TakerSellsForeign => (160_000, 120),
+            SwapDirection::TakerSellsLez => (220_000, 124),
+        };
+        assert_eq!(agreement.lez_refund_at_ms(), lez_refund_at_ms);
+        assert_eq!(agreement.zcash_refund_at_height(), zcash_refund_at_height);
+        assert_eq!(agreement.revealing_claimant(), Participant::Taker);
         assert_eq!(
             agreement.binding().expected_output().value(),
             Zatoshis::from_u64(fixture.zcash_value).expect("value")
@@ -670,7 +714,10 @@ fn public_profile_accepts_exact_signed_deployment_identity_in_both_directions() 
             .expect("public profile accepts exact signed deployment terms");
         assert_eq!(
             agreement.binding().profile_id(),
-            ZecProfileId::PublicTestnetV1
+            match direction {
+                SwapDirection::TakerSellsForeign => ZecProfileId::PublicTestnetV1,
+                SwapDirection::TakerSellsLez => ZecProfileId::PublicTestnetV3,
+            }
         );
         assert_eq!(
             agreement.lez_terms().chain().environment(),
@@ -692,18 +739,16 @@ fn public_profile_accepts_exact_signed_deployment_identity_in_both_directions() 
 }
 
 #[test]
-fn earlier_latest_must_not_precede_actual_lez_deadline_in_either_direction() {
-    for direction in [
-        SwapDirection::TakerSellsForeign,
-        SwapDirection::TakerSellsLez,
-    ] {
-        let mut fixture = Fixture::new(direction);
-        fixture.earlier_latest_ms = 159_999;
-        assert_eq!(
-            fixture.validate(),
-            Err(ZecAgreementV1Error::EarlierRefundBoundBeforeLezDeadline)
-        );
-    }
+fn earlier_latest_must_not_precede_actual_lez_deadline_selling_zec() {
+    // The LEZ refund is the earlier one only in TakerSellsForeign; in
+    // TakerSellsLez it is the later one (see
+    // taker_sells_lez_refund_plan_states_the_lez_deadline_and_a_safe_earlier_zcash_bound).
+    let mut fixture = Fixture::new(SwapDirection::TakerSellsForeign);
+    fixture.earlier_latest_ms = 159_999;
+    assert_eq!(
+        fixture.validate(),
+        Err(ZecAgreementV1Error::EarlierRefundBoundBeforeLezDeadline)
+    );
 }
 
 #[test]
@@ -1306,6 +1351,209 @@ fn valid_token_asset_is_bound_by_the_same_dual_signed_body() {
     let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
     fixture.use_token_asset([8; 32], [2; 8], [3; 8]);
     assert!(fixture.validate().is_ok());
+}
+
+/// Every profile in which the LEZ recipient claims first: before the
+/// Taker-reveals-first profiles, all of them.
+const LEGACY_PROFILES: [ZecProfileId; 10] = [
+    ZecProfileId::DeterministicLocalV1,
+    ZecProfileId::DeterministicLocalDevnetV1,
+    ZecProfileId::DeterministicLocalDevnetV2,
+    ZecProfileId::DeterministicLocalDevnetV3,
+    ZecProfileId::DeterministicLocalDevnetV4,
+    ZecProfileId::PublicTestnetV1,
+    ZecProfileId::PublicTestnetV2,
+    ZecProfileId::DeterministicLocalV2,
+    ZecProfileId::DeterministicLocalDevnetV5,
+    ZecProfileId::DeterministicLocalDevnetV6,
+];
+
+/// Terms that are exactly right for `profile` in the legacy (LEZ-earlier)
+/// shape, so that only the direction decides.
+fn legacy_fixture(direction: SwapDirection, profile: ZecProfileId) -> Fixture {
+    let parameters = ZecRefundProfile::for_id(profile);
+    let mut fixture = if parameters.zcash_network() == NetworkType::Test {
+        Fixture::public(SwapDirection::TakerSellsForeign)
+    } else {
+        Fixture::new(SwapDirection::TakerSellsForeign)
+    };
+    fixture.direction = direction;
+    let (refund_key, claimant_key) = match direction {
+        SwapDirection::TakerSellsForeign => (fixture.taker_key, fixture.maker_key),
+        SwapDirection::TakerSellsLez => (fixture.maker_key, fixture.taker_key),
+    };
+    fixture.contract_refund_hash = pubkey_hash(&refund_key);
+    fixture.contract_claimant_hash = pubkey_hash(&claimant_key);
+    fixture.funding_change_hash = pubkey_hash(&refund_key);
+    fixture.claim_destination_hash = pubkey_hash(&claimant_key);
+    fixture.refund_destination_hash = pubkey_hash(&refund_key);
+    fixture.body_profile = profile;
+    fixture.binding_profile = profile;
+    let delay = parameters.lez_refund_delay().value();
+    fixture.earlier_latest_ms = (fixture.lez_anchor + delay) * 1_000;
+    fixture.later_earliest = fixture.lez_anchor + delay + parameters.required_margin().value();
+    fixture.zcash_refund_lock = fixture.zcash_anchor + parameters.zcash_refund_blocks();
+    fixture.expiry_delta = parameters.expiry_delta_blocks();
+    fixture
+}
+
+/// The maker's proposal wire: the countersigned record without the Taker's
+/// signature.
+fn maker_proposal_wire(fixture: &Fixture) -> Vec<u8> {
+    let mut wire = fixture.record().encode_wire().expect("bounded record");
+    wire.truncate(wire.len() - 64);
+    wire
+}
+
+#[test]
+fn taker_sells_lez_under_a_legacy_profile_is_refused_at_every_boundary() {
+    // Under these profiles the Maker (the LEZ recipient) would hold the
+    // preimage while the Taker locks LEZ first, and could claim the LEZ
+    // without ever funding Zcash. Draft validation, the maker's proposal and
+    // the countersigned agreement all refuse it; TakerSellsForeign under the
+    // same profiles is unchanged.
+    for profile in LEGACY_PROFILES {
+        let parameters = ZecRefundProfile::for_id(profile);
+        assert!(
+            !parameters.admits(SwapDirection::TakerSellsLez),
+            "{profile:?}"
+        );
+        assert!(
+            parameters.admits(SwapDirection::TakerSellsForeign),
+            "{profile:?}"
+        );
+
+        let forward = legacy_fixture(SwapDirection::TakerSellsForeign, profile);
+        forward
+            .validate()
+            .unwrap_or_else(|error| panic!("{profile:?} TakerSellsForeign: {error:?}"));
+        ZecMakerAgreementProposalV1::from_wire_at(
+            &maker_proposal_wire(&forward),
+            UnixSeconds::new(NOW),
+        )
+        .unwrap_or_else(|error| panic!("{profile:?} forward proposal: {error:?}"));
+
+        let reverse = legacy_fixture(SwapDirection::TakerSellsLez, profile);
+        assert_eq!(
+            ZecAgreementDraftV1::new(reverse.body())
+                .validate_at(UnixSeconds::new(NOW))
+                .err(),
+            Some(ZecAgreementV1Error::LegacyRevealOrder),
+            "{profile:?} draft"
+        );
+        assert_eq!(
+            ZecMakerAgreementProposalV1::from_wire_at(
+                &maker_proposal_wire(&reverse),
+                UnixSeconds::new(NOW)
+            )
+            .err(),
+            Some(ZecAgreementV1Error::LegacyRevealOrder),
+            "{profile:?} maker proposal"
+        );
+        assert_eq!(
+            reverse.validate().err(),
+            Some(ZecAgreementV1Error::LegacyRevealOrder),
+            "{profile:?} agreement"
+        );
+        let wire = reverse.record().encode_wire().expect("bounded record");
+        for participant in [Participant::Maker, Participant::Taker] {
+            assert_eq!(
+                AcceptedZecAgreementV1::accept_wire_at(
+                    &wire,
+                    UnixSeconds::new(NOW),
+                    participant,
+                    0
+                )
+                .err(),
+                Some(ZecAgreementV1Error::LegacyRevealOrder),
+                "{profile:?} acceptance by the {participant:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn taker_sells_lez_refund_plan_states_the_lez_deadline_and_a_safe_earlier_zcash_bound() {
+    // The later refund is the Taker's LEZ refund: its earliest time is the LEZ
+    // deadline itself (220 s), nothing else.
+    for later in [219, 221, 250] {
+        let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+        fixture.later_earliest = later;
+        assert_eq!(
+            fixture.validate().err(),
+            Some(ZecAgreementV1Error::LaterRefundBoundIsNotLezDeadline),
+            "later bound {later}"
+        );
+    }
+    // The earlier Maker Zcash refund must open at least the 30 s margin before
+    // the LEZ deadline: (220 - 30) s is the latest bound that is safe.
+    Fixture::new(SwapDirection::TakerSellsLez)
+        .validate()
+        .expect("the margin exactly");
+    for earlier_ms in [190_001, 200_000, 220_000] {
+        let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+        fixture.earlier_latest_ms = earlier_ms;
+        assert!(
+            matches!(
+                fixture.validate(),
+                Err(ZecAgreementV1Error::InvalidRefundProfile(_))
+            ),
+            "earlier bound {earlier_ms} ms leaves less than the margin"
+        );
+    }
+    // public-testnet-v3: the earlier Zcash refund cannot be stated faster than
+    // the anchor plus 96 blocks at the slowest pace (75 s a block).
+    let public = Fixture::public(SwapDirection::TakerSellsLez);
+    public.validate().expect("public-testnet-v3 terms");
+    let slowest = (100 + 96 * 75) * 1_000;
+    assert_eq!(public.earlier_latest_ms, slowest);
+    let mut faster = public.clone();
+    faster.earlier_latest_ms = slowest - 1;
+    assert_eq!(
+        faster.validate().err(),
+        Some(ZecAgreementV1Error::EarlierRefundBoundBelowSlowestPace)
+    );
+    let mut later_earliest = public;
+    later_earliest.later_earliest = 14_499;
+    assert_eq!(
+        later_earliest.validate().err(),
+        Some(ZecAgreementV1Error::LaterRefundBoundIsNotLezDeadline)
+    );
+}
+
+#[test]
+fn taker_reveals_first_profiles_admit_both_directions_on_new_wire_tags() {
+    for (profile, tag) in [
+        (ZecProfileId::DeterministicLocalV3, 10_u8),
+        (ZecProfileId::DeterministicLocalDevnetV7, 11),
+        (ZecProfileId::DeterministicLocalDevnetV8, 12),
+    ] {
+        let parameters = ZecRefundProfile::for_id(profile);
+        let delay = parameters.lez_refund_delay().value();
+        let margin = parameters.required_margin().value();
+        let mut reverse = Fixture::new(SwapDirection::TakerSellsLez);
+        reverse.body_profile = profile;
+        reverse.binding_profile = profile;
+        reverse.zcash_refund_lock = 116 + parameters.zcash_refund_blocks();
+        reverse.earlier_latest_ms = (100 + delay - margin) * 1_000;
+        reverse.later_earliest = 100 + delay;
+        let agreement = reverse
+            .validate()
+            .unwrap_or_else(|error| panic!("{profile:?} TakerSellsLez: {error:?}"));
+        let wire = agreement.encode_wire().expect("bounded wire");
+        let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
+        assert_eq!(wire[profile_offset], tag, "{} wire tag", profile.as_str());
+
+        let mut forward = Fixture::new(SwapDirection::TakerSellsForeign);
+        forward.body_profile = profile;
+        forward.binding_profile = profile;
+        forward.zcash_refund_lock = 116 + parameters.zcash_refund_blocks();
+        forward.earlier_latest_ms = (100 + delay) * 1_000;
+        forward.later_earliest = 100 + delay + margin;
+        forward
+            .validate()
+            .unwrap_or_else(|error| panic!("{profile:?} TakerSellsForeign: {error:?}"));
+    }
 }
 
 fn fixture_account(fixture: &Fixture, participant: Participant) -> &[u8; 32] {

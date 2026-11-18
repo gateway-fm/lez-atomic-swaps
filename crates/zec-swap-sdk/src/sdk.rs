@@ -1982,6 +1982,10 @@ where
     /// refund can be mined) and while the claim window is open (the Maker then has the
     /// profile margin to claim LEZ before the Taker's LEZ refund). A claim already staged is
     /// observed and followed; it is resubmitted only inside the same gate.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the retained claim, the three gates and the submission read as one sequence"
+    )]
     async fn drive_owned_revealing_zcash_claim(
         &mut self,
         now: crate::LezUnixMilliseconds,
@@ -2076,20 +2080,19 @@ where
                 margin_blocks: margin,
             });
         }
-        let (intent, protected) = match retained {
-            Some(retained) => retained,
-            None => {
-                let preimage = self.load_claim_material().await?;
-                let prepared = self
-                    .zcash
-                    .prepare_revealing_claim(self.agreement(), &context, &preimage)
-                    .await
-                    .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
-                self.stage_claim_intent(&prepared).await?;
-                self.load_claim_intent()
-                    .await?
-                    .ok_or(ZecSdkError::MissingClaimIntent)?
-            }
+        let (intent, protected) = if let Some(retained) = retained {
+            retained
+        } else {
+            let preimage = self.load_claim_material().await?;
+            let prepared = self
+                .zcash
+                .prepare_revealing_claim(self.agreement(), &context, &preimage)
+                .await
+                .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+            self.stage_claim_intent(&prepared).await?;
+            self.load_claim_intent()
+                .await?
+                .ok_or(ZecSdkError::MissingClaimIntent)?
         };
         let prepared = self
             .store
@@ -2132,20 +2135,19 @@ where
     /// Taker's Zcash claim. The preimage is public by then, so there is no claim window: the
     /// claim is sent until the escrow's own validity window (the LEZ refund time) refuses it.
     async fn drive_owned_followup_lez_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
-        let (intent, protected) = match self.load_claim_intent().await? {
-            Some(retained) => retained,
-            None => {
-                let preimage = self.load_claim_material().await?;
-                let prepared = self
-                    .lez
-                    .prepare_followup_claim(self.agreement(), &preimage)
-                    .await
-                    .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
-                self.stage_claim_intent(&prepared).await?;
-                self.load_claim_intent()
-                    .await?
-                    .ok_or(ZecSdkError::MissingClaimIntent)?
-            }
+        let (intent, protected) = if let Some(retained) = self.load_claim_intent().await? {
+            retained
+        } else {
+            let preimage = self.load_claim_material().await?;
+            let prepared = self
+                .lez
+                .prepare_followup_claim(self.agreement(), &preimage)
+                .await
+                .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
+            self.stage_claim_intent(&prepared).await?;
+            self.load_claim_intent()
+                .await?
+                .ok_or(ZecSdkError::MissingClaimIntent)?
         };
         let prepared = self
             .store

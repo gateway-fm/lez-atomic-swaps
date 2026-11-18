@@ -190,6 +190,7 @@ pub struct ZecRefundProfile {
 impl ZecRefundProfile {
     /// Resolves the exact immutable parameters for a named profile.
     #[must_use]
+    #[allow(clippy::too_many_lines, reason = "one arm per immutable profile")]
     pub const fn for_id(id: ZecProfileId) -> Self {
         match id {
             ZecProfileId::DeterministicLocalV1 => Self {

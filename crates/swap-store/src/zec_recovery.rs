@@ -465,7 +465,9 @@ impl SqliteZecRecoveryStore {
         self.require_role(Participant::Maker)?;
         self.require_role(accepted.local_participant())?;
         let agreement = accepted.agreement();
-        let maker_claim_authority = agreement.lez_claimant() == Participant::Maker;
+        // The Taker holds the swap secret in both directions, so a Maker completion never
+        // carries claim material.
+        let maker_claim_authority = agreement.revealing_claimant() == Participant::Maker;
         if accepted.revision() != 0
             || agreement.coordinator().pair() != Pair::Zcash
             || maker_claim_authority != maker_preimage.is_some()
@@ -1704,7 +1706,7 @@ impl ClaimRecoveryStore for SqliteZecRecoveryStore {
         let accepted = AcceptedZecAgreementV1::resume(envelope)?;
         self.require_role(accepted.local_participant())?;
         if accepted.revision() != 0
-            || accepted.local_participant() != accepted.agreement().lez_claimant()
+            || accepted.local_participant() != accepted.agreement().revealing_claimant()
         {
             return Err(StoreError::InvalidZecRecoveryState);
         }
@@ -4506,10 +4508,10 @@ fn validate_claim_auxiliary_state(
         let purpose = claim_material_purpose(&material.purpose)?;
         match purpose {
             ClaimMaterialPurpose::LocalFirstClaim
-                if accepted.local_participant() == accepted.agreement().lez_claimant()
+                if accepted.local_participant() == accepted.agreement().revealing_claimant()
                     && material.created_revision == 0 => {}
             ClaimMaterialPurpose::ObservedFollowUpClaim
-                if accepted.local_participant() != accepted.agreement().lez_claimant()
+                if accepted.local_participant() != accepted.agreement().revealing_claimant()
                     && material.created_revision > 0 =>
             {
                 let predecessor = material

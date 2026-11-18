@@ -142,7 +142,7 @@ async fn first_claimant_activation_persists_agreement_and_claim_preimage_in_both
         (
             "sdk-claim-activation-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0x42; 32],
         ),
     ] {
@@ -254,8 +254,8 @@ async fn claim_activation_rejects_wrong_role_or_digest_before_activation_or_effe
         (
             "sdk-claim-reject-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
             Participant::Taker,
+            Participant::Maker,
             [0x52; 32],
         ),
     ] {
@@ -2726,7 +2726,7 @@ async fn independent_actors_reach_both_legs_locked_from_chain_evidence_in_both_d
 }
 
 #[tokio::test]
-async fn independent_actors_complete_lez_then_zcash_claims_in_both_directions() {
+async fn independent_actors_complete_both_claims_taker_first_in_both_directions() {
     for (id, direction, first_claimant, secret) in [
         (
             "sdk-actors-forward-completed",
@@ -2737,7 +2737,7 @@ async fn independent_actors_complete_lez_then_zcash_claims_in_both_directions() 
         (
             "sdk-actors-reverse-completed",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0x92; 32],
         ),
     ] {
@@ -2940,7 +2940,7 @@ async fn a_makers_zcash_funding_that_confirms_after_the_taker_refund_is_projecte
     let mut fixture = Box::pin(maker_lock_submitted_after_taker_lock(
         "sdk-own-lock-zcash-late",
         SwapDirection::TakerSellsLez,
-        Participant::Maker,
+        Participant::Taker,
         [0xd1; 32],
     ))
     .await;
@@ -2964,22 +2964,19 @@ async fn a_makers_zcash_funding_that_confirms_after_the_taker_refund_is_projecte
         FirstLockStepV1::ZcashFund,
         FirstLockObservation::Confirmed(confirmed_zcash_first_lock([0x81; 32], &funding)),
     );
+    // TakerSellsLez: from both legs locked each funder drives its own refund,
+    // so the Maker projects its leg and goes on to its own (earlier) Zcash
+    // refund; it observes the Taker's LEZ refund after its own.
     let observed = fixture
         .maker
         .drive_refund(LezUnixMilliseconds::new(0))
         .await
-        .expect("projects its leg and observes the LEZ refund");
-    assert!(
-        matches!(
-            observed,
-            RefundDriveOutcome::Projected {
-                step: RefundStepV1::Lez,
-                ..
-            }
-        ),
-        "{observed:?}"
+        .expect("projects its leg and drives its own refund");
+    assert_eq!(
+        observed,
+        RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Zcash)
     );
-    assert_eq!(fixture.maker.status(), Phase::TakerLegRefunded);
+    assert_eq!(fixture.maker.status(), Phase::BothLegsLocked);
     // Its own Zcash leg is refunded before it may end.
     fixture.refunds.set_eligibility(
         RefundStepV1::Zcash,
@@ -3002,6 +2999,18 @@ async fn a_makers_zcash_funding_that_confirms_after_the_taker_refund_is_projecte
             .maker
             .drive_refund(LezUnixMilliseconds::new(0))
             .await
+            .expect("projects its Zcash refund"),
+        RefundDriveOutcome::Projected {
+            step: RefundStepV1::Zcash,
+            ..
+        }
+    ));
+    assert_eq!(fixture.maker.status(), Phase::MakerLegRefunded);
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_refund(LezUnixMilliseconds::new(0))
+            .await
             .expect("refunded"),
         RefundDriveOutcome::Refunded { .. }
     ));
@@ -3012,7 +3021,7 @@ async fn a_makers_zcash_funding_absent_past_its_expiry_lets_the_recovery_end() {
     let mut fixture = Box::pin(maker_lock_submitted_after_taker_lock(
         "sdk-own-lock-zcash-lapsed",
         SwapDirection::TakerSellsLez,
-        Participant::Maker,
+        Participant::Taker,
         [0xd2; 32],
     ))
     .await;
@@ -3093,7 +3102,7 @@ async fn a_takers_own_first_lock_cannot_end_its_recovery_before_it_is_projected(
         (
             "sdk-own-first-lock-lez",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0xd5; 32],
             lez_first_lock_plan([0x41; 32], vec![0x61], [0x42; 32], vec![0x62]),
         ),
@@ -3152,7 +3161,7 @@ async fn taker_recovers_its_only_funded_leg_in_both_directions() {
         (
             "sdk-one-leg-refund-lez",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0xa2; 32],
         ),
     ] {
@@ -3168,21 +3177,16 @@ async fn taker_recovers_its_only_funded_leg_in_both_directions() {
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
-async fn refund_contract_keeps_lez_before_zcash_in_both_directions() {
-    for (id, direction, first_claimant, secret) in [
-        (
-            "sdk-refund-contract-forward",
-            SwapDirection::TakerSellsForeign,
-            Participant::Taker,
-            [0xb1; 32],
-        ),
-        (
-            "sdk-refund-contract-reverse",
-            SwapDirection::TakerSellsLez,
-            Participant::Maker,
-            [0xb2; 32],
-        ),
-    ] {
+async fn refund_contract_keeps_lez_before_zcash_selling_zec() {
+    // TakerSellsForeign: the Maker's LEZ refund is the earlier one, then the
+    // Taker's Zcash. TakerSellsLez refunds the Maker's Zcash leg first:
+    // taker_sells_lez_refunds_each_funder_its_own_leg_in_either_order.
+    for (id, direction, first_claimant, secret) in [(
+        "sdk-refund-contract-forward",
+        SwapDirection::TakerSellsForeign,
+        Participant::Taker,
+        [0xb1; 32],
+    )] {
         let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
         lock_claim_actor_fixture(direction, &mut fixture).await;
         let swap_id = SwapId::new(id).expect("swap ID");
@@ -3452,6 +3456,173 @@ async fn refund_contract_keeps_lez_before_zcash_in_both_directions() {
     }
 }
 
+fn refund_position(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    step: RefundStepV1,
+) -> ChainPosition {
+    match step {
+        RefundStepV1::Lez => ChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(agreement.lez_refund_at_ms()),
+        ),
+        RefundStepV1::Zcash => {
+            ChainPosition::block_height(Chain::Zcash, u64::from(agreement.zcash_refund_at_height()))
+        }
+    }
+}
+
+fn early_refund_position(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    step: RefundStepV1,
+) -> ChainPosition {
+    match step {
+        RefundStepV1::Lez => ChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(agreement.lez_refund_at_ms().saturating_sub(1_000)),
+        ),
+        RefundStepV1::Zcash => ChainPosition::block_height(
+            Chain::Zcash,
+            u64::from(agreement.zcash_refund_at_height()).saturating_sub(1),
+        ),
+    }
+}
+
+/// One funder refunds its own leg from both legs locked: early is a wait,
+/// then it is submitted and projected; the other role still waits.
+async fn refund_own_leg_first(
+    fixture: &mut ClaimActorFixture,
+    owner: Participant,
+    step: RefundStepV1,
+) {
+    let agreement = fixture.maker.agreement().clone();
+    fixture.refunds.set_eligibility(
+        step,
+        RefundEligibilityObservationV1::canonical(early_refund_position(&agreement, step)),
+    );
+    assert_eq!(
+        drive_refund_actor(fixture, owner)
+            .await
+            .expect("early deadline is a wait"),
+        RefundDriveOutcome::AwaitingDeadline(step)
+    );
+    fixture.refunds.set_eligibility(
+        step,
+        RefundEligibilityObservationV1::canonical(refund_position(&agreement, step)),
+    );
+    assert_eq!(
+        drive_refund_actor(fixture, owner)
+            .await
+            .expect("own refund submits"),
+        RefundDriveOutcome::Submitted(step)
+    );
+    fixture.refunds.confirm(step);
+    assert_eq!(
+        drive_refund_actor(fixture, owner)
+            .await
+            .expect("own refund projects"),
+        RefundDriveOutcome::Projected { step, revision: 3 }
+    );
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "both refund orders are followed end to end"
+)]
+async fn taker_sells_lez_refunds_each_funder_its_own_leg_in_either_order() {
+    // The Maker's Zcash refund is the earlier one, the Taker's LEZ refund the
+    // later one; neither waits for the other's signature, and whichever lands
+    // first, both roles end Refunded.
+    for (id, first, second) in [
+        (
+            "sdk-reverse-refund-zcash-first",
+            (Participant::Maker, RefundStepV1::Zcash),
+            (Participant::Taker, RefundStepV1::Lez),
+        ),
+        (
+            "sdk-reverse-refund-lez-first",
+            (Participant::Taker, RefundStepV1::Lez),
+            (Participant::Maker, RefundStepV1::Zcash),
+        ),
+    ] {
+        let direction = SwapDirection::TakerSellsLez;
+        let mut fixture =
+            activate_claim_actor_fixture(id, direction, Participant::Taker, [0xb2; 32]).await;
+        lock_claim_actor_fixture(direction, &mut fixture).await;
+        let agreement = fixture.maker.agreement().clone();
+        assert_eq!(RefundStepV1::Zcash.owner(&agreement), Participant::Maker);
+        assert_eq!(RefundStepV1::Lez.owner(&agreement), Participant::Taker);
+        refund_own_leg_first(&mut fixture, first.0, first.1).await;
+        let first_phase = match first.0 {
+            Participant::Maker => Phase::MakerLegRefunded,
+            Participant::Taker => Phase::TakerLegRefunded,
+        };
+        assert_eq!(refund_actor(&fixture, first.0).status(), first_phase);
+        assert_eq!(
+            refund_actor(&fixture, second.0).status(),
+            Phase::BothLegsLocked
+        );
+        // The first funder now follows the other leg's refund; it never
+        // signs it.
+        assert_eq!(
+            drive_refund_actor(&mut fixture, first.0)
+                .await
+                .expect("first funder observes the other leg"),
+            RefundDriveOutcome::AwaitingStableObservation(second.1)
+        );
+        assert!(matches!(
+            drive_actor_at(&mut fixture, first.0, LezUnixMilliseconds::new(0)).await,
+            Err(ZecSdkError::ClaimNotReady(phase)) if phase == first_phase
+        ));
+
+        refund_own_leg_first(&mut fixture, second.0, second.1).await;
+        for participant in [second.0, first.0] {
+            assert_eq!(
+                drive_refund_actor(&mut fixture, participant)
+                    .await
+                    .expect("each role observes the other refund"),
+                RefundDriveOutcome::Refunded { revision: 4 }
+            );
+        }
+        assert_eq!(fixture.maker.status(), Phase::Refunded);
+        assert_eq!(fixture.taker.status(), Phase::Refunded);
+        for step in [RefundStepV1::Lez, RefundStepV1::Zcash] {
+            assert_eq!(
+                fixture
+                    .refunds
+                    .events()
+                    .iter()
+                    .filter(|event| **event == RefundPortEvent::Prepare(step))
+                    .count(),
+                1,
+                "only {step:?}'s funder signs it, once"
+            );
+        }
+        assert_eq!(
+            fixture
+                .refunds
+                .submissions()
+                .iter()
+                .map(|(step, _)| *step)
+                .collect::<Vec<_>>(),
+            vec![first.1, second.1]
+        );
+        let events = fixture.refunds.events().len();
+        for participant in [Participant::Maker, Participant::Taker] {
+            restart_refund_actor(id, &mut fixture, participant).await;
+            assert_eq!(
+                drive_refund_actor(&mut fixture, participant)
+                    .await
+                    .expect("terminal replay"),
+                RefundDriveOutcome::Refunded { revision: 4 }
+            );
+        }
+        assert_eq!(
+            fixture.refunds.events().len(),
+            events,
+            "replay asks no port"
+        );
+    }
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn refund_records_round_trip_only_after_full_context_revalidation() {
@@ -3465,7 +3636,7 @@ async fn refund_records_round_trip_only_after_full_context_revalidation() {
         (
             "sdk-refund-record-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0xb4; 32],
         ),
     ] {
@@ -3652,7 +3823,7 @@ async fn reveal_waits_for_exact_fresh_unspent_zcash_funding_after_restart_in_bot
         (
             "sdk-pre-reveal-gate-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0xa2; 32],
         ),
     ] {
@@ -3693,8 +3864,12 @@ async fn assert_pre_reveal_funding_gate(
             .iter()
             .filter(|event| **event == ClaimPortEvent::PrepareReveal)
             .count(),
-        1,
-        "unsafe funding still leaves one durable reveal intent"
+        match direction {
+            SwapDirection::TakerSellsForeign => 1,
+            SwapDirection::TakerSellsLez => 0,
+        },
+        "unsafe funding still leaves one durable LEZ reveal intent; the Zcash reveal is \
+         prepared only after its gate"
     );
 
     restart_revealing_actor(id, &mut fixture).await;
@@ -3735,36 +3910,47 @@ async fn a_superseded_revealing_claim_is_replanned_restaged_and_lands_in_both_di
         (
             "sdk-claim-replan-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0xb2; 32],
         ),
     ] {
+        // The owned LEZ claim: the Taker's reveal in TakerSellsForeign, the
+        // Maker's follow-up after the Taker's Zcash reveal in TakerSellsLez.
         let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
         lock_claim_actor_fixture(direction, &mut fixture).await;
         let agreement = fixture.maker.agreement().clone();
         fixture
             .corridor
             .expose_funding_as(exact_zcash_funding_observation(&agreement));
+        let lez_claimant = agreement.lez_claimant();
+        let (step, earlier_submissions) = match direction {
+            SwapDirection::TakerSellsForeign => (ClaimStepV1::RevealingLez, vec![]),
+            SwapDirection::TakerSellsLez => {
+                reveal_on_zcash(&mut fixture).await;
+                (ClaimStepV1::FollowupLez, vec![ClaimStepV1::RevealingZcash])
+            }
+        };
         *fixture
             .corridor
             .supersede_claim
             .lock()
             .expect("supersede claim lock") = Some(([0xc1; 32], 1, 2));
         assert_eq!(
-            drive_revealing_actor(&mut fixture)
+            drive_actor_at(&mut fixture, lez_claimant, LezUnixMilliseconds::new(0))
                 .await
                 .expect("superseded is an outcome"),
             ClaimDriveOutcome::Superseded {
-                step: ClaimStepV1::RevealingLez,
+                step,
                 planned_nonce: 1,
                 live_nonce: 2,
             }
         );
-        assert!(
-            fixture.corridor.submissions().is_empty(),
+        assert_eq!(
+            fixture.corridor.submissions(),
+            earlier_submissions,
             "nothing went out"
         );
-        let actor = match first_claimant {
+        let actor = match lez_claimant {
             Participant::Maker => &mut fixture.maker,
             Participant::Taker => &mut fixture.taker,
         };
@@ -3773,15 +3959,13 @@ async fn a_superseded_revealing_claim_is_replanned_restaged_and_lands_in_both_di
             .await
             .expect("open claim");
         assert_eq!(open.expected_submission_id(), &[0xc1; 32]);
+        assert_eq!(open.step(), step);
         let mut exact = vec![0x6c, 0x65, 0x7a];
         exact.extend_from_slice(&secret);
         exact.push(2);
-        let replanned = lez_zec_swap_sdk::PreparedClaimSubmissionV1::new(
-            ClaimStepV1::RevealingLez,
-            [0xc4; 32],
-            exact.clone(),
-        )
-        .expect("re-planned claim");
+        let replanned =
+            lez_zec_swap_sdk::PreparedClaimSubmissionV1::new(step, [0xc4; 32], exact.clone())
+                .expect("re-planned claim");
         let supersession = lez_zec_swap_sdk::ClaimSupersessionV1::new(
             lez_zec_swap_sdk::ClaimSupersessionInputV1 {
                 replan_index: 1,
@@ -3811,22 +3995,57 @@ async fn a_superseded_revealing_claim_is_replanned_restaged_and_lands_in_both_di
         assert_eq!(lineage, vec![supersession]);
         assert_eq!(lineage[0].lez_refund_margin_ms(), 1_200_000);
         assert_eq!(
-            drive_revealing_actor(&mut fixture)
+            drive_actor_at(&mut fixture, lez_claimant, LezUnixMilliseconds::new(0))
                 .await
                 .expect("re-planned claim goes out"),
-            ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+            ClaimDriveOutcome::Submitted(step)
         );
-        assert_eq!(fixture.corridor.revealing_submission_bytes(), vec![exact]);
-        fixture.corridor.confirm_revealing_claim(secret);
+        assert_eq!(
+            fixture.corridor.revealing_submission_bytes().last(),
+            Some(&exact)
+        );
+        fixture.corridor.confirm_lez_claim(secret);
         assert!(matches!(
-            drive_revealing_actor(&mut fixture)
+            drive_actor_at(&mut fixture, lez_claimant, LezUnixMilliseconds::new(0))
                 .await
                 .expect("re-planned claim projected"),
+            ClaimDriveOutcome::Projected { step: projected, .. } if projected == step
+        ));
+    }
+}
+
+/// `TakerSellsLez`: the Taker's revealing Zcash claim is sent, buried at the
+/// Zcash leg's depth and projected by both roles.
+async fn reveal_on_zcash(fixture: &mut ClaimActorFixture) {
+    let now = LezUnixMilliseconds::new(0);
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker reveals"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    fixture
+        .corridor
+        .bury_zcash_claim(zcash_claim_depth(fixture.taker.agreement()));
+    for participant in [Participant::Taker, Participant::Maker] {
+        assert!(matches!(
+            drive_actor_at(fixture, participant, now)
+                .await
+                .expect("the Zcash reveal is projected"),
             ClaimDriveOutcome::Projected {
-                step: ClaimStepV1::RevealingLez,
+                step: ClaimStepV1::RevealingZcash,
                 ..
             }
         ));
+    }
+}
+
+async fn drive_actor_at(
+    fixture: &mut ClaimActorFixture,
+    participant: Participant,
+    now: LezUnixMilliseconds,
+) -> Result<ClaimDriveOutcome, ZecSdkError> {
+    match participant {
+        Participant::Maker => fixture.maker.drive_claim(now).await,
+        Participant::Taker => fixture.taker.drive_claim(now).await,
     }
 }
 
@@ -3846,7 +4065,7 @@ async fn a_revealing_claim_after_its_window_is_refused_with_nothing_sent_in_both
         (
             "sdk-claim-window-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0xb6; 32],
         ),
     ] {
@@ -3860,6 +4079,10 @@ async fn assert_claim_window(
     first_claimant: Participant,
     secret: [u8; 32],
 ) {
+    if direction == SwapDirection::TakerSellsLez {
+        Box::pin(assert_zcash_claim_window(id, secret)).await;
+        return;
+    }
     let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
     lock_claim_actor_fixture(direction, &mut fixture).await;
     let agreement = fixture.maker.agreement().clone();
@@ -3944,6 +4167,112 @@ async fn assert_claim_window(
     );
 }
 
+/// `TakerSellsLez`: the Taker's revealing Zcash claim is sent only before the
+/// claim window closes (the Maker then has the margin to claim LEZ before the
+/// Taker's LEZ refund); one already on Zcash is followed after it.
+async fn assert_zcash_claim_window(id: &str, secret: [u8; 32]) {
+    let mut fixture =
+        activate_claim_actor_fixture(id, SwapDirection::TakerSellsLez, Participant::Taker, secret)
+            .await;
+    lock_claim_actor_fixture(SwapDirection::TakerSellsLez, &mut fixture).await;
+    let agreement = fixture.taker.agreement().clone();
+    fixture
+        .corridor
+        .expose_funding_as(exact_zcash_funding_observation(&agreement));
+    let closes = fixture.taker.claim_window_closes_at_ms();
+    assert_eq!(
+        closes,
+        agreement.lez_refund_at_ms() - 30_000,
+        "refund time minus the 30 s margin"
+    );
+    // Closed, nothing staged: refused by name before any port is asked.
+    let events_before = fixture.corridor.port_events();
+    let refused = fixture
+        .taker
+        .drive_claim(LezUnixMilliseconds::new(closes))
+        .await;
+    assert!(
+        matches!(refused, Err(ZecSdkError::ClaimWindowClosed { closes_at_ms, now_ms }) if closes_at_ms == closes && now_ms == closes),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fixture.corridor.port_events(),
+        events_before,
+        "no prepare, no observation"
+    );
+    assert!(
+        fixture.corridor.submissions().is_empty(),
+        "nothing went out"
+    );
+    assert!(
+        fixture
+            .taker_store
+            .claim_intents
+            .lock()
+            .expect("claim intents")
+            .is_empty(),
+        "nothing staged"
+    );
+    // Inside the window the claim goes out.
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(LezUnixMilliseconds::new(closes - 1))
+            .await
+            .expect("claim inside the window"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert_eq!(fixture.corridor.revealing_submission_bytes().len(), 1);
+    let sent = fixture
+        .corridor
+        .zcash_htlc_spend()
+        .expect("the claim is in the mempool");
+    // In the mempool after the window: followed, not resent.
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(LezUnixMilliseconds::new(closes + 60_000))
+            .await
+            .expect("a claim in the mempool is followed"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+    );
+    // Dropped from the mempool after the window: never sent again.
+    fixture.corridor.spend_zcash_htlc_as(None);
+    let again = fixture
+        .taker
+        .drive_claim(LezUnixMilliseconds::new(closes + 60_000))
+        .await;
+    assert!(
+        matches!(again, Err(ZecSdkError::ClaimWindowClosed { .. })),
+        "{again:?}"
+    );
+    assert_eq!(
+        fixture.corridor.revealing_submission_bytes().len(),
+        1,
+        "no resubmission after the window"
+    );
+    // A claim that is on Zcash is still followed after the window.
+    fixture.corridor.spend_zcash_htlc_as(Some(sent));
+    fixture
+        .corridor
+        .bury_zcash_claim(zcash_claim_depth(&agreement));
+    let projected = fixture
+        .taker
+        .drive_claim(LezUnixMilliseconds::new(closes + 60_000))
+        .await;
+    assert!(
+        matches!(
+            projected,
+            Ok(ClaimDriveOutcome::Projected {
+                step: ClaimStepV1::RevealingZcash,
+                ..
+            })
+        ),
+        "{projected:?}"
+    );
+    assert_eq!(fixture.corridor.revealing_submission_bytes().len(), 1);
+}
+
 async fn assert_funding_wait(
     fixture: &mut ClaimActorFixture,
     observation: ZcashFundingObservationV1,
@@ -4011,13 +4340,17 @@ async fn assert_exact_funding_submission(
     fixture
         .corridor
         .expose_funding_as(exact_zcash_funding_observation(agreement));
+    let step = ClaimStepV1::revealing(agreement);
     assert_eq!(
         drive_revealing_actor(fixture)
             .await
             .expect("exact canonical unspent funding permits reveal"),
-        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+        ClaimDriveOutcome::Submitted(step)
     );
-    let mut expected_submission = vec![0x6c, 0x65, 0x7a];
+    let mut expected_submission = match step {
+        ClaimStepV1::RevealingLez => vec![0x6c, 0x65, 0x7a],
+        _ => vec![0x7a, 0x65, 0x63],
+    };
     expected_submission.extend_from_slice(&secret);
     assert_eq!(
         fixture.corridor.revealing_submission_bytes(),
@@ -4027,12 +4360,22 @@ async fn assert_exact_funding_submission(
     let events = fixture.corridor.port_events();
     assert_eq!(
         &events[events.len() - 3..],
-        &[
-            ClaimPortEvent::ObserveReveal,
-            ClaimPortEvent::ObserveFunding,
-            ClaimPortEvent::SubmitReveal,
-        ],
-        "fresh funding observation is literally the final awaited claim-port call before submit"
+        match step {
+            // The LEZ reveal was staged on the first drive; the funding
+            // observation is the last call before it is sent.
+            ClaimStepV1::RevealingLez => [
+                ClaimPortEvent::ObserveReveal,
+                ClaimPortEvent::ObserveFunding,
+                ClaimPortEvent::SubmitReveal,
+            ],
+            // The Zcash reveal is staged only after the funding gate passed.
+            _ => [
+                ClaimPortEvent::ObserveFunding,
+                ClaimPortEvent::PrepareReveal,
+                ClaimPortEvent::SubmitReveal,
+            ],
+        },
+        "fresh funding observation precedes the reveal's submission"
     );
     assert!(
         fixture
@@ -4138,14 +4481,26 @@ async fn assert_independent_claim_happy_path(
         ))
     ));
     lock_claim_actor_fixture(direction, &mut fixture).await;
-    assert!(matches!(
-        fixture.taker.zcash_claim_context(),
-        Err(ZecSdkError::InvalidZcashClaimContext(
-            ZcashClaimContextError::ClaimNotReady {
-                actual: Phase::BothLegsLocked
-            }
-        ))
-    ));
+    match direction {
+        // The Zcash claim follows the LEZ reveal.
+        SwapDirection::TakerSellsForeign => assert!(matches!(
+            fixture.taker.zcash_claim_context(),
+            Err(ZecSdkError::InvalidZcashClaimContext(
+                ZcashClaimContextError::ClaimNotReady {
+                    actual: Phase::BothLegsLocked
+                }
+            ))
+        )),
+        // The Zcash claim is the Taker's reveal, ready once both legs are locked.
+        SwapDirection::TakerSellsLez => assert_eq!(
+            fixture
+                .taker
+                .zcash_claim_context()
+                .expect("revealing Zcash claim context")
+                .zcash_funder(),
+            Participant::Maker
+        ),
+    }
     drive_claim_actor_fixture(id, &mut fixture).await;
     Box::pin(assert_claim_actor_restarts(id, fixture)).await;
 }
@@ -4267,7 +4622,15 @@ async fn lock_claim_actor_fixture(direction: SwapDirection, fixture: &mut ClaimA
     assert_eq!(fixture.taker.status(), Phase::BothLegsLocked);
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the TakerSellsForeign claim order is followed end to end"
+)]
 async fn drive_claim_actor_fixture(id: &str, fixture: &mut ClaimActorFixture) {
+    if fixture.maker.agreement().direction() == SwapDirection::TakerSellsLez {
+        drive_taker_sells_lez_claims(id, fixture).await;
+        return;
+    }
     match fixture.first_claimant {
         Participant::Maker => fixture
             .maker
@@ -4354,6 +4717,170 @@ async fn drive_claim_actor_fixture(id: &str, fixture: &mut ClaimActorFixture) {
             && context.funding_transaction_id() == funding_transaction_id
             && context.funding_transaction_id_bytes() == &internal_transaction_id
             && context.funding_output_index() == 0
+            && context.funding_outpoint() == &OutPoint::new(internal_transaction_id, 0)
+    }));
+    assert_eq!(
+        (fixture.maker.status(), fixture.maker.revision()),
+        (Phase::Completed, 4)
+    );
+    assert_eq!(
+        (fixture.taker.status(), fixture.taker.revision()),
+        (Phase::Completed, 4)
+    );
+}
+
+/// `TakerSellsLez`: the Taker claims the Maker's Zcash HTLC and reveals the
+/// preimage; the Maker reads it from that claim and claims the Taker's LEZ.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one TakerSellsLez claim order is followed end to end"
+)]
+async fn drive_taker_sells_lez_claims(id: &str, fixture: &mut ClaimActorFixture) {
+    let now = lez_zec_swap_sdk::LezUnixMilliseconds::new(0);
+    let swap_id = SwapId::new(id).expect("swap ID");
+    assert_eq!(fixture.first_claimant, Participant::Taker);
+    assert_eq!(fixture.taker.next_action(), ZecLifecycleAction::ClaimZcash);
+    assert_eq!(fixture.maker.next_action(), ZecLifecycleAction::Wait);
+    // Before the Taker's claim the Maker only observes Zcash.
+    let lez_calls = fixture.corridor.lez_claim_calls();
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker waits for the Taker's Zcash claim"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+    );
+    assert_eq!(fixture.corridor.lez_claim_calls(), lez_calls);
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(now)
+            .await
+            .expect("taker durably prepares and submits the Zcash reveal"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert_eq!(
+        fixture.corridor.submissions(),
+        vec![ClaimStepV1::RevealingZcash]
+    );
+    // In the mempool the claim is not yet evidence for either role.
+    assert_eq!(
+        fixture.maker.drive_claim(now).await.expect("maker waits"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+    );
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker waits"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+    );
+    assert!(
+        fixture
+            .maker_store
+            .claim_materials
+            .lock()
+            .expect("maker claim materials")
+            .is_empty(),
+        "an unconfirmed Zcash claim commits no preimage"
+    );
+    fixture
+        .corridor
+        .bury_zcash_claim(zcash_claim_depth(fixture.maker.agreement()));
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(now)
+            .await
+            .expect("taker projects its Zcash claim"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::RevealingZcash,
+            revision: 3,
+        }
+    );
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker reads the preimage from the Zcash claim"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::RevealingZcash,
+            revision: 3,
+        }
+    );
+    assert_eq!(fixture.maker.status(), Phase::ClaimEvidenceAvailable);
+    assert_eq!(fixture.taker.status(), Phase::ClaimEvidenceAvailable);
+    assert_eq!(fixture.maker.next_action(), ZecLifecycleAction::ClaimLez);
+    assert_eq!(fixture.taker.next_action(), ZecLifecycleAction::Wait);
+    let recovered = fixture
+        .maker_store
+        .load_claim_material(&swap_id)
+        .await
+        .expect("maker authenticates extracted material")
+        .expect("canonical Zcash evidence persisted the preimage");
+    assert_eq!(recovered.expose_secret(), &fixture.secret);
+
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker consumes only protected material for LEZ"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+    );
+    assert_eq!(
+        fixture.corridor.submissions(),
+        vec![ClaimStepV1::RevealingZcash, ClaimStepV1::FollowupLez],
+        "the corridor must reveal on Zcash before claiming LEZ"
+    );
+    let mut lez_claim = vec![0x6c, 0x65, 0x7a];
+    lez_claim.extend_from_slice(&fixture.secret);
+    assert_eq!(
+        fixture.corridor.revealing_submission_bytes().last(),
+        Some(&lez_claim)
+    );
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker waits"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupLez)
+    );
+    fixture.corridor.confirm_lez_claim(fixture.secret);
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker observes its LEZ claim"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::FollowupLez,
+            revision: 4,
+        }
+    );
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(now)
+            .await
+            .expect("taker observes the Maker's LEZ claim"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::FollowupLez,
+            revision: 4,
+        }
+    );
+    let funding_transaction_id = canonical_zcash_taker_lock(fixture.maker.agreement())
+        .transaction_id()
+        .to_string();
+    let internal_transaction_id =
+        ReverseHex::decode(&funding_transaction_id).expect("canonical fixture transaction ID");
+    let contexts = fixture.corridor.zcash_contexts();
+    assert_eq!(
+        contexts.len(),
+        7,
+        "prepare, submit, two exact observations and three counterparty observations bind context"
+    );
+    assert!(contexts.iter().all(|context| {
+        context.agreement_commitment() == fixture.maker.agreement().agreement_commitment()
+            && context.swap_id().as_str() == id
+            && context.zcash_funder() == Participant::Maker
+            && context.funding_transaction_id() == funding_transaction_id
             && context.funding_outpoint() == &OutPoint::new(internal_transaction_id, 0)
     }));
     assert_eq!(
@@ -5054,7 +5581,7 @@ async fn refund_validation_refuses_a_reorg_phase_holding_claim_evidence() {
         (
             "sdk-refund-reorg-reveal-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0xc2; 32],
         ),
     ] {
@@ -5117,7 +5644,7 @@ async fn refund_validation_still_admits_a_reorg_phase_without_claim_evidence() {
         (
             "sdk-refund-reorg-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0xc4; 32],
         ),
     ] {
@@ -5169,4 +5696,610 @@ async fn refund_validation_still_admits_a_reorg_phase_without_claim_evidence() {
             }
         }
     }
+}
+
+// TakerSellsLez: the Taker locks LEZ first and holds the preimage; the Maker
+// funds Zcash and learns the preimage only from the Taker's Zcash claim.
+
+fn maker_holds_no_claim_material_or_intent(store: &MemoryStore) -> bool {
+    store
+        .claim_materials
+        .lock()
+        .expect("claim materials")
+        .is_empty()
+        && store
+            .claim_intents
+            .lock()
+            .expect("claim intents")
+            .is_empty()
+        && store
+            .observed_revealing_claim_transitions
+            .lock()
+            .expect("observed reveals")
+            .is_empty()
+}
+
+fn claim_events(fixture: &ClaimActorFixture, event: ClaimPortEvent) -> usize {
+    fixture
+        .corridor
+        .port_events()
+        .iter()
+        .filter(|candidate| **candidate == event)
+        .count()
+}
+
+async fn restart_actor(id: &str, fixture: &mut ClaimActorFixture, participant: Participant) {
+    let swap_id = SwapId::new(id).expect("swap ID");
+    let resumed = actor_sdk(
+        participant,
+        fixture.wire.clone(),
+        fixture.lez.clone(),
+        fixture.zcash.clone(),
+        refund_store(fixture, participant).clone(),
+    )
+    .resume_all_capable(&swap_id)
+    .await
+    .expect("restart")
+    .expect("durable swap");
+    match participant {
+        Participant::Maker => fixture.maker = resumed,
+        Participant::Taker => fixture.taker = resumed,
+    }
+}
+
+/// The protocol-level proof for the flaw an independent reproduction showed
+/// at the escrow level: the LEZ escrow's `claim_native` pays its claimant for
+/// any preimage of the digest and cannot see Zcash, so a Maker holding the
+/// preimage could take the Taker's LEZ without funding Zcash. Here the Taker
+/// initializes and funds the LEZ escrow whose claimant is the Maker; the
+/// Maker never holds the preimage, cannot stage or send a LEZ claim, and only
+/// observes Zcash until the Taker's Zcash claim is buried.
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one swap is followed from the Taker's lock to the Maker's LEZ claim"
+)]
+async fn maker_cannot_claim_the_takers_lez_before_the_takers_zcash_claim_reveals_the_preimage() {
+    let id = "sdk-reverse-maker-holds-no-preimage";
+    let secret = [0x5a; 32];
+    let digest: [u8; 32] = Sha256::digest(secret).into();
+    let direction = SwapDirection::TakerSellsLez;
+    let now = LezUnixMilliseconds::new(0);
+
+    // The Maker cannot be activated as a claimant.
+    let wire = agreement_wire_with_digest(id, direction, FixtureVariant::Local, digest);
+    assert!(
+        !wire.windows(secret.len()).any(|window| window == secret),
+        "the agreement the Maker receives carries no preimage"
+    );
+    assert!(
+        wire.windows(digest.len()).any(|window| window == digest),
+        "only the digest"
+    );
+    let refused_store = MemoryStore::default();
+    let refused = sdk(Participant::Maker, wire.clone(), refused_store.clone());
+    let terms = refused
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("maker accepts the terms");
+    assert_eq!(terms.agreement().lez_claimant(), Participant::Maker);
+    assert_eq!(terms.agreement().revealing_claimant(), Participant::Taker);
+    assert!(matches!(
+        refused
+            .activate_with_claim_preimage(terms, ClaimPreimage::new(secret))
+            .await,
+        Err(ZecSdkError::WrongRole {
+            expected: Participant::Taker,
+            actual: Participant::Maker
+        })
+    ));
+    assert_store_has_no_activation_effects(&refused_store);
+
+    let mut fixture = activate_claim_actor_fixture(id, direction, Participant::Taker, secret).await;
+    assert_eq!(fixture.wire, wire);
+    assert!(maker_holds_no_claim_material_or_intent(
+        &fixture.maker_store
+    ));
+
+    // The Taker initializes and funds the LEZ escrow; the Maker observes it.
+    project_actor_taker_first_lock(direction, &mut fixture.taker, &fixture.lez, &fixture.zcash)
+        .await;
+    expose_taker_lock_to_maker(direction, &fixture.maker, &fixture.lez, &fixture.zcash);
+    fixture
+        .maker
+        .observe_taker_first_lock()
+        .await
+        .expect("maker observes the taker lock");
+    assert_eq!(fixture.maker.status(), Phase::TakerLockConfirmed);
+    assert!(maker_holds_no_claim_material_or_intent(
+        &fixture.maker_store
+    ));
+    assert!(matches!(
+        fixture.maker.open_revealing_claim_submission().await,
+        Err(ZecSdkError::ClaimNotReady(Phase::TakerLockConfirmed))
+    ));
+    assert_eq!(fixture.corridor.lez_claim_calls(), 0);
+
+    // The Maker funds Zcash.
+    let evidence = project_actor_maker_second_lock(
+        direction,
+        &mut fixture.maker,
+        &fixture.lez,
+        &fixture.zcash,
+    )
+    .await;
+    expose_maker_lock_to_taker(direction, evidence, &fixture.lez, &fixture.zcash);
+    fixture
+        .taker
+        .observe_maker_lock()
+        .await
+        .expect("taker observes the maker lock");
+    assert_eq!(fixture.maker.status(), Phase::BothLegsLocked);
+    assert!(maker_holds_no_claim_material_or_intent(
+        &fixture.maker_store
+    ));
+    assert_eq!(fixture.maker.next_action(), ZecLifecycleAction::Wait);
+    assert!(matches!(
+        fixture.maker.open_revealing_claim_submission().await,
+        Err(ZecSdkError::ClaimNotReady(Phase::BothLegsLocked))
+    ));
+    let replanned = lez_zec_swap_sdk::PreparedClaimSubmissionV1::new(
+        ClaimStepV1::FollowupLez,
+        [0xc4; 32],
+        vec![0x6c, 0x65, 0x7a, 0x01],
+    )
+    .expect("a claim the Maker cannot have");
+    let supersession =
+        lez_zec_swap_sdk::ClaimSupersessionV1::new(lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+            replan_index: 1,
+            superseded_id: [0xc1; 32],
+            superseded_nonce: 1,
+            replanned_id: [0xc4; 32],
+            replanned_nonce: 2,
+            lez_refund_margin_ms: 60_000,
+        })
+        .expect("supersession");
+    assert!(matches!(
+        fixture
+            .maker
+            .restage_revealing_claim(&replanned, &supersession)
+            .await,
+        Err(ZecSdkError::ClaimNotReady(Phase::BothLegsLocked))
+    ));
+
+    // The Maker's claim drive only observes Zcash: no LEZ claim port call.
+    for _ in 0..2 {
+        assert_eq!(
+            fixture.maker.drive_claim(now).await.expect("maker waits"),
+            ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+        );
+    }
+    assert_eq!(
+        fixture.corridor.lez_claim_calls(),
+        0,
+        "no LEZ claim port call"
+    );
+    assert_eq!(
+        fixture.corridor.port_events(),
+        vec![ClaimPortEvent::ObserveCounterpartyZcashReveal; 2]
+    );
+    assert!(fixture.corridor.submissions().is_empty());
+    assert!(maker_holds_no_claim_material_or_intent(
+        &fixture.maker_store
+    ));
+
+    // The Taker claims ZEC; buried at depth, its preimage reaches the Maker.
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker reveals"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("in the mempool"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+    );
+    assert!(maker_holds_no_claim_material_or_intent(
+        &fixture.maker_store
+    ));
+    assert_eq!(fixture.corridor.lez_claim_calls(), 0);
+    fixture
+        .corridor
+        .bury_zcash_claim(zcash_claim_depth(fixture.maker.agreement()));
+    assert_eq!(
+        fixture.maker.drive_claim(now).await.expect("maker commits"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::RevealingZcash,
+            revision: 3,
+        }
+    );
+    assert_eq!(fixture.corridor.lez_claim_calls(), 0);
+    let stored = fixture
+        .maker_store
+        .load_claim_material(&SwapId::new(id).expect("swap ID"))
+        .await
+        .expect("protected material")
+        .expect("the committed Zcash claim carried the preimage");
+    assert_eq!(stored.expose_secret(), &secret);
+
+    // Only now does the Maker claim LEZ, with the preimage it read.
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker claims LEZ"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+    );
+    fixture.corridor.confirm_lez_claim(secret);
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker projects"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::FollowupLez,
+            revision: 4,
+        }
+    );
+    for (step, revision) in [
+        (ClaimStepV1::RevealingZcash, 3),
+        (ClaimStepV1::FollowupLez, 4),
+    ] {
+        assert_eq!(
+            fixture.taker.drive_claim(now).await.expect("taker follows"),
+            ClaimDriveOutcome::Projected { step, revision }
+        );
+    }
+    assert_eq!(fixture.maker.status(), Phase::Completed);
+    assert_eq!(fixture.taker.status(), Phase::Completed);
+}
+
+#[tokio::test]
+async fn taker_refuses_its_zcash_claim_too_close_to_the_refund_height() {
+    let id = "sdk-reverse-reveal-margin";
+    let secret = [0x5b; 32];
+    let mut fixture =
+        activate_claim_actor_fixture(id, SwapDirection::TakerSellsLez, Participant::Taker, secret)
+            .await;
+    lock_claim_actor_fixture(SwapDirection::TakerSellsLez, &mut fixture).await;
+    let agreement = fixture.taker.agreement().clone();
+    let refund_height = agreement.zcash_refund_at_height();
+    let margin = lez_zec_swap_sdk::ZecRefundProfile::for_id(agreement.binding().profile_id())
+        .zcash_reveal_margin_blocks();
+    assert_eq!((refund_height, margin), (124, 2));
+    // tip + margin reaches the refund height: the claim could not be buried
+    // before the Maker's refund can be mined.
+    for tip in [refund_height - margin, refund_height - 1] {
+        fixture
+            .corridor
+            .expose_funding_as(exact_zcash_funding_observation_at_tip(&agreement, tip));
+        let refused = fixture.taker.drive_claim(LezUnixMilliseconds::new(0)).await;
+        assert!(
+            matches!(
+                refused,
+                Err(ZecSdkError::ZcashRevealWindowClosed { tip_height, refund_height: height, margin_blocks })
+                    if tip_height == tip && height == refund_height && margin_blocks == margin
+            ),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(claim_events(&fixture, ClaimPortEvent::PrepareReveal), 0);
+    assert!(fixture.corridor.submissions().is_empty(), "nothing sent");
+    assert!(
+        fixture
+            .taker_store
+            .claim_intents
+            .lock()
+            .expect("claim intents")
+            .is_empty(),
+        "nothing staged"
+    );
+    // One block earlier the claim goes out.
+    fixture
+        .corridor
+        .expose_funding_as(exact_zcash_funding_observation_at_tip(
+            &agreement,
+            refund_height - margin - 1,
+        ));
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(LezUnixMilliseconds::new(0))
+            .await
+            .expect("inside the margin"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+}
+
+#[tokio::test]
+async fn taker_refuses_its_zcash_claim_on_too_shallow_maker_funding() {
+    let id = "sdk-reverse-shallow-funding";
+    let secret = [0x5c; 32];
+    let mut fixture =
+        activate_claim_actor_fixture(id, SwapDirection::TakerSellsLez, Participant::Taker, secret)
+            .await;
+    lock_claim_actor_fixture(SwapDirection::TakerSellsLez, &mut fixture).await;
+    let agreement = fixture.taker.agreement().clone();
+    fixture
+        .corridor
+        .expose_funding_as(ZcashFundingObservationV1::Unstable);
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(LezUnixMilliseconds::new(0))
+            .await
+            .expect("unstable funding is a wait"),
+        ClaimDriveOutcome::AwaitingSafeZcashFunding(ZcashFundingWaitReasonV1::Unstable)
+    );
+    fixture
+        .corridor
+        .expose_funding_as(mutated_zcash_funding_observation(
+            &agreement,
+            FundingMutation::InsufficientConfirmations,
+        ));
+    let shallow = fixture.taker.drive_claim(LezUnixMilliseconds::new(0)).await;
+    assert!(
+        matches!(
+            shallow,
+            Err(ZecSdkError::InvalidZcashFundingObservation(
+                lez_zec_swap_sdk::ZcashFundingObservationError::InsufficientConfirmations {
+                    required: 2,
+                    actual: 1
+                }
+            ))
+        ),
+        "{shallow:?}"
+    );
+    assert_eq!(claim_events(&fixture, ClaimPortEvent::PrepareReveal), 0);
+    assert!(fixture.corridor.submissions().is_empty(), "nothing sent");
+    assert!(
+        fixture
+            .taker_store
+            .claim_intents
+            .lock()
+            .expect("claim intents")
+            .is_empty(),
+        "nothing staged"
+    );
+}
+
+#[tokio::test]
+async fn maker_rejects_a_refund_spend_or_a_wrong_preimage_as_the_takers_zcash_reveal() {
+    let id = "sdk-reverse-reject-spends";
+    let secret = [0x5d; 32];
+    let mut fixture =
+        activate_claim_actor_fixture(id, SwapDirection::TakerSellsLez, Participant::Taker, secret)
+            .await;
+    lock_claim_actor_fixture(SwapDirection::TakerSellsLez, &mut fixture).await;
+    let agreement = fixture.maker.agreement().clone();
+    for spend in [
+        ZcashHtlcSpend::Refund { confirmations: 5 },
+        ZcashHtlcSpend::Claim {
+            preimage: [0xee; 32],
+            confirmations: 5,
+        },
+        ZcashHtlcSpend::Claim {
+            preimage: [0xee; 32],
+            confirmations: 0,
+        },
+    ] {
+        fixture.corridor.spend_zcash_htlc_as(Some(spend));
+        let rejected = fixture.maker.drive_claim(LezUnixMilliseconds::new(0)).await;
+        assert!(
+            matches!(rejected, Err(ZecSdkError::ZcashClaim(_))),
+            "{spend:?}: {rejected:?}"
+        );
+        assert_eq!(fixture.maker.status(), Phase::BothLegsLocked);
+        assert!(
+            maker_holds_no_claim_material_or_intent(&fixture.maker_store),
+            "{spend:?} stores nothing"
+        );
+    }
+    // The SDK itself refuses a Zcash claim whose preimage is not the
+    // agreement's, and a Zcash reveal in the direction that reveals on LEZ.
+    assert!(matches!(
+        lez_zec_swap_sdk::RevealingClaimEvidenceV1::from_canonical_zcash_claim(
+            &agreement,
+            ZCASH_HTLC_CLAIM_ID,
+            ZCASH_HTLC_CLAIM_TRANSACTION,
+            5,
+            ClaimPreimage::new([0xee; 32]),
+        ),
+        Err(ClaimError::SecretDigestMismatch)
+    ));
+    let forward = AcceptedZecAgreementV1::accept_wire_at(
+        &agreement_wire_with_digest(
+            "sdk-forward-no-zcash-reveal",
+            SwapDirection::TakerSellsForeign,
+            FixtureVariant::Local,
+            Sha256::digest(secret).into(),
+        ),
+        ACCEPTED_AT,
+        Participant::Maker,
+        0,
+    )
+    .expect("forward terms");
+    assert!(matches!(
+        lez_zec_swap_sdk::RevealingClaimEvidenceV1::from_canonical_zcash_claim(
+            forward.agreement(),
+            ZCASH_HTLC_CLAIM_ID,
+            ZCASH_HTLC_CLAIM_TRANSACTION,
+            5,
+            ClaimPreimage::new(secret),
+        ),
+        Err(ClaimError::ContextMismatch)
+    ));
+    // The Taker's real claim, below depth, is still not evidence.
+    fixture
+        .corridor
+        .spend_zcash_htlc_as(Some(ZcashHtlcSpend::Claim {
+            preimage: secret,
+            confirmations: 0,
+        }));
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(LezUnixMilliseconds::new(0))
+            .await
+            .expect("below depth is a wait"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+    );
+    assert!(maker_holds_no_claim_material_or_intent(
+        &fixture.maker_store
+    ));
+}
+
+#[tokio::test]
+async fn maker_restart_after_reading_the_zcash_reveal_claims_lez_with_the_stored_preimage() {
+    let id = "sdk-reverse-maker-restart-revealed";
+    let secret = [0x5e; 32];
+    let mut fixture =
+        activate_claim_actor_fixture(id, SwapDirection::TakerSellsLez, Participant::Taker, secret)
+            .await;
+    lock_claim_actor_fixture(SwapDirection::TakerSellsLez, &mut fixture).await;
+    reveal_on_zcash(&mut fixture).await;
+    // The Zcash view is gone after the restart (a node that pruned or lost
+    // the claim): the Maker claims from its durable preimage alone.
+    fixture.corridor.spend_zcash_htlc_as(None);
+    restart_actor(id, &mut fixture, Participant::Maker).await;
+    assert_eq!(
+        (fixture.maker.status(), fixture.maker.revision()),
+        (Phase::ClaimEvidenceAvailable, 3)
+    );
+    assert_eq!(fixture.maker.next_action(), ZecLifecycleAction::ClaimLez);
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(LezUnixMilliseconds::new(0))
+            .await
+            .expect("resumed maker claims LEZ"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+    );
+    let mut expected = vec![0x6c, 0x65, 0x7a];
+    expected.extend_from_slice(&secret);
+    assert_eq!(
+        fixture.corridor.revealing_submission_bytes().last(),
+        Some(&expected)
+    );
+}
+
+#[tokio::test]
+async fn maker_restart_after_staging_its_lez_claim_resubmits_the_same_claim() {
+    let id = "sdk-reverse-maker-restart-staged";
+    let secret = [0x5f; 32];
+    let mut fixture =
+        activate_claim_actor_fixture(id, SwapDirection::TakerSellsLez, Participant::Taker, secret)
+            .await;
+    lock_claim_actor_fixture(SwapDirection::TakerSellsLez, &mut fixture).await;
+    reveal_on_zcash(&mut fixture).await;
+    let now = LezUnixMilliseconds::new(0);
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker claims LEZ"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+    );
+    restart_actor(id, &mut fixture, Participant::Maker).await;
+    assert_eq!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("resubmits the staged claim"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+    );
+    let sent = fixture.corridor.revealing_submission_bytes();
+    assert_eq!(sent.len(), 3, "the Zcash reveal and the LEZ claim twice");
+    assert_eq!(sent[1], sent[2], "the same exact staged bytes");
+    assert_eq!(
+        claim_events(&fixture, ClaimPortEvent::PrepareLezFollowup),
+        1,
+        "never re-prepared"
+    );
+    fixture.corridor.confirm_lez_claim(secret);
+    restart_actor(id, &mut fixture, Participant::Maker).await;
+    assert_eq!(
+        fixture.maker.drive_claim(now).await.expect("projects"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::FollowupLez,
+            revision: 4,
+        }
+    );
+    assert_eq!(fixture.corridor.revealing_submission_bytes().len(), 3);
+}
+
+#[tokio::test]
+async fn taker_restart_after_broadcasting_its_zcash_claim_observes_commits_and_follows() {
+    let id = "sdk-reverse-taker-restart-broadcast";
+    let secret = [0x60; 32];
+    let mut fixture =
+        activate_claim_actor_fixture(id, SwapDirection::TakerSellsLez, Participant::Taker, secret)
+            .await;
+    lock_claim_actor_fixture(SwapDirection::TakerSellsLez, &mut fixture).await;
+    let now = LezUnixMilliseconds::new(0);
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker reveals"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    restart_actor(id, &mut fixture, Participant::Taker).await;
+    assert_eq!(fixture.taker.status(), Phase::BothLegsLocked);
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(now)
+            .await
+            .expect("in the mempool"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+    );
+    fixture
+        .corridor
+        .bury_zcash_claim(zcash_claim_depth(fixture.taker.agreement()));
+    restart_actor(id, &mut fixture, Participant::Taker).await;
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker commits"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::RevealingZcash,
+            revision: 3,
+        }
+    );
+    assert_eq!(claim_events(&fixture, ClaimPortEvent::PrepareReveal), 1);
+    assert_eq!(fixture.corridor.revealing_submission_bytes().len(), 1);
+    restart_actor(id, &mut fixture, Participant::Taker).await;
+    assert_eq!(
+        (fixture.taker.status(), fixture.taker.revision()),
+        (Phase::ClaimEvidenceAvailable, 3)
+    );
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker waits"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupLez)
+    );
+    drive_actor_at(&mut fixture, Participant::Maker, now)
+        .await
+        .expect("maker commits the reveal");
+    assert_eq!(
+        drive_actor_at(&mut fixture, Participant::Maker, now)
+            .await
+            .expect("maker claims LEZ"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+    );
+    fixture.corridor.confirm_lez_claim(secret);
+    restart_actor(id, &mut fixture, Participant::Taker).await;
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(now)
+            .await
+            .expect("taker observes"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::FollowupLez,
+            revision: 4,
+        }
+    );
+    assert_eq!(fixture.taker.status(), Phase::Completed);
 }

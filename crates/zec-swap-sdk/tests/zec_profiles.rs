@@ -1,6 +1,7 @@
 use lez_swap_core::{Chain, ChainPosition, LezUnixMilliseconds, SwapDirection, UnixSeconds};
 use lez_zec_swap_sdk::{
-    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, ProfileError, ZecProfileId, ZecRefundProfile,
+    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS, ProfileError,
+    ZecProfileId, ZecRefundProfile, ZecRevealOrder,
 };
 use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType};
 
@@ -124,33 +125,166 @@ fn calibrated_bounds_ceil_lez_milliseconds_and_require_the_exact_margin() {
 }
 
 #[test]
-fn both_directions_keep_lez_before_zcash_while_mapping_role_deadlines() {
-    let local = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1);
-    for direction in [
-        SwapDirection::TakerSellsForeign,
-        SwapDirection::TakerSellsLez,
-    ] {
-        let schedule = local
+fn each_direction_refunds_the_maker_funded_leg_first_while_mapping_role_deadlines() {
+    let lez = ChainPosition::timestamp(Chain::Lez, 60);
+    let zec = ChainPosition::block_height(Chain::Zcash, 4);
+    // TakerSellsForeign: the Maker's LEZ refund, then the Taker's Zcash.
+    let legacy = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1);
+    let schedule = legacy
+        .recovery_schedule(
+            SwapDirection::TakerSellsForeign,
+            UnixSeconds::new(60),
+            BlockHeight::from_u32(4),
+            LezUnixMilliseconds::new(13_000),
+            Some(UnixSeconds::new(43)),
+        )
+        .unwrap();
+    assert!(schedule.maker_deadline_reached(lez).unwrap());
+    assert!(schedule.taker_refund_reached(zec).unwrap());
+    // TakerSellsLez under a LEZ-recipient-first profile is unsafe.
+    assert_eq!(
+        legacy.recovery_schedule(
+            SwapDirection::TakerSellsLez,
+            UnixSeconds::new(60),
+            BlockHeight::from_u32(4),
+            LezUnixMilliseconds::new(13_000),
+            Some(UnixSeconds::new(43)),
+        ),
+        Err(ProfileError::UnsafeRevealOrder)
+    );
+    // TakerSellsLez: the Maker's Zcash refund opens by 30 s (the earlier
+    // one), the Taker's LEZ refund at 60 s, the 30 s margin later.
+    let taker_first = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV3);
+    let schedule = taker_first
+        .recovery_schedule(
+            SwapDirection::TakerSellsLez,
+            UnixSeconds::new(60),
+            BlockHeight::from_u32(4),
+            LezUnixMilliseconds::new(30_000),
+            Some(UnixSeconds::new(60)),
+        )
+        .unwrap();
+    assert!(schedule.maker_deadline_reached(zec).unwrap());
+    assert!(schedule.taker_refund_reached(lez).unwrap());
+    assert_eq!(
+        taker_first.recovery_schedule(
+            SwapDirection::TakerSellsLez,
+            UnixSeconds::new(60),
+            BlockHeight::from_u32(4),
+            LezUnixMilliseconds::new(30_001),
+            Some(UnixSeconds::new(60)),
+        ),
+        Err(ProfileError::InsufficientSafetyMargin)
+    );
+    // The Taker-reveals-first profile still admits TakerSellsForeign.
+    assert!(
+        taker_first
             .recovery_schedule(
-                direction,
+                SwapDirection::TakerSellsForeign,
                 UnixSeconds::new(60),
                 BlockHeight::from_u32(4),
-                LezUnixMilliseconds::new(13_000),
-                Some(UnixSeconds::new(43)),
+                LezUnixMilliseconds::new(60_000),
+                Some(UnixSeconds::new(90)),
             )
-            .unwrap();
-        let lez = ChainPosition::timestamp(Chain::Lez, 60);
-        let zec = ChainPosition::block_height(Chain::Zcash, 4);
-        match direction {
-            SwapDirection::TakerSellsForeign => {
-                assert!(schedule.maker_deadline_reached(lez).unwrap());
-                assert!(schedule.taker_refund_reached(zec).unwrap());
-            }
-            SwapDirection::TakerSellsLez => {
-                assert!(schedule.maker_deadline_reached(zec).unwrap());
-                assert!(schedule.taker_refund_reached(lez).unwrap());
-            }
-        }
+            .is_ok()
+    );
+}
+
+/// The Taker-reveals-first profiles: new ids for a new meaning, every older
+/// id unchanged and admitted only for `TakerSellsForeign`.
+#[test]
+fn taker_reveals_first_profiles_match_the_reviewed_parameters() {
+    for (id, spelling, network, delay, blocks, margin, confirmations, reveal_margin, slowest) in [
+        (
+            ZecProfileId::DeterministicLocalV3,
+            "deterministic-local-v3",
+            NetworkType::Regtest,
+            120,
+            8,
+            30,
+            (1, 1),
+            2,
+            None,
+        ),
+        (
+            ZecProfileId::DeterministicLocalDevnetV7,
+            "deterministic-local-devnet-v7",
+            NetworkType::Regtest,
+            720,
+            16,
+            120,
+            (1, 1),
+            3,
+            None,
+        ),
+        (
+            ZecProfileId::DeterministicLocalDevnetV8,
+            "deterministic-local-devnet-v8",
+            NetworkType::Regtest,
+            240,
+            16,
+            120,
+            (1, 1),
+            3,
+            None,
+        ),
+        (
+            ZecProfileId::PublicTestnetV3,
+            "public-testnet-v3",
+            NetworkType::Test,
+            14_400,
+            95,
+            7_200,
+            (2, 10),
+            10,
+            Some(PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS),
+        ),
+    ] {
+        let profile = ZecRefundProfile::for_id(id);
+        assert_eq!(profile.id().as_str(), spelling);
+        assert_eq!(profile.zcash_network(), network);
+        assert_eq!(profile.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(profile.lez_refund_delay(), UnixSeconds::new(delay));
+        assert_eq!(profile.zcash_refund_blocks(), blocks);
+        assert_eq!(profile.required_margin(), UnixSeconds::new(margin));
+        assert_eq!(
+            (profile.lez_confirmations(), profile.zcash_confirmations()),
+            confirmations
+        );
+        assert_eq!(profile.zcash_reveal_margin_blocks(), reveal_margin);
+        assert_eq!(profile.zcash_slowest_block_millis(), slowest);
+        assert_eq!(profile.reveal_order(), ZecRevealOrder::TakerFirst);
+        assert!(profile.admits(SwapDirection::TakerSellsLez));
+        assert!(profile.admits(SwapDirection::TakerSellsForeign));
+    }
+    // public-testnet-v3: the anchor is the tip plus one, so the Maker's
+    // Zcash refund is at most 96 blocks away: 96 x 75 s = 7 200 s, and the
+    // Taker's LEZ refund is the margin after that.
+    let public = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV3);
+    assert_eq!(
+        (u64::from(public.zcash_refund_blocks()) + 1) * PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS
+            + public.required_margin().value() * 1_000,
+        public.lez_refund_delay().value() * 1_000
+    );
+    for legacy in [
+        ZecProfileId::DeterministicLocalV1,
+        ZecProfileId::DeterministicLocalDevnetV1,
+        ZecProfileId::DeterministicLocalDevnetV2,
+        ZecProfileId::DeterministicLocalDevnetV3,
+        ZecProfileId::DeterministicLocalDevnetV4,
+        ZecProfileId::PublicTestnetV1,
+        ZecProfileId::PublicTestnetV2,
+        ZecProfileId::DeterministicLocalV2,
+        ZecProfileId::DeterministicLocalDevnetV5,
+        ZecProfileId::DeterministicLocalDevnetV6,
+    ] {
+        let profile = ZecRefundProfile::for_id(legacy);
+        assert_eq!(profile.reveal_order(), ZecRevealOrder::LezRecipientFirst);
+        assert!(!profile.admits(SwapDirection::TakerSellsLez), "{legacy:?}");
+        assert!(
+            profile.admits(SwapDirection::TakerSellsForeign),
+            "{legacy:?}"
+        );
     }
 }
 

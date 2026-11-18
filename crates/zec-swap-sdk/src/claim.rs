@@ -622,15 +622,27 @@ impl RevealingClaimEvidenceV1 {
         preimage: ClaimPreimage,
         canonical_lez_snapshot: CanonicalLezClaimSnapshotRecordV1,
     ) -> Result<Self, ClaimError> {
-        let mut evidence = Self::from_legacy_recovery_parts(
-            agreement,
+        // A LEZ claim spends the LEZ leg, so its depth is the LEZ leg's in either order:
+        // the Taker's revealing claim selling ZEC, the Maker's follow-up selling LEZ (whose
+        // revealing claim is on Zcash, with the Zcash leg's depth).
+        let lez_step = match ClaimStepV1::revealing(agreement).chain() {
+            lez_swap_core::Chain::Lez => ClaimStepV1::revealing(agreement),
+            _ => ClaimStepV1::followup(agreement),
+        };
+        if observed_submission_id == [0; 32] {
+            return Err(ClaimError::EmptyExpectedIdentity(lez_step));
+        }
+        let transaction_id = transaction_id.into();
+        ChainProof::new(transaction_id.clone(), confirmations).map_err(ClaimError::Core)?;
+        validate_preimage(agreement, &preimage)?;
+        require_confirmations(agreement, lez_step, confirmations)?;
+        Ok(Self {
             observed_submission_id,
             transaction_id,
             confirmations,
             preimage,
-        )?;
-        evidence.canonical_lez_snapshot = Some(Box::new(canonical_lez_snapshot));
-        Ok(evidence)
+            canonical_lez_snapshot: Some(Box::new(canonical_lez_snapshot)),
+        })
     }
 
     /// Canonical adapter-derived identity of the observed transaction.
@@ -867,6 +879,7 @@ impl std::fmt::Debug for RevealingClaimTransitionV1 {
         formatter
             .debug_struct("RevealingClaimTransitionV1")
             .field("schema_version", &self.schema_version)
+            .field("step", &self.step)
             .field("swap_id", &self.swap_id)
             .field("agreement_commitment", &"[REDACTED]")
             .field("local_participant", &self.local_participant)
@@ -994,6 +1007,7 @@ impl std::fmt::Debug for ObservedRevealingClaimTransitionV1 {
         formatter
             .debug_struct("ObservedRevealingClaimTransitionV1")
             .field("schema_version", &self.schema_version)
+            .field("step", &self.step)
             .field("swap_id", &self.swap_id)
             .field("agreement_commitment", &"[REDACTED]")
             .field("local_participant", &self.local_participant)

@@ -479,9 +479,9 @@ pub(crate) fn claim_submission_context<'a>(
             agreement.direction(),
             agreement.agreement_commitment(),
             local,
-            match step {
-                ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
-                ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+            match step.chain() {
+                lez_swap_core::Chain::Lez => ClaimMaterialPurpose::LezClaimSubmission,
+                _ => ClaimMaterialPurpose::ZcashClaimSubmission,
             },
         ),
         step,
@@ -1567,7 +1567,30 @@ pub(crate) enum ClaimPortEvent {
     ObserveReveal,
     ObserveFunding,
     SubmitReveal,
+    /// The Maker reads the Taker's revealing Zcash claim (`TakerSellsLez`).
+    ObserveCounterpartyZcashReveal,
+    PrepareLezFollowup,
+    ObserveLezFollowup,
+    SubmitLezFollowup,
+    ObserveCounterpartyLezFollowup,
 }
+
+/// How the simulated Zcash chain spent the agreement's HTLC outpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ZcashHtlcSpend {
+    /// A claim spend; its input script carries `preimage`. Zero
+    /// confirmations is the mempool.
+    Claim {
+        preimage: [u8; 32],
+        confirmations: u32,
+    },
+    /// A refund spend (the CLTV branch): it carries no preimage.
+    Refund { confirmations: u32 },
+}
+
+/// Identity and transaction of the simulated HTLC claim spend.
+pub(crate) const ZCASH_HTLC_CLAIM_ID: [u8; 32] = [0xc2; 32];
+pub(crate) const ZCASH_HTLC_CLAIM_TRANSACTION: &str = "memory-zcash-htlc-claim";
 
 /// The claim identity whose next submission is answered Superseded, with the
 /// planned and live nonces.
@@ -1586,6 +1609,10 @@ pub(crate) struct MemoryClaimCorridor {
     pub(crate) funding_contexts: Arc<Mutex<Vec<ZcashFundingContextV1>>>,
     pub(crate) funding_observation: Arc<Mutex<Option<ZcashFundingObservationV1>>>,
     pub(crate) port_events: Arc<Mutex<Vec<ClaimPortEvent>>>,
+    /// The spend of the HTLC outpoint on the simulated Zcash chain, if any.
+    pub(crate) zcash_htlc_spend: Arc<Mutex<Option<ZcashHtlcSpend>>>,
+    /// Every call to a `LezClaimPort` method.
+    pub(crate) lez_claim_calls: Arc<Mutex<usize>>,
 }
 
 impl MemoryClaimCorridor {
@@ -1682,6 +1709,42 @@ impl MemoryClaimCorridor {
             .lock()
             .expect("claim submissions lock")
             .push(step);
+    }
+
+    /// The LEZ escrow claim landed with `preimage` (whoever signed it).
+    pub(crate) fn confirm_lez_claim(&self, preimage: [u8; 32]) {
+        self.confirm_revealing_claim(preimage);
+    }
+
+    pub(crate) fn zcash_htlc_spend(&self) -> Option<ZcashHtlcSpend> {
+        *self.zcash_htlc_spend.lock().expect("Zcash HTLC spend lock")
+    }
+
+    /// Replaces the simulated chain's spend of the HTLC outpoint.
+    pub(crate) fn spend_zcash_htlc_as(&self, spend: Option<ZcashHtlcSpend>) {
+        *self.zcash_htlc_spend.lock().expect("Zcash HTLC spend lock") = spend;
+    }
+
+    /// Mines the HTLC claim spend to `confirmations`.
+    pub(crate) fn bury_zcash_claim(&self, confirmations: u32) {
+        let mut spend = self.zcash_htlc_spend.lock().expect("Zcash HTLC spend lock");
+        match *spend {
+            Some(ZcashHtlcSpend::Claim { preimage, .. }) => {
+                *spend = Some(ZcashHtlcSpend::Claim {
+                    preimage,
+                    confirmations,
+                });
+            }
+            _ => panic!("no claim spend of the HTLC to bury"),
+        }
+    }
+
+    pub(crate) fn lez_claim_calls(&self) -> usize {
+        *self.lez_claim_calls.lock().expect("LEZ claim calls lock")
+    }
+
+    pub(crate) fn record_lez_claim_call(&self) {
+        *self.lez_claim_calls.lock().expect("LEZ claim calls lock") += 1;
     }
 
     pub(crate) fn record_revealing_submission(&self, exact: &[u8]) {
@@ -1952,6 +2015,7 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         preimage: &ClaimPreimage,
     ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        self.4.record_lez_claim_call();
         self.4.record_event(ClaimPortEvent::PrepareReveal);
         let mut exact = vec![0x6c, 0x65, 0x7a];
         exact.extend_from_slice(preimage.expose_secret());
@@ -1964,6 +2028,7 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.4.record_lez_claim_call();
         self.4.record_event(ClaimPortEvent::ObserveReveal);
         if prepared.step() != ClaimStepV1::RevealingLez
             || !matches!(prepared.expected_submission_id(), [0xc1 | 0xc4, ..])
@@ -1996,6 +2061,7 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
         &self,
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
     ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.4.record_lez_claim_call();
         let preimage = *self
             .4
             .revealing_preimage
@@ -2016,6 +2082,7 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1, Self::Error> {
+        self.4.record_lez_claim_call();
         if prepared.step() != ClaimStepV1::RevealingLez
             || !matches!(prepared.expected_submission_id(), [0xc1 | 0xc4, ..])
             || !prepared.exact_submission().starts_with(&[0x6c, 0x65, 0x7a])
@@ -2042,6 +2109,116 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
         self.4
             .record_revealing_submission(prepared.exact_submission());
         self.4.record_submission(ClaimStepV1::RevealingLez);
+        Ok(lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Accepted)
+    }
+
+    // TakerSellsLez: the Maker's LEZ claim is the same escrow claim; the
+    // simulated chain sees the same bytes and records the follow-up step.
+
+    async fn prepare_followup_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        self.4.record_lez_claim_call();
+        self.4.record_event(ClaimPortEvent::PrepareLezFollowup);
+        let mut exact = vec![0x6c, 0x65, 0x7a];
+        exact.extend_from_slice(preimage.expose_secret());
+        PreparedClaimSubmissionV1::new(ClaimStepV1::FollowupLez, [0xc1; 32], exact)
+            .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn observe_prepared_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.4.record_lez_claim_call();
+        self.4.record_event(ClaimPortEvent::ObserveLezFollowup);
+        if prepared.step() != ClaimStepV1::FollowupLez
+            || !matches!(prepared.expected_submission_id(), [0xc1 | 0xc4, ..])
+        {
+            return Err(TestPortError(
+                "unexpected prepared follow-up LEZ claim identity".to_owned(),
+            ));
+        }
+        let preimage = *self
+            .4
+            .revealing_preimage
+            .lock()
+            .expect("revealing claim lock");
+        let as_claim = prepared
+            .relabeled_copy(ClaimStepV1::RevealingLez)
+            .map_err(|error| TestPortError(error.to_string()))?;
+        preimage.map_or(Ok(RevealingClaimObservationV1::Absent), |preimage| {
+            RevealingClaimEvidenceV1::from_prepared_lez_claim_snapshot(
+                agreement,
+                &as_claim,
+                canonical_lez_claim_snapshot_for(
+                    agreement,
+                    preimage,
+                    *prepared.expected_submission_id(),
+                ),
+            )
+            .map(RevealingClaimObservationV1::Confirmed)
+            .map_err(|error| TestPortError(error.to_string()))
+        })
+    }
+
+    async fn observe_counterparty_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.4.record_lez_claim_call();
+        self.4
+            .record_event(ClaimPortEvent::ObserveCounterpartyLezFollowup);
+        let preimage = *self
+            .4
+            .revealing_preimage
+            .lock()
+            .expect("revealing claim lock");
+        preimage.map_or(Ok(RevealingClaimObservationV1::Absent), |preimage| {
+            RevealingClaimEvidenceV1::from_lez_claim_snapshot(
+                agreement,
+                canonical_lez_claim_snapshot(agreement, preimage),
+            )
+            .map(RevealingClaimObservationV1::Confirmed)
+            .map_err(|error| TestPortError(error.to_string()))
+        })
+    }
+
+    async fn submit_followup_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1, Self::Error> {
+        self.4.record_lez_claim_call();
+        if prepared.step() != ClaimStepV1::FollowupLez
+            || !matches!(prepared.expected_submission_id(), [0xc1 | 0xc4, ..])
+            || !prepared.exact_submission().starts_with(&[0x6c, 0x65, 0x7a])
+        {
+            return Err(TestPortError(
+                "unexpected deterministic follow-up LEZ claim bytes".to_owned(),
+            ));
+        }
+        let superseded = self
+            .4
+            .supersede_claim
+            .lock()
+            .expect("supersede claim lock")
+            .take_if(|(id, _, _)| id == prepared.expected_submission_id());
+        if let Some((_, planned_nonce, live_nonce)) = superseded {
+            return Ok(
+                lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Superseded {
+                    planned_nonce,
+                    live_nonce,
+                },
+            );
+        }
+        self.4.record_event(ClaimPortEvent::SubmitLezFollowup);
+        self.4
+            .record_revealing_submission(prepared.exact_submission());
+        self.4.record_submission(ClaimStepV1::FollowupLez);
         Ok(lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Accepted)
     }
 }
@@ -2261,6 +2438,149 @@ impl ZcashClaimPort for MemoryZcashTakerLockObservation {
         self.3.record_submission(ClaimStepV1::FollowupZcash);
         Ok(())
     }
+
+    // TakerSellsLez: the Taker's revealing claim is the same HTLC claim
+    // spend; the simulated chain records it as the outpoint's spender.
+
+    async fn prepare_revealing_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        self.3.record_zcash_context(context);
+        self.3.record_event(ClaimPortEvent::PrepareReveal);
+        let mut exact = vec![0x7a, 0x65, 0x63];
+        exact.extend_from_slice(preimage.expose_secret());
+        PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingZcash, ZCASH_HTLC_CLAIM_ID, exact)
+            .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn observe_prepared_revealing_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        self.3.record_zcash_context(context);
+        self.3.record_event(ClaimPortEvent::ObserveReveal);
+        if prepared.step() != ClaimStepV1::RevealingZcash
+            || prepared.expected_submission_id() != &ZCASH_HTLC_CLAIM_ID
+        {
+            return Err(TestPortError(
+                "unexpected prepared revealing Zcash claim identity".to_owned(),
+            ));
+        }
+        match self.3.zcash_htlc_spend() {
+            None => Ok(FollowupClaimObservationV1::Absent),
+            Some(ZcashHtlcSpend::Refund { .. }) => Err(TestPortError(
+                "the HTLC was spent by the refund branch".to_owned(),
+            )),
+            Some(ZcashHtlcSpend::Claim { preimage, .. })
+                if prepared.exact_submission()[3..] != preimage =>
+            {
+                Err(TestPortError(
+                    "the HTLC was claimed by another transaction".to_owned(),
+                ))
+            }
+            Some(ZcashHtlcSpend::Claim { confirmations, .. })
+                if confirmations < zcash_claim_depth(agreement) =>
+            {
+                Ok(FollowupClaimObservationV1::Unstable)
+            }
+            Some(ZcashHtlcSpend::Claim { confirmations, .. }) => FollowupClaimEvidenceV1::new(
+                agreement,
+                ZCASH_HTLC_CLAIM_ID,
+                ZCASH_HTLC_CLAIM_TRANSACTION,
+                confirmations,
+            )
+            .map(FollowupClaimObservationV1::Confirmed)
+            .map_err(|error| TestPortError(error.to_string())),
+        }
+    }
+
+    async fn submit_revealing_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        self.3.record_zcash_context(context);
+        let exact = prepared.exact_submission();
+        if prepared.step() != ClaimStepV1::RevealingZcash
+            || prepared.expected_submission_id() != &ZCASH_HTLC_CLAIM_ID
+            || exact.len() != 35
+            || !exact.starts_with(&[0x7a, 0x65, 0x63])
+        {
+            return Err(TestPortError(
+                "unexpected deterministic revealing Zcash claim bytes".to_owned(),
+            ));
+        }
+        self.3.record_event(ClaimPortEvent::SubmitReveal);
+        self.3.record_revealing_submission(exact);
+        self.3.record_submission(ClaimStepV1::RevealingZcash);
+        let mut spend = self
+            .3
+            .zcash_htlc_spend
+            .lock()
+            .expect("Zcash HTLC spend lock");
+        if spend.is_none() {
+            let mut preimage = [0; 32];
+            preimage.copy_from_slice(&exact[3..]);
+            *spend = Some(ZcashHtlcSpend::Claim {
+                preimage,
+                confirmations: 0,
+            });
+        }
+        Ok(())
+    }
+
+    async fn observe_counterparty_revealing_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.3.record_zcash_context(context);
+        self.3
+            .record_event(ClaimPortEvent::ObserveCounterpartyZcashReveal);
+        match self.3.zcash_htlc_spend() {
+            None => Ok(RevealingClaimObservationV1::Absent),
+            // The refund branch carries no preimage: never evidence.
+            Some(ZcashHtlcSpend::Refund { .. }) => Err(TestPortError(
+                "the HTLC was spent by the refund branch; it reveals no preimage".to_owned(),
+            )),
+            Some(ZcashHtlcSpend::Claim { preimage, .. })
+                if <[u8; 32]>::from(Sha256::digest(preimage)) != *agreement.secret_digest() =>
+            {
+                Err(TestPortError(
+                    "the claim's preimage does not hash to the agreement digest".to_owned(),
+                ))
+            }
+            Some(ZcashHtlcSpend::Claim { confirmations, .. })
+                if confirmations < zcash_claim_depth(agreement) =>
+            {
+                Ok(RevealingClaimObservationV1::Unstable)
+            }
+            Some(ZcashHtlcSpend::Claim {
+                preimage,
+                confirmations,
+            }) => RevealingClaimEvidenceV1::from_canonical_zcash_claim(
+                agreement,
+                ZCASH_HTLC_CLAIM_ID,
+                ZCASH_HTLC_CLAIM_TRANSACTION,
+                confirmations,
+                ClaimPreimage::new(preimage),
+            )
+            .map(RevealingClaimObservationV1::Confirmed)
+            .map_err(|error| TestPortError(error.to_string())),
+        }
+    }
+}
+
+/// The confirmation depth of the agreement's Zcash leg (its funder's policy).
+pub(crate) fn zcash_claim_depth(agreement: &lez_zec_swap_sdk::ZecAgreementV1) -> u32 {
+    lez_zec_swap_sdk::ZecRefundProfile::for_id(agreement.binding().profile_id())
+        .zcash_confirmations()
 }
 
 #[async_trait]
@@ -2881,6 +3201,33 @@ pub(crate) fn exact_zcash_funding_observation(
     ZcashFundingObservationV1::confirmed(canonical, unspent)
 }
 
+/// The agreement's exact funding, canonical and unspent, observed at `tip`
+/// (funded at height 100).
+pub(crate) fn exact_zcash_funding_observation_at_tip(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    tip: u32,
+) -> ZcashFundingObservationV1 {
+    let canonical = canonical_zcash_taker_lock_fixture(
+        agreement,
+        [9; 32],
+        BlockHash([0x44; 32]),
+        BlockHash([0xaa; 32]),
+        BlockHeight::from_u32(tip),
+    );
+    let tip = ZcashStableTip::new(
+        canonical.tip_block_hash(),
+        canonical.tip_height(),
+        canonical.tip_block_hash(),
+        canonical.tip_height(),
+    );
+    let unspent = ZcashUnspentOutputSnapshotV1::new(
+        canonical.outpoint().clone(),
+        canonical.output().clone(),
+        tip,
+    );
+    ZcashFundingObservationV1::confirmed(canonical, unspent)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum FundingMutation {
     CanonicalTransactionId,
@@ -3370,7 +3717,7 @@ pub(crate) fn agreement_wire_with_digest(
         zcash_refund_lock,
         earlier_latest_ms,
         later_earliest,
-    } = fixture_deployment(matches!(variant, FixtureVariant::Public));
+    } = fixture_deployment(matches!(variant, FixtureVariant::Public), direction);
     let escrow_program = [1; 8];
     let onchain_swap_id = derive_lez_swap_id_v1(id.as_bytes());
     let metadata_account = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
@@ -3452,9 +3799,39 @@ pub(crate) struct FixtureDeployment {
     pub(crate) later_earliest: u64,
 }
 
-pub(crate) fn fixture_deployment(is_public: bool) -> FixtureDeployment {
-    if is_public {
-        FixtureDeployment {
+/// The deployment a fixture agreement is signed under. `TakerSellsForeign`
+/// keeps the profiles it always had; `TakerSellsLez` needs a
+/// Taker-reveals-first profile, under which the Maker's Zcash refund is the
+/// earlier one: `later_refund_earliest` is the LEZ deadline itself and the
+/// Zcash refund's latest wall time is at least the margin before it.
+pub(crate) fn fixture_deployment(is_public: bool, direction: SwapDirection) -> FixtureDeployment {
+    match (is_public, direction) {
+        // public-testnet-v3: LEZ anchor 100 s + 14 400 s = 14 500 s; Zcash
+        // anchor 100 + 95 blocks; the earlier Zcash refund's latest time is
+        // the anchor plus 96 blocks at 75 s (7 300 s), the 7 200 s margin
+        // before the LEZ deadline.
+        (true, SwapDirection::TakerSellsLez) => FixtureDeployment {
+            profile: ZecProfileId::PublicTestnetV3,
+            environment: LezEnvironmentV1::PublicTestnetV0_2,
+            network: NetworkType::Test,
+            zcash_anchor: 100,
+            zcash_refund_lock: 195,
+            earlier_latest_ms: 7_300_000,
+            later_earliest: 14_500,
+        },
+        // deterministic-local-v3: LEZ anchor 100 s + 120 s = 220 s; Zcash
+        // anchor 116 + 8 blocks; the harness declares the earlier Zcash
+        // refund's latest time as the LEZ deadline minus the 30 s margin.
+        (false, SwapDirection::TakerSellsLez) => FixtureDeployment {
+            profile: ZecProfileId::DeterministicLocalV3,
+            environment: LezEnvironmentV1::DeterministicLocalV0_2,
+            network: NetworkType::Regtest,
+            zcash_anchor: 116,
+            zcash_refund_lock: 124,
+            earlier_latest_ms: 190_000,
+            later_earliest: 220,
+        },
+        (true, SwapDirection::TakerSellsForeign) => FixtureDeployment {
             profile: ZecProfileId::PublicTestnetV1,
             environment: LezEnvironmentV1::PublicTestnetV0_2,
             network: NetworkType::Test,
@@ -3462,9 +3839,8 @@ pub(crate) fn fixture_deployment(is_public: bool) -> FixtureDeployment {
             zcash_refund_lock: 292,
             earlier_latest_ms: 7_300_000,
             later_earliest: 14_500,
-        }
-    } else {
-        FixtureDeployment {
+        },
+        (false, SwapDirection::TakerSellsForeign) => FixtureDeployment {
             profile: ZecProfileId::DeterministicLocalV1,
             environment: LezEnvironmentV1::DeterministicLocalV0_2,
             network: NetworkType::Regtest,
@@ -3472,7 +3848,7 @@ pub(crate) fn fixture_deployment(is_public: bool) -> FixtureDeployment {
             zcash_refund_lock: 120,
             earlier_latest_ms: 160_000,
             later_earliest: 200,
-        }
+        },
     }
 }
 
@@ -3488,7 +3864,7 @@ pub(crate) fn fixture_binding(
         profile,
         ExpectedBip199Output::new(
             network,
-            BranchId::Nu6_2,
+            lez_zec_swap_sdk::ZecRefundProfile::for_id(profile).consensus_branch_id(),
             Zatoshis::from_u64(100_000_000).expect("value"),
             Bip199Contract::new(refund_lock, refund_hash, digest, claimant_hash),
         ),
