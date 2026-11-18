@@ -4236,21 +4236,40 @@ async fn assert_zcash_claim_window(id: &str, secret: [u8; 32]) {
             .expect("a claim in the mempool is followed"),
         ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
     );
-    // Dropped from the mempool after the window: never sent again.
+    // Dropped from the mempool after the window, the HTLC still unspent: the preimage may
+    // already be public (a Maker reads it from the mempool), so the exact stored bytes go out
+    // again whatever the window; withholding them would only let the Maker refund the Zcash
+    // after taking the LEZ.
     fixture.corridor.spend_zcash_htlc_as(None);
-    let again = fixture
-        .taker
-        .drive_claim(LezUnixMilliseconds::new(closes + 60_000))
-        .await;
-    assert!(
-        matches!(again, Err(ZecSdkError::ClaimWindowClosed { .. })),
-        "{again:?}"
-    );
     assert_eq!(
-        fixture.corridor.revealing_submission_bytes().len(),
-        1,
-        "no resubmission after the window"
+        fixture
+            .taker
+            .drive_claim(LezUnixMilliseconds::new(closes + 60_000))
+            .await
+            .expect("a dropped claim is re-broadcast after the window"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
     );
+    let resent = fixture.corridor.revealing_submission_bytes();
+    assert_eq!(resent.len(), 2, "re-broadcast once");
+    assert_eq!(resent[0], resent[1], "byte for byte the staged claim");
+    // Dropped again while the Maker's refund spent the HTLC: there is nothing to claim and
+    // nothing goes out.
+    fixture.corridor.spend_zcash_htlc_as(None);
+    fixture
+        .corridor
+        .expose_funding_as(ZcashFundingObservationV1::Spent);
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(LezUnixMilliseconds::new(closes + 60_000))
+            .await
+            .expect("a spent HTLC waits"),
+        ClaimDriveOutcome::AwaitingSafeZcashFunding(ZcashFundingWaitReasonV1::Spent)
+    );
+    assert_eq!(fixture.corridor.revealing_submission_bytes().len(), 2);
+    fixture
+        .corridor
+        .expose_funding_as(exact_zcash_funding_observation(&agreement));
     // A claim that is on Zcash is still followed after the window.
     fixture.corridor.spend_zcash_htlc_as(Some(sent));
     fixture
@@ -4270,7 +4289,7 @@ async fn assert_zcash_claim_window(id: &str, secret: [u8; 32]) {
         ),
         "{projected:?}"
     );
-    assert_eq!(fixture.corridor.revealing_submission_bytes().len(), 1);
+    assert_eq!(fixture.corridor.revealing_submission_bytes().len(), 2);
 }
 
 async fn assert_funding_wait(

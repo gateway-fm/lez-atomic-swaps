@@ -1980,8 +1980,9 @@ where
     /// while the Maker's funding output is canonical, unspent and at the Zcash leg's depth,
     /// while `tip + reveal margin < refund height` (the claim is buried before the Maker's
     /// refund can be mined) and while the claim window is open (the Maker then has the
-    /// profile margin to claim LEZ before the Taker's LEZ refund). A claim already staged is
-    /// observed and followed; it is resubmitted only inside the same gate.
+    /// profile margin to claim LEZ before the Taker's LEZ refund). The gates apply to the first
+    /// send only: a staged claim is observed and, while absent with the HTLC output unspent,
+    /// re-broadcast byte for byte whatever the window, since its preimage may already be public.
     #[allow(
         clippy::too_many_lines,
         reason = "the retained claim, the three gates and the submission read as one sequence"
@@ -2030,9 +2031,15 @@ where
                 FollowupClaimObservationV1::Absent => {}
             }
         }
-        // Nothing of ours is on the chain: the gate decides whether to (re)send.
+        // A staged claim is treated as sent: it is staged immediately before its first
+        // submission, and once it may have left, its preimage may be public (a Maker reads it
+        // from the mempool). From then on the gates no longer apply: the exact stored bytes are
+        // re-broadcast whenever they are absent and the HTLC output is still unspent, because
+        // withholding them could only let the Maker refund the Zcash after taking the LEZ.
+        let retained_submitted = retained.is_some();
+        // Nothing of ours is on the chain: the gate decides whether to send the first time.
         let now_ms = now.value();
-        if self.claim_window_closed(now) {
+        if !retained_submitted && self.claim_window_closed(now) {
             return Err(ZecSdkError::ClaimWindowClosed {
                 closes_at_ms: self.claim_window_closes_at_ms(),
                 now_ms,
@@ -2073,7 +2080,7 @@ where
         let refund_height = self.agreement().zcash_refund_at_height();
         let margin = crate::ZecRefundProfile::for_id(self.agreement().binding().profile_id())
             .zcash_reveal_margin_blocks();
-        if tip_height.saturating_add(margin) >= refund_height {
+        if !retained_submitted && tip_height.saturating_add(margin) >= refund_height {
             return Err(ZecSdkError::ZcashRevealWindowClosed {
                 tip_height,
                 refund_height,
