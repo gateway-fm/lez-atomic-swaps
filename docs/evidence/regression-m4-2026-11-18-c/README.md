@@ -1,5 +1,8 @@
 # Full regression of `15b1dc84`, 2026-11-18
 
+A later full run of the same day, 159 of 159 at `10a785ad` (this tree plus the sidecar change
+for the refund retry loop below), is in [regression-m4-2026-11-18-d](../regression-m4-2026-11-18-d/).
+
 One run of every test of `deploy/scripts/regress.sh full` (159: `regress.sh list full`) on the
 Docker devnet with the Monero regtest chain up (`LEZ_MONERO=1`), three lanes at a time
 (`LEZ_LANES=3`), without desk recordings: run `runtime/regress/20261118T101419Z`, 2026-11-18
