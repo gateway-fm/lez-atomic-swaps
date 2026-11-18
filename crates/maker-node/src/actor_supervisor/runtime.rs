@@ -982,6 +982,17 @@ fn revealing_claim_held_back(
             .and_then(|value| value.get(key))
             .and_then(Value::as_u64)
     };
+    // This swap's own claim is in flight: it holds the nonce and must be
+    // followed to final to release it. Holding it behind a waiting claim with
+    // an earlier refund time deadlocked both (devnet, zec-concurrent selling
+    // LEZ, 2026-11-18): the waiting claim waits for this nonce.
+    if zec_reference_actor::revealing_claim_in_flight_marker(own_state)
+        .is_some_and(|marker| marker.is_file())
+    {
+        zec_reference_actor::record_revealing_claim_holder(own_state, None);
+        zec_reference_actor::record_lez_claim_waiting(own_state, None);
+        return RevealingClaimHold::Open;
+    }
     // Announced before the others are read: of two claims arriving at once,
     // at least one sees the other.
     let own_refund_at_ms = read("lez_refund_at_ms").unwrap_or(u64::MAX);

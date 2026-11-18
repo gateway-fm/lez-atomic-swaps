@@ -1824,3 +1824,81 @@ fn actor_script(script: String) -> String {
 fn actor_script_bytes(script: &[u8]) -> Vec<u8> {
     actor_script(String::from_utf8(script.to_vec()).expect("UTF-8 actor script")).into_bytes()
 }
+
+#[test]
+fn a_submitted_maker_lez_claim_is_followed_while_an_earlier_refund_waits() {
+    // Found on the devnet (zec-concurrent selling LEZ, 2026-11-18): the swap
+    // with the later LEZ refund submitted its claim first; the swap with the
+    // earlier refund then announced itself as waiting. The submitted swap's
+    // next attempt (to see its own claim final and release the nonce) was held
+    // behind the waiting one, which was held behind the submitted claim: no
+    // claim moved until the earlier refund time had passed. A swap whose own
+    // claim is in flight is never held; the waiting one goes after it.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("order-maker.sqlite3")).unwrap();
+    let claims = root.path().join("lez-claims-submitted");
+    let now_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    let swaps = [
+        ("m5-held-a-later-refund", now_ms + 3_600_000),
+        ("m5-held-b-earlier-refund", now_ms + 1_800_000),
+    ];
+    for (swap_id, refund_at_ms) in swaps {
+        let swap_root = root.path().join(swap_id);
+        fs::create_dir(&swap_root).unwrap();
+        fs::set_permissions(&swap_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let state = ActorConfig::load_private(&actor_deployment(&swap_root, swap_id).source_config)
+            .unwrap()
+            .role_state_db()
+            .to_path_buf();
+        let program = gated_lez_claim_program(
+            swap_id,
+            &state,
+            &root.path().join(format!("{swap_id}-log")),
+            &claims,
+            refund_at_ms,
+        );
+        register_actor(&mut store, &swap_root, swap_id, program.as_bytes());
+    }
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let owner = MakerActorLeaseOwner::new([0x78; 16]).unwrap();
+    let run = |store: &mut SqliteSwapStore, now: u64| {
+        let outcome = supervise_one_due_maker_actor(store, owner, now, &config)
+            .unwrap()
+            .expect("a due actor runs");
+        (outcome.swap_id().as_str().to_owned(), outcome.resolution())
+    };
+    // `a` (later refund) is due first, nothing waits yet: it submits.
+    assert_eq!(
+        run(&mut store, 10),
+        (
+            "m5-held-a-later-refund".to_owned(),
+            MakerActorSupervisorResolution::Requeued
+        )
+    );
+    // `b` (earlier refund) announces itself and waits behind `a`'s nonce.
+    let (swap, resolution) = run(&mut store, 15);
+    assert_eq!(swap, "m5-held-b-earlier-refund");
+    assert_eq!(resolution, MakerActorSupervisorResolution::Backoff);
+    // `a` follows its own submitted claim to final although `b` refunds earlier.
+    assert_eq!(
+        run(&mut store, 20),
+        (
+            "m5-held-a-later-refund".to_owned(),
+            MakerActorSupervisorResolution::Terminal
+        )
+    );
+    // Then `b` claims and completes.
+    let (swap, resolution) = run(&mut store, 60);
+    assert_eq!(swap, "m5-held-b-earlier-refund");
+    assert_eq!(resolution, MakerActorSupervisorResolution::Requeued);
+    let (swap, resolution) = run(&mut store, 65);
+    assert_eq!(swap, "m5-held-b-earlier-refund");
+    assert_eq!(resolution, MakerActorSupervisorResolution::Terminal);
+}
