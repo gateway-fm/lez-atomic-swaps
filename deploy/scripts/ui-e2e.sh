@@ -691,22 +691,28 @@ scenario_zec_restart() { # scenario_zec_restart <maker|taker>
   local swap maker_pid taker_pid; zec_provision; take swap
   if [[ "$direction" == TakerSellsLez ]]; then
     # Selling LEZ the restarts come at the points the Taker-reveals-first
-    # order adds: the Taker right after its revealing Zcash claim is broadcast,
-    # the Maker once it has read the preimage from that claim and before its
-    # LEZ claim is final.
+    # order adds: the Taker right after its revealing Zcash claim is broadcast;
+    # the Maker down across the Taker's reveal (stopped before the Taker
+    # claims, started after the claim is broadcast). The Maker reads a reveal
+    # on first sight, mempool included, and claims LEZ within seconds, so
+    # its point between reading and claiming is covered in the SDK tests.
     maker_wait_bg maker_pid awaiting_taker_claim "$swap"
     desk_head_start
     zec_wait "$swap" claim_available
     wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
+    if [[ "$1" == maker ]]; then
+      note "The Maker's Basecamp, with its Node, is stopped before the Taker claims"
+      stop_node "$container_prefix-maker-node"
+    fi
     taker_act "$claim_action" "$swap"
     zec_step "$swap" taker-claim-broadcast 300
     if [[ "$1" == maker ]]; then
-      zec_step "$swap" maker-read-reveal 600
-      note "The Maker's Basecamp, with its Node, is restarted now, after it read the secret from the Taker's Zcash claim and before its LEZ claim is final; swaps survive a restart"
+      note "The Maker's Basecamp, with its Node, starts again with the Taker's Zcash claim broadcast while it was down: it reads the secret from that claim and claims LEZ; swaps survive a restart"
+      start_node "$container_prefix-maker-node"
     else
       note "The Taker's Basecamp, with its Node, is restarted now, right after its Zcash claim was broadcast; swaps survive a restart"
+      restart_node "$1"
     fi
-    restart_node "$1"
     maker_wait_bg maker_pid completed "$swap"
     taker_wait_bg taker_pid completed "$swap"
     desk_head_start

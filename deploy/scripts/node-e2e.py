@@ -3714,9 +3714,13 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
     Selling ZEC the restart comes once the Taker's first lock is final on both
     Nodes. Selling LEZ it comes at the points the Taker-reveals-first order
     adds: the Taker right after its revealing Zcash claim was broadcast (in
-    zebra's mempool, unmined), the Maker once it has read the preimage from
-    that claim (its phase claim_evidence_available) and before its LEZ claim
-    is final."""
+    zebra's mempool, unmined); the Maker down across the Taker's reveal (it
+    is stopped at both_legs_locked, the Taker claims, the Maker starts again
+    and must read the preimage from the broadcast claim and claim LEZ). The
+    Maker commits a reveal on first sight, mempool included, and claims LEZ
+    within seconds, so a restart between its reading the reveal and its LEZ
+    claim is not a point a harness can hold; the SDK covers it
+    (maker_restart_after_reading_the_zcash_reveal_claims_lez_with_the_stored_preimage)."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -3724,6 +3728,11 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
     if zec_taker_sells_lez() and not ZEC_PUBLIC:
         view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
                               describe=zec_flow())
+        if role == "maker":
+            wait_maker_phase(swap_id, {"both_legs_locked"}, timeout=600,
+                             describe="(the Maker at both legs locked before the Taker's reveal)")
+            log("  stopping the Maker Node before the Taker reveals")
+            node_stop("maker")
         call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
                                               "swap_id": swap_id, "expected_generation": view["progress_generation"]},
              timeout=300)
@@ -3734,19 +3743,18 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
         log(f"  the Taker's Zcash claim {zec_mempool()[0][:12]} is broadcast, unmined")
         restart_point = "taker_zcash_claim_broadcast"
         if role == "maker":
-            zebra_mine(1, "the Taker's Zcash claim")
-            phase = wait_maker_phase(swap_id, {"claim_evidence_available", "completed"}, timeout=600,
-                                     describe="(the Maker reading the preimage from the Taker's Zcash claim)")
-            if phase == "completed":
-                raise Failure("the Maker's LEZ claim was final before the restart point could be held")
-            restart_point = "maker_read_reveal_before_lez_claim_final"
+            restart_point = "maker_down_across_the_takers_reveal"
     else:
         zec_wait_until(swap_id, config, {"refund_available"}, timeout=1200, corridor=corridor,
                         describe="(Taker first lock final)")
     container, _ = NODES[role]
-    log(f"  restarting {container}")
     restarted_at = time.time()
-    node_restart(role)
+    if restart_point == "maker_down_across_the_takers_reveal":
+        log(f"  starting {container} again: the Taker's claim is broadcast while it was down")
+        node_start(role)
+    else:
+        log(f"  restarting {container}")
+        node_restart(role)
     wait_healthy(role)
     classes = set()
     if role == "taker":
