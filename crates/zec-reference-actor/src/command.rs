@@ -702,6 +702,20 @@ const fn claimant_next_action(
     claim_submitted: bool,
     window_closed: bool,
 ) -> ZecLifecycleAction {
+    // TakerSellsLez: after the Maker's earlier Zcash refund the swap waits on the
+    // Taker's later LEZ refund; the Maker's recovery observes it (the non-owner
+    // of a refund step observes it) and ends Refunded.
+    if matches!(
+        (direction, local, phase, sdk_next),
+        (
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            Phase::MakerLegRefunded,
+            ZecLifecycleAction::Wait
+        )
+    ) {
+        return ZecLifecycleAction::RefundLez;
+    }
     if !window_closed || !matches!(phase, Phase::BothLegsLocked) {
         return sdk_next;
     }
@@ -2415,6 +2429,39 @@ mod tests {
             !revealing_claim_held_by_marker(&state_db)
                 .expect("marker path")
                 .exists()
+        );
+    }
+
+    #[test]
+    fn a_taker_sells_lez_maker_whose_zcash_is_refunded_observes_the_takers_lez_refund() {
+        // After its earlier Zcash refund the Maker's swap waits on the Taker's
+        // later LEZ refund. Reported as refund_lez, the Node runs the recovery,
+        // which for the non-owner observes that refund and ends Refunded; as
+        // wait, the Node drove a phase the drive does not serve, forever.
+        for window_closed in [false, true] {
+            assert_eq!(
+                claimant_next_action(
+                    ZecLifecycleAction::Wait,
+                    Phase::MakerLegRefunded,
+                    SwapDirection::TakerSellsLez,
+                    Participant::Maker,
+                    false,
+                    window_closed,
+                ),
+                ZecLifecycleAction::RefundLez
+            );
+        }
+        // TakerSellsForeign is unchanged.
+        assert_eq!(
+            claimant_next_action(
+                ZecLifecycleAction::Wait,
+                Phase::MakerLegRefunded,
+                SwapDirection::TakerSellsForeign,
+                Participant::Maker,
+                false,
+                true,
+            ),
+            ZecLifecycleAction::Wait
         );
     }
 
