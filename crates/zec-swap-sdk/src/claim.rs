@@ -614,6 +614,46 @@ impl RevealingClaimEvidenceV1 {
         )
     }
 
+    /// Builds the Maker's evidence of the Taker's revealing Zcash claim (`TakerSellsLez`) as
+    /// soon as the claim is seen, in the mempool (`confirmations` 0) or in any block.
+    ///
+    /// The preimage is what the Maker needs, and a preimage that hashes to the agreement digest
+    /// stays valid whatever happens to the Zcash transaction that carried it, so no depth is
+    /// required: waiting for one would only spend the Maker's margin before the LEZ refund. The
+    /// Taker's own revealing evidence keeps its depth rule
+    /// ([`Self::from_canonical_zcash_claim`]).
+    ///
+    /// # Errors
+    ///
+    /// Rejects a direction whose revealing claim is not on Zcash, an empty identity, or a
+    /// wrong preimage.
+    pub fn from_observed_zcash_claim(
+        agreement: &ZecAgreementV1,
+        observed_submission_id: [u8; 32],
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+        preimage: ClaimPreimage,
+    ) -> Result<Self, ClaimError> {
+        if ClaimStepV1::revealing(agreement) != ClaimStepV1::RevealingZcash {
+            return Err(ClaimError::ContextMismatch);
+        }
+        if observed_submission_id == [0; 32] {
+            return Err(ClaimError::EmptyExpectedIdentity(
+                ClaimStepV1::RevealingZcash,
+            ));
+        }
+        let transaction_id = transaction_id.into();
+        ChainProof::new(transaction_id.clone(), confirmations).map_err(ClaimError::Core)?;
+        validate_preimage(agreement, &preimage)?;
+        Ok(Self {
+            observed_submission_id,
+            transaction_id,
+            confirmations,
+            preimage,
+            canonical_lez_snapshot: None,
+        })
+    }
+
     pub(crate) fn from_validated_lez_snapshot_parts(
         agreement: &ZecAgreementV1,
         observed_submission_id: [u8; 32],
@@ -993,11 +1033,16 @@ impl ObservedRevealingClaimTransitionV1 {
             ClaimStepV1::revealing(agreement),
         )?;
         validate_preimage(agreement, self.evidence.preimage())?;
-        require_confirmations(
-            agreement,
-            ClaimStepV1::revealing(agreement),
-            self.evidence.confirmations(),
-        )?;
+        // The observed Zcash reveal is committed when first seen (see
+        // `RevealingClaimEvidenceV1::from_observed_zcash_claim`); an observed LEZ reveal keeps
+        // the LEZ leg's depth.
+        if self.step != ClaimStepV1::RevealingZcash {
+            require_confirmations(
+                agreement,
+                ClaimStepV1::revealing(agreement),
+                self.evidence.confirmations(),
+            )?;
+        }
         apply_revealing_claim(agreement, coordinator, &self.evidence)
     }
 }

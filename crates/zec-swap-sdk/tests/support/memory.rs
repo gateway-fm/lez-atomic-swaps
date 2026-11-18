@@ -2556,15 +2556,12 @@ impl ZcashClaimPort for MemoryZcashTakerLockObservation {
                     "the claim's preimage does not hash to the agreement digest".to_owned(),
                 ))
             }
-            Some(ZcashHtlcSpend::Claim { confirmations, .. })
-                if confirmations < zcash_claim_depth(agreement) =>
-            {
-                Ok(RevealingClaimObservationV1::Unstable)
-            }
+            // As the Zebra adapter: the preimage is read as soon as the claim is seen, in the
+            // mempool or any block.
             Some(ZcashHtlcSpend::Claim {
                 preimage,
                 confirmations,
-            }) => RevealingClaimEvidenceV1::from_canonical_zcash_claim(
+            }) => RevealingClaimEvidenceV1::from_observed_zcash_claim(
                 agreement,
                 ZCASH_HTLC_CLAIM_ID,
                 ZCASH_HTLC_CLAIM_TRANSACTION,

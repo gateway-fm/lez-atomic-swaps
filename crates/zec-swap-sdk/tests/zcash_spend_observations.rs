@@ -1,7 +1,7 @@
 use lez_zec_swap_sdk::{
-    Bip199Contract, Bip199SpendKind, CanonicalZcashSpendObservation, ExpectedBip199Spend,
-    SpendObservationError, TransparentSpendRequest, ZcashSpendNodeSnapshot, ZcashStableTip,
-    build_claim_transaction, build_refund_transaction,
+    Bip199Contract, Bip199SpendBranch, Bip199SpendKind, CanonicalZcashSpendObservation,
+    ExpectedBip199Spend, SpendObservationError, TransparentSpendRequest, ZcashSpendNodeSnapshot,
+    ZcashStableTip, build_claim_transaction, build_refund_transaction, read_bip199_spend_branch,
 };
 use orchard::bundle as orchard_bundle;
 use sapling::bundle as sapling_bundle;
@@ -514,6 +514,72 @@ fn consensus_valid_nonminimal_high_s_and_semantic_stacks_reveal_the_claim() {
     .unwrap();
     assert!(matches!(observation.kind(), Bip199SpendKind::Refund { .. }));
     assert!(!observation.sdk_canonical_policy().has_exact_script_sig());
+}
+
+/// The counterparty's reveal is read from the stack alone: the node already enforced
+/// consensus, so the signature is not what decides whether the preimage is usable.
+#[test]
+fn spend_branch_is_read_from_the_stack_without_the_signature() {
+    let (contract, _, claim, refund) = fixture();
+    let script_sig = |transaction: &Transaction| {
+        transaction.transparent_bundle().unwrap().vin[0]
+            .script_sig()
+            .0
+            .0
+            .clone()
+    };
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &script_sig(&claim)),
+        Ok(Bip199SpendBranch::Claim {
+            preimage: PREIMAGE.to_vec().into_boxed_slice()
+        })
+    );
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &script_sig(&refund)),
+        Ok(Bip199SpendBranch::Refund)
+    );
+
+    let pushes = script_pushes(&claim);
+    let mut unsigned = pushes.clone();
+    unsigned[0] = vec![0x30, 0x01];
+    assert!(matches!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&unsigned)),
+        Ok(Bip199SpendBranch::Claim { .. })
+    ));
+    let mut extra_stack = pushes.clone();
+    extra_stack.insert(0, vec![]);
+    assert!(matches!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&extra_stack)),
+        Ok(Bip199SpendBranch::Claim { .. })
+    ));
+
+    let mut wrong_preimage = pushes.clone();
+    wrong_preimage[2] = vec![0x13; 32];
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&wrong_preimage)),
+        Err(SpendObservationError::WrongPreimage)
+    );
+    let mut other_script = pushes.clone();
+    other_script[4] = vec![0x51];
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&other_script)),
+        Err(SpendObservationError::SpendScriptMismatch)
+    );
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&pushes[2..])),
+        Err(SpendObservationError::InvalidSpendScript),
+        "a claim stack needs signature and public key below the preimage"
+    );
+    let mut not_push_only = minimally_encode_pushes(&pushes);
+    not_push_only.insert(0, 0x76);
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &not_push_only),
+        Err(SpendObservationError::InvalidSpendScript)
+    );
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &[]),
+        Err(SpendObservationError::InvalidSpendScript)
+    );
 }
 
 #[test]

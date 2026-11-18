@@ -260,7 +260,8 @@ impl ObservedRevealingClaimTransitionRecordV1 {
     /// # Errors
     ///
     /// Rejects unknown schemas, owner-local or substituted context, stale revisions,
-    /// insufficient depth, or a preimage that does not satisfy the agreement digest.
+    /// insufficient depth of an observed LEZ reveal (an observed Zcash reveal is committed at
+    /// any depth), or a preimage that does not satisfy the agreement digest.
     pub fn revalidate(
         &self,
         accepted: &AcceptedZecAgreementV1,
@@ -282,6 +283,16 @@ impl ObservedRevealingClaimTransitionRecordV1 {
             accepted,
         )?;
         let evidence = match (self.schema_version, &self.canonical_lez_snapshot) {
+            // The Maker's observed Zcash reveal is committed when first seen, at any depth.
+            (CLAIM_RECORD_SCHEMA_V1, None) if step == ClaimStepV1::RevealingZcash => {
+                RevealingClaimEvidenceV1::from_observed_zcash_claim(
+                    accepted.agreement(),
+                    self.observed_submission_id,
+                    self.transaction_id.clone(),
+                    self.confirmations,
+                    preimage,
+                )?
+            }
             (CLAIM_RECORD_SCHEMA_V1, None) => RevealingClaimEvidenceV1::from_legacy_recovery_parts(
                 accepted.agreement(),
                 self.observed_submission_id,

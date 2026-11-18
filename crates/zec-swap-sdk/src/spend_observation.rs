@@ -846,6 +846,81 @@ fn classify_script_sig(
     Err(SpendObservationError::InvalidSpendScript)
 }
 
+/// The BIP-199 branch one spend input takes, read from its scriptSig alone.
+#[derive(Clone, Eq, PartialEq)]
+pub enum Bip199SpendBranch {
+    /// The claim branch, with the preimage it pushes (its SHA-256 is the contract digest).
+    Claim {
+        /// The pushed preimage.
+        preimage: Box<[u8]>,
+    },
+    /// The refund branch, which pushes no preimage.
+    Refund,
+}
+
+impl std::fmt::Debug for Bip199SpendBranch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Claim { preimage } => formatter
+                .debug_struct("Claim")
+                .field("preimage_length", &preimage.len())
+                .finish(),
+            Self::Refund => formatter.write_str("Refund"),
+        }
+    }
+}
+
+/// Reads which branch of `contract` a spend input's scriptSig takes and, on the claim branch,
+/// the preimage it reveals.
+///
+/// This is for the counterparty's spend that a node already holds in its mempool or a block:
+/// consensus has checked its signature, signature-hash type, outputs, fee and expiry, and none
+/// of those decide whether the preimage is usable. Only the stack is read: the claim branch is
+/// `[signature, public key, preimage, true, redeem script]` with the contract's redeem script
+/// last, and the preimage is returned only when its SHA-256 is the contract digest. The
+/// signature is not verified here.
+///
+/// # Errors
+///
+/// Rejects an oversized or non-push scriptSig, a redeem script other than the contract's, a
+/// claim stack shorter than five items, and a pushed preimage whose SHA-256 is not the digest.
+pub fn read_bip199_spend_branch(
+    contract: &Bip199Contract,
+    script_sig: &[u8],
+) -> Result<Bip199SpendBranch, SpendObservationError> {
+    if script_sig.len() > ZCASH_MAX_SCRIPT_BYTES {
+        return Err(SpendObservationError::ScriptSigTooLarge {
+            actual: script_sig.len(),
+            maximum: ZCASH_MAX_SCRIPT_BYTES,
+        });
+    }
+    let pushes = Code(script_sig.to_vec())
+        .parse()
+        .map(|parsed| match parsed {
+            Ok(PossiblyBad::Good(Opcode::PushValue(value))) => Ok(value.value()),
+            _ => Err(SpendObservationError::InvalidSpendScript),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let [.., flag, redeem_script] = pushes.as_slice() else {
+        return Err(SpendObservationError::InvalidSpendScript);
+    };
+    if redeem_script.as_slice() != contract.redeem_script() {
+        return Err(SpendObservationError::SpendScriptMismatch);
+    }
+    if !script_bool(flag) {
+        return Ok(Bip199SpendBranch::Refund);
+    }
+    let [.., _signature, _public_key, preimage, _, _] = pushes.as_slice() else {
+        return Err(SpendObservationError::InvalidSpendScript);
+    };
+    if <[u8; 32]>::from(Sha256::digest(preimage)) != contract.secret_digest() {
+        return Err(SpendObservationError::WrongPreimage);
+    }
+    Ok(Bip199SpendBranch::Claim {
+        preimage: preimage.clone().into_boxed_slice(),
+    })
+}
+
 fn script_bool(value: &[u8]) -> bool {
     value
         .iter()

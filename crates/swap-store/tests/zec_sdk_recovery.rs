@@ -1152,15 +1152,12 @@ impl ZcashClaimPort for SqliteClaimPort {
                     "the claim's preimage does not hash to the agreement digest",
                 ))
             }
-            Some(ZcashHtlcSpend::Claim { confirmations, .. })
-                if confirmations < zcash_claim_depth(agreement) =>
-            {
-                Ok(RevealingClaimObservationV1::Unstable)
-            }
+            // As the Zebra adapter: the preimage is read as soon as the claim is seen, in the
+            // mempool or any block.
             Some(ZcashHtlcSpend::Claim {
                 preimage,
                 confirmations,
-            }) => RevealingClaimEvidenceV1::from_canonical_zcash_claim(
+            }) => RevealingClaimEvidenceV1::from_observed_zcash_claim(
                 agreement,
                 ZCASH_HTLC_CLAIM_ID,
                 "sqlite-zcash-revealing-claim",
@@ -2346,11 +2343,6 @@ async fn drive_sqlite_taker_sells_lez_claims(
         ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
     );
     assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingZcash]);
-    port.bury_zcash_claim(taker.agreement());
-    taker
-        .drive_claim(now)
-        .await
-        .expect("taker projects its Zcash reveal");
     assert!(
         maker_store
             .load_claim_material(&swap_id)
@@ -2359,10 +2351,23 @@ async fn drive_sqlite_taker_sells_lez_claims(
             .is_none(),
         "the Maker holds no preimage before it commits the Taker's claim"
     );
-    maker
+    // The Maker commits the claim from the mempool (0 confirmations); the reopen that follows
+    // this drive revalidates that record.
+    assert_eq!(
+        maker
+            .drive_claim(now)
+            .await
+            .expect("maker observes the Zcash reveal in the mempool"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::RevealingZcash,
+            revision: 3,
+        }
+    );
+    port.bury_zcash_claim(taker.agreement());
+    taker
         .drive_claim(now)
         .await
-        .expect("maker observes the Zcash reveal");
+        .expect("taker projects its Zcash reveal");
     let recovered = maker_store
         .load_claim_material(&swap_id)
         .await

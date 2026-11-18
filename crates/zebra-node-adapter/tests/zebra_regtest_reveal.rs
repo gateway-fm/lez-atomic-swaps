@@ -4,8 +4,9 @@
 //! The Taker runs the SDK with the production Zebra port and role-keyed signer: it
 //! observes the Maker's real funding, passes the reveal gate and sends its claim through
 //! Zebra. The Maker reads the claim with `observe_counterparty_revealing_claim` on the same
-//! node. A refund of the HTLC is classified as the refund branch and never yields a
-//! preimage. LEZ is not part of this harness: the Taker's LEZ lock is projected from fixed
+//! node, from the mempool on. A claim the Taker builds outside the SDK (another destination,
+//! another fee, expiry height 0) reveals the preimage the same way. A refund of the HTLC is
+//! classified as the refund branch and never yields a preimage. LEZ is not part of this harness: the Taker's LEZ lock is projected from fixed
 //! evidence, and the Maker's LEZ claim that follows the reveal is covered by the SDK and
 //! Node lanes.
 
@@ -27,13 +28,14 @@ use lez_zec_swap_sdk::{
     MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1, OfferDiscovery,
     PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, ProtectedClaimKey,
     RefundObservationV1, RefundSubmitOutcomeV1, RevealingClaimObservationV1,
-    RevealingClaimSubmitOutcomeV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort, ZcashRefundPort,
+    RevealingClaimSubmitOutcomeV1, TransparentFundingRequest, TransparentSpendRequest,
+    TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort, ZcashRefundPort,
     ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1,
     ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
     ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSdkError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_claim_transaction,
+    build_funding_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
@@ -510,13 +512,17 @@ async fn maker_reads_the_preimage_from_the_taker_zcash_claim_on_zebra() {
     );
     let pending = mempool(&client).await;
     assert_eq!(pending.len(), 1, "exactly the Taker's claim is pending");
-    assert!(matches!(
-        maker
-            .observe_counterparty_revealing_claim(&agreement, &context)
-            .await
-            .expect("mempool claim"),
-        RevealingClaimObservationV1::Unstable
-    ));
+    // The Maker reads the preimage from the mempool claim; it does not wait for depth.
+    let RevealingClaimObservationV1::Confirmed(in_mempool) = maker
+        .observe_counterparty_revealing_claim(&agreement, &context)
+        .await
+        .expect("mempool claim")
+    else {
+        panic!("the mempool claim reveals the preimage")
+    };
+    assert_eq!(in_mempool.preimage().expose_secret(), &SECRET);
+    assert_eq!(in_mempool.confirmations(), 0);
+    assert_eq!(in_mempool.transaction_id(), pending[0]);
 
     mine_one(&client).await;
     let RevealingClaimObservationV1::Confirmed(evidence) = maker
@@ -561,6 +567,99 @@ async fn maker_reads_the_preimage_from_the_taker_zcash_claim_on_zebra() {
         "Maker read the preimage from Taker Zcash claim {} at {} confirmation(s)",
         evidence.transaction_id(),
         evidence.confirmations()
+    );
+}
+
+/// A Taker that claims with its own software: the claim pays another destination, pays
+/// another fee and has expiry height 0. Zebra accepts it; the Maker reads the preimage from it
+/// in the mempool and in its block.
+#[tokio::test]
+#[ignore = "requires scripts/run-zebra-e2e.sh and pinned Docker Zebra"]
+async fn maker_reads_the_preimage_from_a_non_template_taker_claim_on_zebra() {
+    const SECRET: [u8; 32] = [0x7e; 32];
+    const OTHER_FEE: u64 = 15_000;
+    let client = client();
+    generate_to(&client, 110).await;
+    let data = TempDir::new().expect("isolated stores");
+    let mut spent = Vec::new();
+    let (taker, funding) =
+        taker_at_both_legs_locked(&client, &data, "foreign", SECRET, &mut spent).await;
+    let agreement = taker.agreement().clone();
+    let context = taker
+        .zcash_claim_context()
+        .expect("the revealing Zcash claim context exists at BothLegsLocked");
+    let template = agreement
+        .claim_spend_request(
+            context.funding_outpoint().clone(),
+            funding.transparent_bundle().expect("funding").vout
+                [usize::try_from(context.funding_outpoint().n()).expect("u32 fits usize")]
+            .clone(),
+            BlockHeight::from_u32(block_count(&client).await),
+        )
+        .expect("the SDK's claim request");
+    let other_destination = TransparentAddress::PublicKeyHash(pubkey_hash(
+        &SecretKey::from_slice(&[9; 32]).expect("another key"),
+    ));
+    assert_ne!(other_destination, template.destination());
+    assert_ne!(u64::from(template.fee()), OTHER_FEE);
+    let request = TransparentSpendRequest::new(
+        agreement.binding().expected_output().contract(),
+        context.funding_outpoint().clone(),
+        template.funding_output().clone(),
+        other_destination,
+        Zatoshis::from_u64(OTHER_FEE).expect("fee"),
+        BlockHeight::from_u32(0),
+        BranchId::Nu7,
+    )
+    .expect("a claim request outside the agreement's policy");
+    let claim = build_claim_transaction(
+        agreement.binding().expected_output().contract(),
+        &request,
+        &taker_key(),
+        &SECRET,
+    )
+    .expect("the Taker signs its own claim");
+    let claim_id = broadcast(&client, &claim).await;
+
+    let maker = maker_observer();
+    let RevealingClaimObservationV1::Confirmed(in_mempool) = maker
+        .observe_counterparty_revealing_claim(&agreement, &context)
+        .await
+        .expect("the non-template claim in the mempool")
+    else {
+        panic!("the mempool claim reveals the preimage")
+    };
+    assert_eq!(in_mempool.preimage().expose_secret(), &SECRET);
+    assert_eq!(
+        (in_mempool.transaction_id(), in_mempool.confirmations()),
+        (claim_id.as_str(), 0)
+    );
+
+    mine_one(&client).await;
+    let mined: Value = client
+        .request("getrawtransaction", rpc_params![&claim_id, 1])
+        .await
+        .expect("claim is indexed");
+    assert_eq!(
+        mined["confirmations"], 1,
+        "Zebra mined the non-template claim"
+    );
+    assert_eq!(mined["expiryheight"], 0);
+    assert_eq!(mined["vin"][0]["txid"], funding.txid().to_string());
+    let RevealingClaimObservationV1::Confirmed(in_block) = maker
+        .observe_counterparty_revealing_claim(&agreement, &context)
+        .await
+        .expect("the non-template claim in a block")
+    else {
+        panic!("the mined claim reveals the preimage")
+    };
+    assert_eq!(in_block.preimage().expose_secret(), &SECRET);
+    assert_eq!(
+        (in_block.transaction_id(), in_block.confirmations()),
+        (claim_id.as_str(), 1)
+    );
+    eprintln!(
+        "Maker read the preimage from non-template Taker claim {claim_id} (fee {OTHER_FEE}, expiry 0)"
     );
 }
 

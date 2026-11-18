@@ -39,6 +39,7 @@ pub use agreement_v1::{
     ZecAgreementDraftV1, ZecAgreementExecutionError, ZecAgreementRecordV1, ZecAgreementV1,
     ZecAgreementV1Error, ZecLezTermsV1, ZecMakerAgreementProposalV1, ZecParticipantIdentityV1,
     ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1, ZecTransactionPolicyV1,
+    legacy_taker_sells_lez, zec_agreement_wire_terms,
 };
 pub use claim::{
     ClaimDriveOutcome, ClaimError, ClaimIntentV1, ClaimStepV1, ClaimSupersessionError,
@@ -146,9 +147,10 @@ pub use refund_record::{
 };
 pub use sdk::{ActiveZecSwap, ZecPairSdk};
 pub use spend_observation::{
-    Bip199SpendKind, CanonicalZcashSpendObservation, ExpectedBip199Spend,
+    Bip199SpendBranch, Bip199SpendKind, CanonicalZcashSpendObservation, ExpectedBip199Spend,
     SdkCanonicalSpendDeviation, SdkCanonicalSpendPolicy, SpendObservationError,
     ZCASH_MAX_SCRIPT_BYTES, ZEBRA_MAX_BLOCK_BYTES, ZcashSpendNodeSnapshot,
+    read_bip199_spend_branch,
 };
 pub use zcash_claim_context::{
     ZcashClaimContextError, ZcashClaimContextV1, ZcashFundingContextV1,
