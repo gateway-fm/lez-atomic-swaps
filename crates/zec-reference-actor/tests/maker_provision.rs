@@ -189,6 +189,80 @@ fn taker_source_is_rejected_without_publishing_any_bundle() {
 }
 
 #[test]
+fn a_maker_bundle_with_the_preimage_or_a_taker_bundle_without_it_is_refused() {
+    let fixture = Fixture::new();
+    let source = fixture.root.path().join("source");
+    let wire = fs::read(source.join("agreement-v2.borsh")).unwrap();
+    let variant = fixture.root.path().join("maker-with-preimage");
+    private_directory(&variant);
+    let maker_with_preimage = variant.join("maker-config.json");
+    write_role_config(
+        &variant,
+        &maker_with_preimage,
+        &source.join("agreement-v2.borsh"),
+        &wire,
+        "maker",
+        &secret(8),
+        RoleMaterial {
+            funder: true,
+            preimage: true,
+        },
+    );
+    assert!(ActorConfig::load_private(&maker_with_preimage).is_err());
+    let variant = fixture.root.path().join("taker-without-preimage");
+    private_directory(&variant);
+    let taker_without_preimage = variant.join("taker-config.json");
+    write_role_config(
+        &variant,
+        &taker_without_preimage,
+        &source.join("agreement-v2.borsh"),
+        &wire,
+        "taker",
+        &secret(2),
+        RoleMaterial {
+            funder: false,
+            preimage: false,
+        },
+    );
+    assert!(ActorConfig::load_private(&taker_without_preimage).is_err());
+}
+
+#[test]
+fn a_bundle_whose_funder_role_differs_from_the_agreement_is_not_published() {
+    // TakerSellsLez: the Maker funds Zcash. A Taker bundle naming funding
+    // candidates claims the funder role it does not have.
+    let fixture = Fixture::new();
+    let source = fixture.root.path().join("source");
+    let wire = fs::read(source.join("agreement-v2.borsh")).unwrap();
+    let variant = fixture.root.path().join("taker-as-funder-source");
+    private_directory(&variant);
+    let taker_as_funder = variant.join("taker-config.json");
+    write_role_config(
+        &variant,
+        &taker_as_funder,
+        &source.join("agreement-v2.borsh"),
+        &wire,
+        "taker",
+        &secret(2),
+        RoleMaterial {
+            funder: true,
+            preimage: true,
+        },
+    );
+    let output = fixture.output("taker-as-funder");
+    assert!(
+        provision_zec_taker_actor_from_chat(
+            &taker_as_funder,
+            &fixture.final_wire,
+            fixture.accepted_at,
+            &output,
+        )
+        .is_err()
+    );
+    assert!(!output.exists());
+}
+
+#[test]
 fn corrupt_preseeded_output_conflicts_without_clobbering_it() {
     let fixture = Fixture::new();
     let output = fixture.output("preseeded-collision");
@@ -336,6 +410,8 @@ impl Fixture {
 
         let maker_config = source.join("maker-config.json");
         let taker_config = source.join("taker-config.json");
+        // TakerSellsLez: the Maker funds Zcash; the Taker alone holds the
+        // preimage.
         write_role_config(
             &source,
             &maker_config,
@@ -343,7 +419,10 @@ impl Fixture {
             &source_wire,
             "maker",
             &maker_secret,
-            true,
+            RoleMaterial {
+                funder: true,
+                preimage: false,
+            },
         );
         write_role_config(
             &source,
@@ -352,7 +431,10 @@ impl Fixture {
             &source_wire,
             "taker",
             &taker_secret,
-            false,
+            RoleMaterial {
+                funder: false,
+                preimage: true,
+            },
         );
         ActorConfig::load_private(&maker_config)
             .expect("Maker source config")
@@ -376,6 +458,14 @@ impl Fixture {
     }
 }
 
+/// What one role's source bundle holds: the Zcash funding candidates (the
+/// funder) and the claim preimage (the Taker, in both directions).
+#[derive(Clone, Copy)]
+struct RoleMaterial {
+    funder: bool,
+    preimage: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_role_config(
     root: &Path,
@@ -384,15 +474,19 @@ fn write_role_config(
     agreement_wire: &[u8],
     role: &str,
     zcash_secret: &SecretKey,
-    funder: bool,
+    material: RoleMaterial,
 ) {
+    let RoleMaterial {
+        funder,
+        preimage: owns_preimage,
+    } = material;
     let prefix = root.join(role);
     let claim_key = prefix.with_extension("claim-key");
     let preimage = prefix.with_extension("preimage");
     let zcash_key = prefix.with_extension("zcash-key");
     let capability = prefix.with_extension("capability");
     private_file(&claim_key, &[if role == "maker" { 0x71 } else { 0x72 }; 32]);
-    if funder {
+    if owns_preimage {
         private_file(&preimage, &PREIMAGE);
     }
     private_file(&zcash_key, &zcash_secret.secret_bytes());
@@ -415,7 +509,7 @@ fn write_role_config(
             "key_id": format!("{role}-claim-key-v1"),
             "key_file": claim_key
         },
-        "claim_preimage_file": funder.then_some(preimage),
+        "claim_preimage_file": owns_preimage.then_some(preimage),
         "zcash_key_file": zcash_key,
         "bridge": {
             "endpoint": format!("http://127.0.0.1:{sidecar_port}"),
@@ -441,7 +535,7 @@ fn write_role_config(
             "identity": {
                 "network": "regtest",
                 "rpc_chain": "test",
-                "consensus_branch_id": "c8e71055",
+                "consensus_branch_id": "77190ad9",
                 "genesis_hash": "77".repeat(32)
             },
             "counterparty_scan_blocks": 1000
@@ -474,20 +568,22 @@ fn agreement_wire(
     let metadata = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
     let custody = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
     let secret_digest: [u8; 32] = Sha256::digest(PREIMAGE).into();
+    // TakerSellsLez under the test lane's Taker-reveals-first profile: the
+    // Maker's Zcash HTLC (claimant the Taker) refunds at 116 + 8 blocks.
     let binding = ZecSwapBinding::new(
-        ZecProfileId::DeterministicLocalV1,
+        ZecProfileId::DeterministicLocalV3,
         ExpectedBip199Output::new(
             NetworkType::Regtest,
-            BranchId::Nu6_2,
+            BranchId::Nu7,
             Zatoshis::from_u64(10_000).unwrap(),
-            Bip199Contract::new(120, maker_hash, secret_digest, taker_hash),
+            Bip199Contract::new(124, maker_hash, secret_digest, taker_hash),
         ),
     )
     .unwrap();
     let body = ZecAgreementBodyV1::new(
         SWAP_ID.to_owned(),
         SwapDirection::TakerSellsLez,
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV3),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_public.serialize()),
             ZecParticipantIdentityV1::new([4; 32], taker_public.serialize()),
@@ -515,11 +611,14 @@ fn agreement_wire(
             1,
             40,
         ),
+        // The Maker's Zcash refund is the earlier one, declared at the LEZ
+        // refund time (anchor + 120 s) minus the 30 s margin; the Taker's LEZ
+        // refund opens at the LEZ refund time itself.
         ZecRefundPlanV1::new(
             now.value(),
             116,
-            (now.value() + 60) * 1_000,
-            now.value() + 90,
+            (now.value() + 90) * 1_000,
+            now.value() + 120,
         ),
         transcript,
     );

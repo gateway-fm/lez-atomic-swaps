@@ -16,7 +16,7 @@ use lez_swap_store::{
     DurableBridgeRequestContext, SqliteBridgeOperationJournal, StoreError,
 };
 use lez_zec_swap_sdk::{
-    CanonicalLezEscrowObservationV1, ClaimPreimage, FirstLockConfirmedEvidenceV1,
+    CanonicalLezEscrowObservationV1, ClaimPreimage, ClaimStepV1, FirstLockConfirmedEvidenceV1,
     FirstLockObservation, FirstLockPlanV1, FirstLockStepV1, FirstLockSubmitOutcome, LezClaimPort,
     LezFirstLockPort, LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
     MakerLockObservationV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
@@ -1017,8 +1017,12 @@ where
     Contexts: BridgeRequestContextSource,
     Store: lez_zec_swap_sdk::ClaimRecoveryStore,
 {
-    /// Re-plans the open owned revealing claim after its submission was
-    /// answered `Superseded` (FINDINGS 24): the same claim at the live nonce.
+    /// Re-plans the open owned LEZ claim after its submission was answered
+    /// `Superseded` (FINDINGS 24): the same claim at the live nonce. It is the
+    /// Taker's revealing claim in `TakerSellsForeign` and the Maker's follow-up
+    /// claim in `TakerSellsLez`, the same claimant-signed escrow claim: the
+    /// sidecar re-plans it as a claim of the claimant's account, and the
+    /// re-plan keeps the step of the claim it replaces.
     ///
     /// The re-plan index is the count of recorded claim re-plans plus one;
     /// each index owns its durable request context, so a retry of the same
@@ -1045,21 +1049,29 @@ where
             .ok_or(ContextOwningLezPortError::ReplanExhausted)?;
         let operation = BridgeOperationKind::revealing_claim_supersede(replan_index)
             .ok_or(ContextOwningLezPortError::ReplanExhausted)?;
+        let step = superseded.step();
+        let as_claim = superseded
+            .relabeled_copy(ClaimStepV1::RevealingLez)
+            .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
         let (key, context) = self.reserve_context(agreement, operation)?;
         let result = self
             .fresh_adapter()?
             .supersede_native_revealing_claim(
                 agreement,
                 context.request_id().clone(),
-                superseded,
+                &as_claim,
                 replan_index,
             )
             .await;
         if matches!(&result, Err(NativeRevealingClaimAdapterError::Transport(_))) {
             self.resume_ambiguous(&key, &context)?;
         }
-        let replanned =
+        let mut replanned =
             result.map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
+        replanned.claim = replanned
+            .claim
+            .relabeled(step)
+            .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
         let submit_key = self.key(agreement, BridgeOperationKind::RevealingClaimSubmit);
         let mut journal = self.journal()?;
         if let Some(current) = journal

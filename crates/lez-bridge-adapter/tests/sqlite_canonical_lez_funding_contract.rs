@@ -524,6 +524,29 @@ fn accept(agreement: &ZecAgreementV1, role: Participant) -> AcceptedZecAgreement
     .expect("accepted agreement")
 }
 
+/// The fixture's profile, Zcash refund height and refund plan per direction:
+/// `TakerSellsLez` is signed only under a Taker-reveals-first profile
+/// (`deterministic-local-v3`, Regtest NU7: 120 s LEZ refund delay, 8 blocks,
+/// 30 s margin; the Maker's Zcash refund first), `TakerSellsForeign` keeps
+/// `deterministic-local-v1`. Both put the LEZ refund at 160 s: the
+/// `TakerSellsLez` anchor is 40 s.
+fn fixture_profile(direction: SwapDirection) -> (ZecProfileId, BranchId, u32, ZecRefundPlanV1) {
+    match direction {
+        SwapDirection::TakerSellsForeign => (
+            ZecProfileId::DeterministicLocalV1,
+            BranchId::Nu6_2,
+            120,
+            ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        ),
+        SwapDirection::TakerSellsLez => (
+            ZecProfileId::DeterministicLocalV3,
+            BranchId::Nu7,
+            124,
+            ZecRefundPlanV1::new(40, 116, 130_000, 160),
+        ),
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn signed_agreement(
     id: &str,
@@ -542,13 +565,14 @@ fn signed_agreement(
     let refund_hash = pubkey_hash(&refund_key);
     let claimant_hash = pubkey_hash(&claimant_key);
     let digest: [u8; 32] = Sha256::digest([9; 32]).into();
+    let (profile, branch, refund_height, refund_plan) = fixture_profile(direction);
     let binding = ZecSwapBinding::new(
-        ZecProfileId::DeterministicLocalV1,
+        profile,
         ExpectedBip199Output::new(
             NetworkType::Regtest,
-            BranchId::Nu6_2,
+            branch,
             Zatoshis::from_u64(100_000_000).expect("principal"),
-            Bip199Contract::new(120, refund_hash, digest, claimant_hash),
+            Bip199Contract::new(refund_height, refund_hash, digest, claimant_hash),
         ),
     )
     .expect("binding");
@@ -559,7 +583,7 @@ fn signed_agreement(
     let body = ZecAgreementBodyV1::new(
         id,
         direction,
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(profile),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_key),
             ZecParticipantIdentityV1::new([4; 32], taker_key),
@@ -587,7 +611,7 @@ fn signed_agreement(
             10_000,
             40,
         ),
-        ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        refund_plan,
         NegotiationTranscriptV1::new(
             [5; 32],
             if changed_transcript {

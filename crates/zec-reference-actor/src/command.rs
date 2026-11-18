@@ -148,8 +148,14 @@ enum ActorOperationV1 {
     TakerFirstLock,
     ZcashFund,
     MakerLock,
+    /// `TakerSellsForeign`: the Taker's revealing LEZ claim.
     LezRevealingClaim,
+    /// `TakerSellsForeign`: the Maker's follow-up Zcash claim.
     ZcashFollowupClaim,
+    /// `TakerSellsLez`: the Taker's revealing Zcash claim.
+    ZcashRevealingClaim,
+    /// `TakerSellsLez`: the Maker's follow-up LEZ claim.
+    LezFollowupClaim,
     LezRefund,
     ZcashRefund,
 }
@@ -312,11 +318,14 @@ pub struct ActorReplanV1 {
     lez_refund_margin_ms: Option<i64>,
 }
 
-impl From<&lez_zec_swap_sdk::ClaimSupersessionV1> for ActorReplanV1 {
-    fn from(value: &lez_zec_swap_sdk::ClaimSupersessionV1) -> Self {
+impl ActorReplanV1 {
+    /// One re-plan of the owned LEZ claim `step` (the Taker's revealing LEZ
+    /// claim in `TakerSellsForeign`, the Maker's follow-up LEZ claim in
+    /// `TakerSellsLez`).
+    fn from_claim(value: &lez_zec_swap_sdk::ClaimSupersessionV1, step: ClaimStepV1) -> Self {
         Self {
             replan_index: value.replan_index(),
-            step: claim_operation(ClaimStepV1::RevealingLez),
+            step: claim_operation(step),
             superseded_nonce: value.superseded_nonce(),
             replanned_nonce: value.replanned_nonce(),
             superseded_transaction_id: hex::encode(value.superseded_id()),
@@ -408,6 +417,7 @@ enum ActorNextActionV1 {
     ClaimLez,
     ClaimZcash,
     RefundZcash,
+    RefundLez,
     Complete,
 }
 
@@ -420,6 +430,7 @@ impl From<ZecLifecycleAction> for ActorNextActionV1 {
             ZecLifecycleAction::ClaimLez => Self::ClaimLez,
             ZecLifecycleAction::ClaimZcash => Self::ClaimZcash,
             ZecLifecycleAction::RefundZcash => Self::RefundZcash,
+            ZecLifecycleAction::RefundLez => Self::RefundLez,
             ZecLifecycleAction::Complete => Self::Complete,
         }
     }
@@ -434,6 +445,7 @@ impl ActorNextActionV1 {
             Self::ClaimLez => ZecLifecycleAction::ClaimLez,
             Self::ClaimZcash => ZecLifecycleAction::ClaimZcash,
             Self::RefundZcash => ZecLifecycleAction::RefundZcash,
+            Self::RefundLez => ZecLifecycleAction::RefundLez,
             Self::Complete => ZecLifecycleAction::Complete,
         }
     }
@@ -484,17 +496,21 @@ pub enum ActorCommandError {
         "LEZ escrow account already exists, initialized by a transaction that is not this swap's; the escrow initialization can never execute and is no longer submitted"
     )]
     LezEscrowAlreadyInitialized,
-    /// The owned revealing LEZ claim was re-planned the bounded number of
-    /// times and its nonce was taken again; the claim was never abandoned and
-    /// the swap needs attention by name (FINDINGS 24).
+    /// The owned LEZ claim (revealing in `TakerSellsForeign`, follow-up in
+    /// `TakerSellsLez`) was re-planned the bounded number of times and its
+    /// nonce was taken again; the claim was never abandoned and the swap needs
+    /// attention by name (FINDINGS 24).
     #[error(
-        "revealing LEZ claim was re-planned {MAX_REVEALING_CLAIM_REPLANS} times; its nonce keeps being taken"
+        "LEZ claim was re-planned {MAX_REVEALING_CLAIM_REPLANS} times; its nonce keeps being taken"
     )]
     RevealingClaimReplanExhausted,
-    /// The revealing LEZ claim window closed before the claim was on LEZ: it
-    /// is never prepared or sent after it; the settlement is the refund
-    /// (FINDINGS 26).
-    #[error("the revealing LEZ claim window closed; the claim is not sent")]
+    /// The revealing claim window closed before the claim left: it is never
+    /// prepared or sent after it; the settlement is the refund (FINDINGS 26).
+    /// The Taker's revealing LEZ claim (`TakerSellsForeign`) closes at the
+    /// LEZ refund time minus the margin; its revealing Zcash claim
+    /// (`TakerSellsLez`) also when too few blocks remain before the Maker's
+    /// Zcash refund height.
+    #[error("the revealing claim window closed; the claim is not sent")]
     ClaimWindowClosed,
     /// Fresh claim material could not be loaded safely.
     #[error("actor claim material is unavailable")]
@@ -585,6 +601,19 @@ async fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComm
     {
         return Err(ActorCommandError::ActivationUnavailable);
     }
+    if !activation_roles_match(
+        accepted.agreement().revealing_claimant(),
+        accepted.agreement().lez_claimant(),
+        participant,
+        material.claim_preimage().is_some(),
+        config.is_local_zcash_funder(),
+    ) {
+        eprintln!(
+            "actor activation refused: the preimage belongs to the Taker alone and the Zcash \
+             candidates to the Zcash funder; this actor's material does not match the agreement"
+        );
+        return Err(ActorCommandError::ActivationUnavailable);
+    }
     let preimage = material
         .claim_preimage()
         .map(|value| ClaimPreimage::new(*value.expose_secret()));
@@ -608,6 +637,21 @@ async fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComm
     ))
 }
 
+/// Whether an actor's material fits its role in the agreement: the preimage is
+/// the Taker's alone in both directions (it claims the Maker-funded leg first;
+/// the Maker reads the preimage from that claim), and the Zcash funding
+/// candidates belong to the Zcash funder (the LEZ claimant).
+fn activation_roles_match(
+    revealing_claimant: Participant,
+    zcash_funder: Participant,
+    participant: Participant,
+    has_preimage: bool,
+    has_funding_candidates: bool,
+) -> bool {
+    has_preimage == (participant == revealing_claimant)
+        && has_funding_candidates == (participant == zcash_funder)
+}
+
 /// The wall clock in Unix milliseconds for the claim window (0 if the clock is
 /// before the epoch, which keeps the window open only for a broken clock that
 /// also breaks every other deadline here).
@@ -621,11 +665,17 @@ fn wall_clock_ms() -> lez_zec_swap_sdk::LezUnixMilliseconds {
     )
 }
 
-/// The next action this role reports: the SDK's, except that the LEZ claimant
-/// whose claim window has closed (the agreement's LEZ refund time minus the
-/// required margin) without its claim having left is told to refund its
-/// Zcash, never to claim (FINDINGS 26). The LEZ claimant is always the Zcash
-/// funder. A claim already submitted inside the window is still followed.
+/// The next action this role reports: the SDK's, except once the claim window
+/// has closed (the agreement's LEZ refund time minus the required margin;
+/// FINDINGS 26) with both legs locked:
+///
+/// - the revealing claimant (the Taker, in both directions) whose claim has
+///   not left is told to refund its own leg, never to claim: its Zcash in
+///   `TakerSellsForeign`, its LEZ in `TakerSellsLez`. A claim already submitted
+///   inside the window is still followed;
+/// - the Maker of `TakerSellsLez` is told to refund its Zcash (the earlier
+///   refund); before the window closes it waits while its drive observes the
+///   Taker's Zcash claim.
 fn reported_next_action<Lez, Zcash, Store>(
     active: &lez_zec_swap_sdk::ActiveZecSwap<Lez, Zcash, Store>,
     config: &ActorConfig,
@@ -636,6 +686,8 @@ fn reported_next_action<Lez, Zcash, Store>(
     claimant_next_action(
         active.next_action(),
         active.status(),
+        active.agreement().direction(),
+        active.local_participant(),
         claim_submitted,
         active.claim_window_closed(now_ms),
     )
@@ -645,17 +697,43 @@ fn reported_next_action<Lez, Zcash, Store>(
 const fn claimant_next_action(
     sdk_next: ZecLifecycleAction,
     phase: Phase,
+    direction: SwapDirection,
+    local: Participant,
     claim_submitted: bool,
     window_closed: bool,
 ) -> ZecLifecycleAction {
-    match (sdk_next, phase) {
-        (ZecLifecycleAction::ClaimLez, Phase::BothLegsLocked)
-            if !claim_submitted && window_closed =>
+    if !window_closed || !matches!(phase, Phase::BothLegsLocked) {
+        return sdk_next;
+    }
+    match (direction, local, sdk_next) {
+        (SwapDirection::TakerSellsForeign, Participant::Taker, ZecLifecycleAction::ClaimLez)
+            if !claim_submitted =>
         {
+            ZecLifecycleAction::RefundZcash
+        }
+        (SwapDirection::TakerSellsLez, Participant::Taker, ZecLifecycleAction::ClaimZcash)
+            if !claim_submitted =>
+        {
+            ZecLifecycleAction::RefundLez
+        }
+        (SwapDirection::TakerSellsLez, Participant::Maker, ZecLifecycleAction::Wait) => {
             ZecLifecycleAction::RefundZcash
         }
         _ => sdk_next,
     }
+}
+
+/// The Maker of `TakerSellsLez` funds Zcash only while the Taker's claim
+/// window is open (the agreement's LEZ refund time minus the required margin):
+/// a funding after it cannot be claimed by an honest Taker and only exposes the
+/// Maker to a refund race. A funding already staged (its exact bytes may be on
+/// the chain) is still driven to its observation.
+const fn maker_funding_cut_off(
+    direction: SwapDirection,
+    funding_staged: bool,
+    window_closed: bool,
+) -> bool {
+    matches!(direction, SwapDirection::TakerSellsLez) && !funding_staged && window_closed
 }
 
 fn trusted_wall_clock() -> Result<UnixSeconds, ActorCommandError> {
@@ -865,12 +943,25 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                 operation: ActorOperationV1::TakerFirstLock,
             },
         },
-        (Participant::Maker, Phase::TakerLockConfirmed) => {
-            let plan = match store
+        (Participant::Maker, Phase::TakerLockConfirmed) => 'maker_lock: {
+            let staged = store
                 .load_maker_lock_intent(active.agreement().coordinator().id())
                 .await
-                .map_err(unavailable_drive)?
-            {
+                .map_err(unavailable_drive)?;
+            if maker_funding_cut_off(
+                active.agreement().direction(),
+                staged.is_some(),
+                active.claim_window_closed(wall_clock_ms()),
+            ) {
+                eprintln!(
+                    "actor drive: the Zcash funding is not sent: the Taker's claim window closed at {} ms; the Taker's settlement is its LEZ refund",
+                    active.claim_window_closes_at_ms()
+                );
+                break 'maker_lock ActorEffectOutcomeV1::AwaitingObservation {
+                    operation: ActorOperationV1::TakerFirstLock,
+                };
+            }
+            let plan = match staged {
                 Some(intent) => intent.plan().clone(),
                 None => match active.agreement().direction() {
                     SwapDirection::TakerSellsForeign => lez_first_lock_or_refusal(
@@ -1349,9 +1440,10 @@ const fn ensure_claim_phase(phase: Phase) -> Result<(), ActorCommandError> {
     }
 }
 
-/// The marker a revealing LEZ claim leaves the moment it is submitted, kept
-/// for the life of the swap: a refund in the claim window is refused once it
-/// exists (FINDINGS 24, the secret may be public).
+/// The marker the Taker's revealing claim (LEZ in `TakerSellsForeign`, Zcash
+/// in `TakerSellsLez`) leaves the moment it is submitted, kept for the life of
+/// the swap: a refund in the claim window is refused once it exists (FINDINGS
+/// 24, the secret may be public).
 /// (`<swap>/actor/<role>/revealing-claim-submitted`.)
 #[must_use]
 pub fn revealing_claim_submitted_marker(role_state_db: &Path) -> Option<PathBuf> {
@@ -1363,9 +1455,11 @@ pub fn revealing_claim_submitted_marker(role_state_db: &Path) -> Option<PathBuf>
     )
 }
 
-/// The marker of a revealing LEZ claim submitted and not yet observed final:
-/// while another swap of the same Node holds it, that Node keeps its own
-/// revealing claim back (one per LEZ account in flight; FINDINGS 24). Removed
+/// The marker of an owned LEZ claim submitted and not yet observed final (the
+/// Taker's revealing LEZ claim in `TakerSellsForeign`, the Maker's follow-up
+/// LEZ claim in `TakerSellsLez`; both are signed at the claimant's LEZ account
+/// nonce): while another swap of the same Node holds it, that Node keeps its
+/// own LEZ claim back (one per LEZ account in flight; FINDINGS 24). Removed
 /// when the claim is projected, never on a timer.
 /// (`<swap>/actor/<role>/revealing-claim-in-flight`.)
 #[must_use]
@@ -1461,7 +1555,17 @@ fn claim_attempt(
             now_ms,
         }) => {
             eprintln!(
-                "actor claim refused: the revealing LEZ claim window closed at {closes_at_ms} ms (now {now_ms} ms); nothing was sent, the settlement is the refund"
+                "actor claim refused: the revealing claim window closed at {closes_at_ms} ms (now {now_ms} ms); nothing was sent, the settlement is the refund"
+            );
+            Err(ActorCommandError::ClaimWindowClosed)
+        }
+        Err(lez_zec_swap_sdk::ZecSdkError::ZcashRevealWindowClosed {
+            tip_height,
+            refund_height,
+            margin_blocks,
+        }) => {
+            eprintln!(
+                "actor claim refused: the revealing Zcash claim window closed: tip {tip_height} + {margin_blocks} blocks reaches the refund height {refund_height}; nothing was sent, the settlement is the LEZ refund"
             );
             Err(ActorCommandError::ClaimWindowClosed)
         }
@@ -1498,9 +1602,9 @@ where
         let outcome = claim_attempt(active.drive_claim(wall_clock_ms()).await, unavailable)?;
         match outcome {
             ClaimDriveOutcome::Superseded {
+                step,
                 planned_nonce,
                 live_nonce,
-                ..
             } => {
                 if replans.len() >= MAX_REVEALING_CLAIM_REPLANS as usize {
                     return Err(ActorCommandError::RevealingClaimReplanExhausted);
@@ -1545,7 +1649,8 @@ where
                 )
                 .map_err(|_| ActorCommandError::ClaimUnavailable)?;
                 eprintln!(
-                    "actor claim: revealing LEZ claim superseded (planned nonce {planned_nonce}, live {live_nonce}); re-plan {} at nonce {}: {} -> {}; {} s left before the LEZ refund time",
+                    "actor claim: {} superseded (planned nonce {planned_nonce}, live {live_nonce}); re-plan {} at nonce {}: {} -> {}; {} s left before the LEZ refund time",
+                    claim_name(step),
                     supersession.replan_index(),
                     supersession.replanned_nonce(),
                     hex::encode(supersession.superseded_id()),
@@ -1559,19 +1664,17 @@ where
                         eprintln!("actor claim unavailable: {error:?}");
                         ActorCommandError::ClaimUnavailable
                     })?;
-                replans.push(ActorReplanV1::from(&supersession));
+                replans.push(ActorReplanV1::from_claim(&supersession, step));
             }
             ClaimDriveOutcome::Submitted(step) => {
-                if step == ClaimStepV1::RevealingLez {
-                    mark_revealing_claim_submitted(config);
-                }
+                mark_claim_submitted(config, step);
                 return Ok(ActorEffectOutcomeV1::Submitted {
                     operation: claim_operation(step),
                     replans,
                 });
             }
             other => {
-                if !matches!(active.status(), Phase::BothLegsLocked) {
+                if active.status() != owned_lez_claim_phase(active.agreement().direction()) {
                     clear_revealing_claim_in_flight(config);
                 }
                 return Ok(claim_outcome(other));
@@ -1580,21 +1683,61 @@ where
     }
 }
 
-/// Both claim markers: submitted (for the life of the swap) and in flight.
-fn mark_revealing_claim_submitted(config: &ActorConfig) {
-    for marker in [
-        revealing_claim_submitted_marker(config.role_state_db()),
-        revealing_claim_in_flight_marker(config.role_state_db()),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let _ = fs::write(marker, b"revealing LEZ claim submitted\n");
+/// The markers one submitted claim leaves: "submitted" (for the life of the
+/// swap) for the Taker's revealing claim on either chain, and "in flight" for
+/// a claim signed at this actor's LEZ account nonce (the Taker's revealing LEZ
+/// claim, the Maker's follow-up LEZ claim). The Maker's follow-up Zcash claim
+/// leaves neither.
+fn mark_claim_submitted(config: &ActorConfig, step: ClaimStepV1) {
+    let (submitted, in_flight) = claim_markers(step);
+    let markers = [
+        submitted
+            .then(|| revealing_claim_submitted_marker(config.role_state_db()))
+            .flatten(),
+        in_flight
+            .then(|| revealing_claim_in_flight_marker(config.role_state_db()))
+            .flatten(),
+    ];
+    for marker in markers.into_iter().flatten() {
+        let _ = fs::write(marker, format!("{} submitted\n", claim_name(step)));
     }
-    record_revealing_claim_holder(config.role_state_db(), None);
+    if in_flight {
+        record_revealing_claim_holder(config.role_state_db(), None);
+    }
 }
 
-/// The revealing claim is observed final (the swap left both legs locked).
+/// Which markers a submitted claim `step` leaves: (submitted, in flight).
+const fn claim_markers(step: ClaimStepV1) -> (bool, bool) {
+    match step {
+        ClaimStepV1::RevealingLez => (true, true),
+        ClaimStepV1::RevealingZcash => (true, false),
+        ClaimStepV1::FollowupLez => (false, true),
+        ClaimStepV1::FollowupZcash => (false, false),
+    }
+}
+
+/// The phase in which this actor's own LEZ claim is driven: the Taker's
+/// revealing LEZ claim with both legs locked (`TakerSellsForeign`), the
+/// Maker's follow-up LEZ claim once the Taker's Zcash claim is recorded
+/// (`TakerSellsLez`). Its in-flight marker is removed once the swap leaves it.
+const fn owned_lez_claim_phase(direction: SwapDirection) -> Phase {
+    match direction {
+        SwapDirection::TakerSellsForeign => Phase::BothLegsLocked,
+        SwapDirection::TakerSellsLez => Phase::ClaimEvidenceAvailable,
+    }
+}
+
+/// The text name of a claim step for the operator's stderr line.
+const fn claim_name(step: ClaimStepV1) -> &'static str {
+    match step {
+        ClaimStepV1::RevealingLez => "revealing LEZ claim",
+        ClaimStepV1::FollowupZcash => "follow-up Zcash claim",
+        ClaimStepV1::RevealingZcash => "revealing Zcash claim",
+        ClaimStepV1::FollowupLez => "follow-up LEZ claim",
+    }
+}
+
+/// The owned LEZ claim is observed final (the swap left that claim's phase).
 fn clear_revealing_claim_in_flight(config: &ActorConfig) {
     if let Some(marker) = revealing_claim_in_flight_marker(config.role_state_db()) {
         let _ = fs::remove_file(marker);
@@ -1649,8 +1792,10 @@ const fn claim_outcome(outcome: ClaimDriveOutcome) -> ActorEffectOutcomeV1 {
 /// The configured role is passed unchanged into both chain adapters and the
 /// SDK. Consequently, a non-owner can only observe its counterparty's refund;
 /// it cannot prepare, sign, or submit that counterparty-owned effect. The SDK
-/// retains LEZ-before-Zcash ordering, fresh funding/deadline admission, and its
-/// persist-before-send journal.
+/// retains the agreement's refund order (the Maker-funded leg first: LEZ in
+/// `TakerSellsForeign`, Zcash in `TakerSellsLez`, where each funder drives its
+/// own refund once both legs are locked), fresh funding/deadline admission,
+/// and its persist-before-send journal.
 async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandError> {
     let material = config
         .load_drive_material()
@@ -1711,7 +1856,7 @@ async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComma
     let zcash = ZebraRpcZcashPort::new(rpc, signer, identity, participant)
         .map_err(|_| ActorCommandError::RecoveryConfigurationUnavailable)?
         .with_counterparty_scan_blocks(config.counterparty_scan_blocks());
-    let sdk = ZecPairSdk::new(participant, (), (), lez, zcash, store);
+    let sdk = ZecPairSdk::new(participant, (), (), lez.clone(), zcash, store);
     let mut active = sdk
         .resume_all_capable(config.swap_id())
         .await
@@ -1723,12 +1868,59 @@ async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComma
         .drive_refund(wall_clock_ms())
         .await
         .map_err(unavailable_recovery)?;
+    let outcome = if refund_found_the_revealing_claim(
+        active.agreement().direction(),
+        participant,
+        active.status(),
+        &outcome,
+    ) {
+        // The Maker's Zcash HTLC was spent, and not by its refund: the
+        // Taker's revealing Zcash claim landed after all. Its preimage pays the
+        // Maker's LEZ claim, so the claim is observed here rather than the
+        // refund waited on (the next status names the LEZ claim).
+        eprintln!(
+            "actor recovery: the Zcash HTLC is spent; observing the Taker's revealing Zcash claim"
+        );
+        drive_claim_with_replans(
+            &mut active,
+            &lez,
+            config,
+            ActorCommandError::RecoveryUnavailable,
+        )
+        .await?
+    } else {
+        recovery_outcome(outcome)
+    };
     Ok(ActorEffectOutputV1::from_active(
         config,
         ActorEffectCommandV1::Recover,
-        recovery_outcome(outcome),
+        outcome,
         &active,
     ))
+}
+
+/// Whether the Maker's Zcash refund of `TakerSellsLez`, with both legs
+/// locked, found its HTLC spent: only the Taker's revealing claim spends it
+/// then, and the Maker must take that claim's preimage to its LEZ claim before
+/// the Taker's LEZ refund opens.
+const fn refund_found_the_revealing_claim(
+    direction: SwapDirection,
+    local: Participant,
+    phase: Phase,
+    outcome: &RefundDriveOutcome,
+) -> bool {
+    matches!(
+        (direction, local, phase, outcome),
+        (
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            Phase::BothLegsLocked,
+            RefundDriveOutcome::AwaitingFunding {
+                step: RefundStepV1::Zcash,
+                reason: RefundFundingWaitReasonV1::Spent,
+            },
+        )
+    )
 }
 
 const fn ensure_recovery_phase(phase: Phase) -> Result<(), ActorCommandError> {
@@ -1853,6 +2045,8 @@ const fn claim_operation(step: ClaimStepV1) -> ActorOperationV1 {
     match step {
         ClaimStepV1::RevealingLez => ActorOperationV1::LezRevealingClaim,
         ClaimStepV1::FollowupZcash => ActorOperationV1::ZcashFollowupClaim,
+        ClaimStepV1::RevealingZcash => ActorOperationV1::ZcashRevealingClaim,
+        ClaimStepV1::FollowupLez => ActorOperationV1::LezFollowupClaim,
     }
 }
 
@@ -1996,6 +2190,7 @@ mod tests {
             ZecLifecycleAction::ClaimLez,
             ZecLifecycleAction::ClaimZcash,
             ZecLifecycleAction::RefundZcash,
+            ZecLifecycleAction::RefundLez,
             ZecLifecycleAction::Complete,
         ];
         for next_action in actions {
@@ -2123,30 +2318,239 @@ mod tests {
 
     #[test]
     fn a_claimant_whose_claim_window_closed_is_told_to_refund_unless_its_claim_left() {
-        use ZecLifecycleAction::{ClaimLez, ClaimZcash, RefundZcash, Wait};
-        // FINDINGS 26: closed window, nothing sent → the Zcash refund.
+        use Participant::{Maker, Taker};
+        use SwapDirection::{TakerSellsForeign, TakerSellsLez};
+        use ZecLifecycleAction::{ClaimLez, ClaimZcash, RefundLez, RefundZcash, Wait};
+        let both = Phase::BothLegsLocked;
+        // TakerSellsForeign (FINDINGS 26): closed window, nothing sent → the
+        // Taker's Zcash refund; open window → the claim; a claim that left
+        // inside the window is still followed.
         assert_eq!(
-            claimant_next_action(ClaimLez, Phase::BothLegsLocked, false, true),
+            claimant_next_action(ClaimLez, both, TakerSellsForeign, Taker, false, true),
             RefundZcash
         );
-        // Open window → the claim, as before.
         assert_eq!(
-            claimant_next_action(ClaimLez, Phase::BothLegsLocked, false, false),
+            claimant_next_action(ClaimLez, both, TakerSellsForeign, Taker, false, false),
             ClaimLez
         );
-        // A claim that left inside the window is still followed.
         assert_eq!(
-            claimant_next_action(ClaimLez, Phase::BothLegsLocked, true, true),
+            claimant_next_action(ClaimLez, both, TakerSellsForeign, Taker, true, true),
             ClaimLez
         );
-        // The follow-up Zcash claim and the observers are untouched.
+        // Its Maker and its follow-up Zcash claim are untouched.
         assert_eq!(
-            claimant_next_action(ClaimZcash, Phase::ClaimEvidenceAvailable, false, true),
+            claimant_next_action(Wait, both, TakerSellsForeign, Maker, false, true),
+            Wait
+        );
+        assert_eq!(
+            claimant_next_action(
+                ClaimZcash,
+                Phase::ClaimEvidenceAvailable,
+                TakerSellsForeign,
+                Maker,
+                false,
+                true
+            ),
+            ClaimZcash
+        );
+        // TakerSellsLez: the Taker's revealing Zcash claim, unsent when the
+        // window closed → the Taker's LEZ refund; sent → still followed.
+        assert_eq!(
+            claimant_next_action(ClaimZcash, both, TakerSellsLez, Taker, false, true),
+            RefundLez
+        );
+        assert_eq!(
+            claimant_next_action(ClaimZcash, both, TakerSellsLez, Taker, false, false),
             ClaimZcash
         );
         assert_eq!(
-            claimant_next_action(Wait, Phase::BothLegsLocked, false, true),
+            claimant_next_action(ClaimZcash, both, TakerSellsLez, Taker, true, true),
+            ClaimZcash
+        );
+        // Its Maker waits (its drive observes the Taker's Zcash claim) until
+        // the window closes, then refunds its Zcash (the earlier refund).
+        assert_eq!(
+            claimant_next_action(Wait, both, TakerSellsLez, Maker, false, false),
             Wait
+        );
+        assert_eq!(
+            claimant_next_action(Wait, both, TakerSellsLez, Maker, false, true),
+            RefundZcash
+        );
+        // Once the Taker's claim is recorded the Maker's LEZ claim is never
+        // replaced by a refund, window or not.
+        assert_eq!(
+            claimant_next_action(
+                ClaimLez,
+                Phase::ClaimEvidenceAvailable,
+                TakerSellsLez,
+                Maker,
+                false,
+                true
+            ),
+            ClaimLez
+        );
+        // The refund phases keep the SDK's action.
+        assert_eq!(
+            claimant_next_action(
+                RefundLez,
+                Phase::MakerLegRefunded,
+                TakerSellsLez,
+                Taker,
+                false,
+                true
+            ),
+            RefundLez
+        );
+    }
+
+    #[test]
+    fn the_next_action_names_are_the_wire_contract() {
+        for (action, name) in [
+            (ZecLifecycleAction::Wait, "wait"),
+            (ZecLifecycleAction::CreateAndFundLez, "create_and_fund_lez"),
+            (ZecLifecycleAction::FundZcash, "fund_zcash"),
+            (ZecLifecycleAction::ClaimLez, "claim_lez"),
+            (ZecLifecycleAction::ClaimZcash, "claim_zcash"),
+            (ZecLifecycleAction::RefundZcash, "refund_zcash"),
+            (ZecLifecycleAction::RefundLez, "refund_lez"),
+            (ZecLifecycleAction::Complete, "complete"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(ActorNextActionV1::from(action)).unwrap(),
+                json!(name)
+            );
+            assert_eq!(
+                ActorNextActionV1::from(action).as_lifecycle_action(),
+                action
+            );
+        }
+    }
+
+    #[test]
+    fn the_taker_sells_lez_maker_funds_zcash_only_inside_the_claim_window() {
+        use SwapDirection::{TakerSellsForeign, TakerSellsLez};
+        assert!(!maker_funding_cut_off(TakerSellsLez, false, false));
+        assert!(maker_funding_cut_off(TakerSellsLez, false, true));
+        // A funding staged before the cutoff may already be on the chain:
+        // it is still driven to its observation.
+        assert!(!maker_funding_cut_off(TakerSellsLez, true, true));
+        // The Maker of TakerSellsForeign funds LEZ second, as before.
+        assert!(!maker_funding_cut_off(TakerSellsForeign, false, true));
+    }
+
+    #[test]
+    fn the_preimage_is_the_takers_and_the_candidates_the_zcash_funders() {
+        use Participant::{Maker, Taker};
+        // TakerSellsForeign: the Taker funds Zcash and holds the preimage.
+        assert!(activation_roles_match(Taker, Taker, Taker, true, true));
+        assert!(activation_roles_match(Taker, Taker, Maker, false, false));
+        // TakerSellsLez: the Maker funds Zcash, the Taker holds the preimage.
+        assert!(activation_roles_match(Taker, Maker, Taker, true, false));
+        assert!(activation_roles_match(Taker, Maker, Maker, false, true));
+        // A Maker with a preimage, or a Taker without one, is refused.
+        assert!(!activation_roles_match(Taker, Maker, Maker, true, true));
+        assert!(!activation_roles_match(Taker, Taker, Maker, true, false));
+        assert!(!activation_roles_match(Taker, Maker, Taker, false, false));
+        assert!(!activation_roles_match(Taker, Taker, Taker, false, true));
+        // Candidates belong to the funder alone.
+        assert!(!activation_roles_match(Taker, Maker, Taker, true, true));
+        assert!(!activation_roles_match(Taker, Maker, Maker, false, false));
+    }
+
+    #[test]
+    fn claim_markers_follow_the_revealing_claim_and_the_lez_nonce() {
+        // The Taker's revealing claim on either chain marks "submitted"; a
+        // claim at the claimant's LEZ nonce marks "in flight".
+        assert_eq!(claim_markers(ClaimStepV1::RevealingLez), (true, true));
+        assert_eq!(claim_markers(ClaimStepV1::RevealingZcash), (true, false));
+        assert_eq!(claim_markers(ClaimStepV1::FollowupLez), (false, true));
+        assert_eq!(claim_markers(ClaimStepV1::FollowupZcash), (false, false));
+        assert_eq!(
+            owned_lez_claim_phase(SwapDirection::TakerSellsForeign),
+            Phase::BothLegsLocked
+        );
+        assert_eq!(
+            owned_lez_claim_phase(SwapDirection::TakerSellsLez),
+            Phase::ClaimEvidenceAvailable
+        );
+    }
+
+    #[test]
+    fn a_maker_refund_that_finds_its_htlc_spent_observes_the_takers_claim() {
+        let spent = RefundDriveOutcome::AwaitingFunding {
+            step: RefundStepV1::Zcash,
+            reason: RefundFundingWaitReasonV1::Spent,
+        };
+        assert!(refund_found_the_revealing_claim(
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            Phase::BothLegsLocked,
+            &spent
+        ));
+        for (direction, local, phase, outcome) in [
+            (
+                SwapDirection::TakerSellsForeign,
+                Participant::Maker,
+                Phase::BothLegsLocked,
+                spent,
+            ),
+            (
+                SwapDirection::TakerSellsLez,
+                Participant::Taker,
+                Phase::BothLegsLocked,
+                spent,
+            ),
+            (
+                SwapDirection::TakerSellsLez,
+                Participant::Maker,
+                Phase::TakerLegRefunded,
+                spent,
+            ),
+            (
+                SwapDirection::TakerSellsLez,
+                Participant::Maker,
+                Phase::BothLegsLocked,
+                RefundDriveOutcome::AwaitingFunding {
+                    step: RefundStepV1::Zcash,
+                    reason: RefundFundingWaitReasonV1::Absent,
+                },
+            ),
+            (
+                SwapDirection::TakerSellsLez,
+                Participant::Maker,
+                Phase::BothLegsLocked,
+                RefundDriveOutcome::AwaitingDeadline(RefundStepV1::Zcash),
+            ),
+        ] {
+            assert!(!refund_found_the_revealing_claim(
+                direction, local, phase, &outcome
+            ));
+        }
+    }
+
+    #[test]
+    fn the_zcash_reveal_window_is_the_claim_window_exit_class() {
+        assert_eq!(
+            claim_attempt(
+                Err(ZecSdkError::ZcashRevealWindowClosed {
+                    tip_height: 120,
+                    refund_height: 122,
+                    margin_blocks: 3,
+                }),
+                ActorCommandError::ClaimUnavailable,
+            ),
+            Err(ActorCommandError::ClaimWindowClosed)
+        );
+        assert_eq!(
+            claim_attempt(
+                Err(ZecSdkError::ClaimWindowClosed {
+                    closes_at_ms: 10,
+                    now_ms: 11,
+                }),
+                ActorCommandError::ClaimUnavailable,
+            ),
+            Err(ActorCommandError::ClaimWindowClosed)
         );
     }
 
@@ -2209,6 +2613,25 @@ mod tests {
             (
                 ClaimDriveOutcome::Completed { revision: 5 },
                 json!({"outcome":"completed"}),
+            ),
+            (
+                ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash),
+                json!({"outcome":"submitted","operation":"zcash_revealing_claim"}),
+            ),
+            (
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash),
+                json!({"outcome":"awaiting_observation","operation":"zcash_revealing_claim"}),
+            ),
+            (
+                ClaimDriveOutcome::Projected {
+                    step: ClaimStepV1::FollowupLez,
+                    revision: 6,
+                },
+                json!({"outcome":"projected","operation":"lez_followup_claim"}),
+            ),
+            (
+                ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez),
+                json!({"outcome":"submitted","operation":"lez_followup_claim"}),
             ),
         ] {
             assert_eq!(

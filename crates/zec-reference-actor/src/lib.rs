@@ -35,14 +35,16 @@ pub const LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE: i32 = 3;
 /// ([`ActorCommandError::FirstLockReplanExhausted`]): the swap stops by name.
 pub const LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 4;
 
-/// Exit code of an actor whose owned revealing LEZ claim was re-planned the
-/// bounded number of times and keeps losing its nonce
+/// Exit code of an actor whose owned LEZ claim (the Taker's revealing claim in
+/// `TakerSellsForeign`, the Maker's follow-up claim in `TakerSellsLez`) was
+/// re-planned the bounded number of times and keeps losing its nonce
 /// ([`ActorCommandError::RevealingClaimReplanExhausted`], FINDINGS 24): the
 /// swap needs attention by name; it is never turned into a refund.
 pub const LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 5;
 
-/// Exit code of a claim the actor refused because the revealing LEZ claim
-/// window had closed ([`ActorCommandError::ClaimWindowClosed`], FINDINGS 26):
+/// Exit code of a claim the actor refused because the Taker's revealing claim
+/// window had closed ([`ActorCommandError::ClaimWindowClosed`], FINDINGS 26;
+/// on Zcash also when too few blocks remain before the Maker's refund height):
 /// nothing was sent; the actor's status names the refund as the next action.
 pub const LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE: i32 = 6;
 pub use first_lock_attempts::{
