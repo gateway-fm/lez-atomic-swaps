@@ -25,7 +25,9 @@ as well (sign-off, tests with every behavioural change).
   BTC, ZEC, XMR and any later pair. A pair may differ only in the
   cryptographic mechanism that carries the secret (adaptor signature, hash
   preimage, key share). A pair that cannot follow the common flow in a
-  direction does not offer that direction.
+  direction does not offer that direction. XMR does not follow this rule
+  yet; aligning it, or withdrawing the direction, is part of the XMR work
+  (issue #161).
 
 ## Evidence
 
