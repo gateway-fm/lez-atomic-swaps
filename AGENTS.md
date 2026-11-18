@@ -17,6 +17,16 @@ as well (sign-off, tests with every behavioural change).
   describe `main`. "This branch", "this PR", "not merged yet" belong in the
   pull request description.
 
+## Protocol design
+
+- **Swap flows are the same for every pair.** For a given direction (Taker
+  sells LEZ, or Taker sells the foreign asset), who locks first, who holds the
+  secret, who claims first and which refund matures first are identical for
+  BTC, ZEC, XMR and any later pair. A pair may differ only in the
+  cryptographic mechanism that carries the secret (adaptor signature, hash
+  preimage, key share). A pair that cannot follow the common flow in a
+  direction does not offer that direction.
+
 ## Evidence
 
 - Evidence of a commit is committed on top of it, in a docs-only commit that
