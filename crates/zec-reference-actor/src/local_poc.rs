@@ -1913,7 +1913,10 @@ fn build_agreement(
         ActorRole::Maker => (maker_hash, taker_hash),
         ActorRole::Taker => (taker_hash, maker_hash),
     };
-    let contract = Bip199Contract::new(
+    // The profile decides the claim branch: the Taker-reveals-first profiles check
+    // that the preimage is 32 bytes, the length the LEZ escrow claims with.
+    let contract = Bip199Contract::for_profile(
+        spec.profile().id(),
         zcash_refund_height,
         zcash_funder_hash,
         secret_digest,

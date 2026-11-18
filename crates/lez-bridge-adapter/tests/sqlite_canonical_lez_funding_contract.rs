@@ -572,7 +572,7 @@ fn signed_agreement(
             NetworkType::Regtest,
             branch,
             Zatoshis::from_u64(100_000_000).expect("principal"),
-            Bip199Contract::new(refund_height, refund_hash, digest, claimant_hash),
+            Bip199Contract::for_profile(profile, refund_height, refund_hash, digest, claimant_hash),
         ),
     )
     .expect("binding");

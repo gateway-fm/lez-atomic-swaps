@@ -103,20 +103,27 @@ pub struct ZecSwapBinding {
 }
 
 impl ZecSwapBinding {
-    /// Constructs a binding only when profile, network, and consensus branch agree.
+    /// Constructs a binding only when profile, network, consensus branch and the
+    /// contract's preimage rule agree.
     ///
     /// # Errors
     ///
     /// Returns [`ProfileError`] when the expected output is incompatible with the
-    /// selected immutable profile.
+    /// selected immutable profile, including
+    /// [`ProfileError::PreimageRuleMismatch`] for a contract not built with
+    /// [`Bip199Contract::for_profile`]'s rule.
     pub fn new(
         profile_id: ZecProfileId,
         expected_output: ExpectedBip199Output,
     ) -> Result<Self, ProfileError> {
-        ZecRefundProfile::for_id(profile_id).validate_consensus(
+        let profile = ZecRefundProfile::for_id(profile_id);
+        profile.validate_consensus(
             expected_output.network(),
             expected_output.consensus_branch_id(),
         )?;
+        if expected_output.contract().preimage_rule() != profile.bip199_preimage_rule() {
+            return Err(ProfileError::PreimageRuleMismatch);
+        }
         Ok(Self {
             profile_id,
             expected_output,
@@ -263,7 +270,8 @@ impl ZecSwapBindingRecordV1 {
             .map_err(|_| ZecBindingRecordError::UnknownBranch)?;
         let value = Zatoshis::from_u64(expected.value_zatoshis)
             .map_err(|_| ZecBindingRecordError::InvalidValue)?;
-        let contract = Bip199Contract::new(
+        let contract = Bip199Contract::for_profile(
+            self.profile_id.into(),
             expected.refund_lock_time,
             expected.refund_pubkey_hash,
             expected.secret_digest,

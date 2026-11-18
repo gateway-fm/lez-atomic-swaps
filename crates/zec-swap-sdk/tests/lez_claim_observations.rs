@@ -511,7 +511,13 @@ fn agreement_under(profile: ZecProfileId) -> ZecAgreementV1 {
             network,
             BranchId::Nu7,
             Zatoshis::from_u64(100_000_000).expect("valid value"),
-            Bip199Contract::new(refund_lock, refund_hash, secret_digest, claimant_hash),
+            Bip199Contract::for_profile(
+                profile,
+                refund_lock,
+                refund_hash,
+                secret_digest,
+                claimant_hash,
+            ),
         ),
     )
     .expect("profile-bound Zcash output");

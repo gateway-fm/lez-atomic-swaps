@@ -238,10 +238,12 @@ pub trait ZcashClaimPort: Send + Sync {
     /// Observes the counterparty's claim of the exact HTLC outpoint and reads its preimage
     /// (`TakerSellsLez`: the Maker reads the Taker's revealing Zcash claim).
     ///
-    /// `Confirmed` only for a claim spend at the Zcash leg's confirmation depth whose preimage
-    /// hashes to the agreement digest; a claim in the mempool or below depth is `Unstable`; an
-    /// unspent output is `Absent`. A refund spend, or a claim with another preimage, is an
-    /// error and never yields a preimage.
+    /// `Confirmed` for a claim spend of the exact outpoint, in the mempool or in a block at any
+    /// depth, whose input takes this contract's claim branch with a 32-byte preimage hashing to
+    /// the agreement digest (the evidence carries its confirmations, possibly 0): a valid
+    /// preimage stays valid whatever happens to that transaction, so the Maker acts on first
+    /// sight. A moving tip is `Unstable`; an unspent output is `Absent`. A refund spend, or a
+    /// claim with another or malformed preimage, is an error and never yields a preimage.
     async fn observe_counterparty_revealing_claim(
         &self,
         agreement: &ZecAgreementV1,

@@ -576,7 +576,13 @@ fn agreement_wire(
             NetworkType::Regtest,
             BranchId::Nu7,
             Zatoshis::from_u64(10_000).unwrap(),
-            Bip199Contract::new(124, maker_hash, secret_digest, taker_hash),
+            Bip199Contract::for_profile(
+                ZecProfileId::DeterministicLocalV3,
+                124,
+                maker_hash,
+                secret_digest,
+                taker_hash,
+            ),
         ),
     )
     .unwrap();

@@ -168,6 +168,10 @@ pub enum ProfileError {
     /// Zcash refund open before the Maker's LEZ refund.
     #[error("the profile's reveal order is unsafe for this swap direction")]
     UnsafeRevealOrder,
+    /// The BIP-199 contract's claim branch is not the one the profile means
+    /// ([`ZecRefundProfile::bip199_preimage_rule`]).
+    #[error("the BIP-199 contract's preimage rule does not match the selected profile")]
+    PreimageRuleMismatch,
     /// Role deadlines could not form a valid core recovery schedule.
     #[error("invalid recovery schedule: {0}")]
     InvalidSchedule(lez_swap_core::Error),
@@ -468,6 +472,18 @@ impl ZecRefundProfile {
                 ZecRevealOrder::LezRecipientFirst
             ) | (SwapDirection::TakerSellsLez, ZecRevealOrder::TakerFirst)
         )
+    }
+
+    /// What the claim branch of this profile's BIP-199 contracts requires of the
+    /// preimage: the Taker-reveals-first profiles check that it is 32 bytes (the
+    /// length the LEZ escrow claims with); the older profiles keep their script byte
+    /// for byte.
+    #[must_use]
+    pub const fn bip199_preimage_rule(self) -> crate::Bip199PreimageRule {
+        match self.reveal_order {
+            ZecRevealOrder::LezRecipientFirst => crate::Bip199PreimageRule::DigestOnly,
+            ZecRevealOrder::TakerFirst => crate::Bip199PreimageRule::Exactly32Bytes,
+        }
     }
 
     /// Blocks that must remain before the Zcash refund height when the Taker

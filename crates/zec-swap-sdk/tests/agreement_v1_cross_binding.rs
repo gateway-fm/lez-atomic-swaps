@@ -222,7 +222,8 @@ impl Fixture {
     }
 
     fn body(&self) -> ZecAgreementBodyV1 {
-        let contract = Bip199Contract::new(
+        let contract = Bip199Contract::for_profile(
+            self.binding_profile,
             self.zcash_refund_lock,
             self.contract_refund_hash,
             self.contract_digest,

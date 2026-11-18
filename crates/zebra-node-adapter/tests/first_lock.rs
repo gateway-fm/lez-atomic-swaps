@@ -1613,7 +1613,8 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
                 14_500,
             ),
         };
-    let contract = Bip199Contract::new(refund_lock, refund_hash, [9; 32], claimant_hash);
+    let contract =
+        Bip199Contract::for_profile(profile, refund_lock, refund_hash, [9; 32], claimant_hash);
     let binding = ZecSwapBinding::new(
         profile,
         lez_zec_swap_sdk::ExpectedBip199Output::new(

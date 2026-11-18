@@ -1,11 +1,13 @@
 use lez_zec_swap_sdk::{
-    Bip199Contract, Bip199SpendBranch, Bip199SpendKind, CanonicalZcashSpendObservation,
-    ExpectedBip199Spend, SpendObservationError, TransparentSpendRequest, ZcashSpendNodeSnapshot,
-    ZcashStableTip, build_claim_transaction, build_refund_transaction, read_bip199_spend_branch,
+    Bip199Contract, Bip199PreimageRule, Bip199SpendBranch, Bip199SpendKind,
+    CanonicalZcashSpendObservation, ExpectedBip199Spend, SpendObservationError,
+    TransparentSpendRequest, ZcashSpendNodeSnapshot, ZcashStableTip, ZecProfileId,
+    build_claim_transaction, build_refund_transaction, read_bip199_spend_branch,
 };
 use orchard::bundle as orchard_bundle;
 use sapling::bundle as sapling_bundle;
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, ecdsa::Signature};
+use sha2::{Digest as _, Sha256};
 use zcash_primitives::{
     block::BlockHash,
     transaction::{
@@ -830,4 +832,81 @@ fn spend_observation_rejects_invalid_signature_noncanonical_data_and_tip_drift()
         CanonicalZcashSpendObservation::validate(&expected, &wrong_txid),
         Err(SpendObservationError::TransactionIdMismatch)
     );
+}
+
+/// The Taker-reveals-first contract (`OP_SIZE <32> OP_EQUALVERIFY` in the claim branch): a
+/// claim whose preimage is not 32 bytes is never a revealed preimage, neither from the stack
+/// alone nor from a full canonical observation; a 32-byte claim and the refund still are.
+#[test]
+fn size_checked_contract_reads_only_a_32_byte_preimage() {
+    let refund_key = key(1);
+    let claimant_key = key(2);
+    let destination =
+        lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_secret_key(&Secp256k1::new(), &key(3)));
+    for length in [31_usize, 32, 33] {
+        let preimage = vec![0x5a; length];
+        let contract = Bip199Contract::for_profile(
+            ZecProfileId::DeterministicLocalDevnetV7,
+            500_000,
+            pubkey_hash(&refund_key),
+            Sha256::digest(&preimage).into(),
+            pubkey_hash(&claimant_key),
+        );
+        assert_eq!(contract.preimage_rule(), Bip199PreimageRule::Exactly32Bytes);
+        let request = TransparentSpendRequest::new(
+            &contract,
+            OutPoint::new([0x11; 32], 7),
+            TxOut::new(
+                Zatoshis::from_u64(100_000).unwrap(),
+                Script(Code(contract.p2sh_script_pubkey().to_vec())),
+            ),
+            destination,
+            Zatoshis::from_u64(10_000).unwrap(),
+            BlockHeight::from_u32(4_100_000),
+            BranchId::Nu6_2,
+        )
+        .unwrap();
+        let claim = build_claim_transaction(&contract, &request, &claimant_key, &preimage).unwrap();
+        let script_sig = claim.transparent_bundle().unwrap().vin[0]
+            .script_sig()
+            .0
+            .0
+            .clone();
+        let read = read_bip199_spend_branch(&contract, &script_sig);
+        let observed = CanonicalZcashSpendObservation::validate(
+            &expected(contract.clone(), &request),
+            &snapshot(&claim, serialize(&claim)),
+        );
+        if length == 32 {
+            assert_eq!(
+                read,
+                Ok(Bip199SpendBranch::Claim {
+                    preimage: preimage.clone().into_boxed_slice()
+                })
+            );
+            assert!(matches!(
+                observed.unwrap().kind(),
+                Bip199SpendKind::Claim { preimage: seen, .. } if seen.as_ref() == preimage
+            ));
+        } else {
+            assert_eq!(
+                read,
+                Err(SpendObservationError::PreimageLengthRefused { length })
+            );
+            assert_eq!(
+                observed.err(),
+                Some(SpendObservationError::PreimageLengthRefused { length })
+            );
+        }
+        let refund = build_refund_transaction(&contract, &request, &refund_key).unwrap();
+        assert!(matches!(
+            CanonicalZcashSpendObservation::validate(
+                &expected(contract, &request),
+                &snapshot(&refund, serialize(&refund)),
+            )
+            .unwrap()
+            .kind(),
+            Bip199SpendKind::Refund { .. }
+        ));
+    }
 }

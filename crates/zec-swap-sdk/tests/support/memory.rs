@@ -3291,7 +3291,8 @@ pub(crate) fn alternate_expected_funding(
             agreed.network(),
             agreed.consensus_branch_id(),
             agreed.value(),
-            Bip199Contract::new(
+            Bip199Contract::with_preimage_rule(
+                agreed.contract().preimage_rule(),
                 agreed.contract().refund_lock_time(),
                 [0x31; 20],
                 *agreement.secret_digest(),
@@ -3863,7 +3864,7 @@ pub(crate) fn fixture_binding(
             network,
             lez_zec_swap_sdk::ZecRefundProfile::for_id(profile).consensus_branch_id(),
             Zatoshis::from_u64(100_000_000).expect("value"),
-            Bip199Contract::new(refund_lock, refund_hash, digest, claimant_hash),
+            Bip199Contract::for_profile(profile, refund_lock, refund_hash, digest, claimant_hash),
         ),
     )
     .expect("binding")

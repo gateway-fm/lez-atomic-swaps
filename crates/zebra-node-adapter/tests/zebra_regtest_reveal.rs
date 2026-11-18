@@ -6,7 +6,10 @@
 //! Zebra. The Maker reads the claim with `observe_counterparty_revealing_claim` on the same
 //! node, from the mempool on. A claim the Taker builds outside the SDK (another destination,
 //! another fee, expiry height 0) reveals the preimage the same way. A refund of the HTLC is
-//! classified as the refund branch and never yields a preimage. LEZ is not part of this harness: the Taker's LEZ lock is projected from fixed
+//! classified as the refund branch and never yields a preimage. The HTLC of a Taker-reveals-first
+//! profile admits only a 32-byte preimage (the LEZ escrow's length): Zebra refuses a claim with
+//! a 33-byte or 31-byte preimage of the digest, and the Maker refunds that HTLC. LEZ is not part
+//! of this harness: the Taker's LEZ lock is projected from fixed
 //! evidence, and the Maker's LEZ claim that follows the reveal is covered by the SDK and
 //! Node lanes.
 
@@ -22,11 +25,11 @@ use lez_zebra_node_adapter::{
     ZebraRpcClaimPort, ZebraRpcRefundPort, ZebraRpcZcashPort,
 };
 use lez_zec_swap_sdk::{
-    ActiveZecSwap, Bip199Contract, ClaimDriveOutcome, ClaimPreimage, ClaimStepV1,
-    FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockStepV1, LezAssetV1, LezChainIdentityV1,
-    LezClaimPort, LezEnvironmentV1, LezMakerLockObservationPort, LezUnixMilliseconds,
-    MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1, OfferDiscovery,
-    PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, ProtectedClaimKey,
+    ActiveZecSwap, Bip199Contract, Bip199PreimageRule, ClaimDriveOutcome, ClaimPreimage,
+    ClaimStepV1, FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockStepV1, LezAssetV1,
+    LezChainIdentityV1, LezClaimPort, LezEnvironmentV1, LezMakerLockObservationPort,
+    LezUnixMilliseconds, MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1,
+    OfferDiscovery, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, ProtectedClaimKey,
     RefundObservationV1, RefundSubmitOutcomeV1, RevealingClaimObservationV1,
     RevealingClaimSubmitOutcomeV1, TransparentFundingRequest, TransparentSpendRequest,
     TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort, ZcashRefundPort,
@@ -34,7 +37,7 @@ use lez_zec_swap_sdk::{
     ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
     ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSdkError, ZecSwapBinding,
     ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_claim_transaction,
-    build_funding_transaction, derive_lez_metadata_account_v1,
+    build_funding_transaction, build_refund_transaction, derive_lez_metadata_account_v1,
     derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -168,11 +171,17 @@ async fn miner_utxo(client: &HttpClient, skip: &[OutPoint]) -> TransparentUtxo {
     panic!("the deterministic miner has no unused mature output")
 }
 
-async fn broadcast(client: &HttpClient, transaction: &Transaction) -> String {
+async fn try_broadcast(client: &HttpClient, transaction: &Transaction) -> Result<String, String> {
     let mut bytes = Vec::new();
     transaction.write(&mut bytes).expect("serialize");
-    let transaction_id: String = client
+    client
         .request("sendrawtransaction", rpc_params![hex::encode(bytes)])
+        .await
+        .map_err(|error| error.to_string())
+}
+
+async fn broadcast(client: &HttpClient, transaction: &Transaction) -> String {
+    let transaction_id = try_broadcast(client, transaction)
         .await
         .expect("Zebra accepts the consensus-valid transaction");
     assert_eq!(transaction_id, transaction.txid().to_string());
@@ -181,17 +190,18 @@ async fn broadcast(client: &HttpClient, transaction: &Transaction) -> String {
 
 /// A dual-signed `TakerSellsLez` agreement under deterministic-local-v3 whose Zcash anchor is
 /// the next block: the Maker's HTLC refunds 8 blocks later, before the Taker's LEZ refund.
-fn agreement(label: &str, anchor: u32, secret: [u8; 32]) -> ZecAgreementV1 {
+fn agreement(label: &str, anchor: u32, secret_digest: [u8; 32]) -> ZecAgreementV1 {
     let secp = Secp256k1::new();
     let maker = PublicKey::from_secret_key(&secp, &maker_key()).serialize();
     let taker = PublicKey::from_secret_key(&secp, &taker_key()).serialize();
     let refund_hash = pubkey_hash(&maker_key());
     let claimant_hash = pubkey_hash(&taker_key());
     let profile = ZecRefundProfile::for_id(PROFILE);
-    let contract = Bip199Contract::new(
+    let contract = Bip199Contract::for_profile(
+        PROFILE,
         anchor + profile.zcash_refund_blocks(),
         refund_hash,
-        Sha256::digest(secret).into(),
+        secret_digest,
         claimant_hash,
     );
     let binding = ZecSwapBinding::new(
@@ -216,7 +226,7 @@ fn agreement(label: &str, anchor: u32, secret: [u8; 32]) -> ZecAgreementV1 {
             ZecParticipantIdentityV1::new([3; 32], maker),
             ZecParticipantIdentityV1::new([4; 32], taker),
         ),
-        Sha256::digest(secret).into(),
+        secret_digest,
         ZecLezTermsV1::new(
             LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
             escrow_program,
@@ -392,7 +402,7 @@ async fn taker_at_both_legs_locked(
     spent: &mut Vec<OutPoint>,
 ) -> (TakerSwap, Transaction) {
     let tip = block_count(client).await;
-    let agreement = agreement(label, tip + 1, secret);
+    let agreement = agreement(label, tip + 1, Sha256::digest(secret).into());
     let wire = agreement.encode_wire().expect("bounded agreement wire");
     let zcash = ZebraRpcZcashPort::new(
         typed_rpc(),
@@ -731,4 +741,83 @@ async fn maker_refund_of_the_htlc_is_classified_as_refund_on_zebra() {
     ));
     let refund_id = TxId::from_bytes(*refund.expected_submission_id());
     eprintln!("Maker refund {refund_id} classified as the refund branch, no preimage");
+}
+
+/// The LEZ escrow takes a 32-byte preimage only, so the Maker can claim LEZ only with one.
+/// A preimage of another length whose SHA-256 is the digest must therefore not spend the
+/// Maker's HTLC: Zebra refuses a 33-byte and a 31-byte claim, the HTLC stays unspent, and the
+/// Maker refunds it at its refund height. The 32-byte claim is the one the other tests send.
+#[tokio::test]
+#[ignore = "requires scripts/run-zebra-e2e.sh and pinned Docker Zebra"]
+async fn htlc_refuses_a_claim_whose_preimage_is_not_32_bytes_on_zebra() {
+    let client = client();
+    generate_to(&client, 110).await;
+    let mut spent = Vec::new();
+    let mut htlcs = Vec::new();
+    for (label, length) in [("long", 33_usize), ("short", 31)] {
+        let preimage = vec![0x3a; length];
+        let tip = block_count(&client).await;
+        let agreement = agreement(label, tip + 1, Sha256::digest(&preimage).into());
+        let utxo = miner_utxo(&client, &spent).await;
+        spent.push(utxo.outpoint().clone());
+        let funding = maker_funding(&agreement, utxo, tip);
+        broadcast(&client, &funding).await;
+        mine_one(&client).await;
+        htlcs.push((agreement, funding, preimage));
+    }
+
+    for (agreement, funding, preimage) in &htlcs {
+        let contract = agreement.binding().expected_output().contract();
+        assert_eq!(contract.preimage_rule(), Bip199PreimageRule::Exactly32Bytes);
+        let outpoint = OutPoint::new(*funding.txid().as_ref(), 0);
+        let funding_output = funding.transparent_bundle().expect("funding").vout[0].clone();
+        assert_eq!(
+            funding_output.script_pubkey().0.0,
+            contract.p2sh_script_pubkey()
+        );
+        let request = agreement
+            .claim_spend_request(
+                outpoint.clone(),
+                funding_output.clone(),
+                BlockHeight::from_u32(block_count(&client).await),
+            )
+            .expect("the agreement's claim request");
+        let claim = build_claim_transaction(contract, &request, &taker_key(), preimage)
+            .expect("the claim is signed; only the script decides");
+        let refused = try_broadcast(&client, &claim).await;
+        assert!(
+            refused.is_err(),
+            "Zebra accepted a claim with a {}-byte preimage: {refused:?}",
+            preimage.len()
+        );
+        eprintln!(
+            "Zebra refused the {}-byte preimage claim: {}",
+            preimage.len(),
+            refused.expect_err("refused")
+        );
+    }
+    mine_one(&client).await;
+
+    // The HTLC is still the Maker's: it refunds at its refund height.
+    let (agreement, funding, _) = &htlcs[1];
+    let refund_height = agreement.zcash_refund_at_height();
+    generate_to(&client, refund_height).await;
+    let contract = agreement.binding().expected_output().contract();
+    let request = agreement
+        .refund_spend_request(
+            OutPoint::new(*funding.txid().as_ref(), 0),
+            funding.transparent_bundle().expect("funding").vout[0].clone(),
+            BlockHeight::from_u32(block_count(&client).await),
+        )
+        .expect("the agreement's refund request");
+    let refund = build_refund_transaction(contract, &request, &maker_key())
+        .expect("the Maker signs its refund");
+    let refund_id = broadcast(&client, &refund).await;
+    mine_one(&client).await;
+    let mined: Value = client
+        .request("getrawtransaction", rpc_params![&refund_id, 1])
+        .await
+        .expect("refund is indexed");
+    assert_eq!(mined["confirmations"], 1, "Zebra mined the Maker's refund");
+    eprintln!("Maker refunded the HTLC a short preimage could not claim: {refund_id}");
 }

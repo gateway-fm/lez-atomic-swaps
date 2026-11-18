@@ -215,7 +215,13 @@ fn agreement_wire(basis_time: u64, swap_id: &str, direction: SwapDirection) -> V
             NetworkType::Regtest,
             branch,
             Zatoshis::from_u64(10_000).unwrap(),
-            Bip199Contract::new(120, zcash_funder_hash, secret_digest, zcash_claimant_hash),
+            Bip199Contract::for_profile(
+                profile,
+                120,
+                zcash_funder_hash,
+                secret_digest,
+                zcash_claimant_hash,
+            ),
         ),
     )
     .unwrap();

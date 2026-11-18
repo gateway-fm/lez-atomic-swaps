@@ -189,13 +189,37 @@ pub enum ScriptBuildError {
 /// Non-final sequence used by BIP-199 refund inputs so CLTV is effective.
 pub const REFUND_INPUT_SEQUENCE: u32 = u32::MAX - 1;
 
-/// The exact SHA-256/CLTV P2PKH redeem script specified by BIP-199.
+/// What the claim branch of a [`Bip199Contract`] requires of the preimage.
+///
+/// The rule is part of what a profile means (the profile id is signed): a profile's
+/// contracts use [`ZecRefundProfile::bip199_preimage_rule`], and a binding whose contract
+/// uses another rule is refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Bip199PreimageRule {
+    /// `OP_SHA256 <digest> OP_EQUALVERIFY`: any preimage whose SHA-256 is the digest. The
+    /// script of every profile up to `deterministic-local-devnet-v6` and `public-testnet-v2`,
+    /// byte for byte.
+    DigestOnly,
+    /// `OP_SIZE <32> OP_EQUALVERIFY OP_SHA256 <digest> OP_EQUALVERIFY`: a 32-byte preimage
+    /// whose SHA-256 is the digest. The Taker-reveals-first profiles use it: the LEZ escrow
+    /// claims with a 32-byte preimage only, so a Zcash claim with a preimage of another
+    /// length would pay the Taker and leave the Maker unable to claim LEZ.
+    Exactly32Bytes,
+}
+
+/// Preimage length the LEZ escrow claims with, and the one
+/// [`Bip199PreimageRule::Exactly32Bytes`] enforces on Zcash.
+pub const CLAIM_PREIMAGE_BYTES: u32 = 32;
+
+/// The SHA-256/CLTV P2PKH redeem script specified by BIP-199, optionally with a
+/// preimage size check in the claim branch ([`Bip199PreimageRule`]).
 ///
 /// The contract stores script-level public-key hashes. Key derivation and
 /// ownership belong to the transparent-wallet adapter, which uses canonical
 /// librustzcash types.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bip199Contract {
+    preimage_rule: Bip199PreimageRule,
     refund_lock_time: u32,
     refund_pubkey_hash: [u8; 20],
     secret_digest: [u8; 32],
@@ -205,7 +229,8 @@ pub struct Bip199Contract {
 }
 
 impl Bip199Contract {
-    /// Constructs the exact BIP-199 common-tail layout.
+    /// Constructs the exact BIP-199 common-tail layout with
+    /// [`Bip199PreimageRule::DigestOnly`].
     ///
     /// `refund_lock_time` is the absolute Zcash `nLockTime` threshold. The
     /// spending transaction must also use a non-final input sequence for CLTV
@@ -219,7 +244,53 @@ impl Bip199Contract {
         secret_digest: [u8; 32],
         claimant_pubkey_hash: [u8; 20],
     ) -> Self {
+        Self::with_preimage_rule(
+            Bip199PreimageRule::DigestOnly,
+            refund_lock_time,
+            refund_pubkey_hash,
+            secret_digest,
+            claimant_pubkey_hash,
+        )
+    }
+
+    /// Constructs the contract a profile's agreements use
+    /// ([`ZecRefundProfile::bip199_preimage_rule`]).
+    #[must_use]
+    pub fn for_profile(
+        profile_id: ZecProfileId,
+        refund_lock_time: u32,
+        refund_pubkey_hash: [u8; 20],
+        secret_digest: [u8; 32],
+        claimant_pubkey_hash: [u8; 20],
+    ) -> Self {
+        Self::with_preimage_rule(
+            ZecRefundProfile::for_id(profile_id).bip199_preimage_rule(),
+            refund_lock_time,
+            refund_pubkey_hash,
+            secret_digest,
+            claimant_pubkey_hash,
+        )
+    }
+
+    /// Constructs the contract with an explicit claim-branch preimage rule.
+    ///
+    /// With [`Bip199PreimageRule::Exactly32Bytes`] the claim branch starts with
+    /// `OP_SIZE <32> OP_EQUALVERIFY`, as in the common atomic-swap HTLC; the claim
+    /// stack `[signature, public key, preimage, true, redeem script]` is unchanged.
+    #[must_use]
+    pub fn with_preimage_rule(
+        preimage_rule: Bip199PreimageRule,
+        refund_lock_time: u32,
+        refund_pubkey_hash: [u8; 20],
+        secret_digest: [u8; 32],
+        claimant_pubkey_hash: [u8; 20],
+    ) -> Self {
+        let size_check = match preimage_rule {
+            Bip199PreimageRule::DigestOnly => Vec::new(),
+            Bip199PreimageRule::Exactly32Bytes => pattern::size_check(CLAIM_PREIMAGE_BYTES),
+        };
         let claim_branch = [
+            &size_check[..],
             &[op::SHA256][..],
             &pattern::equals(pattern::push_256b_hash(&secret_digest), true),
             &[
@@ -245,12 +316,29 @@ impl Bip199Contract {
         let p2sh_script_pubkey = Component(pattern::pay_to_script_hash(&redeem_script)).to_bytes();
 
         Self {
+            preimage_rule,
             refund_lock_time,
             refund_pubkey_hash,
             secret_digest,
             claimant_pubkey_hash,
             redeem_script: redeem_script.to_bytes(),
             p2sh_script_pubkey,
+        }
+    }
+
+    /// What the claim branch requires of the preimage.
+    #[must_use]
+    pub const fn preimage_rule(&self) -> Bip199PreimageRule {
+        self.preimage_rule
+    }
+
+    /// Whether the claim branch admits a preimage of this length (the SHA-256 is
+    /// checked separately).
+    #[must_use]
+    pub const fn admits_preimage_length(&self, length: usize) -> bool {
+        match self.preimage_rule {
+            Bip199PreimageRule::DigestOnly => true,
+            Bip199PreimageRule::Exactly32Bytes => length == CLAIM_PREIMAGE_BYTES as usize,
         }
     }
 

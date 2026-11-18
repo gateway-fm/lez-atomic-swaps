@@ -850,7 +850,13 @@ mod legacy_start_tests {
                 NetworkType::Regtest,
                 BranchId::Nu7,
                 Zatoshis::from_u64(10_000).unwrap(),
-                Bip199Contract::new(120, [5; 20], [6; 32], [7; 20]),
+                Bip199Contract::for_profile(
+                    ZecProfileId::DeterministicLocalV3,
+                    120,
+                    [5; 20],
+                    [6; 32],
+                    [7; 20],
+                ),
             ),
         )
         .unwrap();

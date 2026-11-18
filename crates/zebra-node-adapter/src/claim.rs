@@ -2281,9 +2281,9 @@ mod tests {
     use lez_swap_core::{Participant, SwapDirection, UnixSeconds};
     use lez_swap_store::SqliteZecRecoveryStore;
     use lez_zec_swap_sdk::{
-        FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockStepV1, LezAssetV1,
-        LezChainIdentityV1, LezClaimInstructionV1, LezClaimNodeSnapshotV1, LezClaimPort,
-        LezClaimTransactionSnapshotV1, LezCustodySnapshotV1, LezEnvironmentV1,
+        Bip199PreimageRule, FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockStepV1,
+        LezAssetV1, LezChainIdentityV1, LezClaimInstructionV1, LezClaimNodeSnapshotV1,
+        LezClaimPort, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1, LezEnvironmentV1,
         LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezInclusionStatusV1,
         LezMakerLockObservationPort, LezStableTipV1, MakerLockObservationV1, NegotiationChannel,
         NegotiationTranscriptV1, OfferDiscovery, PreparedFirstLockSubmissionV1, ProtectedClaimKey,
@@ -2896,6 +2896,55 @@ mod tests {
             _prepared: &PreparedClaimSubmissionV1,
         ) -> Result<(), Self::Error> {
             panic!("claim-context fixture stops before follow-up submission")
+        }
+    }
+
+    // The SDK's claim drive also reads the Maker's Zcash refund (TakerSellsLez); this forward
+    // fixture never reaches it.
+    #[async_trait]
+    impl ZcashRefundPort for NeverZcash {
+        type Error = FakeError;
+
+        async fn observe_refund_eligibility(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+        ) -> Result<RefundEligibilityObservationV1, Self::Error> {
+            panic!("forward claim fixture never refunds")
+        }
+
+        async fn prepare_refund(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+        ) -> Result<PreparedRefundSubmissionV1, Self::Error> {
+            panic!("forward claim fixture never refunds")
+        }
+
+        async fn observe_prepared_refund(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+            _prepared: &PreparedRefundSubmissionV1,
+        ) -> Result<RefundObservationV1, Self::Error> {
+            panic!("forward claim fixture never refunds")
+        }
+
+        async fn observe_counterparty_refund(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+        ) -> Result<RefundObservationV1, Self::Error> {
+            panic!("forward claim fixture never observes a refund")
+        }
+
+        async fn submit_refund(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+            _prepared: &PreparedRefundSubmissionV1,
+        ) -> Result<RefundSubmitOutcomeV1, Self::Error> {
+            panic!("forward claim fixture never refunds")
         }
     }
 
@@ -4524,7 +4573,13 @@ mod tests {
                 LezEnvironmentV1::DeterministicLocalV0_2,
             )
         };
-        let contract = Bip199Contract::new(refund_lock, refund_hash, secret_digest, claimant_hash);
+        let contract = Bip199Contract::for_profile(
+            profile,
+            refund_lock,
+            refund_hash,
+            secret_digest,
+            claimant_hash,
+        );
         let binding = ZecSwapBinding::new(
             profile,
             lez_zec_swap_sdk::ExpectedBip199Output::new(
@@ -5448,8 +5503,12 @@ mod tests {
         ));
     }
 
+    /// The Maker refuses a claim whose preimage is not the agreed one: another 32-byte value,
+    /// or a digest-matching preimage of another length. The Taker-reveals-first contract
+    /// makes the second invalid on Zcash (its claim branch checks the size), so such a claim
+    /// never pays the Taker; the Maker's reader refuses it by length all the same.
     #[tokio::test]
-    async fn claim_with_a_wrong_or_malformed_preimage_is_refused() {
+    async fn maker_refuses_a_claim_with_a_wrong_or_wrong_length_preimage() {
         let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
         let (rpc, _, maker) = reveal_ports(&fixture);
         // Same claim with another 32-byte value in the preimage push.
@@ -5478,17 +5537,32 @@ mod tests {
             ))
         ));
 
-        // A claim whose digest-matching preimage is 33 bytes is refused by length.
-        let long = [0x91; 33];
-        let fixture = reveal_fixture(false, &long).await;
-        let (rpc, _, maker) = reveal_ports(&fixture);
-        set_confirmed_spend(&rpc, spend_bytes(&fixture, Some(&long)));
-        assert!(matches!(
-            maker
-                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
-                .await,
-            Err(ZebraClaimError::MalformedRevealedPreimage { length: 33 })
-        ));
+        // A digest-matching preimage of 33 or 31 bytes: the contract's claim branch refuses
+        // it (`OP_SIZE <32> OP_EQUALVERIFY`, shown on Zebra in zebra_regtest_reveal.rs), and
+        // the Maker's reader refuses it by length before it could become claim evidence.
+        for length in [33_usize, 31] {
+            let wrong_length = vec![0x91; length];
+            let fixture = reveal_fixture(false, &wrong_length).await;
+            assert_eq!(
+                fixture
+                    .agreement
+                    .binding()
+                    .expected_output()
+                    .contract()
+                    .preimage_rule(),
+                Bip199PreimageRule::Exactly32Bytes
+            );
+            let (rpc, _, maker) = reveal_ports(&fixture);
+            set_confirmed_spend(&rpc, spend_bytes(&fixture, Some(&wrong_length)));
+            assert!(matches!(
+                maker
+                    .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                    .await,
+                Err(ZebraClaimError::SpendObservation(
+                    SpendObservationError::PreimageLengthRefused { length: refused }
+                )) if refused == length
+            ));
+        }
     }
 
     #[tokio::test]

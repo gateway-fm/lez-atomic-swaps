@@ -4738,7 +4738,13 @@ fn agreement_for_direction(
     };
     let secret_digest: [u8; 32] = Sha256::digest([0x91; 32]).into();
     let (profile, branch, refund_height, refund_plan) = fixture_profile(direction);
-    let contract = Bip199Contract::new(refund_height, refund_hash, secret_digest, claimant_hash);
+    let contract = Bip199Contract::for_profile(
+        profile,
+        refund_height,
+        refund_hash,
+        secret_digest,
+        claimant_hash,
+    );
     let binding = ZecSwapBinding::new(
         profile,
         ExpectedBip199Output::new(

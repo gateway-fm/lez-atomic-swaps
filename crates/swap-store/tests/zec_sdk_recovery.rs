@@ -6690,7 +6690,7 @@ fn negotiation_artifacts(
             NetworkType::Regtest,
             branch,
             Zatoshis::from_u64(100_000_000).expect("value"),
-            Bip199Contract::new(refund_lock, refund_hash, digest, claimant_hash),
+            Bip199Contract::for_profile(profile, refund_lock, refund_hash, digest, claimant_hash),
         ),
     )
     .expect("binding");

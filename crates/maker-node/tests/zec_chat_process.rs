@@ -2175,7 +2175,13 @@ fn unsigned_draft(
         SwapDirection::TakerSellsLez => (maker_hash, taker_hash),
     };
     let (profile, _, branch, _) = profile_for(direction);
-    let contract = Bip199Contract::new(120, zcash_funder_hash, secret_digest, zcash_claimant_hash);
+    let contract = Bip199Contract::for_profile(
+        profile,
+        120,
+        zcash_funder_hash,
+        secret_digest,
+        zcash_claimant_hash,
+    );
     let output = ExpectedBip199Output::new(
         NetworkType::Regtest,
         branch,

@@ -910,7 +910,7 @@ fn fixture(direction: SwapDirection, values: [u64; 2]) -> Fixture {
             NetworkType::Regtest,
             branch,
             Zatoshis::from_u64(PRINCIPAL).expect("principal"),
-            Bip199Contract::new(refund_lock, refund_hash, [9; 32], claimant_hash),
+            Bip199Contract::for_profile(profile, refund_lock, refund_hash, [9; 32], claimant_hash),
         ),
     )
     .expect("binding");
