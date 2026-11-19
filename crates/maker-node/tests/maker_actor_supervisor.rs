@@ -2164,3 +2164,64 @@ fn a_waiting_maker_lez_claim_whose_attempt_failed_holds_no_other_claim() {
     assert_eq!(resolution, MakerActorSupervisorResolution::Terminal);
     assert_eq!(fs::read_to_string(&failing_log).unwrap(), "status\nclaim\n");
 }
+
+#[test]
+fn a_failed_swaps_lez_claim_in_flight_holds_no_other_claim() {
+    // Review 3, item 3: the gate's peers excluded only terminal swaps, and a
+    // swap stopped as failed (its re-plans exhausted) kept its in-flight
+    // marker, so it held every other Maker LEZ claim until its own LEZ refund
+    // time; an old-format marker without a time held them forever. A failed
+    // swap's claim holds nothing, and the actor removes its marker on that
+    // failure.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let claims = root.path().join("lez-claims-submitted");
+    let now_ms = unix_now_ms();
+    let owner = MakerActorLeaseOwner::new([0x7a; 16]).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let holder = "m5-failed-holder";
+    let holder_state = register_gated_actor(&mut store, root.path(), holder, |_| {
+        format!(
+            "#!/bin/sh\n\
+             test \"$1\" = \"--config-fd\" || exit 91\n\
+             case \"$3\" in\n\
+               status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
+               claim) exit {code} ;;\n\
+               *) exit 95 ;;\n\
+             esac\n",
+            at = now_ms + 3_600_000,
+            code = zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE,
+        )
+    });
+    // An old-format marker (no refund time) left by a claim that never landed.
+    fs::write(
+        zec_reference_actor::revealing_claim_in_flight_marker(&holder_state).unwrap(),
+        "follow-up LEZ claim submitted\n",
+    )
+    .unwrap();
+    let (swap, resolution, class) = run_due(&mut store, owner, 10);
+    assert_eq!(swap, holder);
+    assert_eq!(resolution, MakerActorSupervisorResolution::Failed);
+    assert_eq!(
+        class.as_deref(),
+        Some("lez_revealing_claim_replan_exhausted")
+    );
+
+    let follower = "m5-failed-holder-follower";
+    register_gated_actor(&mut store, root.path(), follower, |state| {
+        gated_lez_claim_program(
+            follower,
+            state,
+            &root.path().join("follower-log"),
+            &claims,
+            now_ms + 1_800_000,
+        )
+    });
+    let (swap, resolution, class) = run_due(&mut store, owner, 20);
+    assert_eq!(swap, follower);
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (MakerActorSupervisorResolution::Requeued, None),
+        "a failed swap's claim holds no other"
+    );
+}

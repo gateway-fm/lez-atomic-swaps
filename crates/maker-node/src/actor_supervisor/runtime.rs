@@ -1019,10 +1019,16 @@ fn revealing_claim_held_back(
             .as_millis(),
     )
     .unwrap_or(u64::MAX);
-    // A submitted claim holds the nonce whatever its swap's schedule says,
-    // until its swap's LEZ refund time.
+    // A submitted claim holds the nonce until its swap's LEZ refund time, unless
+    // its swap was stopped as failed: a failed swap is driven no more, so its
+    // claim is either already included (the nonce moved on, the next claim is
+    // planned at the live one) or never will be (review 3, item 3; an
+    // old-format marker without a time held every claim forever).
     let in_flight = peers().find(|record| {
         let state = record.manifest().state_database_path();
+        if record.schedule_state() == lez_swap_store::MakerActorScheduleState::Failed {
+            return false;
+        }
         zec_reference_actor::revealing_claim_in_flight_marker(state)
             .is_some_and(|marker| marker.is_file())
             && in_flight_claim_holds(

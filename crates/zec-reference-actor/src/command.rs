@@ -1886,6 +1886,7 @@ where
                 live_nonce,
             } => {
                 if replans.len() >= MAX_REVEALING_CLAIM_REPLANS as usize {
+                    clear_revealing_claim_in_flight(config);
                     return Err(ActorCommandError::RevealingClaimReplanExhausted);
                 }
                 let open = active
@@ -1902,6 +1903,7 @@ where
                     Ok(replanned) => replanned,
                     Err(error) if is_claim_replan_exhausted(&error) => {
                         eprintln!("actor claim refused: {error:?}");
+                        clear_revealing_claim_in_flight(config);
                         return Err(ActorCommandError::RevealingClaimReplanExhausted);
                     }
                     Err(error) => {
