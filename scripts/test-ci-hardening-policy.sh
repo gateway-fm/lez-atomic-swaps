@@ -96,6 +96,16 @@ done
 
 ./scripts/check-github-action-pins.sh
 
+# Every commit on main and every tag gets a complete CI run (issue #171):
+# only a pull request's newer push may cancel its older run, and outside pull
+# requests the concurrency group names the commit.
+for workflow in "$ci_workflow" "$public_workflow"; do
+  require_fixed "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" "$workflow"
+  require_fixed "\${{ github.event_name != 'pull_request' && format('-{0}', github.sha) || '' }}" "$workflow"
+  ! rg -Fq 'cancel-in-progress: true' "$workflow" \
+    || fail "$workflow cancels runs outside pull requests"
+done
+
 require_fixed 'tags: ["m*-complete*"]' "$ci_workflow"
 require_fixed './scripts/run-ci-quality-gates.sh' "$ci_workflow"
 require_fixed './scripts/test-spin-lock-remediation.sh' "$ci_workflow"
