@@ -62,7 +62,9 @@ Later full runs of the same suite with the #103 scenarios added (97 tests):
 [`regression-0.3.3-2026-11-16-macos-arm64`](../docs/evidence/regression-0.3.3-2026-11-16-macos-arm64/RESULTS.txt)
 (Apple silicon, `0a42823f`, the fix for #156 and version 0.3.3, 97 of 97),
 [`regression-0.3.3-2026-11-19-macos-arm64`](../docs/evidence/regression-0.3.3-2026-11-19-macos-arm64/RESULTS.txt)
-(Apple silicon, `fab36d52`, ZEC selling LEZ in the Taker-reveals-first order, 97 of 97, 3 of them on a rerun); and the 93 tests on Apple silicon,
+(Apple silicon, `fab36d52`, ZEC selling LEZ in the Taker-reveals-first order, 97 of 97, 3 of them on a rerun),
+[`regression-0.3.4-2026-11-19-macos-arm64`](../docs/evidence/regression-0.3.4-2026-11-19-macos-arm64/RESULTS.txt)
+(Apple silicon, `3b73e65b`, the 0.3.4 candidate with `zec-maker-early-claim`, 98 of 98); and the 93 tests on Apple silicon,
 [`regression-m2-2026-11-12-macos-arm64`](../docs/evidence/regression-m2-2026-11-12-macos-arm64/RESULTS.txt)
 (`af3ac978`, 93 of 93). Each set's `PROVENANCE.md` names its commits. The
 release record is the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).

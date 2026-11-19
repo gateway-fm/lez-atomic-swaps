@@ -1,0 +1,55 @@
+[14:12:35] code 3b73e65b, tree dirty: 0
+[14:12:36] relay: proxies: None
+[14:12:36] lanes.sh down 3 --wipe rc=0
+[14:12:37] down.sh --wipe rc=0
+[14:19:21] from-scratch.sh rc=0
+[14:19:23] packages staged as 0.3.4: lez_maker_node lez_taker_node lez_swap_node lez_network lez_atomic_swap_maker lez_atomic_swap_taker
+[14:19:24] maker image sha256:76262ae6629372ce7a3fef28621e16813363bd780e6bc32aa133ba1f6c23bdfb 2026-11-19T14:16:42.460316011Z build source 3b73e65b3773d94388e91c73e657741935207489
+[14:19:25] taker image sha256:4a46cc52cb6d4f56ee2ab94d73019d18306547f0132c3e63e360db2adb0957a3 2026-11-19T14:16:42.457101177Z build source 3b73e65b3773d94388e91c73e657741935207489
+[14:19:26] maker image probe tool: -r-xr-xr-x 1 root root 14501848 Nov 19 14:16 /usr/local/bin/lez-v02-escrow-claim-probe; image size 2214797159 bytes (fab36d52 image: 2200163338)
+[14:19:26] image lez-basecamp-ui:local sha256:108cde52fcf901cf8b71f3dc0b130b947c8a6090492c7fde3323b8fbff0ef153 2026-11-19T13:39:53.474389378Z
+[14:19:26] image lez-network-module:local sha256:12f8c126c794c5161cdbbe7e17da14078f22b96e4a558e972ff0edd3beda0664 2026-11-19T14:16:27.580055379Z
+[14:19:26] image lez-services:local sha256:f12005f4ce46374689d5a247e75a178db961be1fd460eeaf2958238b8056c0ee 2026-11-18T16:42:54.793313596Z
+[14:19:26] image lez-zebra:local sha256:de894d2d6a2ae38d9b6c0d98fe8360127240aa23597fd97fefcac48d39fe5736 2026-11-18T16:42:54.158681929Z
+[14:19:27] image lez-bitcoin-core:local sha256:39e939eabe1cc7024b140b36464587f72e8b97d528162cf3849cb1479d653691 2026-11-18T16:42:52.934508845Z
+[14:19:27] image lez-btc-miner:local sha256:c00b0cecc587f01984d7f27527644c10619cec42c9674b7f40d201fba0e5d379 2026-11-18T16:43:06.720579129Z
+[14:19:28] lanes.sh down 3 --wipe rc=0
+[14:19:28] lanes.sh mint 3 rc=0
+[14:22:54] up.sh --fresh-lez with three lanes rc=0
+[14:22:54] before: lez-maker-node build source 3b73e65b3773d94388e91c73e657741935207489, package source 3b73e65b3773d94388e91c73e657741935207489, package version 0.3.4
+[14:22:54] before: lez-l2-maker-node build source 3b73e65b3773d94388e91c73e657741935207489, package source 3b73e65b3773d94388e91c73e657741935207489, package version 0.3.4
+[14:22:55] before: lez-l3-maker-node build source 3b73e65b3773d94388e91c73e657741935207489, package source 3b73e65b3773d94388e91c73e657741935207489, package version 0.3.4
+[14:22:55] before: lez-taker-node build source 3b73e65b3773d94388e91c73e657741935207489, package source 3b73e65b3773d94388e91c73e657741935207489, package version 0.3.4
+[14:22:55] before: lez-l2-taker-node build source 3b73e65b3773d94388e91c73e657741935207489, package source 3b73e65b3773d94388e91c73e657741935207489, package version 0.3.4
+[14:22:56] before: lez-l3-taker-node build source 3b73e65b3773d94388e91c73e657741935207489, package source 3b73e65b3773d94388e91c73e657741935207489, package version 0.3.4
+[14:22:56] lez-maker-node probe tool: -r-xr-xr-x 1 root root 14501848 Nov 19 14:16 /usr/local/bin/lez-v02-escrow-claim-probe
+[14:22:56] lez-l2-maker-node probe tool: -r-xr-xr-x 1 root root 14501848 Nov 19 14:16 /usr/local/bin/lez-v02-escrow-claim-probe
+[14:22:56] lez-l3-maker-node probe tool: -r-xr-xr-x 1 root root 14501848 Nov 19 14:16 /usr/local/bin/lez-v02-escrow-claim-probe
+[14:22:56] runtime.env profile: fast
+[14:22:57] proxy check: no lez* container carries a proxy variable
+[14:28:25] regress.sh smoke rc=0
+[14:27:26] === node:btc:happy:TakerSellsForeign (try 1, lane 1): PASSED in 137 s; LEZ finalized 195, tip 198
+[14:27:44] === node:zec:zec-happy:TakerSellsLez (try 1, lane 3): PASSED in 162 s; LEZ finalized 203, tip 208
+[14:28:25] === node:zec:zec-happy:TakerSellsForeign (try 1, lane 2): PASSED in 126 s; LEZ finalized 228, tip 231
+[14:28:25] regression smoke: 6 of 6 passed in 5 min, 0 new chains, 0 profile switches,        0 frozen tries
+[14:37:37] early-claim lane 1: PASS in 547 s
+[14:46:41] early-claim lane 3: PASS in 537 s
+[14:46:42] early-claim lane 2: PASS in 537 s
+[14:46:42] DONE
+[14:47:23] full run: code 3b73e65b, tree dirty: 0
+[14:47:24] full run: all six Node containers report 3b73e65b3773d94388e91c73e657741935207489
+[14:47:24] full run: runtime.env profile fast
+[14:47:24] full run: proxy check clean
+[14:47:24] starting regress.sh full (LEZ_LANES=3, LEZ_REGRESS_RECORD=1): 98 tests
+[16:42:40] regress.sh full rc=0
+[16:35:09] === ui:btc:taker-refund:TakerSellsForeign (try 1, lane 2): PASSED in 329 s; LEZ finalized 5468, tip 5470
+[16:36:03] === ui:btc:maker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 320 s; LEZ finalized 5500, tip 5503
+[16:36:03] lanes: 2 test(s) on a chain of their own, lane 1 alone
+[16:36:10]     new LEZ chain (1) LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+[16:37:14]     node:zec:zec-balance-refusal:TakerSellsLez (try 1) starts: LEZ finalized 32, tip 36
+[16:39:31] === node:zec:zec-balance-refusal:TakerSellsLez (try 1): PASSED in 137 s (+64 s before it, a new chain among them); LEZ finalized 126, tip 148
+[16:39:31]     new LEZ chain (2) LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01
+[16:40:31]     node:zec:zec-balance-refusal:TakerSellsForeign (try 1) starts: LEZ finalized 34, tip 38
+[16:42:40] === node:zec:zec-balance-refusal:TakerSellsForeign (try 1): PASSED in 129 s (+60 s before it, a new chain among them); LEZ finalized 131, tip 143
+[16:42:40] regression full: 98 of 98 passed in 115 min, 2 new chains, 1 profile switches,        0 frozen tries
+[16:42:40] DONE
