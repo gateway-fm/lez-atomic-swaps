@@ -175,8 +175,19 @@ In `BothLegsLocked` with no claim, each role drives its own refund (the Taker
 cannot sign the Zcash refund, so its LEZ refund does not wait for it); once
 one leg's refund is recorded the other role's follows. No refund is admitted
 after claim evidence is recorded, except the `TakerSellsLez` Maker's own
-Zcash refund once its follow-up LEZ claim can no longer land (the Taker's
-LEZ refund final; ADR 0216). `TakerSellsLez` deviates from RFP-003 F4,
+Zcash refund once its follow-up LEZ claim can no longer land
+(`RefundIntentV1::after_lost_followup` with a `LostFollowupProofV1`: the
+Taker's LEZ refund final, or the escrow still open at a finalized LEZ time
+past the refund time; ADR 0216). The proof's parts (`RefundEvidenceV1`,
+`LezEscrowOpenPastRefundTimeV1`) have public constructors, but they must
+come from the LEZ adapter's finalized observation, never be assembled from
+other facts.
+
+If the Taker's Zcash claim is older than the adapter's
+`counterparty_scan_blocks`, the Maker's observation of it is `Absent` and
+the swap retries without end (nothing is lost; the Maker cannot read the
+spend's depth). A Zcash reorg deeper than the profile's depth after a fact
+was recorded is not revisited. `TakerSellsLez` deviates from RFP-003 F4,
 which puts the LEZ refund first in both directions; ADR 0216 records why.
 
 <!-- Part D: rewrite when TakerSellsForeign through the Nodes lands (handover steps 17-21). -->

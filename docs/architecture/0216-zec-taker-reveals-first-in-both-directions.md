@@ -174,8 +174,21 @@ direction's agreements are byte-identical to those signed before.
   block time is at or past `refund_at` it submits the claim no more and only
   observes it (it may have landed earlier); the swap stays at its claim,
   holding no other claim and counted by no capacity, reported as waiting
-  for the Taker's LEZ refund (`taker_lez_refund_after_lost_claim`), and
-  re-plans exhausted past `refund_at` do not stop it.
+  for the escrow to settle (`taker_lez_refund_after_lost_claim`), and
+  re-plans exhausted past `refund_at` do not stop it. The Maker then refunds
+  its Zcash on either proof that its claim can never land: the Taker's LEZ
+  refund final, or the escrow read still funded (neither claimed nor
+  refunded) in the finalized LEZ state at a finalized time at or past
+  `refund_at` (the escrow takes a claim only before it). The second does
+  not need the Taker to act, which the reference Taker never does once its
+  claim left; it reads the escrow's account state, not a bounded scan, so a
+  Maker whose claim did land never also refunds. The Taker then records the
+  Maker's refund (its own claim lost) and refunds its LEZ.
+- A Maker Zcash refund sent at `BothLegsLocked`, before the Taker's claim
+  was seen, is not sent again once the Maker records the reveal, unless its
+  LEZ claim can no longer land; the one broadcast before the reveal cannot be
+  recalled and can still win against an unmined Taker claim (the race
+  above).
 
 - The Maker reads the preimage from any consensus-valid claim of the HTLC
   (the claim branch of this contract with a 32-byte preimage of the digest),
