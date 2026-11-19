@@ -162,12 +162,18 @@ measured.
 
 A Node refuses to start while it holds an open `TakerSellsLez` ZEC swap under
 a legacy profile and names the swaps: finish or refund them with the previous
-release first (no upgrade between releases before 1.0.0, issue #133).
+release first (no upgrade between releases before 1.0.0, issue #133). The
+same holds for a swap under a Taker-reveals-first profile: a Taker claim
+staged by an earlier build (which set an expiry height) no longer validates
+against this build, which stages it with none, so such a swap is finished
+with the build that staged it; there is no fallback.
 
 In `BothLegsLocked` with no claim, each role drives its own refund (the Taker
 cannot sign the Zcash refund, so its LEZ refund does not wait for it); once
 one leg's refund is recorded the other role's follows. No refund is admitted
-after claim evidence is recorded. `TakerSellsLez` deviates from RFP-003 F4,
+after claim evidence is recorded, except the `TakerSellsLez` Maker's own
+Zcash refund once its follow-up LEZ claim can no longer land (the Taker's
+LEZ refund final; ADR 0216). `TakerSellsLez` deviates from RFP-003 F4,
 which puts the LEZ refund first in both directions; ADR 0216 records why.
 
 <!-- Part D: rewrite when TakerSellsForeign through the Nodes lands (handover steps 17-21). -->
