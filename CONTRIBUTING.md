@@ -44,9 +44,16 @@ new contributions.
 From the repository root, run:
 
 ```sh
+./scripts/check-all.sh
 ./scripts/verify-public-repository.sh
 ./scripts/run-public-offline-e2e.sh
 ```
+
+`check-all.sh` runs `cargo fmt --check` on every Cargo workspace of the tree
+(the root, `fuzz` and those under `compat/`), then Clippy and rustdoc with the
+flags CI uses, and the shell, workflow and Dockerfile linters that are
+installed. `--fast` limits Clippy and rustdoc to the root workspace. The lint
+jobs that open `ci.yml` run the same script.
 
 The offline E2E wrapper uses a cached Rust image and dependency registry in an
 auto-removed Docker container with no network. It never starts, stops, or joins

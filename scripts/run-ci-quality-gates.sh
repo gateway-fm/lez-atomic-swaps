@@ -56,18 +56,8 @@ tar -xzf "$shellcheck_archive" -C "$tools_dir"
 shellcheck="${tools_dir}/shellcheck-v${shellcheck_version}/shellcheck"
 chmod 0555 "${tools_dir}/actionlint" "$hadolint" "$compose" "$shellcheck"
 
-is_release_scope_path() {
-  local path="$1"
-  [[ "$path" != *monero* \
-    && "$path" != *xmr* \
-    && "$path" != *zcash* \
-    && "$path" != *zebra* \
-    && "$path" != *zec* \
-    && "$path" != *m4-* \
-    && "$path" != *m5-* \
-    && "$path" != *m7-* \
-    && "$path" != */milestone-7/* ]]
-}
+# shellcheck source=scripts/ci-release-scope.sh
+source ./scripts/ci-release-scope.sh
 
 shell_files=()
 while IFS= read -r -d '' path; do
