@@ -147,6 +147,13 @@ revealing evidence still waits for the Zcash leg's depth. The Maker's
 follow-up LEZ claim uses the `LezClaimPort` follow-up methods
 (`prepare_followup_claim` and the rest).
 
+A LEZ claim whose nonce another transaction of the account took is answered
+`Superseded` and re-planned at the live nonce (`restage_revealing_claim`),
+for as long as the claim can land; `REVEALING_CLAIM_REPLAN_ATTENTION` (5)
+re-plans is the point past which an actor reports the contention, and
+`MAX_REVEALING_CLAIM_REPLANS` (16,384) the protocol's bound, which no
+profile's LEZ refund window reaches at one re-plan per attempt.
+
 A Maker Node signs every LEZ claim with one account, so its follow-up LEZ
 claims go one at a time (a submitted claim holds the next until it is final
 or its swap's LEZ refund time passes; a failed swap's claim for one

@@ -226,7 +226,16 @@ direction's agreements are byte-identical to those signed before.
   `claim_lez`/`claim_zcash` meaning the chain claimed, and adds `refund_lez`
   and the claim operations `zcash_revealing_claim` and `lez_followup_claim`.
 - The Maker Node's one-LEZ-claim-in-flight gate covers the Maker's follow-up
-  LEZ claim, as it covered its revealing claim before. A submitted claim's
+  LEZ claim, as it covered its revealing claim before. A LEZ claim whose
+  nonce was taken by another transaction of the same account is re-planned
+  at the live nonce, at most once per attempt, for as long as it can land
+  (issue #172): before 0.3.4 the sixth re-plan stopped the swap while its
+  claim could still land. Past five re-plans the actor reports
+  `lez_claim_nonce_contention` so the operator learns of it; the protocol's
+  bound (16,384) is out of reach inside any profile's LEZ refund window.
+  The Maker's own LEZ escrow locks and refunds for other swaps sign with the
+  same account and do not pass the gate, so they can take a claim's nonce;
+  each such collision costs the claim one re-plan, never funds. A submitted claim's
   in-flight marker holds the others until its swap's LEZ refund time, or
   until its actor removes it (the claim final, or unable to land). A swap
   stopped as failed is driven no more, so its marker holds for one

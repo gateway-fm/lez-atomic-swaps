@@ -1470,13 +1470,13 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         Some(zec_reference_actor::LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE) => {
             ChildRunError::Retry("lez_claim_window_closed")
         }
-        // The Zcash actor re-planned its LEZ claim (the Maker's follow-up claim
-        // in TakerSellsLez) the bounded number of times and its nonce was
-        // taken again: the claim is never abandoned for a refund; the swap
-        // needs attention by name (FINDINGS 24).
+        // An actor that reports its LEZ claim's re-plans exhausted (an actor
+        // before issue #172; the current one re-plans while the claim can
+        // land and never exits so): a backoff, not a failure, so the swap is
+        // attempted again while its claim can still land.
         #[cfg(feature = "pair-zec")]
         Some(zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE) => {
-            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+            ChildRunError::Retry("lez_revealing_claim_replan_exhausted")
         }
         // The Zcash actor's LEZ escrow initialization was refused because its
         // escrow account already exists without it (another swap with the same
@@ -2880,7 +2880,7 @@ mod exit_classification_tests {
         );
         assert!(matches!(
             classify_exit(claim_exhausted),
-            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+            ChildRunError::Retry("lez_revealing_claim_replan_exhausted")
         ));
         // FINDINGS 26: a claim refused after its window (nothing sent) backs
         // off; the next status names the actor's own refund.

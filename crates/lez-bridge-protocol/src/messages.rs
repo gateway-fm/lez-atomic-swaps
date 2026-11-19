@@ -270,9 +270,15 @@ impl PrepareNativeEscrowResult {
 /// refused with [`ErrorCode::ReplanExhausted`].
 pub const MAX_NATIVE_ESCROW_REPLANS: u32 = 5;
 
-/// Upper bound on re-plans of one owned revealing claim; the sixth
+/// Upper bound on re-plans of one owned revealing claim; past it a
 /// supersession is refused with [`ErrorCode::ReplanExhausted`].
-pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 5;
+///
+/// A claim is re-planned only after its nonce was taken, and a claim that can
+/// still land is never given up while its window is open (issue #172). The
+/// actor re-plans at most once per attempt and attempts are at least a second
+/// apart, so within the longest LEZ refund delay of any profile (14,400 s,
+/// `public-testnet-v3`) no claim reaches this bound.
+pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 16_384;
 
 /// The native escrow transaction whose nonce was taken.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
