@@ -106,6 +106,24 @@ for workflow in "$ci_workflow" "$public_workflow"; do
     || fail "$workflow cancels runs outside pull requests"
 done
 
+# Release gate (issue #171): the first job of each release workflow checks
+# that the commit has finished, green CI, and every other job waits for it.
+for workflow in .github/workflows/release-images.yml .github/workflows/release-packages.yml; do
+  require_fixed 'run: ./scripts/check-release-ci.sh' "$workflow"
+  require_fixed 'GH_TOKEN: ${{ github.token }}' "$workflow"
+  ungated="$(awk '
+    /^jobs:/ { in_jobs = 1; next }
+    in_jobs && /^  [A-Za-z0-9_-]+:$/ { flush(); job = substr($1, 1, length($1) - 1); has_needs = 0; next }
+    in_jobs && /^    needs:/ { has_needs = 1 }
+    function flush() { if (job != "" && job != "ci-gate" && !has_needs) print job }
+    END { flush() }
+  ' "$workflow")"
+  [[ -z "$ungated" ]] || fail "$workflow jobs start without the release CI gate: ${ungated//$'\n'/ }"
+  first_job="$(awk '/^jobs:/ { getline; sub(/:$/, ""); sub(/^ +/, ""); print; exit }' "$workflow")"
+  [[ "$first_job" == ci-gate ]] || fail "$workflow must start with the ci-gate job"
+done
+require_fixed 'readonly gated_workflows=(ci.yml public-readiness.yml)' scripts/check-release-ci.sh
+
 require_fixed 'tags: ["m*-complete*"]' "$ci_workflow"
 require_fixed './scripts/run-ci-quality-gates.sh' "$ci_workflow"
 require_fixed './scripts/test-spin-lock-remediation.sh' "$ci_workflow"
