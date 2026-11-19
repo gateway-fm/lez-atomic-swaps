@@ -131,8 +131,7 @@ fn coordinator(pair: Pair, direction: SwapDirection) -> SwapCoordinator {
             SwapDirection::TakerSellsLez => Chain::Lez,
         };
         let safety_chains = match pair {
-            Pair::Bitcoin => [maker_chain, taker_chain],
-            Pair::Zcash => [Chain::Lez, Chain::Zcash],
+            Pair::Bitcoin | Pair::Zcash => [maker_chain, taker_chain],
             Pair::Monero => unreachable!("Monero uses event-gated recovery"),
         };
         RecoverySchedule::new(

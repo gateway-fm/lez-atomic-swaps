@@ -185,6 +185,35 @@ impl LezBridgeWitnessedClaimPresenceTransport for BridgeClient {
     }
 }
 
+/// One read of the finalized LEZ clock: the last finalized block's height and
+/// consensus timestamp from the official indexer. A block timestamp is the only
+/// clock the escrow's validity window (`..refund_at`) is checked against; once
+/// the finalized one is at or past `refund_at`, no later block can include a
+/// claim of that escrow.
+#[async_trait]
+pub trait LezBridgeFinalizedClockTransport: Send + Sync {
+    /// Concrete transport failure.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Reads the finalized clock once.
+    async fn observe_finalized_clock(
+        &self,
+        request: lez_bridge_protocol::ObserveFinalizedClockRequest,
+    ) -> Result<lez_bridge_protocol::ObserveFinalizedClockResult, Self::Error>;
+}
+
+#[async_trait]
+impl LezBridgeFinalizedClockTransport for BridgeClient {
+    type Error = BridgeClientError;
+
+    async fn observe_finalized_clock(
+        &self,
+        request: lez_bridge_protocol::ObserveFinalizedClockRequest,
+    ) -> Result<lez_bridge_protocol::ObserveFinalizedClockResult, Self::Error> {
+        BridgeClient::observe_finalized_clock(self, request).await
+    }
+}
+
 /// One fresh-client attempt at exact owner first-lock observation or submission.
 ///
 /// A process-local bridge client rejects request-ID reuse. Context-owning SDK
@@ -1511,6 +1540,43 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
             None,
         )
         .await
+    }
+
+    /// Reads, for the claimant, whether the escrow is still funded (neither claimed
+    /// nor refunded) in the finalized LEZ state, and the finalized clock it was read
+    /// at (Unix milliseconds). The sidecar reads the escrow accounts at its last
+    /// finalized block and scans `window` (one block suffices) for a refund.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-claimant, inconsistent account facts, and transport failures.
+    pub async fn observe_finalized_escrow_open(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        window: DiscoveryWindow,
+    ) -> Result<(u64, bool), NativeRefundAdapterError<T::Error>> {
+        if self.local_participant != agreement.lez_claimant() {
+            return Err(NativeRefundAdapterError::DiscoveryRequiresClaimant);
+        }
+        let terms = refund_terms(agreement, &self.runtime, self.local_participant)?;
+        let context = self.refund_context(request_id);
+        let response = self
+            .transport
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                terms.clone(),
+                NativeRefundObservationTarget::DiscoverByTerms { window },
+            ))
+            .await
+            .map_err(NativeRefundAdapterError::Transport)?;
+        validate_refund_response_context(&context, &response)?;
+        let state = validate_refund_accounts(agreement, &terms, &response.accounts)?;
+        Ok((
+            response.clock_after.timestamp_ms,
+            state == Some(EscrowState::Funded),
+        ))
     }
 
     /// Submits exact durable native refund bytes once through generic submit.

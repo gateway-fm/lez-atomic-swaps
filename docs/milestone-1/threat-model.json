@@ -317,9 +317,9 @@
     },
     {
       "id": "INV-07",
-      "text": "Recovery order is route-specific: BTC recovers the Maker-funded leg first; ZEC claim order is LEZ reveal then ZEC claim, while no-reveal recovery is LEZ refund then ZEC refund; XMR is LEZ-first and uses Tag 14 authorization, Tag 15 claim, Tag 16 refund, and Tag 17 punishment. Tag 17 reveals no XMR share.",
+      "text": "Claim and recovery order follows the common flow: in both directions of BTC and ZEC the Taker holds the secret, claims the Maker-funded leg first, and the Maker-funded leg refunds first (ADR 0216; ZEC TakerSellsLez departs from RFP F4). XMR is LEZ-first and uses Tag 14 authorization, Tag 15 claim, Tag 16 refund, and Tag 17 punishment. Tag 17 reveals no XMR share.",
       "routes": ["lez-btc", "lez-xmr", "lez-zec"],
-      "proofs": ["docs/architecture/0008-bidirectional-role-ordering.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0174-join-tag17-to-the-funded-monero-output.md"]
+      "proofs": ["docs/architecture/0008-bidirectional-role-ordering.md", "docs/architecture/0216-zec-taker-reveals-first-in-both-directions.md", "crates/swap-core/tests/zec_contract_ordering.rs", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0174-join-tag17-to-the-funded-monero-output.md"]
     },
     {
       "id": "INV-08",
@@ -1087,6 +1087,32 @@
       "remaining": "The exported evidence files are writable and unsigned; the explorer mounts only the export directory read-only (ADR 0213 S1.6). Owner-only publication, signatures, and privacy review remain open.",
       "owner": "evidence-security",
       "state": "open"
+    },
+    {
+      "id": "TM-0030",
+      "old_ids": [],
+      "view": "chain-protocol",
+      "scenario": "In ZEC TakerSellsLez the Maker holds the preimage and claims the Taker's locked LEZ without ever funding the Zcash HTLC, because the LEZ escrow checks only the claimant's signature, the preimage, and the validity window.",
+      "scope": {
+        "routes": ["lez-zec"],
+        "directions": ["taker-sells-lez"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E11", "E22", "E12", "E15", "E16", "F13", "F16", "F17", "F20"]
+      },
+      "classes": ["stride.elevation-of-privilege", "protocol.ordering", "protocol.secret-lifecycle", "protocol.deadline-inclusion"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "INV-03", "INV-05", "INV-07"],
+      "milestones": ["M1", "M2", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 4 }, "residual": { "likelihood": 1, "impact": 4 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 4 }, "residual": { "likelihood": 2, "impact": 4 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 2, "impact": 5 } }
+      ],
+      "control": "The Taker holds the preimage in both directions and reveals it only by claiming the Maker-funded Zcash output once it is canonical at the profile's depth, more than the reveal margin before the Zcash refund height and a margin before the LEZ refund time; the Maker's Zcash refund matures first and the Taker's LEZ refund later. The Maker reads the preimage from any consensus-valid claim of the HTLC and commits it on first sight, mempool included; the Taker re-broadcasts a staged claim whatever the window; the Maker serialises its LEZ claims earliest refund first and caps its open TakerSellsLez swaps so the queue fits the margin; the Maker funds Zcash only while tip + R + C < H_z. TakerSellsLez under a profile older than deterministic-local-v3, deterministic-local-devnet-v7/-v8, or public-testnet-v3 is refused.",
+      "proofs": ["docs/architecture/0216-zec-taker-reveals-first-in-both-directions.md", "crates/swap-core/tests/zec_contract_ordering.rs", "crates/zec-swap-sdk/src/sdk.rs", "crates/zec-swap-sdk/src/profile.rs"],
+      "remaining": "If Zcash runs slower than the profile's slowest pace, the Zcash refund height can fall after the LEZ refund time minus the margin, and a dishonest Taker can claim ZEC late and also refund LEZ; this mirrors TakerSellsForeign's dependence on the fastest pace. The BIP-199 claim branch has no deadline, so a Maker offline from its refund height to the LEZ refund time can lose both legs. The prepared ZEC setup is single-operator: the preparation ceremony signs the template with both roles' keys and holds both halves, the preimage included, while it runs, so it is safe only where the preparer is trusted by the Taker; Node-side take-time preparation (the Taker's Node creates the secret, each Node its own Zcash key) is tracked in issue #162 for M5. A Maker who also mines Zcash (or controls the miners the Taker's claim reaches) can read the preimage from the mempool, claim the LEZ, and keep the Taker's claim out of blocks until its own Zcash refund is mined at the refund height; the Taker's only protection is the reveal margin (it claims only while tip + R < H_z), which bounds how long such a Maker must censor, not whether it can. A miner can malleate the Taker's claim (ZIP-244 transaction ids do not cover scriptSigs) so the mined transaction is not byte-identical to the one the Taker sent; the Taker observes its own claim by its transaction id and exact bytes, so a malleated claim fails that check (ObservedClaimBytesMismatch) on every drive and the Taker's Node never records its own claim: the ZEC is the Taker's on chain and the Maker still claims the LEZ, but the Taker's swap does not reach completed without an operator. A public Testnet run under public-testnet-v3 has not run.",
+      "owner": "zec-protocol",
+      "state": "checking"
     }
   ]
 }

@@ -7,12 +7,13 @@ use crate::{
     ClaimStepV1, CreateAgreementOutcome, CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1,
     FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
     FirstLockProjectionCommit, FirstLockSubmitOutcome, FirstLockSupersessionV1,
-    FirstLockTransitionV1, FollowupClaimObservationV1, FollowupClaimTransitionRecordV1,
-    FollowupClaimTransitionV1, LezClaimPort, LezFirstLockPort, LezMakerLockObservationPort,
-    LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerV1, LezRefundPort,
-    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel,
-    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, ObservedFollowupClaimTransitionRecordV1,
+    FirstLockTransitionV1, FollowupClaimEvidenceV1, FollowupClaimObservationV1,
+    FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezClaimPort, LezFirstLockPort,
+    LezMakerLockObservationPort, LezObservationEventV1, LezObservationReconciliationV1,
+    LezObservationTrackerV1, LezRefundPort, LezTakerFirstLockObservationPort,
+    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockIntentV1,
+    MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel, ObserveMakerLockOutcome,
+    ObserveTakerFirstLockOutcome, ObservedFollowupClaimTransitionRecordV1,
     ObservedFollowupClaimTransitionV1, ObservedMakerLockTransitionV1,
     ObservedRevealingClaimTransitionRecordV1, ObservedRevealingClaimTransitionV1,
     ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
@@ -194,8 +195,9 @@ where
     /// Atomically persists first-claimant recovery material before activation.
     ///
     /// This is the claim-capable activation path. The local role must be the
-    /// agreement-derived first claimant and the supplied preimage must satisfy
-    /// the agreement's SHA-256 digest.
+    /// agreement's revealing claimant (the Taker, in both directions) and the
+    /// supplied preimage must satisfy the agreement's SHA-256 digest. The Maker
+    /// never holds the preimage before the Taker's revealing claim.
     ///
     /// # Errors
     ///
@@ -215,8 +217,11 @@ where
         if accepted.revision() != 0 {
             return Err(ZecSdkError::InvalidActivationRevision(accepted.revision()));
         }
-        let first_claimant = accepted.agreement().coordinator().first_claimant();
-        debug_assert_eq!(first_claimant, accepted.agreement().lez_claimant());
+        let first_claimant = accepted.agreement().revealing_claimant();
+        debug_assert_eq!(
+            first_claimant,
+            accepted.agreement().coordinator().first_claimant()
+        );
         self.require_role(first_claimant)?;
         validate_preimage(accepted.agreement(), &preimage)?;
 
@@ -1527,13 +1532,14 @@ where
         loop {
             let advanced = match self.status() {
                 Phase::BothLegsLocked
-                    if self.local_participant() == self.agreement().lez_claimant() =>
+                    if self.local_participant() == self.agreement().revealing_claimant() =>
                 {
                     self.replay_owned_revealing_claim().await?
                 }
                 Phase::BothLegsLocked => self.replay_observed_revealing_claim().await?,
                 Phase::ClaimEvidenceAvailable
-                    if self.local_participant() == self.agreement().lez_claimant().other() =>
+                    if self.local_participant()
+                        == self.agreement().revealing_claimant().other() =>
                 {
                     self.replay_owned_followup_claim().await?
                 }
@@ -1618,11 +1624,134 @@ where
     }
 }
 
+// `TakerSellsLez`: the Maker whose follow-up LEZ claim missed its window both observes that
+// claim and recovers its Zcash, so it needs every claim and refund port.
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Lez: LezClaimPort + LezRefundPort + LezFirstLockPort,
+    Zcash: ZcashClaimPort + ZcashRefundPort + ZcashFirstLockPort,
+    Store: ClaimRecoveryStore + RefundRecoveryStore,
+{
+    /// `TakerSellsLez`, the Maker at claim evidence: its follow-up LEZ claim is observed and
+    /// never submitted (the caller saw the escrow's claim window closed by LEZ time). A claim
+    /// that landed before the window closed completes the swap as [`Self::drive_claim`] would.
+    ///
+    /// # Errors
+    ///
+    /// Rejects another role, direction or phase, and preserves store and adapter errors.
+    pub async fn observe_followup_lez_claim_past_window(
+        &mut self,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        self.replay_claim_transitions().await?;
+        if self.local_participant() != Participant::Maker
+            || self.agreement().direction() != SwapDirection::TakerSellsLez
+            || self.status() != Phase::ClaimEvidenceAvailable
+        {
+            return Err(ZecSdkError::ClaimNotReady(self.status()));
+        }
+        self.drive_owned_followup_lez_claim(false).await
+    }
+
+    /// `TakerSellsLez`, the Maker at claim evidence whose LEZ claim can no longer land: the
+    /// recovery of [`Self::drive_refund`], except that a spent HTLC is reported as spent
+    /// ([`RefundDriveOutcome::AwaitingFunding`] with `Spent`) only once the spender is the
+    /// Taker's claim at the profile's Zcash depth.
+    ///
+    /// Refund eligibility reads a mempool spend as spent too, and the Taker's claim never
+    /// expires but can be evicted, unspending the HTLC again (review 4, M1): until it is that
+    /// deep the spend is a wait ([`RefundDriveOutcome::AwaitingStableObservation`]). The
+    /// Maker's own refund never gets here: its exact identity is observed first.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::drive_refund`], and a Zcash claim observation failure.
+    pub async fn drive_refund_after_lost_followup(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        let outcome = self.drive_refund(now).await?;
+        self.spent_only_at_claim_depth(outcome).await
+    }
+
+    /// `TakerSellsLez`, the Maker at claim evidence: its Zcash refund once its escrow is read
+    /// still open at a finalized LEZ time past the refund time, the Taker's LEZ refund or
+    /// not (review 5, item 2: a Taker that never refunds left the Maker's Zcash in the HTLC).
+    /// A spent HTLC is reported as in [`Self::drive_refund_after_lost_followup`].
+    ///
+    /// # Errors
+    ///
+    /// Rejects another role, direction or phase; otherwise as
+    /// [`Self::drive_refund_after_lost_followup`].
+    pub async fn drive_refund_with_open_escrow(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+        open: crate::LezEscrowOpenPastRefundTimeV1,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        let _ = now;
+        self.replay_refund_transitions().await?;
+        if self.local_participant() != Participant::Maker
+            || self.agreement().direction() != SwapDirection::TakerSellsLez
+        {
+            return Err(ZecSdkError::RefundNotReady(self.status()));
+        }
+        let outcome = match self.status() {
+            Phase::Refunded => RefundDriveOutcome::Refunded {
+                revision: self.revision,
+            },
+            Phase::ClaimEvidenceAvailable => {
+                self.drive_owned_refund(
+                    RefundStepV1::Zcash,
+                    Some(&crate::LostFollowupProofV1::EscrowOpenPastRefundTime(open)),
+                )
+                .await?
+            }
+            phase => return Err(ZecSdkError::RefundNotReady(phase)),
+        };
+        self.spent_only_at_claim_depth(outcome).await
+    }
+
+    async fn spent_only_at_claim_depth(
+        &self,
+        outcome: RefundDriveOutcome,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        match outcome {
+            RefundDriveOutcome::AwaitingFunding {
+                step: RefundStepV1::Zcash,
+                reason: crate::RefundFundingWaitReasonV1::Spent,
+            } => {}
+            outcome => return Ok(outcome),
+        }
+        let context = ZcashClaimContextV1::after_reveal(self.agreement(), &self.coordinator)
+            .map_err(ZecSdkError::from)?;
+        let observation = self
+            .zcash
+            .observe_counterparty_revealing_claim(self.agreement(), &context)
+            .await
+            .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+        let depth = crate::ZecRefundProfile::for_id(self.agreement().binding().profile_id())
+            .zcash_confirmations();
+        Ok(match observation {
+            RevealingClaimObservationV1::Confirmed(evidence)
+                if evidence.confirmations() >= depth =>
+            {
+                RefundDriveOutcome::AwaitingFunding {
+                    step: RefundStepV1::Zcash,
+                    reason: crate::RefundFundingWaitReasonV1::Spent,
+                }
+            }
+            _ => RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Zcash),
+        })
+    }
+}
+
+// The claim drive also reads the Maker's Zcash refund (`TakerSellsLez`: a Taker whose claim can no
+// longer land records it and turns to its LEZ refund), so it needs the Zcash refund observation
+// and the refund journal as well.
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
     Lez: LezClaimPort,
-    Zcash: ZcashClaimPort,
-    Store: ClaimRecoveryStore,
+    Zcash: ZcashClaimPort + ZcashRefundPort,
+    Store: ClaimRecoveryStore + RefundRecoveryStore,
 {
     /// Advances the agreement-directed claim path without accepting role, chain, or secret args.
     ///
@@ -1646,17 +1775,33 @@ where
         now: crate::LezUnixMilliseconds,
     ) -> Result<ClaimDriveOutcome, ZecSdkError> {
         self.replay_claim_transitions().await?;
+        let revealing_on_zcash =
+            ClaimStepV1::revealing(self.agreement()) == ClaimStepV1::RevealingZcash;
         match self.status() {
             Phase::BothLegsLocked
-                if self.local_participant() == self.agreement().lez_claimant() =>
+                if self.local_participant() == self.agreement().revealing_claimant() =>
             {
-                self.drive_owned_revealing_claim(now).await
+                if revealing_on_zcash {
+                    self.drive_owned_revealing_zcash_claim(now).await
+                } else {
+                    self.drive_owned_revealing_claim(now).await
+                }
+            }
+            Phase::BothLegsLocked if revealing_on_zcash => {
+                self.observe_revealing_zcash_claim().await
             }
             Phase::BothLegsLocked => self.observe_revealing_claim().await,
             Phase::ClaimEvidenceAvailable
-                if self.local_participant() == self.agreement().lez_claimant().other() =>
+                if self.local_participant() == self.agreement().revealing_claimant().other() =>
             {
-                self.drive_owned_followup_claim().await
+                if revealing_on_zcash {
+                    self.drive_owned_followup_lez_claim(true).await
+                } else {
+                    self.drive_owned_followup_claim().await
+                }
+            }
+            Phase::ClaimEvidenceAvailable if revealing_on_zcash => {
+                self.observe_followup_lez_claim().await
             }
             Phase::ClaimEvidenceAvailable => self.observe_followup_claim().await,
             Phase::Completed => Ok(ClaimDriveOutcome::Completed {
@@ -1666,13 +1811,15 @@ where
         }
     }
 
-    /// The open owned revealing claim, reopened from protected storage: what a
-    /// re-plan names as superseded (FINDINGS 24).
+    /// The open owned LEZ claim, reopened from protected storage: what a
+    /// re-plan names as superseded (FINDINGS 24). It is the Taker's revealing
+    /// LEZ claim in `TakerSellsForeign` and the Maker's follow-up LEZ claim in
+    /// `TakerSellsLez`; both are signed at the claimant's LEZ account nonce.
     ///
     /// # Errors
     ///
-    /// Rejects a role that is not the LEZ claimant, a phase other than both
-    /// legs locked, a missing intent and storage failures.
+    /// Rejects a role that is not the LEZ claimant, a phase other than that
+    /// claim's, a missing intent and storage failures.
     pub async fn open_revealing_claim_submission(
         &self,
     ) -> Result<crate::PreparedClaimSubmissionV1, ZecSdkError> {
@@ -1682,7 +1829,13 @@ where
                 actual: self.local_participant(),
             });
         }
-        if self.status() != Phase::BothLegsLocked {
+        let lez_claim_phase =
+            if ClaimStepV1::revealing(self.agreement()) == ClaimStepV1::RevealingLez {
+                Phase::BothLegsLocked
+            } else {
+                Phase::ClaimEvidenceAvailable
+            };
+        if self.status() != lez_claim_phase {
             return Err(ZecSdkError::ClaimNotReady(self.status()));
         }
         let (intent, protected) = self
@@ -1944,6 +2097,314 @@ where
         }
     }
 
+    /// `TakerSellsLez`: the Taker's revealing claim of the Maker's Zcash HTLC.
+    ///
+    /// The gate that protects the revealer is the Taker's: the claim is staged and sent only
+    /// while the Maker's funding output is canonical, unspent and at the Zcash leg's depth,
+    /// while `tip + reveal margin < refund height` (the claim is buried before the Maker's
+    /// refund can be mined) and while the claim window is open (the Maker then has the
+    /// profile margin to claim LEZ before the Taker's LEZ refund). The gates apply to the first
+    /// send only: a staged claim is observed and, while absent with the HTLC output unspent,
+    /// re-broadcast byte for byte whatever the window, since its preimage may already be public.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the retained claim, the three gates and the submission read as one sequence"
+    )]
+    async fn drive_owned_revealing_zcash_claim(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let context = self.zcash_claim_context()?;
+        let retained = self.load_claim_intent().await?;
+        if let Some((intent, protected)) = &retained {
+            let prepared = self
+                .store
+                .open_claim_submission(self.agreement(), intent, protected)
+                .await
+                .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+            match self
+                .zcash
+                .observe_prepared_revealing_claim(self.agreement(), &context, &prepared)
+                .await
+                .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?
+            {
+                FollowupClaimObservationV1::Unstable => {
+                    return Ok(ClaimDriveOutcome::AwaitingStableObservation(
+                        ClaimStepV1::RevealingZcash,
+                    ));
+                }
+                FollowupClaimObservationV1::Confirmed(evidence) => {
+                    let preimage = self.load_claim_material().await?;
+                    let evidence = crate::RevealingClaimEvidenceV1::from_canonical_zcash_claim(
+                        self.agreement(),
+                        *evidence.observed_submission_id(),
+                        evidence.transaction_id(),
+                        evidence.confirmations(),
+                        preimage,
+                    )?;
+                    let transition = RevealingClaimTransitionV1::from_active(
+                        self.agreement(),
+                        &self.coordinator,
+                        intent,
+                        self.revision,
+                        evidence,
+                    )?;
+                    return self.commit_owned_revealing_claim(transition).await;
+                }
+                FollowupClaimObservationV1::Absent => {}
+            }
+        }
+        // A staged claim is treated as sent: it is staged immediately before its first
+        // submission, and once it may have left, its preimage may be public (a Maker reads it
+        // from the mempool). From then on the gates no longer apply: the exact stored bytes are
+        // re-broadcast whenever they are absent and the HTLC output is still unspent, because
+        // withholding them could only let the Maker refund the Zcash after taking the LEZ.
+        let retained_submitted = retained.is_some();
+        // Nothing of ours is on the chain: the gate decides whether to send the first time.
+        let now_ms = now.value();
+        if !retained_submitted && self.claim_window_closed(now) {
+            return Err(ZecSdkError::ClaimWindowClosed {
+                closes_at_ms: self.claim_window_closes_at_ms(),
+                now_ms,
+            });
+        }
+        let funding = self
+            .zcash
+            .observe_funding_before_reveal(self.agreement(), context.funding_context())
+            .await
+            .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+        let tip_height = match funding {
+            ZcashFundingObservationV1::Absent => {
+                return Ok(ClaimDriveOutcome::AwaitingSafeZcashFunding(
+                    ZcashFundingWaitReasonV1::Absent,
+                ));
+            }
+            ZcashFundingObservationV1::Spent => {
+                // Our claim (if one left) is not on the chain and the HTLC is spent: only the
+                // Maker's refund spends it then. Once that refund is canonical it is recorded
+                // (MakerLegRefunded) and the Taker's settlement is its LEZ refund; until then
+                // this waits as before.
+                self.record_observed_maker_zcash_refund().await?;
+                return Ok(ClaimDriveOutcome::AwaitingSafeZcashFunding(
+                    ZcashFundingWaitReasonV1::Spent,
+                ));
+            }
+            ZcashFundingObservationV1::Unstable => {
+                return Ok(ClaimDriveOutcome::AwaitingSafeZcashFunding(
+                    ZcashFundingWaitReasonV1::Unstable,
+                ));
+            }
+            ZcashFundingObservationV1::Confirmed { canonical, unspent } => {
+                ZcashFundingObservationV1::validate_confirmed_for_reveal(
+                    &canonical,
+                    &unspent,
+                    self.agreement(),
+                    &self.coordinator,
+                    context.funding_context(),
+                )?;
+                u32::from(canonical.tip_height())
+            }
+        };
+        let refund_height = self.agreement().zcash_refund_at_height();
+        let margin = crate::ZecRefundProfile::for_id(self.agreement().binding().profile_id())
+            .zcash_reveal_margin_blocks();
+        if !retained_submitted && tip_height.saturating_add(margin) >= refund_height {
+            return Err(ZecSdkError::ZcashRevealWindowClosed {
+                tip_height,
+                refund_height,
+                margin_blocks: margin,
+            });
+        }
+        let (intent, protected) = if let Some(retained) = retained {
+            retained
+        } else {
+            let preimage = self.load_claim_material().await?;
+            let prepared = self
+                .zcash
+                .prepare_revealing_claim(self.agreement(), &context, &preimage)
+                .await
+                .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+            self.stage_claim_intent(&prepared).await?;
+            self.load_claim_intent()
+                .await?
+                .ok_or(ZecSdkError::MissingClaimIntent)?
+        };
+        let prepared = self
+            .store
+            .open_claim_submission(self.agreement(), &intent, &protected)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        self.zcash
+            .submit_revealing_claim(self.agreement(), &context, &prepared)
+            .await
+            .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+        Ok(ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash))
+    }
+
+    /// `TakerSellsLez`, the Taker with the Maker's Zcash HTLC spent and no claim of its own on
+    /// the chain: records the Maker's Zcash refund once it is canonical, through the same
+    /// counterparty refund observation the Taker's recovery uses. The swap then reads
+    /// `MakerLegRefunded` and the Taker's next action is its LEZ refund. While that refund is
+    /// absent or unstable nothing is recorded.
+    async fn record_observed_maker_zcash_refund(&mut self) -> Result<(), ZecSdkError> {
+        let context = self.zcash_funding_context()?;
+        let observation = self
+            .zcash
+            .observe_counterparty_refund(self.agreement(), &context)
+            .await
+            .map_err(|error| ZecSdkError::ZcashRefund(Box::new(error)))?;
+        if let RefundObservationV1::Confirmed(evidence) = observation {
+            let transition = RefundTransitionV1::from_observed(
+                self.agreement(),
+                &self.coordinator,
+                self.local_participant(),
+                self.revision,
+                evidence,
+            )?;
+            self.commit_refund_transition(transition).await?;
+        }
+        Ok(())
+    }
+
+    /// `TakerSellsLez`: the Maker reads the Taker's revealing Zcash claim and its preimage.
+    async fn observe_revealing_zcash_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let context = self.zcash_claim_context()?;
+        let observation = self
+            .zcash
+            .observe_counterparty_revealing_claim(self.agreement(), &context)
+            .await
+            .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+        match observation {
+            RevealingClaimObservationV1::Confirmed(evidence) => {
+                let transition = ObservedRevealingClaimTransitionV1::from_active(
+                    self.agreement(),
+                    &self.coordinator,
+                    self.local_participant(),
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_observed_revealing_claim(transition).await
+            }
+            RevealingClaimObservationV1::Absent | RevealingClaimObservationV1::Unstable => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash),
+            ),
+        }
+    }
+
+    /// `TakerSellsLez`: the Maker claims the Taker's LEZ with the preimage it read from the
+    /// Taker's Zcash claim. The preimage is public by then, so there is no claim window: the
+    /// claim is sent until the escrow's own validity window (the LEZ refund time) refuses it.
+    ///
+    /// With `submit` false nothing is prepared or sent: a retained claim is only
+    /// observed (a claim past its window that may still have landed).
+    async fn drive_owned_followup_lez_claim(
+        &mut self,
+        submit: bool,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let (intent, protected) = if let Some(retained) = self.load_claim_intent().await? {
+            retained
+        } else if !submit {
+            return Ok(ClaimDriveOutcome::AwaitingStableObservation(
+                ClaimStepV1::FollowupLez,
+            ));
+        } else {
+            let preimage = self.load_claim_material().await?;
+            let prepared = self
+                .lez
+                .prepare_followup_claim(self.agreement(), &preimage)
+                .await
+                .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
+            self.stage_claim_intent(&prepared).await?;
+            self.load_claim_intent()
+                .await?
+                .ok_or(ZecSdkError::MissingClaimIntent)?
+        };
+        let prepared = self
+            .store
+            .open_claim_submission(self.agreement(), &intent, &protected)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match self
+            .lez
+            .observe_prepared_followup_claim(self.agreement(), &prepared)
+            .await
+            .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?
+        {
+            RevealingClaimObservationV1::Absent if !submit => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupLez),
+            ),
+            RevealingClaimObservationV1::Absent => {
+                let outcome = self
+                    .lez
+                    .submit_followup_claim(self.agreement(), &prepared)
+                    .await
+                    .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
+                Ok(match outcome {
+                    crate::RevealingClaimSubmitOutcomeV1::Accepted => {
+                        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+                    }
+                    crate::RevealingClaimSubmitOutcomeV1::Superseded {
+                        planned_nonce,
+                        live_nonce,
+                    } => ClaimDriveOutcome::Superseded {
+                        step: ClaimStepV1::FollowupLez,
+                        planned_nonce,
+                        live_nonce,
+                    },
+                })
+            }
+            RevealingClaimObservationV1::Unstable => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupLez),
+            ),
+            RevealingClaimObservationV1::Confirmed(evidence) => {
+                let evidence = FollowupClaimEvidenceV1::new(
+                    self.agreement(),
+                    *evidence.observed_submission_id(),
+                    evidence.transaction_id(),
+                    evidence.confirmations(),
+                )?;
+                let transition = FollowupClaimTransitionV1::from_active(
+                    self.agreement(),
+                    &self.coordinator,
+                    &intent,
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_owned_followup_claim(transition).await
+            }
+        }
+    }
+
+    /// `TakerSellsLez`: the Taker observes the Maker's follow-up LEZ claim.
+    async fn observe_followup_lez_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        match self
+            .lez
+            .observe_counterparty_followup_claim(self.agreement())
+            .await
+            .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?
+        {
+            RevealingClaimObservationV1::Confirmed(evidence) => {
+                let evidence = FollowupClaimEvidenceV1::new(
+                    self.agreement(),
+                    *evidence.observed_submission_id(),
+                    evidence.transaction_id(),
+                    evidence.confirmations(),
+                )?;
+                let transition = ObservedFollowupClaimTransitionV1::from_active(
+                    self.agreement(),
+                    &self.coordinator,
+                    self.local_participant(),
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_observed_followup_claim(transition).await
+            }
+            RevealingClaimObservationV1::Absent | RevealingClaimObservationV1::Unstable => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupLez),
+            ),
+        }
+    }
+
     async fn revealing_claim_intent(
         &self,
     ) -> Result<(ClaimIntentV1, crate::ProtectedClaimPayloadEnvelope), ZecSdkError> {
@@ -2065,7 +2526,12 @@ where
                 }
             }
         };
-        self.finish_claim_commit(commit, expected, next, ClaimStepV1::RevealingLez)
+        self.finish_claim_commit(
+            commit,
+            expected,
+            next,
+            ClaimStepV1::revealing(self.agreement()),
+        )
     }
 
     async fn commit_observed_revealing_claim(
@@ -2097,7 +2563,12 @@ where
                 }
             }
         };
-        self.finish_claim_commit(commit, expected, next, ClaimStepV1::RevealingLez)
+        self.finish_claim_commit(
+            commit,
+            expected,
+            next,
+            ClaimStepV1::revealing(self.agreement()),
+        )
     }
 
     async fn commit_owned_followup_claim(
@@ -2127,7 +2598,12 @@ where
                 }
             }
         };
-        self.finish_claim_commit(commit, expected, next, ClaimStepV1::FollowupZcash)
+        self.finish_claim_commit(
+            commit,
+            expected,
+            next,
+            ClaimStepV1::followup(self.agreement()),
+        )
     }
 
     async fn commit_observed_followup_claim(
@@ -2159,7 +2635,12 @@ where
                 }
             }
         };
-        self.finish_claim_commit(commit, expected, next, ClaimStepV1::FollowupZcash)
+        self.finish_claim_commit(
+            commit,
+            expected,
+            next,
+            ClaimStepV1::followup(self.agreement()),
+        )
     }
 
     fn finish_claim_commit(
@@ -2212,6 +2693,48 @@ where
                 actual: u64::MAX,
             })
     }
+
+    async fn commit_refund_transition(
+        &mut self,
+        transition: RefundTransitionV1,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected = self.checked_next_refund_revision()?;
+        let commit = match self.store.commit_refund_transition(&transition).await {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_refund_transition(self.coordinator.id(), self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref() == Some(&transition) {
+                    FirstLockProjectionCommit::new(expected, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        if commit.revision() != expected {
+            return Err(ZecSdkError::InvalidProjectionRevision {
+                expected,
+                actual: commit.revision(),
+            });
+        }
+        let step = transition.evidence().step();
+        self.coordinator = next;
+        self.revision = commit.revision();
+        if self.status() == Phase::Refunded {
+            Ok(RefundDriveOutcome::Refunded {
+                revision: self.revision,
+            })
+        } else {
+            Ok(RefundDriveOutcome::Projected {
+                step,
+                revision: self.revision,
+            })
+        }
+    }
 }
 
 // The refund step the active coordinator admits now. None once a revealing claim is recorded:
@@ -2221,12 +2744,27 @@ where
 fn admitted_refund_step(
     coordinator: &SwapCoordinator,
     lez_refunded: Phase,
+    local: Participant,
 ) -> Option<RefundStepV1> {
     if coordinator.claim_evidence().is_some() {
         return None;
     }
     if coordinator.phase() == lez_refunded {
         return Some(RefundStepV1::Zcash);
+    }
+    if coordinator.direction() == lez_swap_core::SwapDirection::TakerSellsLez {
+        // The Maker's earlier Zcash refund and the Taker's later LEZ refund: each funder
+        // recovers its own leg; after the Zcash refund the LEZ refund follows.
+        match coordinator.phase() {
+            Phase::MakerLegRefunded => return Some(RefundStepV1::Lez),
+            Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged => {
+                return Some(match local {
+                    Participant::Maker => RefundStepV1::Zcash,
+                    Participant::Taker => RefundStepV1::Lez,
+                });
+            }
+            _ => {}
+        }
     }
     next_refund_step(coordinator.phase(), coordinator.direction())
 }
@@ -2287,18 +2825,48 @@ where
         if let Some(wait) = self.settle_own_lock(now).await? {
             return Ok(wait);
         }
+        if self.local_participant() == Participant::Maker
+            && self.agreement().direction() == SwapDirection::TakerSellsLez
+            && self.status() == Phase::ClaimEvidenceAvailable
+        {
+            // The Maker read the preimage but its LEZ claim has not landed: once the
+            // Taker's LEZ refund is final that claim never will, and the Maker
+            // recovers its Zcash if the HTLC is still unspent at its refund height
+            // (review 3, item 1). Until then no refund is admitted.
+            return match self
+                .lez
+                .observe_counterparty_refund(self.agreement())
+                .await
+                .map_err(|error| ZecSdkError::LezRefund(Box::new(error)))?
+            {
+                RefundObservationV1::Confirmed(lez_refund) => {
+                    self.drive_owned_refund(
+                        RefundStepV1::Zcash,
+                        Some(&crate::LostFollowupProofV1::TakerLezRefund(lez_refund)),
+                    )
+                    .await
+                }
+                RefundObservationV1::Absent | RefundObservationV1::Unstable => Ok(
+                    RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Lez),
+                ),
+            };
+        }
         let step = match self.status() {
             Phase::Refunded => {
                 return Ok(RefundDriveOutcome::Refunded {
                     revision: self.revision,
                 });
             }
-            phase => admitted_refund_step(&self.coordinator, lez_refunded_phase(self.agreement()))
-                .ok_or(ZecSdkError::RefundNotReady(phase))?,
+            phase => admitted_refund_step(
+                &self.coordinator,
+                lez_refunded_phase(self.agreement()),
+                self.local_participant(),
+            )
+            .ok_or(ZecSdkError::RefundNotReady(phase))?,
         };
 
         if self.local_participant() == step.owner(self.agreement()) {
-            self.drive_owned_refund(step).await
+            self.drive_owned_refund(step, None).await
         } else {
             self.observe_counterparty_refund(step).await
         }
@@ -2384,9 +2952,12 @@ where
         }
     }
 
+    /// `lez_refund`: the Taker's confirmed LEZ refund when this is the Maker's Zcash refund
+    /// after its follow-up LEZ claim was lost; a fresh intent is staged only with it.
     async fn drive_owned_refund(
         &mut self,
         step: RefundStepV1,
+        lez_refund: Option<&crate::LostFollowupProofV1>,
     ) -> Result<RefundDriveOutcome, ZecSdkError> {
         let intent = if let Some(intent) = self.load_refund_intent().await? {
             intent
@@ -2395,7 +2966,7 @@ where
                 return Ok(wait);
             }
             let prepared = self.prepare_refund(step).await?;
-            self.stage_refund_intent(prepared).await?;
+            self.stage_refund_intent(prepared, lez_refund).await?;
             self.load_refund_intent()
                 .await?
                 .ok_or(ZecSdkError::MissingRefundIntent)?
@@ -2583,14 +3154,25 @@ where
     async fn stage_refund_intent(
         &self,
         prepared: PreparedRefundSubmissionV1,
+        lez_refund: Option<&crate::LostFollowupProofV1>,
     ) -> Result<(), ZecSdkError> {
-        let intent = RefundIntentV1::from_active(
-            self.agreement(),
-            &self.coordinator,
-            self.local_participant(),
-            self.revision,
-            prepared,
-        )?;
+        let intent = match lez_refund {
+            Some(lez_refund) => RefundIntentV1::after_lost_followup(
+                self.agreement(),
+                &self.coordinator,
+                self.local_participant(),
+                self.revision,
+                prepared,
+                lez_refund,
+            )?,
+            None => RefundIntentV1::from_active(
+                self.agreement(),
+                &self.coordinator,
+                self.local_participant(),
+                self.revision,
+                prepared,
+            )?,
+        };
         match self.store.create_refund_intent(&intent).await {
             Ok(CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame) => Ok(()),
             Ok(CreateFirstLockOutcome::Conflict) => Err(ZecSdkError::RefundIntentConflict),
@@ -2606,48 +3188,6 @@ where
                     Err(ZecSdkError::Persistence(Box::new(error)))
                 }
             }
-        }
-    }
-
-    async fn commit_refund_transition(
-        &mut self,
-        transition: RefundTransitionV1,
-    ) -> Result<RefundDriveOutcome, ZecSdkError> {
-        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
-        let expected = self.checked_next_refund_revision()?;
-        let commit = match self.store.commit_refund_transition(&transition).await {
-            Ok(commit) => commit,
-            Err(error) => {
-                let probe = self
-                    .store
-                    .load_refund_transition(self.coordinator.id(), self.revision)
-                    .await
-                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
-                if probe.as_ref() == Some(&transition) {
-                    FirstLockProjectionCommit::new(expected, true)
-                } else {
-                    return Err(ZecSdkError::Persistence(Box::new(error)));
-                }
-            }
-        };
-        if commit.revision() != expected {
-            return Err(ZecSdkError::InvalidProjectionRevision {
-                expected,
-                actual: commit.revision(),
-            });
-        }
-        let step = transition.evidence().step();
-        self.coordinator = next;
-        self.revision = commit.revision();
-        if self.status() == Phase::Refunded {
-            Ok(RefundDriveOutcome::Refunded {
-                revision: self.revision,
-            })
-        } else {
-            Ok(RefundDriveOutcome::Projected {
-                step,
-                revision: self.revision,
-            })
         }
     }
 }
@@ -2676,7 +3216,7 @@ mod tests {
                 direction,
                 ChainPosition::block_height(maker_chain, 100),
                 ChainPosition::block_height(taker_chain, 120),
-                TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100)
+                TimelockSafety::between(maker_chain, taker_chain, 1_000, 1_200, 100)
                     .expect("safety"),
             )
             .expect("schedule"),
@@ -2718,10 +3258,12 @@ mod tests {
                 .observe_taker_lock_removed("taker-lock")
                 .expect("taker removal");
             assert_eq!(taker_reorged.phase(), Phase::TakerLockReorged);
-            assert_eq!(
-                admitted_refund_step(&taker_reorged, lez_refunded(direction)),
-                None
-            );
+            for local in [Participant::Maker, Participant::Taker] {
+                assert_eq!(
+                    admitted_refund_step(&taker_reorged, lez_refunded(direction), local),
+                    None
+                );
+            }
 
             let mut maker_reorged = locked_coordinator(direction);
             reveal(&mut maker_reorged);
@@ -2729,44 +3271,74 @@ mod tests {
                 .observe_maker_lock_removed("maker-lock")
                 .expect("maker removal");
             assert_eq!(maker_reorged.phase(), Phase::MakerLockReorged);
-            assert_eq!(
-                admitted_refund_step(&maker_reorged, lez_refunded(direction)),
-                None
-            );
+            for local in [Participant::Maker, Participant::Taker] {
+                assert_eq!(
+                    admitted_refund_step(&maker_reorged, lez_refunded(direction), local),
+                    None
+                );
+            }
         }
     }
 
     #[test]
-    fn the_lez_refund_step_is_still_offered_in_a_reorg_phase_without_claim_evidence() {
+    fn each_funder_is_offered_its_refund_step_in_a_reorg_phase_without_claim_evidence() {
         for direction in [
             SwapDirection::TakerSellsForeign,
             SwapDirection::TakerSellsLez,
         ] {
+            // TakerSellsForeign keeps one order (the Maker's LEZ refund, then the Taker's
+            // Zcash). TakerSellsLez: the Maker recovers its earlier Zcash leg, the Taker its
+            // later LEZ leg, neither waiting on the other's signature.
+            let expected = |local: Participant| match (direction, local) {
+                (SwapDirection::TakerSellsLez, Participant::Maker) => Some(RefundStepV1::Zcash),
+                _ => Some(RefundStepV1::Lez),
+            };
             let mut taker_reorged = locked_coordinator(direction);
             taker_reorged
                 .observe_taker_lock_removed("taker-lock")
                 .expect("taker removal");
             assert_eq!(taker_reorged.phase(), Phase::TakerLockReorged);
-            assert_eq!(
-                admitted_refund_step(&taker_reorged, lez_refunded(direction)),
-                Some(RefundStepV1::Lez)
-            );
-
             let mut maker_reorged = locked_coordinator(direction);
             maker_reorged
                 .observe_maker_lock_removed("maker-lock")
                 .expect("maker removal");
             assert_eq!(maker_reorged.phase(), Phase::MakerLockReorged);
+            let locked = locked_coordinator(direction);
+            for local in [Participant::Maker, Participant::Taker] {
+                for swap in [&taker_reorged, &maker_reorged, &locked] {
+                    assert_eq!(
+                        admitted_refund_step(swap, lez_refunded(direction), local),
+                        expected(local)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn taker_sells_lez_refunds_follow_the_earlier_zcash_refund_either_way() {
+        use lez_swap_core::{Chain, ChainPosition};
+        let direction = SwapDirection::TakerSellsLez;
+        let mut zcash_first = locked_coordinator(direction);
+        zcash_first
+            .refund_maker_leg(ChainPosition::block_height(Chain::Zcash, 100))
+            .expect("Maker's Zcash refund");
+        assert_eq!(zcash_first.phase(), Phase::MakerLegRefunded);
+        for local in [Participant::Maker, Participant::Taker] {
             assert_eq!(
-                admitted_refund_step(&maker_reorged, lez_refunded(direction)),
+                admitted_refund_step(&zcash_first, lez_refunded(direction), local),
                 Some(RefundStepV1::Lez)
             );
-
-            // And the agreement order is unchanged around it.
-            let locked = locked_coordinator(direction);
+        }
+        let mut lez_first = locked_coordinator(direction);
+        lez_first
+            .refund_taker_leg(ChainPosition::block_height(Chain::Lez, 120))
+            .expect("Taker's LEZ refund");
+        assert_eq!(lez_first.phase(), Phase::TakerLegRefunded);
+        for local in [Participant::Maker, Participant::Taker] {
             assert_eq!(
-                admitted_refund_step(&locked, lez_refunded(direction)),
-                Some(RefundStepV1::Lez)
+                admitted_refund_step(&lez_first, lez_refunded(direction), local),
+                Some(RefundStepV1::Zcash)
             );
         }
     }

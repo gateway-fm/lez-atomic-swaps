@@ -107,20 +107,34 @@ def bundle(corridors, preflights=None, artifacts=True):
 
 
 class LaneProfile(unittest.TestCase):
-    def test_the_lane_names_what_the_agreement_profile_pins(self):
+    def test_the_lane_names_what_the_agreement_profiles_pin(self):
+        # One agreement profile per direction: TakerSellsLez's (LEZ_ZEC_SWAP_PROFILE)
+        # and TakerSellsForeign's (LEZ_ZEC_SWAP_PROFILE_FOREIGN); one branch and
+        # one confirmation count for both, each its own Zcash refund window.
         profile = (ROOT / 'crates/zec-swap-sdk/src/profile.rs').read_text()
-        # The variant the lane names, by its stable id (profile.rs as_str).
-        variant = re.search(rf'Self::(\w+) => "{re.escape(ENV["LEZ_ZEC_SWAP_PROFILE"])}"', profile).group(1)
-        self.assertTrue(variant.startswith('PublicTestnet'), variant)
-        block = re.search(rf'ZecProfileId::{variant} => Self \{{(.*?)\}}', profile, re.S).group(1)
-        branch = re.search(r'consensus_branch_id: BranchId::(\w+)', block).group(1)
         config = (ROOT / 'crates/zec-reference-actor/src/config.rs').read_text()
-        branch_hex = re.search(rf'Self::{branch} => "([0-9a-f]{{8}})"', config).group(1)
-        self.assertEqual(branch_hex, '77190ad9', 'Zcash Testnet has been on NU7 since height 4,465,026')
-        self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_BRANCH'], branch_hex)
-        self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_CONFIRMATIONS'], re.search(r'zcash_confirmations: (\d+)', block).group(1))
-        self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_REFUND_BLOCKS'],
-                         re.search(r'zcash_refund_blocks: ([\d_]+)', block).group(1).replace('_', ''))
+        for name, refund_blocks in (('LEZ_ZEC_SWAP_PROFILE', 'LEZ_ZEC_SWAP_PROFILE_REFUND_BLOCKS'),
+                                    ('LEZ_ZEC_SWAP_PROFILE_FOREIGN', 'LEZ_ZEC_SWAP_PROFILE_FOREIGN_REFUND_BLOCKS')):
+            with self.subTest(profile=ENV[name]):
+                # The variant the lane names, by its stable id (profile.rs as_str).
+                variant = re.search(rf'Self::(\w+) => "{re.escape(ENV[name])}"', profile).group(1)
+                self.assertTrue(variant.startswith('PublicTestnet'), variant)
+                block = re.search(rf'ZecProfileId::{variant} => Self \{{(.*?)\n            \}},', profile, re.S).group(1)
+                branch = re.search(r'consensus_branch_id: BranchId::(\w+)', block).group(1)
+                branch_hex = re.search(rf'Self::{branch} => "([0-9a-f]{{8}})"', config).group(1)
+                self.assertEqual(branch_hex, '77190ad9', 'Zcash Testnet has been on NU7 since height 4,465,026')
+                self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_BRANCH'], branch_hex)
+                self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_CONFIRMATIONS'],
+                                 re.search(r'zcash_confirmations: (\d+)', block).group(1))
+                self.assertEqual(ENV[refund_blocks],
+                                 re.search(r'zcash_refund_blocks: ([\d_]+)', block).group(1).replace('_', ''))
+
+    def test_taker_sells_lez_signs_under_the_taker_reveals_first_profile(self):
+        self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE'], 'public-testnet-v3')
+        self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_FOREIGN'], 'public-testnet-v2')
+        profile = (ROOT / 'crates/zec-swap-sdk/src/profile.rs').read_text()
+        block = re.search(r'ZecProfileId::PublicTestnetV3 => Self \{(.*?)\n            \},', profile, re.S).group(1)
+        self.assertIn('reveal_order: ZecRevealOrder::TakerFirst', block)
 
     def test_the_provider_route_is_the_origin_the_actor_pins(self):
         config = (ROOT / 'crates/zec-reference-actor/src/config.rs').read_text()

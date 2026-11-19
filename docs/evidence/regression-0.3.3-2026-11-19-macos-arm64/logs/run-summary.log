@@ -1,0 +1,49 @@
+[07:02:40] code fab36d52, tree dirty: 0
+[07:02:41] relay: proxies: None
+[07:02:48] lanes.sh down 3 --wipe rc=0
+[07:03:22] down.sh --wipe rc=0
+[07:09:31] from-scratch.sh rc=0
+[07:09:32] maker image sha256:361365e1d8df8eb28a1c8427847569907b45a4e0094204481ab9f1bdf6078a67 2026-11-19T07:07:37.761800637Z build source fab36d525c4c9514e9b9b518f3317d7fd024c6ef
+[07:09:32] taker image sha256:b2bc1e427fddd13a4e99e80ef48ae11aafddada43caad0c87d716c070b3d54ea 2026-11-19T07:07:37.782352387Z build source fab36d525c4c9514e9b9b518f3317d7fd024c6ef
+[07:09:32] image lez-basecamp-ui:local sha256:1df1279b092d927f41b921ec729d16ae2996b2cdce0d85c091e350ffbd8f2acc 2026-11-19T07:07:22.873604005Z
+[07:09:32] image lez-network-module:local sha256:aa7d29de82d54b555e4fbd14c91592dff28020f0b9b7689b9ebf3c9966c58754 2026-11-19T07:07:25.246558172Z
+[07:09:32] image lez-services:local sha256:f12005f4ce46374689d5a247e75a178db961be1fd460eeaf2958238b8056c0ee 2026-11-18T16:42:54.793313596Z
+[07:09:32] image lez-zebra:local sha256:de894d2d6a2ae38d9b6c0d98fe8360127240aa23597fd97fefcac48d39fe5736 2026-11-18T16:42:54.158681929Z
+[07:09:33] image lez-bitcoin-core:local sha256:39e939eabe1cc7024b140b36464587f72e8b97d528162cf3849cb1479d653691 2026-11-18T16:42:52.934508845Z
+[07:09:33] image lez-btc-miner:local sha256:c00b0cecc587f01984d7f27527644c10619cec42c9674b7f40d201fba0e5d379 2026-11-18T16:43:06.720579129Z
+[07:09:33] lanes.sh down 3 --wipe rc=0
+[07:09:33] lanes.sh mint 3 rc=0
+[07:11:27] up.sh --fresh-lez with three lanes rc=0
+[07:11:27] before: lez-maker-node build source fab36d525c4c9514e9b9b518f3317d7fd024c6ef, package source fab36d525c4c9514e9b9b518f3317d7fd024c6ef
+[07:11:27] before: lez-l2-maker-node build source fab36d525c4c9514e9b9b518f3317d7fd024c6ef, package source fab36d525c4c9514e9b9b518f3317d7fd024c6ef
+[07:11:28] before: lez-l3-maker-node build source fab36d525c4c9514e9b9b518f3317d7fd024c6ef, package source fab36d525c4c9514e9b9b518f3317d7fd024c6ef
+[07:11:28] before: lez-taker-node build source fab36d525c4c9514e9b9b518f3317d7fd024c6ef, package source fab36d525c4c9514e9b9b518f3317d7fd024c6ef
+[07:11:28] before: lez-l2-taker-node build source fab36d525c4c9514e9b9b518f3317d7fd024c6ef, package source fab36d525c4c9514e9b9b518f3317d7fd024c6ef
+[07:11:28] before: lez-l3-taker-node build source fab36d525c4c9514e9b9b518f3317d7fd024c6ef, package source fab36d525c4c9514e9b9b518f3317d7fd024c6ef
+[07:11:28] runtime.env profile: fast
+[07:11:29] proxy check: no lez* container carries a proxy variable
+[07:14:58] regress.sh smoke rc=0
+[07:14:34] === node:btc:happy:TakerSellsForeign (try 1, lane 1): PASSED in 76 s; LEZ finalized 192, tip 196
+[07:14:50] === node:zec:zec-happy:TakerSellsLez (try 1, lane 3): PASSED in 92 s; LEZ finalized 200, tip 207
+[07:14:58] === node:zec:zec-happy:TakerSellsForeign (try 1, lane 2): PASSED in 86 s; LEZ finalized 209, tip 213
+[07:14:58] regression smoke: 6 of 6 passed in 3 min, 0 new chains, 0 profile switches,        0 frozen tries
+[07:14:58] starting regress.sh full (LEZ_LANES=3, LEZ_REGRESS_RECORD=1): 97 tests
+[08:54:43] regress.sh full rc=1
+[08:48:35]     new LEZ chain (1) LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+[08:49:38]     node:zec:zec-balance-refusal:TakerSellsLez (try 1) starts: LEZ finalized 34, tip 42
+[08:51:43] === node:zec:zec-balance-refusal:TakerSellsLez (try 1): PASSED in 125 s (+63 s before it, a new chain among them); LEZ finalized 135, tip 145
+[08:51:43]     new LEZ chain (2) LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01
+[08:52:40]     node:zec:zec-balance-refusal:TakerSellsForeign (try 1) starts: LEZ finalized 29, tip 37
+[08:54:43] === node:zec:zec-balance-refusal:TakerSellsForeign (try 1): PASSED in 123 s (+57 s before it, a new chain among them); LEZ finalized 128, tip 137
+[08:54:43] regression full: 94 of 97 passed in 99 min, 2 new chains, 1 profile switches,        0 frozen tries
+[08:54:43]   not passed: ui:zec:zec-happy:TakerSellsLez
+[08:54:43]   not passed: ui:zec:zec-survivor:TakerSellsLez
+[08:54:43]   not passed: ui:zec:zec-node-offline:TakerSellsLez
+[08:54:44] DONE
+[08:56:35] rerun: up.sh --fresh-lez with three lanes rc=0
+[09:01:31] rerun rc=0
+[08:57:02]     [lane 3] ui:zec:zec-node-offline:TakerSellsLez (try 1) starts: LEZ finalized 69, tip 80
+[08:59:45] === ui:zec:zec-survivor:TakerSellsLez (try 1, lane 2): PASSED in 156 s; LEZ finalized 202, tip 207
+[09:00:00] === ui:zec:zec-happy:TakerSellsLez (try 1, lane 1): PASSED in 171 s; LEZ finalized 216, tip 219
+[09:01:31] === ui:zec:zec-node-offline:TakerSellsLez (try 1, lane 3): PASSED in 261 s; LEZ finalized 286, tip 293
+[09:01:31] regression run: 3 of 3 passed in 4 min, 0 new chains, 0 profile switches,        0 frozen tries

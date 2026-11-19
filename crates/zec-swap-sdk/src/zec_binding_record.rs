@@ -38,9 +38,19 @@ pub enum ZecProfileRecordV1 {
     /// The devnet profile with the 12-minute LEZ refund delay on NU7 (wire
     /// tag 8).
     DeterministicLocalDevnetV5,
-    /// The devnet refund journeys' profile on NU7 (wire tag 9). Last on
-    /// purpose: tags are append-only.
+    /// The devnet refund journeys' profile on NU7 (wire tag 9).
     DeterministicLocalDevnetV6,
+    /// The test lane's Taker-reveals-first profile on NU7 (wire tag 10).
+    DeterministicLocalV3,
+    /// The devnet's Taker-reveals-first profile for swaps that claim (wire
+    /// tag 11).
+    DeterministicLocalDevnetV7,
+    /// The devnet's Taker-reveals-first refund journeys' profile (wire tag
+    /// 12).
+    DeterministicLocalDevnetV8,
+    /// The Taker-reveals-first public-testnet profile on NU7 (wire tag 13).
+    /// Last on purpose: tags are append-only.
+    PublicTestnetV3,
 }
 
 impl From<ZecProfileId> for ZecProfileRecordV1 {
@@ -56,6 +66,10 @@ impl From<ZecProfileId> for ZecProfileRecordV1 {
             ZecProfileId::DeterministicLocalV2 => Self::DeterministicLocalV2,
             ZecProfileId::DeterministicLocalDevnetV5 => Self::DeterministicLocalDevnetV5,
             ZecProfileId::DeterministicLocalDevnetV6 => Self::DeterministicLocalDevnetV6,
+            ZecProfileId::DeterministicLocalV3 => Self::DeterministicLocalV3,
+            ZecProfileId::DeterministicLocalDevnetV7 => Self::DeterministicLocalDevnetV7,
+            ZecProfileId::DeterministicLocalDevnetV8 => Self::DeterministicLocalDevnetV8,
+            ZecProfileId::PublicTestnetV3 => Self::PublicTestnetV3,
         }
     }
 }
@@ -73,6 +87,10 @@ impl From<ZecProfileRecordV1> for ZecProfileId {
             ZecProfileRecordV1::DeterministicLocalV2 => Self::DeterministicLocalV2,
             ZecProfileRecordV1::DeterministicLocalDevnetV5 => Self::DeterministicLocalDevnetV5,
             ZecProfileRecordV1::DeterministicLocalDevnetV6 => Self::DeterministicLocalDevnetV6,
+            ZecProfileRecordV1::DeterministicLocalV3 => Self::DeterministicLocalV3,
+            ZecProfileRecordV1::DeterministicLocalDevnetV7 => Self::DeterministicLocalDevnetV7,
+            ZecProfileRecordV1::DeterministicLocalDevnetV8 => Self::DeterministicLocalDevnetV8,
+            ZecProfileRecordV1::PublicTestnetV3 => Self::PublicTestnetV3,
         }
     }
 }
@@ -85,20 +103,27 @@ pub struct ZecSwapBinding {
 }
 
 impl ZecSwapBinding {
-    /// Constructs a binding only when profile, network, and consensus branch agree.
+    /// Constructs a binding only when profile, network, consensus branch and the
+    /// contract's preimage rule agree.
     ///
     /// # Errors
     ///
     /// Returns [`ProfileError`] when the expected output is incompatible with the
-    /// selected immutable profile.
+    /// selected immutable profile, including
+    /// [`ProfileError::PreimageRuleMismatch`] for a contract not built with
+    /// [`Bip199Contract::for_profile`]'s rule.
     pub fn new(
         profile_id: ZecProfileId,
         expected_output: ExpectedBip199Output,
     ) -> Result<Self, ProfileError> {
-        ZecRefundProfile::for_id(profile_id).validate_consensus(
+        let profile = ZecRefundProfile::for_id(profile_id);
+        profile.validate_consensus(
             expected_output.network(),
             expected_output.consensus_branch_id(),
         )?;
+        if expected_output.contract().preimage_rule() != profile.bip199_preimage_rule() {
+            return Err(ProfileError::PreimageRuleMismatch);
+        }
         Ok(Self {
             profile_id,
             expected_output,
@@ -245,7 +270,8 @@ impl ZecSwapBindingRecordV1 {
             .map_err(|_| ZecBindingRecordError::UnknownBranch)?;
         let value = Zatoshis::from_u64(expected.value_zatoshis)
             .map_err(|_| ZecBindingRecordError::InvalidValue)?;
-        let contract = Bip199Contract::new(
+        let contract = Bip199Contract::for_profile(
+            self.profile_id.into(),
             expected.refund_lock_time,
             expected.refund_pubkey_hash,
             expected.secret_digest,

@@ -1,0 +1,12 @@
+
+[07:44:24] === zec-happy (TakerSellsLez)
+
+[07:44:24] a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book
+
+[07:44:31] provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh: offer, draft, catalog, Nodes recreated)
+   [zec-provision 07:44:34] 7/8 prepared.json
+   [zec-provision 07:44:35]   catalog: 1 entries; this run: zec-devnet-swap-1795074271 / zec-devnet-offer-1795074271;  swap files under /var/lib/lez/zec/taker-swaps/<run id>
+   [zec-provision 07:44:35] 8/8 recreating maker-node, then taker-node
+   zec-provision failed: lez-taker-node not healthy after 360 s
+
+[07:50:54] FAILED: zec-provision.sh

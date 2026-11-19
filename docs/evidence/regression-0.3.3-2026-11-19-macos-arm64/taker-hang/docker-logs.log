@@ -1,0 +1,5 @@
+stored passwd in file: /tmp/vnc.pass
+[2026-11-19 07:44:47.267] [info] [logos] Module loaded: capability_module
+Logos Core started successfully!
+[2026-11-19 07:44:47.268] [info] [logos] Module loaded: package_manager
+[2026-11-19 07:44:47.270] [info] [logos] Module loaded: package_downloader

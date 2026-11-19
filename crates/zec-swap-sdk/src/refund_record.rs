@@ -120,7 +120,7 @@ impl RefundIntentRecordV1 {
         }
         let local = parse_participant(&self.local_participant)
             .map_err(|_| RefundRecordError::RoleMismatch)?;
-        let trusted = RefundIntentV1::from_active(
+        let trusted = RefundIntentV1::retained(
             accepted.agreement(),
             coordinator,
             local,

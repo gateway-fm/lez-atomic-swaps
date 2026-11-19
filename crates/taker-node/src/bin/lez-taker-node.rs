@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
 
     let context = load_taker_service_context(&arguments.role_config)
         .context("load Taker Node role configuration")?;
+    context.refuse_start_with_legacy_zec_swaps()?;
     let sweep = arguments
         .observer_sweep_seconds
         .map_or(DEFAULT_OBSERVER_SWEEP_INTERVAL, Duration::from_secs);

@@ -1,0 +1,33 @@
+[09:52:41] === zec-balance-refusal (stamp 1795078361)
+[09:52:41] preflight: indexer historical reads
+[09:52:41]   indexer serves historical reads at the tip (29)
+[09:52:41] preflight: LEZ finality check waived by request
+[09:52:41]   Maker LEZ account holds 0, below the 50000 lot
+[09:52:41]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[09:52:59]       taker: taker ZEC corridor zec-devnet-1795078361: sidecar listening on 127.0.0.1:19902
+[09:52:59]       taker: taker: 1 prepared ZEC entries configured
+[09:52:59]     [zec-provision 08:52:59]   maker sidecar answers on 127.0.0.1:19901
+[09:52:59]     [zec-provision 08:52:59]   taker sidecar answers on 127.0.0.1:19902
+[09:52:59]       maker_health: ready=True degraded=False
+[09:52:59]     [zec-provision 08:52:59]   Taker lists zec-devnet-offer-1795078361 ; corridor zec-devnet-1795078361 is live
+[09:52:59]   corridor zec-devnet-1795078361 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-1795078361, zebra tip 373, Zcash refund height 382
+[09:52:59]   Taker took zec-devnet-offer-1795078361: swap zec-devnet-s (not_activated)
+[09:52:59]   receipt: swap zec-devnet-swap-1795078361, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1795078361/actor/taker/actor-config.json
+[09:53:00]   [0 s] waiting for the Maker's balance refusal: maker zec-devnet-s: schedule leased, reason None, class None, phase leased | LEZ finalized 34, tip 45 (11 unfinalized) [heartbeat]
+[09:53:10]   [10 s] waiting for the Maker's balance refusal: maker zec-devnet-s: schedule leased, reason None, class None, phase offered | LEZ finalized 34, tip 45 (11 unfinalized) [heartbeat]
+[09:53:10]   zebra: mined 1 block(s) → height 374 (mempool had ['baf58cdd0d79'])
+[09:53:20]   [20 s] waiting for the Maker's balance refusal: maker zec-devnet-s: schedule backoff, reason lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient, phase taker_lock_confirmed | LEZ finalized 46, tip 62 (16 unfinalized) [heartbeat]
+[09:54:05]   45 s later the Maker's row still names the refusal (the supervisor backs off, nothing locked)
+[09:54:05]   funding the Maker's account: scripts/bootstrap-market.sh claims the deferred vault
+[09:54:26]   Maker LEZ account holds 1950000 (vault claim f3e09f77897adce3…)
+[09:54:26]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker both_legs_locked | zebra 374 | LEZ finalized 89, tip 114 (25 unfinalized) [heartbeat]
+[09:54:26]   zebra: mined 1 block(s) → height 375 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[09:54:30]   [3 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 375 | LEZ finalized 89, tip 114 (25 unfinalized) [heartbeat]
+[09:54:30]   Taker claimed LEZ on zec-devnet-s (replay=False)
+[09:54:30]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 375 | LEZ finalized 89, tip 114 (25 unfinalized) [heartbeat]
+[09:54:33]   [3 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker both_legs_locked | zebra 375 | LEZ finalized 89, tip 114 (25 unfinalized) [heartbeat]
+[09:54:40]   zebra: mined 1 block(s) → height 376 (mempool had ['43c6fd3219ed'])
+[09:54:43]   [12 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 376 | LEZ finalized 126, tip 130 (4 unfinalized) [heartbeat]
+[09:54:43]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 126, tip 130 (4 unfinalized) [heartbeat]
+[09:54:43]   both Nodes report zec-devnet-s completed
+[09:54:43] === zec-balance-refusal: passed in 123s

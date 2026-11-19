@@ -253,6 +253,15 @@ SwapWait swapWait(const QJsonObject& lastOutcome, const QString& role)
                 timeHolds};
     if (kind == QStringLiteral("zcash_refund_height"))
         return {"Waiting for the Zcash refund height", false};
+    // The Maker's follow-up LEZ claim missed the escrow's window (its refund
+    // time has passed by LEZ time): nothing is sent; the Maker waits for the
+    // escrow to settle, then takes its Zcash back.
+    if (kind == QStringLiteral("taker_lez_refund_after_lost_claim"))
+        return {"The LEZ claim missed its window" + (until > 0 ? " (" + clockDisplay(until) + ")" : QString())
+                    + "; waiting for the LEZ escrow to settle before the Zcash refund" + nowTime,
+                true};
+    if (kind == QStringLiteral("zcash_refund_after_lost_lez_claim"))
+        return {"The LEZ claim can no longer land; refunding the Zcash", true};
     // A kind this desk does not know yet, by its bound.
     if (until > 0) return {"Waiting for " + chain + " until " + clockDisplay(until) + nowTime, timeHolds};
     if (untilHeight > 0)
@@ -352,71 +361,71 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
             return {"lock_pending", myChain + " lock pending", 20,
                     sellsBitcoin ? "Your Node's supervisor funds the Zcash HTLC on its own; the desk follows it"
                                  : "Your Node's supervisor submits the LEZ escrow lock on its own; the desk follows it", "", ""};
-        // The ZEC projection folds every phase between the Taker's lock and the
-        // revealing LEZ claim into refund_available: the swap is moving and a
+        // The ZEC projection folds every phase between the Taker's lock and its
+        // revealing claim into refund_available: the swap is moving and a
         // refund is merely allowed, which is not "the Maker missed its window".
-        // Selling LEZ, the Maker funds Zcash and claims LEZ with the secret;
-        // selling ZEC, the Maker funds the LEZ escrow and the Taker claims it.
-        // Selling ZEC with both legs locked, the Taker's revealing LEZ claim
-        // window closed with nothing sent (the Node says so): the claim is no
-        // longer offered and the refund is the settlement (FINDINGS 26). Not
-        // "waiting for the Maker's lock": the Maker locked long ago.
-        // Selling ZEC, the Maker's LEZ is already back (its refund ran first);
-        // the Taker's Zcash refund is the one left (Zcash rows only).
-        if (sellsBitcoin && nodeState == "refund_available" && availableAction == QStringLiteral("refund")
+        // The Taker locks first, holds the secret and claims the Maker-funded
+        // leg first in both directions: selling LEZ, the Maker funds Zcash and
+        // the Taker claims it; selling ZEC, the Maker funds the LEZ escrow and
+        // the Taker claims it. The Maker's refund of its leg comes first.
+        // With both legs locked and the Taker's claim window closed with
+        // nothing sent (the Node says so), the claim is no longer offered and
+        // the refund is the settlement (FINDINGS 26). Not "waiting for the
+        // Maker's lock": the Maker locked long ago.
+        // The Maker's leg is already back (its refund ran first); the Taker's
+        // refund of its own leg is the one left (Zcash rows only).
+        if (nodeState == "refund_available" && availableAction == QStringLiteral("refund")
             && actorPhase == QStringLiteral("maker_leg_refunded"))
-            return {"refund_ready", "Maker's LEZ refunded", 75,
+            return {"refund_ready", "Maker's " + theirChain + " refunded", 75,
                     "Refund recovers your " + mine, refundAction, "Refund " + mine};
-        // Selling ZEC the Taker's Zcash refund needs only the refund height,
-        // not the Maker's LEZ refund, and the Taker's actor records that
-        // refund only once it recovers: the row says neither "the Maker
-        // refunds" nor "waiting for" it, which read wrong once the Maker's
-        // LEZ was already back.
+        // The Taker's refund needs only its own deadline (selling ZEC the
+        // Zcash refund height, selling LEZ the LEZ refund time), not the
+        // Maker's earlier refund, and the Taker's actor records that refund
+        // only once it recovers: the row says neither "the Maker refunds" nor
+        // "waiting for" it, which read wrong once the Maker's leg was back.
         if (nodeState == "refund_available" && availableAction == QStringLiteral("refund") && claimWindowClosed)
             return {"refund_ready", "Claim window closed", 70,
                     sellsBitcoin ? "Refund recovers your " + mine + " at the refund height; the Maker's LEZ refund needs nothing from you"
-                                 : "Refund recovers your " + mine + "; the Maker refunds its LEZ",
+                                 : "Refund recovers your " + mine + " at the LEZ refund time; the Maker's Zcash refund needs nothing from you",
                     refundAction, "Refund " + mine};
         if (nodeState == "refund_available" && availableAction == QStringLiteral("refund"))
             return {"awaiting_maker_lock", "Waiting for the Maker's " + theirChain + " lock", 50,
                     QString(sellsBitcoin ? "The Maker's Node funds the LEZ escrow once your Zcash funding is confirmed"
-                                         : "The Maker's Node funds Zcash and claims LEZ with the secret")
+                                         : "The Maker's Node funds the Zcash HTLC once your LEZ lock is confirmed")
                         + "; Refund recovers your " + mine + " if it never does", refundAction, "Refund " + mine};
         // The Taker's own refund is in flight or back; the Maker's refund of
-        // the other leg follows at its deadline and the Node observes it. The
-        // Maker missed nothing: both legs were locked and the Taker refunded by choice.
-        if (sellsBitcoin && nodeState == "refund_in_progress" && actorPhase == QStringLiteral("maker_leg_refunded"))
-            return inFlight("refunding", "Refunding Zcash · the Maker's LEZ is already back", 75,
-                            "Your Zcash refund is admitted; your Node broadcasts it at the refund height and follows it to a block",
-                            refundAction, "Resubmit refund");
-        if (sellsBitcoin && nodeState == "refund_in_progress")
-            return inFlight("refunding", "Refunding Zcash", 70,
-                            "Your Zcash refund is admitted; your Node broadcasts it at the refund height and follows it to a block",
-                            refundAction, "Resubmit refund");
+        // its leg is the earlier one and the Node observes it. The Maker
+        // missed nothing: both legs were locked and the Taker refunded by choice.
+        const QString refundDetail = sellsBitcoin
+            ? "Your Zcash refund is admitted; your Node broadcasts it at the refund height and follows it to a block"
+            : "Your LEZ refund is admitted; your Node submits it at the LEZ refund time and follows it to finality";
+        if (nodeState == "refund_in_progress" && actorPhase == QStringLiteral("maker_leg_refunded"))
+            return inFlight("refunding", "Refunding " + myChain + " · the Maker's " + theirChain + " is already back", 75,
+                            refundDetail, refundAction, "Resubmit refund");
         if (nodeState == "refund_in_progress")
-            return inFlight("refunding", "Refunding " + myChain + " · waiting for the Maker's " + theirChain + " refund", 70,
-                            "Your " + myChain + " refund is admitted; your Node follows it and the Maker's " + theirChain + " refund",
-                            refundAction, "Resubmit refund");
-        // ZEC is a hashlock, not an adaptor signature: selling LEZ, the Maker's
-        // LEZ claim revealed the secret and the Taker's Zcash claim completes
-        // the swap; selling ZEC, the Taker's LEZ claim reveals it and the
-        // Maker's follow-up Zcash claim completes the swap.
+            return inFlight("refunding", "Refunding " + myChain, 70, refundDetail, refundAction, "Resubmit refund");
+        // ZEC is a hashlock, not an adaptor signature: the Taker's claim of
+        // the Maker-funded leg reveals the secret and the Maker's follow-up
+        // claim completes the swap (selling ZEC: the Taker claims LEZ, the
+        // Maker Zcash; selling LEZ: the Taker claims Zcash, the Maker LEZ).
         if (nodeState == "claim_available")
             return {"claim_ready", "Your " + theirChain + " claim is ready", 70,
                     sellsBitcoin ? "Your move — Claim " + theirs + " reveals the secret the Maker needs for its Zcash claim"
-                                 : "Your move — Claim " + theirs + " spends the Zcash HTLC with the secret the Maker's LEZ claim revealed; it completes the swap",
+                                 : "Your move — Claim " + theirs + " spends the Maker's Zcash HTLC and reveals the secret the Maker needs for its LEZ claim",
                     claimAction, "Claim " + theirs};
-        // Selling ZEC the submitted claim is the revealing LEZ claim: the Node
-        // keeps one in flight and re-drives it until final, so the row has
-        // nothing to offer (it read "Retry claim" under NEEDS YOU while the
-        // claim was landing).
+        // The submitted claim is the Taker's revealing claim: the Node keeps
+        // it in flight and re-drives it until final, so the row has nothing to
+        // offer (it read "Retry claim" under NEEDS YOU while the claim was
+        // landing). Once it is final the Maker's follow-up claim is awaited.
         if (nodeState == "claim_in_progress" && sellsBitcoin)
             return {"claiming_lez", "LEZ claim submitted", 85,
                     "Your Node follows the claim to finality; the Maker's follow-up Zcash claim completes the swap", "", ""};
+        if (nodeState == "claim_in_progress" && actorPhase == QStringLiteral("claim_evidence_available"))
+            return {"claiming_zec", "Waiting for the Maker's LEZ claim", 90,
+                    "Your Zcash claim is final and revealed the secret; the Maker's LEZ claim completes the swap", "", ""};
         if (nodeState == "claim_in_progress")
-            return inFlight("claiming_zec", theirChain + " claim submitted", 85,
-                            "Your Node submitted the Zcash claim and follows it to a block; the swap completes when it is final",
-                            claimAction, "Resubmit claim");
+            return {"claiming_zec", "Zcash claim submitted", 85,
+                    "Your Node follows the claim to finality; the Maker's follow-up LEZ claim completes the swap", "", ""};
     }
     // A refund already submitted keeps its refund action (offered as "Resubmit
     // refund" once it looks stuck; the ZEC projection does this through the
@@ -535,17 +544,20 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     if (nextAction == QStringLiteral("recover_maker_leg"))
         return {"recovering", "Claim window closed", 55,
                 "The Taker's claim can no longer land; your Node refunds its " + myChain + " lock", "", ""};
-    // ZEC (TakerSellsLez): the Maker funds Zcash second, claims LEZ first with
-    // the secret, and refunds Zcash at the agreement's height if LEZ never pays.
+    // ZEC (TakerSellsLez): the Maker funds Zcash second; the Taker claims it
+    // first and reveals the secret, and the Maker claims LEZ with it on its
+    // own. Past the Taker's claim window the Maker's Zcash refund is the
+    // earlier one; its Node still watches for a late Taker claim meanwhile.
     if (nextAction == QStringLiteral("refund_zcash"))
         return {"recovering", "Refunding Zcash", 55,
-                "The LEZ leg will not pay; your Node refunds its Zcash lock once the refund height is reached", "", ""};
-    if (phase == "both_legs_locked" && nextAction == QStringLiteral("claim_lez"))
-        return {"claiming_lez", "Claiming LEZ", 70,
-                "Your Node claims the LEZ escrow with the secret; the Taker then claims " + foreignChain, "", ""};
+                phase == "both_legs_locked"
+                    ? "The Taker's Zcash claim window closed; your Node refunds its Zcash lock at the refund height and still takes a late claim's secret to LEZ"
+                    : "The Taker's LEZ came back; your Node refunds its Zcash lock once the refund height is reached",
+                "", ""};
     if (pair == QStringLiteral("Zcash") && !sellsLez && phase == "claim_evidence_available")
-        return {"awaiting_taker_claim", "Waiting for the Taker's " + foreignChain + " claim", 85,
-                "Your LEZ claim revealed the secret; the Taker's " + foreignChain + " claim completes the swap", "", ""};
+        return {"claiming_lez", claimSent ? "LEZ claim sent" : "Claiming LEZ", 85,
+                claimSent ? "Your Node sent its LEZ claim with the secret the Taker's Zcash claim revealed; the swap completes when it confirms"
+                          : "The Taker's Zcash claim revealed the secret; your Node claims the LEZ escrow with it", "", ""};
     if (phase == "offered" || phase == "awaiting_taker_confirmations")
         return {"awaiting_taker_lock", "Waiting for the Taker's " + theirChain + " lock", 20,
                 "Your Node observes " + theirChain + "; nothing to click", "", ""};

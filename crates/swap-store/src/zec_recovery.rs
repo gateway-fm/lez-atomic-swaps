@@ -7,7 +7,7 @@ use std::{
 
 use async_trait::async_trait;
 use lez_bridge_protocol::RequestId;
-use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapId, UnixSeconds};
+use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, CLAIM_RECORD_SCHEMA_V1,
     CLAIM_RECORD_SCHEMA_V2, ClaimIntentRecordV1, ClaimIntentV1, ClaimMaterialContext,
@@ -415,6 +415,61 @@ impl SqliteZecRecoveryStore {
         )
     }
 
+    /// As [`Self::complete_maker_zec_negotiation_and_register_actor_for_role`],
+    /// refusing a `TakerSellsLez` agreement with
+    /// [`StoreError::MakerZecTakerSellsLezCapacityReached`] while the Maker
+    /// already holds `taker_sells_lez_capacity` open ones
+    /// ([`Self::count_open_maker_zec_taker_sells_lez_swaps`]), counted in the
+    /// same `BEGIN IMMEDIATE` transaction as the acceptance. An exact replay
+    /// is answered whatever the count.
+    ///
+    /// # Errors
+    ///
+    /// As the unbounded completion, and the capacity refusal.
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_maker_zec_negotiation_and_register_actor_within_capacity(
+        &self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        accepted: &AcceptedZecAgreementV1,
+        actor: &MakerActorManifestV1,
+        actor_not_before: u64,
+        taker_sells_lez_capacity: usize,
+    ) -> Result<MakerZecAcceptanceCommit, StoreError> {
+        self.complete_maker_zec_negotiation_checked(
+            request_id,
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            accepted,
+            None,
+            Some((actor, actor_not_before)),
+            Some(taker_sells_lez_capacity),
+        )
+    }
+
+    /// The Maker's open ZEC `TakerSellsLez` swaps at `now_unix_seconds`: an
+    /// accepted Maker agreement in that direction whose actor the schedule has
+    /// not ended (completed or refunded) and whose LEZ refund time is still
+    /// ahead. A swap past its LEZ refund time no longer competes for the
+    /// Maker's one-at-a-time LEZ claims: its claim can no longer be included,
+    /// so the Maker Node's gate passes over it, waiting or in flight, and its
+    /// actor stops it by name (`lez_claim_cannot_land`).
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error.
+    pub fn count_open_maker_zec_taker_sells_lez_swaps(
+        &self,
+        now_unix_seconds: u64,
+    ) -> Result<usize, StoreError> {
+        self.require_role(Participant::Maker)?;
+        let connection = self.connection()?;
+        count_open_maker_zec_taker_sells_lez(&connection, now_unix_seconds)
+    }
+
     /// Atomically accepts either ZEC direction and schedules the Maker actor.
     ///
     /// Maker claim material is required exactly when the signed direction makes
@@ -462,10 +517,40 @@ impl SqliteZecRecoveryStore {
         maker_preimage: Option<&ClaimPreimage>,
         actor: Option<(&MakerActorManifestV1, u64)>,
     ) -> Result<MakerZecAcceptanceCommit, StoreError> {
+        self.complete_maker_zec_negotiation_checked(
+            request_id,
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            accepted,
+            maker_preimage,
+            actor,
+            None,
+        )
+    }
+
+    #[allow(
+        clippy::similar_names,
+        clippy::too_many_lines,
+        clippy::too_many_arguments
+    )]
+    fn complete_maker_zec_negotiation_checked(
+        &self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        accepted: &AcceptedZecAgreementV1,
+        maker_preimage: Option<&ClaimPreimage>,
+        actor: Option<(&MakerActorManifestV1, u64)>,
+        taker_sells_lez_capacity: Option<usize>,
+    ) -> Result<MakerZecAcceptanceCommit, StoreError> {
         self.require_role(Participant::Maker)?;
         self.require_role(accepted.local_participant())?;
         let agreement = accepted.agreement();
-        let maker_claim_authority = agreement.lez_claimant() == Participant::Maker;
+        // The Taker holds the swap secret in both directions, so a Maker completion never
+        // carries claim material.
+        let maker_claim_authority = agreement.revealing_claimant() == Participant::Maker;
         if accepted.revision() != 0
             || agreement.coordinator().pair() != Pair::Zcash
             || maker_claim_authority != maker_preimage.is_some()
@@ -534,6 +619,16 @@ impl SqliteZecRecoveryStore {
                 offer_revision: result.offer_revision,
                 was_replay: true,
             });
+        }
+
+        if let Some(capacity) = taker_sells_lez_capacity
+            && agreement.direction() == SwapDirection::TakerSellsLez
+        {
+            let open =
+                count_open_maker_zec_taker_sells_lez(&transaction, accepted.accepted_at().value())?;
+            if open >= capacity {
+                return Err(StoreError::MakerZecTakerSellsLezCapacityReached { open, capacity });
+            }
         }
 
         #[allow(clippy::type_complexity)]
@@ -1704,7 +1799,7 @@ impl ClaimRecoveryStore for SqliteZecRecoveryStore {
         let accepted = AcceptedZecAgreementV1::resume(envelope)?;
         self.require_role(accepted.local_participant())?;
         if accepted.revision() != 0
-            || accepted.local_participant() != accepted.agreement().lez_claimant()
+            || accepted.local_participant() != accepted.agreement().revealing_claimant()
         {
             return Err(StoreError::InvalidZecRecoveryState);
         }
@@ -1923,7 +2018,12 @@ impl ClaimRecoveryStore for SqliteZecRecoveryStore {
         supersession: &lez_zec_swap_sdk::ClaimSupersessionV1,
     ) -> Result<CreateFirstLockOutcome, Self::Error> {
         self.require_role(intent.local_participant())?;
-        if intent.step() != ClaimStepV1::RevealingLez {
+        // Only an owned LEZ claim is re-planned (its signer nonce can be taken): the
+        // Taker's revealing claim in TakerSellsForeign, the Maker's follow-up in TakerSellsLez.
+        if !matches!(
+            intent.step(),
+            ClaimStepV1::RevealingLez | ClaimStepV1::FollowupLez
+        ) {
             return Err(StoreError::InvalidZecRecoveryState);
         }
         let key = self.claim_key()?;
@@ -3136,6 +3236,64 @@ struct RefundTransitionRow {
     intent_staged_revision: Option<i64>,
 }
 
+impl crate::SqliteSwapStore {
+    /// Every Maker ZEC swap whose actor the schedule has not ended (completed
+    /// or refunded), with its stored agreement wire, by swap id: what a Maker
+    /// Node checks at start for swaps it cannot resume.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error.
+    pub fn open_maker_zec_agreement_wires(&self) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT a.swap_id, a.agreement_wire
+               FROM zec_sdk_agreements a
+               LEFT JOIN maker_actor_processes p ON p.swap_id = a.swap_id
+              WHERE a.local_role = 'maker'
+                AND (p.schedule_state IS NULL OR p.schedule_state <> 'terminal')
+              ORDER BY a.swap_id",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+/// Counts the open Maker ZEC `TakerSellsLez` swaps (see
+/// [`SqliteZecRecoveryStore::count_open_maker_zec_taker_sells_lez_swaps`]).
+/// An agreement row that no longer validates is not counted: this release
+/// cannot drive it, and the Node refuses to start while one is open.
+fn count_open_maker_zec_taker_sells_lez(
+    connection: &Connection,
+    now_unix_seconds: u64,
+) -> Result<usize, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT a.agreement_wire
+           FROM zec_sdk_agreements a
+           LEFT JOIN maker_actor_processes p ON p.swap_id = a.swap_id
+          WHERE a.local_role = 'maker'
+            AND (p.schedule_state IS NULL OR p.schedule_state <> 'terminal')",
+    )?;
+    let wires = statement
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let now_ms = now_unix_seconds.saturating_mul(1_000);
+    Ok(wires
+        .iter()
+        .filter_map(|wire| {
+            AcceptedZecAgreementV1::accept_wire_at(wire, UnixSeconds::new(0), Participant::Maker, 0)
+                .ok()
+        })
+        .filter(|accepted| {
+            accepted.agreement().direction() == SwapDirection::TakerSellsLez
+                && accepted.agreement().lez_refund_at_ms() > now_ms
+        })
+        .count())
+}
+
 fn load_agreement_row(
     connection: &Connection,
     role: &str,
@@ -4297,8 +4455,12 @@ fn claim_submission_context<'a>(
     intent: &'a ClaimIntentV1,
 ) -> ClaimSubmissionContext<'a> {
     let purpose = match intent.step() {
-        ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
-        ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+        ClaimStepV1::RevealingLez | ClaimStepV1::FollowupLez => {
+            ClaimMaterialPurpose::LezClaimSubmission
+        }
+        ClaimStepV1::FollowupZcash | ClaimStepV1::RevealingZcash => {
+            ClaimMaterialPurpose::ZcashClaimSubmission
+        }
     };
     ClaimSubmissionContext::new(
         ClaimMaterialContext::new(
@@ -4323,8 +4485,12 @@ fn prepared_claim_submission_context<'a>(
     prepared: &'a PreparedClaimSubmissionV1,
 ) -> ClaimSubmissionContext<'a> {
     let purpose = match prepared.step() {
-        ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
-        ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+        ClaimStepV1::RevealingLez | ClaimStepV1::FollowupLez => {
+            ClaimMaterialPurpose::LezClaimSubmission
+        }
+        ClaimStepV1::FollowupZcash | ClaimStepV1::RevealingZcash => {
+            ClaimMaterialPurpose::ZcashClaimSubmission
+        }
     };
     ClaimSubmissionContext::new(
         ClaimMaterialContext::new(
@@ -4493,10 +4659,10 @@ fn validate_claim_auxiliary_state(
         let purpose = claim_material_purpose(&material.purpose)?;
         match purpose {
             ClaimMaterialPurpose::LocalFirstClaim
-                if accepted.local_participant() == accepted.agreement().lez_claimant()
+                if accepted.local_participant() == accepted.agreement().revealing_claimant()
                     && material.created_revision == 0 => {}
             ClaimMaterialPurpose::ObservedFollowUpClaim
-                if accepted.local_participant() != accepted.agreement().lez_claimant()
+                if accepted.local_participant() != accepted.agreement().revealing_claimant()
                     && material.created_revision > 0 =>
             {
                 let predecessor = material

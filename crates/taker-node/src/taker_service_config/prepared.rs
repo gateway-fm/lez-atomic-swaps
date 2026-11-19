@@ -93,6 +93,37 @@ impl ConfiguredTakerInitiationContext {
             .collect()
     }
 
+    /// Refuses to start while this Node holds an open ZEC `TakerSellsLez` swap
+    /// agreed under a profile of the earlier reveal order (the Maker revealed
+    /// first on LEZ): this release refuses that agreement
+    /// (`ZecAgreementV1Error::LegacyRevealOrder`), so its actor could neither
+    /// claim nor refund. There is no upgrade between releases before 1.0.0
+    /// (issue #133): such a swap is finished or refunded by the release that
+    /// started it. Completed and refunded swaps do not block.
+    ///
+    /// # Errors
+    ///
+    /// Names every blocking swap.
+    #[cfg(feature = "pair-zec")]
+    pub fn refuse_start_with_legacy_zec_swaps(&self) -> anyhow::Result<()> {
+        let bound = self.zec_bound_swaps();
+        let blocking = legacy_open_zec_swaps(
+            bound.iter().map(|prepared| {
+                (
+                    prepared.swap_id().as_str(),
+                    prepared.execution().agreement_output(),
+                )
+            }),
+            &self.schedule,
+        );
+        anyhow::ensure!(
+            blocking.is_empty(),
+            "this Taker Node holds open ZEC TakerSellsLez swaps agreed in the earlier reveal order, which this release cannot resume: {}; finish or refund them with the previous release first (no upgrade between releases before 1.0.0, issue #133), then start this one",
+            blocking.join(", ")
+        );
+        Ok(())
+    }
+
     /// Adds a swap prepared at take time; the same offer may not be prepared twice.
     pub(crate) fn insert_prepared(
         &mut self,
@@ -764,4 +795,178 @@ pub(super) fn validate_initiation(
         }
     }
     Ok(())
+}
+
+/// The swaps among `bound` (swap id, countersigned agreement file) whose
+/// agreement is a `TakerSellsLez` one under a profile of the earlier reveal
+/// order and whose schedule has not ended (completed or refunded).
+#[cfg(feature = "pair-zec")]
+pub(crate) fn legacy_open_zec_swaps<'a>(
+    bound: impl IntoIterator<Item = (&'a str, &'a Path)>,
+    schedule: &lez_swap_store::SqliteTakerActorSchedule,
+) -> Vec<String> {
+    bound
+        .into_iter()
+        .filter(|(swap_id, _)| {
+            !schedule
+                .record(swap_id)
+                .ok()
+                .flatten()
+                .is_some_and(|record| {
+                    record.schedule_state() == lez_actor_supervision::ScheduleState::Terminal
+                })
+        })
+        .filter(|(_, agreement)| {
+            fs::read(agreement).is_ok_and(|wire| lez_zec_swap_sdk::legacy_taker_sells_lez(&wire))
+        })
+        .map(|(swap_id, _)| swap_id.to_owned())
+        .collect()
+}
+
+#[cfg(all(test, feature = "pair-zec"))]
+mod legacy_start_tests {
+    use super::*;
+    use lez_actor_supervision::AttemptResolution;
+    use lez_swap_core::SwapDirection;
+    use lez_zec_swap_sdk::{
+        Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
+        NegotiationTranscriptV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashTransparentDestinationV1,
+        ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1, ZecParticipantIdentityV1,
+        ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding,
+        ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    };
+    use zcash_protocol::{
+        consensus::{BranchId, NetworkType},
+        value::Zatoshis,
+    };
+
+    /// A stored agreement wire with `direction` and the signed `profile`; the
+    /// start check reads only those, so the rest of the record (its Zcash
+    /// binding included) need not validate.
+    fn stored_wire(swap_id: &str, direction: SwapDirection, profile: ZecProfileId) -> Vec<u8> {
+        let binding = ZecSwapBinding::new(
+            ZecProfileId::DeterministicLocalV3,
+            ExpectedBip199Output::new(
+                NetworkType::Regtest,
+                BranchId::Nu7,
+                Zatoshis::from_u64(10_000).unwrap(),
+                Bip199Contract::for_profile(
+                    ZecProfileId::DeterministicLocalV3,
+                    120,
+                    [5; 20],
+                    [6; 32],
+                    [7; 20],
+                ),
+            ),
+        )
+        .unwrap();
+        let body = ZecAgreementBodyV1::new(
+            swap_id.to_owned(),
+            direction,
+            ZecProfileRecordV1::from(profile),
+            ZecParticipantsV1::new(
+                ZecParticipantIdentityV1::new([3; 32], [2; 33]),
+                ZecParticipantIdentityV1::new([4; 32], [3; 33]),
+            ),
+            [6; 32],
+            ZecLezTermsV1::new(
+                LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
+                [1; 8],
+                LezAssetV1::Native {
+                    authenticated_transfer_program_id: [2; 8],
+                },
+                25_000,
+                [9; 32],
+                [10; 32],
+            ),
+            ZecSwapBindingRecordV1::from_binding(&binding),
+            ZecTransactionPolicyV1::new(
+                [12; 32],
+                ZcashTransparentDestinationV1::p2pkh([5; 20]),
+                1,
+                1,
+                ZcashTransparentDestinationV1::p2pkh([7; 20]),
+                1,
+                ZcashTransparentDestinationV1::p2pkh([5; 20]),
+                1,
+                40,
+            ),
+            ZecRefundPlanV1::new(100, 116, 190_000, 220),
+            NegotiationTranscriptV1::new([9; 32], [10; 32], 400),
+        );
+        ZecAgreementRecordV1::from_parts(
+            ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+            body,
+            [0; 32],
+            [0; 64],
+            [0; 64],
+        )
+        .encode_wire()
+        .unwrap()
+    }
+
+    #[test]
+    fn a_taker_node_refuses_to_start_only_for_open_legacy_taker_sells_lez_swaps() {
+        let root = tempfile::tempdir().unwrap();
+        let mut schedule = lez_swap_store::SqliteTakerActorSchedule::open(
+            root.path().join("taker-actor-schedule.sqlite3"),
+        )
+        .unwrap();
+        let swaps = [
+            (
+                "legacy-open",
+                SwapDirection::TakerSellsLez,
+                ZecProfileId::DeterministicLocalDevnetV3,
+            ),
+            (
+                "legacy-completed",
+                SwapDirection::TakerSellsLez,
+                ZecProfileId::DeterministicLocalDevnetV3,
+            ),
+            (
+                "legacy-forward",
+                SwapDirection::TakerSellsForeign,
+                ZecProfileId::DeterministicLocalDevnetV5,
+            ),
+            (
+                "current-open",
+                SwapDirection::TakerSellsLez,
+                ZecProfileId::DeterministicLocalDevnetV7,
+            ),
+        ];
+        let files: Vec<(String, PathBuf)> = swaps
+            .iter()
+            .map(|(swap_id, direction, profile)| {
+                let path = root.path().join(format!("{swap_id}.agreement"));
+                fs::write(&path, stored_wire(swap_id, *direction, *profile)).unwrap();
+                schedule.register(swap_id, 1).unwrap();
+                ((*swap_id).to_owned(), path)
+            })
+            .collect();
+        let lease = schedule.claim("legacy-completed", 2).unwrap().unwrap();
+        schedule
+            .resolve(&lease, &AttemptResolution::Terminal, None, 3)
+            .unwrap();
+
+        let bound = || files.iter().map(|(id, path)| (id.as_str(), path.as_path()));
+        assert_eq!(legacy_open_zec_swaps(bound(), &schedule), ["legacy-open"]);
+        // A swap bound but not yet scheduled is open.
+        let unscheduled = root.path().join("legacy-unscheduled.agreement");
+        fs::write(
+            &unscheduled,
+            stored_wire(
+                "legacy-unscheduled",
+                SwapDirection::TakerSellsLez,
+                ZecProfileId::PublicTestnetV2,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            legacy_open_zec_swaps(
+                bound().chain([("legacy-unscheduled", unscheduled.as_path())]),
+                &schedule
+            ),
+            ["legacy-open", "legacy-unscheduled"]
+        );
+    }
 }

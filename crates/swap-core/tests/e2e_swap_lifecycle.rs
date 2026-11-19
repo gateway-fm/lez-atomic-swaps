@@ -32,11 +32,8 @@ fn schedule(pair: Pair, direction: SwapDirection) -> RecoverySchedule {
         SwapDirection::TakerSellsForeign => (Chain::Lez, foreign),
         SwapDirection::TakerSellsLez => (foreign, Chain::Lez),
     };
-    let safety_chains = if pair == Pair::Zcash {
-        [Chain::Lez, Chain::Zcash]
-    } else {
-        [maker_chain, taker_chain]
-    };
+    // The Maker-funded leg refunds first for BTC and ZEC alike.
+    let safety_chains = [maker_chain, taker_chain];
     RecoverySchedule::new(
         pair,
         direction,

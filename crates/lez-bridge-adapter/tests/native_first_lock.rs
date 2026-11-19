@@ -785,8 +785,83 @@ async fn refund_observation_advances_contiguous_pages_across_sqlite_reopen() {
     }
 }
 
+/// `TakerSellsLez`: the Maker's follow-up LEZ claim is the same
+/// claimant-signed escrow claim as a revealing one; its re-plan goes to the
+/// sidecar as a claim of the Maker's account and comes back under its own
+/// step, so the SDK restages it as the follow-up claim it replaces.
+#[tokio::test]
+async fn a_followup_lez_claim_is_re_planned_under_its_own_step() {
+    let agreement = agreement();
+    assert_eq!(agreement.direction(), SwapDirection::TakerSellsLez);
+    assert_eq!(agreement.lez_claimant(), Participant::Maker);
+    let store_path = isolated_sqlite_path("lez-wrapper-followup-supersede-store");
+    let journal_path = isolated_sqlite_path("lez-wrapper-followup-supersede-journal");
+    let transport = ClaimTransport::new([]).with_behavior(ClaimBehavior::Supersede);
+    let ports = ContextOwningLezBridgePorts::new(
+        RunId::new("native-run-0001").expect("run ID"),
+        runtime_for_participant(&agreement, Participant::Maker),
+        Participant::Maker,
+        CloneTransportFactory {
+            transport: transport.clone(),
+            opens: Arc::new(AtomicUsize::new(0)),
+        },
+        QueuedContexts {
+            requests: Arc::new(Mutex::new(VecDeque::from([BridgeRequestSpec::new(
+                RequestId::new("followup-claim-supersede-1").expect("request ID"),
+                None,
+            )]))),
+            calls: Arc::new(AtomicUsize::new(0)),
+        },
+        SqliteZecRecoveryStore::open(&store_path, Participant::Maker)
+            .expect("open production recovery store"),
+        (),
+        SqliteBridgeOperationJournal::open(&journal_path).expect("operation journal"),
+    )
+    .expect("role-local claim wrapper");
+
+    // A Zcash claim has no LEZ nonce to re-plan: refused before the sidecar.
+    let zcash =
+        PreparedClaimSubmissionV1::new(ClaimStepV1::FollowupZcash, [0x36; 32], vec![0xca, 0xfe])
+            .expect("follow-up Zcash claim");
+    assert!(
+        ports
+            .supersede_revealing_claim(&agreement, &zcash)
+            .await
+            .is_err()
+    );
+    assert!(
+        transport
+            .supersede_requests
+            .lock()
+            .expect("supersede log")
+            .is_empty()
+    );
+
+    let followup =
+        PreparedClaimSubmissionV1::new(ClaimStepV1::FollowupLez, [0x34; 32], vec![0xca, 0xfe])
+            .expect("follow-up LEZ claim");
+    let replanned = ports
+        .supersede_revealing_claim(&agreement, &followup)
+        .await
+        .expect("follow-up claim re-plan");
+    assert_eq!(replanned.claim.step(), ClaimStepV1::FollowupLez);
+    assert_eq!(replanned.claim.expected_submission_id(), &[0x35; 32]);
+    assert_eq!(replanned.replan_index, 1);
+    let requests = transport.supersede_requests.lock().expect("supersede log");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].superseded_claim_transaction_id,
+        TransactionId::from_bytes([0x34; 32])
+    );
+    drop(requests);
+    drop(ports);
+    remove_sqlite_files(&store_path);
+    remove_sqlite_files(&journal_path);
+}
+
 #[derive(Clone, Debug)]
 struct ClaimTransport {
+    supersede_requests: Arc<Mutex<Vec<lez_bridge_protocol::SupersedeRevealingClaimRequest>>>,
     prepare_requests: Arc<Mutex<Vec<PrepareRevealingClaimRequest>>>,
     observe_requests: Arc<Mutex<Vec<ObserveRevealingClaimRequest>>>,
     submit_requests: Arc<Mutex<Vec<SubmitTransactionRequest>>>,
@@ -806,11 +881,14 @@ enum ClaimBehavior {
     WrongSubmitContext,
     WrongSubmitId,
     ZeroPreparedId,
+    /// The sidecar re-plans the claim it is asked to supersede (index 1).
+    Supersede,
 }
 
 impl ClaimTransport {
     fn new(observations: impl IntoIterator<Item = ObserveRevealingClaimResult>) -> Self {
         Self {
+            supersede_requests: Arc::default(),
             prepare_requests: Arc::default(),
             observe_requests: Arc::default(),
             submit_requests: Arc::default(),
@@ -831,9 +909,27 @@ impl LezBridgeClaimTransport for ClaimTransport {
 
     async fn supersede_revealing_claim(
         &self,
-        _request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
+        request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
     ) -> Result<lez_bridge_protocol::SupersedeRevealingClaimResult, Self::Error> {
-        Err(FakeError)
+        if !matches!(self.behavior, ClaimBehavior::Supersede) {
+            return Err(FakeError);
+        }
+        let result = lez_bridge_protocol::SupersedeRevealingClaimResult::new(
+            request.context.clone(),
+            request.superseded_claim_transaction_id,
+            7,
+            8,
+            1,
+            PreparedTransaction::new(
+                TransactionId::from_bytes([0x35; 32]),
+                ExactTransactionBytes::new(vec![0xca, 0xff]).expect("re-planned claim bytes"),
+            ),
+        );
+        self.supersede_requests
+            .lock()
+            .expect("claim supersede log")
+            .push(request);
+        Ok(result)
     }
 
     async fn prepare_revealing_claim(
@@ -4602,6 +4698,29 @@ fn agreement_for(environment: LezEnvironmentV1, token: bool) -> ZecAgreementV1 {
     agreement_for_direction(environment, token, SwapDirection::TakerSellsLez)
 }
 
+/// The fixture's profile, Zcash refund height and refund plan per direction:
+/// `TakerSellsLez` is signed only under a Taker-reveals-first profile
+/// (`deterministic-local-v3`, Regtest NU7: 120 s LEZ refund delay, 8 blocks,
+/// 30 s margin; the Maker's Zcash refund first), `TakerSellsForeign` keeps
+/// `deterministic-local-v1`. Both put the LEZ refund at 160 s: the
+/// `TakerSellsLez` anchor is 40 s.
+fn fixture_profile(direction: SwapDirection) -> (ZecProfileId, BranchId, u32, ZecRefundPlanV1) {
+    match direction {
+        SwapDirection::TakerSellsForeign => (
+            ZecProfileId::DeterministicLocalV1,
+            BranchId::Nu6_2,
+            120,
+            ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        ),
+        SwapDirection::TakerSellsLez => (
+            ZecProfileId::DeterministicLocalV3,
+            BranchId::Nu7,
+            124,
+            ZecRefundPlanV1::new(40, 116, 130_000, 160),
+        ),
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn agreement_for_direction(
     environment: LezEnvironmentV1,
@@ -4618,12 +4737,19 @@ fn agreement_for_direction(
         SwapDirection::TakerSellsForeign => (pubkey_hash(&taker_key), pubkey_hash(&maker_key)),
     };
     let secret_digest: [u8; 32] = Sha256::digest([0x91; 32]).into();
-    let contract = Bip199Contract::new(120, refund_hash, secret_digest, claimant_hash);
+    let (profile, branch, refund_height, refund_plan) = fixture_profile(direction);
+    let contract = Bip199Contract::for_profile(
+        profile,
+        refund_height,
+        refund_hash,
+        secret_digest,
+        claimant_hash,
+    );
     let binding = ZecSwapBinding::new(
-        ZecProfileId::DeterministicLocalV1,
+        profile,
         ExpectedBip199Output::new(
             NetworkType::Regtest,
-            BranchId::Nu6_2,
+            branch,
             Zatoshis::from_u64(100_000_000).expect("principal"),
             contract,
         ),
@@ -4691,7 +4817,7 @@ fn agreement_for_direction(
     let body = ZecAgreementBodyV1::new(
         id,
         direction,
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(profile),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_key),
             ZecParticipantIdentityV1::new([4; 32], taker_key),
@@ -4717,7 +4843,7 @@ fn agreement_for_direction(
             10_000,
             40,
         ),
-        ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        refund_plan,
         NegotiationTranscriptV1::new([5; 32], [6; 32], 1_000),
     );
     let commitment = body.commitment();

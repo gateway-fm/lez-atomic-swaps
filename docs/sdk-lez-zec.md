@@ -28,8 +28,8 @@ unless stated otherwise.
 | Offer discovery | `OfferDiscovery::{publish, discover}`, `ZecPairSdk::{publish_offer, discover_offers}` | `ports.rs`, `sdk.rs` | `independent_roles_validate_the_same_wire_and_persist_before_activation`; `accepted_wire_activation_and_resume_need_no_discovery_or_negotiation_capability` (the capability is gone after activation) |
 | Negotiation | `NegotiationChannel::negotiate`, `ZecPairSdk::negotiate_at`, `ZecAgreementDraftV1`, `ZecMakerAgreementProposalV1`, `ZecAgreementV1::from_wire_at`, `AcceptedZecAgreementV1::accept_wire_at` | `ports.rs`, `sdk.rs`, `agreement_v1.rs` | same test, plus `tests/agreement_v1_cross_binding.rs` (`maker_validates_and_signs_before_the_taker_countersigns_exact_wire`, `devnet_profile_round_trips_on_the_wire_and_an_unknown_tag_is_rejected`) |
 | Escrow creation | `FirstLockPlanV1`, `ActiveZecSwap::{stage_first_lock, drive_first_lock, project_first_lock}` (the first leg), `ActiveZecSwap::{observe_taker_first_lock, refresh_maker_funding_eligibility, drive_maker_lock, project_maker_lock, observe_maker_lock}` (the second leg), `build_funding_transaction`, `Bip199Contract` | `sdk.rs`, `first_lock.rs`, `maker_lock.rs`, `transaction.rs`, `lib.rs` | `first_lock_intent_is_role_fixed_and_durable_before_any_effect`, `lez_initialize_is_observed_before_fund_and_each_retry_is_exact`, `maker_independently_observes_and_durably_projects_taker_first_locks_in_both_directions`, `maker_happy_path_locks_the_opposite_chain_and_restarts_in_both_legs_locked`, `independent_actors_reach_both_legs_locked_from_chain_evidence_in_both_directions` |
-| Claim | `ActiveZecSwap::{drive_claim, zcash_claim_context, zcash_funding_context}`, `ClaimDriveOutcome`, `ClaimPreimage`, `ZcashClaimContextV1` (the pre-reveal funding gate) | `sdk.rs`, `claim.rs`, `zcash_claim_context.rs` | `first_claimant_activation_persists_agreement_and_claim_preimage_in_both_directions`, `claim_activation_rejects_wrong_role_or_digest_before_activation_or_effect`, `independent_actors_complete_lez_then_zcash_claims_in_both_directions`; `tests/lez_claim_observations.rs` |
-| Refund | `ActiveZecSwap::drive_refund`, `RefundDriveOutcome`, `ZecRefundPlanV1`, `ZecRefundProfile::recovery_schedule`, `RefundIntentV1` | `sdk.rs`, `refund.rs`, `profile.rs`, `agreement_v1.rs` | `refund_contract_keeps_lez_before_zcash_in_both_directions`, `taker_reorg_between_lez_maker_steps_suspends_funding_until_replacement`; `tests/zec_profiles.rs` |
+| Claim | `ActiveZecSwap::{drive_claim, zcash_claim_context, zcash_funding_context}`, `ClaimDriveOutcome`, `ClaimPreimage`, `ZcashClaimContextV1` (the pre-reveal funding gate) | `sdk.rs`, `claim.rs`, `zcash_claim_context.rs` | `first_claimant_activation_persists_agreement_and_claim_preimage_in_both_directions`, `claim_activation_rejects_wrong_role_or_digest_before_activation_or_effect`, `independent_actors_complete_both_claims_taker_first_in_both_directions`, `a_revealing_claim_after_its_window_is_refused_with_nothing_sent_in_both_directions`; `tests/lez_claim_observations.rs` |
+| Refund | `ActiveZecSwap::drive_refund`, `RefundDriveOutcome`, `ZecRefundPlanV1`, `ZecRefundProfile::recovery_schedule`, `RefundIntentV1` | `sdk.rs`, `refund.rs`, `profile.rs`, `agreement_v1.rs` | `refund_contract_keeps_lez_before_zcash_selling_zec`, `taker_sells_lez_refunds_each_funder_its_own_leg_in_either_order`, `taker_reorg_between_lez_maker_steps_suspends_funding_until_replacement`; `tests/zec_profiles.rs` |
 | Durability across all of them | `ZecPairSdk::{resume, resume_claim_capable, resume_all_capable}`, `RecoveryStore`, `ClaimRecoveryStore`, `RefundRecoveryStore` (implemented on SQLite by `lez-swap-store`) | `sdk.rs`, `ports.rs`, [`crates/swap-store/src/zec_recovery.rs`](../crates/swap-store/src/zec_recovery.rs) | `confirmed_first_lock_commits_before_apply_and_replays_after_restart`, `restart_observes_before_exact_zcash_rebroadcast_without_advancing_phase`, `stale_maker_replays_committed_second_lock_without_resubmission`, `maker_restart_observes_unknown_zcash_submission_before_any_rebroadcast` |
 | Zcash consensus | the funding, claim and refund transactions this crate builds, broadcast to a pinned Zebra regtest node | `transaction.rs`, [`crates/zebra-node-adapter`](../crates/zebra-node-adapter) | [`tests/zebra_regtest.rs`](../crates/zec-swap-sdk/tests/zebra_regtest.rs) `real_actor_keys_fund_claim_and_refund_through_zebra_consensus` (fund, claim and refund accepted by Zebra; a competing fork and a concurrent claim/refund reorg recorded) |
 
@@ -48,9 +48,9 @@ cargo run -p lez-zec-swap-sdk --example full-lifecycle
 
 It publishes an offer, discovers it, negotiates a countersigned agreement,
 activates the swap for both roles, drives the LEZ first lock and the Zcash
-second lock, the revealing LEZ claim and the follow-up Zcash claim to
-`Completed`, then takes a second swap, whose Zcash leg is never claimed,
-through the ordered LEZ and Zcash refunds to `Refunded`. It uses fixed secrets
+second lock, the Taker's revealing Zcash claim and the Maker's follow-up LEZ
+claim to `Completed`, then takes a second swap, which nobody claims, through
+the Maker's Zcash refund and the Taker's later LEZ refund to `Refunded`. It uses fixed secrets
 and no I/O, so it is deterministic and runs offline.
 
 ## The five stages in the facade
@@ -79,12 +79,13 @@ pub async fn activate(&self, accepted: AcceptedZecAgreementV1)
 decodes the exact schema version, verifies both roles' signatures, checks the
 named profile against the LEZ environment and the Zcash network, and validates
 the transcript against the clock. `activate` persists the accepted agreement
-(and, for the first claimant, the claim preimage under a protected key) before
-any chain effect.
+(and, for the Taker, the claim preimage under a protected key) before any
+chain effect.
 
 From there the swap is a state machine. `ActiveZecSwap::next_action` returns a
 `ZecLifecycleAction` — `CreateAndFundLez`, `FundZcash`, `ClaimLez`,
-`ClaimZcash`, `RefundZcash`, `Wait`, or `Complete` — and the `drive_*` methods
+`ClaimZcash`, `RefundZcash`, `RefundLez`, `Wait`, or `Complete` — and the
+`drive_*` methods
 are the only way to move it forward. Each transition is revalidated and
 committed by exact compare-and-swap at the next revision before the next
 action is chosen, so a restart replays rather than re-sends. The reference
@@ -97,12 +98,97 @@ same engine in-process.
 ## Directions
 
 Both directions are implemented and tested at the SDK level (`sdk_lifecycle.rs`
-drives every stage in `TakerSellsForeign` and `TakerSellsLez`). The RFP-fixed
-order is ZEC after LEZ: the LEZ leg is locked first and claimed first, and the
-secret is revealed by the LEZ claim; the Zcash leg follows. In `TakerSellsLez`
-the Taker locks LEZ, the Maker funds the Zcash HTLC, the Maker claims LEZ
-revealing the preimage, and the Taker claims Zcash. In `TakerSellsForeign` the
-roles swap chains and the Taker is the first claimant.
+drives every stage in `TakerSellsForeign` and `TakerSellsLez`). They follow
+the flow BTC follows
+([ADR 0216](architecture/0216-zec-taker-reveals-first-in-both-directions.md)):
+the Taker locks first and holds the preimage, the Taker claims the
+Maker-funded leg first and so reveals it, the Maker claims the Taker-funded
+leg with the preimage it extracts, and the Maker-funded leg refunds first.
+
+| | `TakerSellsForeign` | `TakerSellsLez` |
+| --- | --- | --- |
+| First lock | Taker funds the Zcash HTLC | Taker creates and funds the LEZ escrow |
+| Second lock | Maker funds the LEZ escrow | Maker funds the Zcash HTLC |
+| Revealing claim (Taker) | `ClaimLez`, step `RevealingLez` | `ClaimZcash`, step `RevealingZcash` |
+| Follow-up claim (Maker) | `ClaimZcash`, step `FollowupZcash` | `ClaimLez`, step `FollowupLez` |
+| Earlier refund (Maker) | LEZ, at the LEZ refund time | Zcash, at the Zcash refund height |
+| Later refund (Taker) | Zcash, at the Zcash refund height | LEZ (`RefundLez`), at the LEZ refund time |
+
+Who holds the secret: the per-swap preparation generates the preimage and
+gives it to the Taker's half only. `activate_with_claim_preimage` is accepted
+for the Taker and refused for the Maker in both directions; the Maker's store
+first holds the preimage when it commits the observed revealing claim, whose
+transition carries the extracted preimage checked against the digest. The prepared ZEC setup is single-operator: the preparation ceremony (`zec-provision.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner). Node-side take-time preparation, in which the Taker's Node creates the secret and each Node its own Zcash key, is tracked in issue #162 for M5.
+
+The Taker's revealing claim is gated. In `TakerSellsLez`, before it stages or
+submits its Zcash claim, the Taker requires the Maker's funding output to be
+canonical, unspent and at the profile's Zcash confirmations,
+`tip + zcash_reveal_margin_blocks < zcash_refund_height`
+(else `ZecSdkError::ZcashRevealWindowClosed`), and
+`now < lez_refund_at − required_margin` (else `ClaimWindowClosed`), the margin
+being the Maker's budget for its follow-up LEZ claim. The gates apply to the
+first send only: once the claim is staged its preimage may be public, so the
+exact stored bytes are re-broadcast whenever they are absent and the HTLC
+output is unspent, whatever the window. A Taker whose window closed with no
+claim staged refunds its LEZ at the LEZ refund time.
+
+The Maker learns the preimage through
+`ZcashClaimPort::observe_counterparty_revealing_claim`, which finds the spend
+of the exact HTLC outpoint and reads it on consensus facts only: the input
+takes this contract's claim branch and carries a 32-byte preimage of the
+digest (`read_bip199_spend_branch`). Destination, fee, other outputs, expiry
+height, sighash flags and signature form are the Taker's business; Zebra
+admits only consensus-valid transactions. A refund spend or a wrong preimage
+never yields one. The Maker commits the reveal as soon as it sees the claim,
+in the mempool or in a block (`RevealingClaimEvidenceV1::from_observed_zcash_claim`):
+a valid preimage stays valid whatever happens to that transaction, and
+waiting for depth would only spend the Maker's margin. The Taker's own
+revealing evidence still waits for the Zcash leg's depth. The Maker's
+follow-up LEZ claim uses the `LezClaimPort` follow-up methods
+(`prepare_followup_claim` and the rest).
+
+A Maker Node signs every LEZ claim with one account, so its follow-up LEZ
+claims go one at a time (a submitted claim holds the next until it is final
+or its swap's LEZ refund time passes; a failed swap's claim for one
+admission bound after the failure), the swap with the earliest LEZ refund
+time first,
+and it accepts at most `zec_taker_sells_lez_capacity(profile)` open
+`TakerSellsLez` ZEC swaps (refused with `zec_taker_sells_lez_capacity_reached`):
+3 under `deterministic-local-devnet-v7`/`-v8`, where `M = 120 s` holds three
+38 s slots (a LEZ claim measured at most 6.3 s from submission to final on
+the devnet, three samples on 2026-11-18, doubled with the held-claim retry),
+and 1 under `deterministic-local-v3` and `public-testnet-v3`. On the LEZ
+testnet the escrow takes the claim if it is included before the refund
+time, but the Node holds the next claim until the previous one is final,
+which is the reason for 1 there; no LEZ testnet claim latency has been
+measured.
+
+A Node refuses to start while it holds an open `TakerSellsLez` ZEC swap under
+a legacy profile and names the swaps: finish or refund them with the previous
+release first (no upgrade between releases before 1.0.0, issue #133). The
+same holds for a swap under a Taker-reveals-first profile: a Taker claim
+staged by an earlier build (which set an expiry height) no longer validates
+against this build, which stages it with none, so such a swap is finished
+with the build that staged it; there is no fallback.
+
+In `BothLegsLocked` with no claim, each role drives its own refund (the Taker
+cannot sign the Zcash refund, so its LEZ refund does not wait for it); once
+one leg's refund is recorded the other role's follows. No refund is admitted
+after claim evidence is recorded, except the `TakerSellsLez` Maker's own
+Zcash refund once its follow-up LEZ claim can no longer land
+(`RefundIntentV1::after_lost_followup` with a `LostFollowupProofV1`: the
+Taker's LEZ refund final, or the escrow still open at a finalized LEZ time
+past the refund time; ADR 0216). The proof's parts (`RefundEvidenceV1`,
+`LezEscrowOpenPastRefundTimeV1`) have public constructors, but they must
+come from the LEZ adapter's finalized observation, never be assembled from
+other facts.
+
+If the Taker's Zcash claim is older than the adapter's
+`counterparty_scan_blocks`, the Maker's observation of it is `Absent` and
+the swap retries without end (nothing is lost; the Maker cannot read the
+spend's depth). A Zcash reorg deeper than the profile's depth after a fact
+was recorded is not revisited. `TakerSellsLez` deviates from RFP-003 F4,
+which puts the LEZ refund first in both directions; ADR 0216 records why.
 
 <!-- Part D: rewrite when TakerSellsForeign through the Nodes lands (handover steps 17-21). -->
 The Node-driven settlement on the local Docker stack and the M6 PoC
@@ -113,7 +199,13 @@ only, and the evidence set says so.
 ## Recovery profiles
 
 `ZecRefundProfile` names immutable parameter sets
-([`docs/milestone-1/parameter-profiles.md`](milestone-1/parameter-profiles.md)):
+([`docs/milestone-1/parameter-profiles.md`](milestone-1/parameter-profiles.md)).
+`TakerSellsLez` needs a Taker-reveals-first profile:
+`deterministic-local-v3` (test lane), `deterministic-local-devnet-v7`
+(devnet swaps that claim), `deterministic-local-devnet-v8` (devnet refund
+journeys) or `public-testnet-v3`; under any older profile the agreement is
+refused (`ZecAgreementV1Error::LegacyRevealOrder`). The older profiles admit
+`TakerSellsForeign` only:
 `deterministic-local-v1` for the isolated test lane, `public-testnet-v1` for
 the public networks (NU6.2; `public-testnet-v2` is its NU7 successor), and
 `deterministic-local-devnet-v3` (eight-block Zcash
@@ -126,10 +218,10 @@ whose LEZ chain finalises in minutes rather than instantly. The LEZ escrow
 program emits a timestamp validity window that ends at the agreement's LEZ
 refund time, so a profile's `lez_refund_delay` is also the longest a lock may
 take to reach the chain after the agreement's anchor; the devnet profile
-sets it to 12 minutes (v3), short enough for a refund to finish inside the
-pinned devnet chain's finality lifetime (upstream #3643). A revealing claim
-held behind another swap's needs attention a third of that delay before the
-refund time. The profile is part of the signed agreement
+sets it to 12 minutes (v3, v5, v7), short enough for a refund to finish
+inside the pinned devnet chain's finality lifetime (upstream #3643). A
+revealing claim held behind another swap's needs attention a third of that
+delay before the refund time. The profile is part of the signed agreement
 (`ZecProfileRecordV1`), and evidence states which profile it ran under.
 
 ## Privacy posture
@@ -190,9 +282,9 @@ crate. The two map like this:
 | `taker_offer_list_v1` | offer discovery (discover) |
 | `taker_swap_initiate_v1` (a `prepared_zec` catalog entry) | negotiation over the Maker's Chat socket (`zec_chat_propose_v1`, `zec_chat_complete_v1`), then actor provisioning |
 | the Taker actor's `drive` (no desk button; driven on the Node host) | escrow creation — first lock |
-| the Maker Node's supervisor | escrow creation — second lock, then the revealing claim |
-| `taker_swap_claim_v1` | claim (the Taker's follow-up Zcash claim) |
-| `taker_swap_refund_v1`, `maker_actor_refund_v1` | refund |
+| the Maker Node's supervisor | escrow creation — second lock, then the Maker's follow-up claim |
+| `taker_swap_claim_v1` | claim (the Taker's revealing claim: Zcash in `TakerSellsLez`, LEZ in `TakerSellsForeign`) |
+| `taker_swap_refund_v1`, `maker_actor_refund_v1` | refund (the Taker's LEZ or Zcash leg; the Maker's Zcash or LEZ leg) |
 
 A ZEC take on the Nodes is prepared, not composed: the Taker's catalog entry
 carries the signed offer envelope, the unsigned draft bound to that offer, the

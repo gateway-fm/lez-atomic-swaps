@@ -1,11 +1,12 @@
 //! A worked run of the LEZ/ZEC SDK through all five lifecycle stages, offline.
 //!
 //! Two swaps in `TakerSellsLez`, the direction the Nodes drive on the local
-//! stack: the Taker locks LEZ first, the Maker funds the Zcash HTLC second,
-//! the Maker claims LEZ revealing the secret, the Taker claims Zcash. The
-//! first swap settles to `Completed`; the second is locked on both legs and
-//! never claimed, so it runs the ordered refunds (LEZ first, then Zcash) to
-//! `Refunded`. Both roles run as independent actors on their own in-memory
+//! stack: the Taker locks LEZ first and holds the secret, the Maker funds the
+//! Zcash HTLC second, the Taker claims Zcash revealing the secret, the Maker
+//! reads it from that claim and claims LEZ. The first swap settles to
+//! `Completed`; the second is locked on both legs and never claimed, so each
+//! funder refunds its own leg (the Maker's Zcash first, then the Taker's LEZ)
+//! to `Refunded`. Both roles run as independent actors on their own in-memory
 //! stores, and both are resumed from those stores at the end.
 //!
 //! The chains are simulated: the same in-memory ports and store the lifecycle
@@ -37,7 +38,7 @@ use memory::{
     MemoryRefundCorridor, MemoryStore, MemoryTakerLockObservation, MemoryZcashTakerLockObservation,
     Offer, Proposal, agreement_wire_with_digest, canonical_lez_taker_lock,
     canonical_zcash_taker_lock, confirmed_first_lock, confirmed_first_lock_observation,
-    confirmed_zcash_first_lock, lez_first_lock_plan, zcash_first_lock_plan,
+    confirmed_zcash_first_lock, lez_first_lock_plan, zcash_claim_depth, zcash_first_lock_plan,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -116,9 +117,9 @@ impl Corridor {
 }
 
 /// Stages 1–3: both roles discover the same offer, negotiate the same
-/// countersigned agreement, and activate their own actor. The Maker is the
-/// first claimant in `TakerSellsLez`, so it is the one that protects the
-/// claim preimage at activation.
+/// countersigned agreement, and activate their own actor. The Taker holds the
+/// secret and claims first in both directions, so it is the one that protects
+/// the claim preimage at activation; the Maker's terms carry only its digest.
 async fn through_activation(
     corridor: &Corridor,
     wire: Vec<u8>,
@@ -151,13 +152,13 @@ async fn through_activation(
     );
 
     let maker = maker_sdk
-        .activate_with_claim_preimage(maker_terms, ClaimPreimage::new(secret))
+        .activate(maker_terms)
         .await
-        .expect("maker activation protects the preimage");
+        .expect("maker activation");
     let taker = taker_sdk
-        .activate(taker_terms)
+        .activate_with_claim_preimage(taker_terms, ClaimPreimage::new(secret))
         .await
-        .expect("taker activation");
+        .expect("taker activation protects the preimage");
     println!(
         "  4. activation        Maker next: {:?}; Taker next: {:?}",
         maker.next_action(),
@@ -266,7 +267,8 @@ async fn lock_both_legs(corridor: &Corridor, maker: &mut Actor, taker: &mut Acto
     println!("  7. escrow creation   Maker funded the Zcash HTLC; both legs locked on both actors");
 }
 
-/// A swap that settles: the revealing LEZ claim, then the follow-up Zcash claim.
+/// A swap that settles: the Taker's revealing Zcash claim, then the Maker's
+/// follow-up LEZ claim.
 /// The trusted clock `drive_claim` takes (Unix milliseconds). A real caller
 /// passes its wall clock: after the claim window (the agreement's LEZ refund
 /// time minus the profile's margin) the SDK refuses to send a revealing claim
@@ -288,16 +290,43 @@ async fn settled_swap() {
     let (mut maker, mut taker) = through_activation(&corridor, wire, secret).await;
     lock_both_legs(&corridor, &mut maker, &mut taker).await;
 
-    assert_eq!(maker.next_action(), ZecLifecycleAction::ClaimLez);
+    assert_eq!(taker.next_action(), ZecLifecycleAction::ClaimZcash);
+    assert_eq!(maker.next_action(), ZecLifecycleAction::Wait);
+    taker
+        .drive_claim(EXAMPLE_NOW)
+        .await
+        .expect("taker prepares and submits the revealing Zcash claim");
+    assert_eq!(
+        corridor.claims.submissions(),
+        vec![ClaimStepV1::RevealingZcash]
+    );
+    // The simulated Zcash chain buries the claim at the leg's depth.
+    corridor
+        .claims
+        .bury_zcash_claim(zcash_claim_depth(taker.agreement()));
+    taker
+        .drive_claim(EXAMPLE_NOW)
+        .await
+        .expect("taker observes its Zcash claim");
     maker
         .drive_claim(EXAMPLE_NOW)
         .await
-        .expect("maker prepares and submits the revealing LEZ claim");
+        .expect("maker observes the Zcash claim and extracts the secret");
+    assert_eq!(maker.status(), Phase::ClaimEvidenceAvailable);
+    println!(
+        "  8. claim             Taker's revealing Zcash claim confirmed; Maker next: {:?}",
+        maker.next_action()
+    );
+
+    maker
+        .drive_claim(EXAMPLE_NOW)
+        .await
+        .expect("maker prepares and submits the follow-up LEZ claim");
     assert_eq!(
         corridor.claims.submissions(),
-        vec![ClaimStepV1::RevealingLez]
+        vec![ClaimStepV1::RevealingZcash, ClaimStepV1::FollowupLez]
     );
-    corridor.claims.confirm_revealing_claim(secret);
+    corridor.claims.confirm_lez_claim(secret);
     maker
         .drive_claim(EXAMPLE_NOW)
         .await
@@ -305,34 +334,11 @@ async fn settled_swap() {
     taker
         .drive_claim(EXAMPLE_NOW)
         .await
-        .expect("taker observes the LEZ claim and extracts the secret");
-    assert_eq!(taker.status(), Phase::ClaimEvidenceAvailable);
-    println!(
-        "  8. claim             Maker's revealing LEZ claim confirmed; Taker next: {:?}",
-        taker.next_action()
-    );
-
-    taker
-        .drive_claim(EXAMPLE_NOW)
-        .await
-        .expect("taker prepares and submits the follow-up Zcash claim");
-    assert_eq!(
-        corridor.claims.submissions(),
-        vec![ClaimStepV1::RevealingLez, ClaimStepV1::FollowupZcash]
-    );
-    corridor.claims.confirm_followup_claim();
-    maker
-        .drive_claim(EXAMPLE_NOW)
-        .await
-        .expect("maker observes the Zcash claim");
-    taker
-        .drive_claim(EXAMPLE_NOW)
-        .await
-        .expect("taker observes its Zcash claim");
+        .expect("taker observes the LEZ claim");
     assert_eq!(maker.status(), Phase::Completed);
     assert_eq!(taker.status(), Phase::Completed);
     println!(
-        "  9. claim             Taker's follow-up Zcash claim confirmed; both actors {:?} at revision {}",
+        "  9. claim             Maker's follow-up LEZ claim confirmed; both actors {:?} at revision {}",
         maker.status(),
         maker.revision()
     );
@@ -356,8 +362,9 @@ async fn settled_swap() {
     );
 }
 
-/// A swap that refunds: both legs locked, nobody claims, the LEZ leg refunds
-/// at its deadline and the Zcash leg at its height, in that order.
+/// A swap that refunds: both legs locked, nobody claims. Each funder refunds
+/// its own leg: the Maker's Zcash HTLC at its height (the earlier refund),
+/// the Taker's LEZ escrow at its deadline (the later one).
 async fn refunded_swap() {
     println!("\nA swap that refunds (TakerSellsLez)");
     let secret = [0x6b; 32];
@@ -382,41 +389,6 @@ async fn refunded_swap() {
     assert_eq!(agreement.lez_claimant(), Participant::Maker);
 
     corridor.refunds.set_eligibility(
-        RefundStepV1::Lez,
-        RefundEligibilityObservationV1::canonical(lez_deadline),
-    );
-    corridor
-        .refunds
-        .set_submit_outcome(RefundStepV1::Lez, RefundSubmitOutcomeV1::Accepted);
-    assert_eq!(
-        taker
-            .drive_refund(EXAMPLE_NOW)
-            .await
-            .expect("taker refunds its LEZ escrow"),
-        RefundDriveOutcome::Submitted(RefundStepV1::Lez)
-    );
-    corridor.refunds.confirm(RefundStepV1::Lez);
-    let projected = taker
-        .drive_refund(EXAMPLE_NOW)
-        .await
-        .expect("taker observes its LEZ refund");
-    assert!(matches!(
-        projected,
-        RefundDriveOutcome::Projected {
-            step: RefundStepV1::Lez,
-            ..
-        }
-    ));
-    maker
-        .drive_refund(EXAMPLE_NOW)
-        .await
-        .expect("maker observes the LEZ refund");
-    println!(
-        "  9. refund            Taker's LEZ refund confirmed at the agreement's LEZ deadline; Maker at {:?}",
-        maker.status()
-    );
-
-    corridor.refunds.set_eligibility(
         RefundStepV1::Zcash,
         RefundEligibilityObservationV1::canonical(zcash_deadline),
     );
@@ -433,7 +405,40 @@ async fn refunded_swap() {
             .drive_refund(EXAMPLE_NOW)
             .await
             .expect("maker observes its Zcash refund"),
-        RefundDriveOutcome::Refunded { .. }
+        RefundDriveOutcome::Projected {
+            step: RefundStepV1::Zcash,
+            ..
+        }
+    ));
+    println!(
+        "  9. refund            Maker's Zcash refund confirmed at the agreement's refund height; Maker at {:?}",
+        maker.status()
+    );
+
+    corridor.refunds.set_eligibility(
+        RefundStepV1::Lez,
+        RefundEligibilityObservationV1::canonical(lez_deadline),
+    );
+    corridor
+        .refunds
+        .set_submit_outcome(RefundStepV1::Lez, RefundSubmitOutcomeV1::Accepted);
+    assert_eq!(
+        taker
+            .drive_refund(EXAMPLE_NOW)
+            .await
+            .expect("taker refunds its LEZ escrow"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Lez)
+    );
+    corridor.refunds.confirm(RefundStepV1::Lez);
+    assert!(matches!(
+        taker
+            .drive_refund(EXAMPLE_NOW)
+            .await
+            .expect("taker observes its LEZ refund"),
+        RefundDriveOutcome::Projected {
+            step: RefundStepV1::Lez,
+            ..
+        }
     ));
     assert!(matches!(
         taker
@@ -442,10 +447,17 @@ async fn refunded_swap() {
             .expect("taker observes the Zcash refund"),
         RefundDriveOutcome::Refunded { .. }
     ));
+    assert!(matches!(
+        maker
+            .drive_refund(EXAMPLE_NOW)
+            .await
+            .expect("maker observes the LEZ refund"),
+        RefundDriveOutcome::Refunded { .. }
+    ));
     assert_eq!(maker.status(), Phase::Refunded);
     assert_eq!(taker.status(), Phase::Refunded);
     println!(
-        " 10. refund            Maker's Zcash refund confirmed at the agreement's refund height; both actors {:?} at revision {}",
+        " 10. refund            Taker's LEZ refund confirmed at the agreement's LEZ deadline; both actors {:?} at revision {}",
         maker.status(),
         maker.revision()
     );

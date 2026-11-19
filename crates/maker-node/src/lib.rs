@@ -18,9 +18,10 @@ mod zec_chat;
 
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
-    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, prepare_maker_actor,
-    supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
-    supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
+    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, clear_maker_lez_claim_admissions,
+    prepare_maker_actor, supervise_one_abandoned_maker_actor,
+    supervise_one_abandoned_maker_actor_until, supervise_one_due_maker_actor,
+    supervise_one_due_maker_actor_until,
 };
 use btc_chat::register_btc_chat_methods;
 pub use btc_chat::{BtcMakerActorProvisioner, BtcMakerRoleAgreementAuthority};
@@ -48,7 +49,35 @@ pub use zec_application::{
     load_zcash_observation_tracker,
 };
 #[cfg(feature = "pair-zec")]
-pub use zec_chat::ZecMakerActorProvisioner;
+pub use zec_chat::{ZecMakerActorProvisioner, zec_taker_sells_lez_capacity};
+
+/// Refuses to start a Maker Node that holds an open ZEC `TakerSellsLez` swap
+/// agreed under a profile of the earlier reveal order (the Maker revealed
+/// first on LEZ): this release refuses that agreement
+/// (`ZecAgreementV1Error::LegacyRevealOrder`), so its actor could neither
+/// claim nor refund. There is no upgrade between releases before 1.0.0
+/// (issue #133): such a swap is finished or refunded by the release that
+/// started it. Completed and refunded swaps do not block.
+///
+/// # Errors
+///
+/// Names every blocking swap, or reports the store failure.
+#[cfg(feature = "pair-zec")]
+pub fn refuse_start_with_legacy_zec_swaps(store: &SqliteSwapStore) -> anyhow::Result<()> {
+    let blocking: Vec<String> = store
+        .open_maker_zec_agreement_wires()
+        .context("read the Maker's open ZEC swaps")?
+        .into_iter()
+        .filter(|(_, wire)| lez_zec_swap_sdk::legacy_taker_sells_lez(wire))
+        .map(|(swap_id, _)| swap_id)
+        .collect();
+    anyhow::ensure!(
+        blocking.is_empty(),
+        "this Maker Node holds open ZEC TakerSellsLez swaps agreed in the earlier reveal order, which this release cannot resume: {}; finish or refund them with the previous release first (no upgrade between releases before 1.0.0, issue #133), then start this one",
+        blocking.join(", ")
+    );
+    Ok(())
+}
 #[cfg(feature = "pair-zec")]
 use zec_chat::register_zec_chat_methods;
 
@@ -104,10 +133,10 @@ use lez_xmr_swap_sdk::{
 };
 #[cfg(feature = "pair-zec")]
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ProtectedClaimKey,
-    ValidatedZecAgreementDraftV1, ZcashObservationEvent, ZcashObservationEventRecordV1,
-    ZcashObservationTracker, ZecAgreementDraftV1, ZecBindingRecordError, ZecPairSdk,
-    ZecRefundProfile, ZecSwapBinding, replay_zcash_observation_history,
+    AcceptedZecAgreementV1, HistoricalReplayError, ProtectedClaimKey, ValidatedZecAgreementDraftV1,
+    ZcashObservationEvent, ZcashObservationEventRecordV1, ZcashObservationTracker,
+    ZecAgreementDraftV1, ZecBindingRecordError, ZecPairSdk, ZecRefundProfile, ZecSwapBinding,
+    replay_zcash_observation_history,
 };
 use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -119,6 +148,9 @@ const NOT_FOUND: i32 = -32_004;
 const CONFLICT: i32 = -32_009;
 const RESULT_LIMIT_EXCEEDED: i32 = -32_011;
 const OFFER_UNAVAILABLE: i32 = -32_018;
+/// The Maker's named refusal of a ZEC `TakerSellsLez` take at its capacity
+/// (`zec_taker_sells_lez_capacity_reached`); the Taker may take again later.
+const ZEC_TAKER_SELLS_LEZ_CAPACITY_REACHED: i32 = -32_019;
 const INTERNAL_ERROR: i32 = -32_603;
 
 const MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES: usize = 128;
@@ -288,9 +320,9 @@ impl MakerRpc {
     #[cfg(feature = "pair-zec")]
     /// Attaches direction-aware ZEC agreement and Maker actor authority.
     ///
-    /// The claim preimage of a swap whose LEZ claimant is the Maker comes from
-    /// that swap's pinned template at completion; the Node holds no secret of
-    /// its own, so one swap's claim cannot reveal another's.
+    /// The Maker holds no claim preimage in either direction: the Taker holds
+    /// the swap secret and reveals it with its claim of the Maker-funded leg.
+    /// A completion whose pinned template carries a preimage is refused.
     #[must_use]
     pub fn with_directional_zec_chat_authority(
         mut self,
@@ -754,9 +786,9 @@ pub struct MakerActorMonitorV1 {
     /// itself once the account is funded).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attention_reason: Option<String>,
-    /// With `lez_revealing_claim_held_near_refund`: the swap whose revealing
-    /// LEZ claim is in flight and holds this one's back (one per Node, until
-    /// it is final) while this swap's own LEZ refund time is near.
+    /// With `lez_revealing_claim_held_near_refund`: the swap whose Maker LEZ
+    /// claim is in flight and holds this one's back (one per Node, until it
+    /// is final) while this swap's own LEZ refund time is near.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revealing_claim_held_by: Option<String>,
     /// What the swap's actor last did, or why it did not act, and when; with
@@ -958,7 +990,7 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
 }
 
 /// Why a Zcash row needs its owner, by name, and the holding swap for a
-/// revealing claim held behind another's: a Zcash actor short of LEZ for its
+/// Maker LEZ claim held behind another's: a Zcash actor short of LEZ for its
 /// lot leaves a marker beside its state
 /// (`zec_reference_actor::lez_depositor_balance_marker`), and the supervisor's
 /// one-claim gate names the holder beside it as the swap's own LEZ refund time
@@ -1848,9 +1880,10 @@ fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Er
                 SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
                 SwapDirection::TakerSellsLez => [foreign, Chain::Lez],
             };
+            // The Maker-funded leg refunds first for every deadline pair: the
+            // Taker claims that leg first (swap-core `RecoverySchedule::new`).
             let safety_chains = match pair {
-                Pair::Bitcoin => role_chains,
-                Pair::Zcash => [Chain::Lez, Chain::Zcash],
+                Pair::Bitcoin | Pair::Zcash => role_chains,
                 Pair::Monero => unreachable!("Monero uses event-gated recovery"),
             };
             RecoverySchedule::new(
@@ -1898,6 +1931,9 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
         | StoreError::MakerPriceRevisionConflict
         | StoreError::StaleMakerOffer { .. } => rpc_error(CONFLICT, error.to_string()),
         StoreError::MissingMakerOffer => rpc_error(NOT_FOUND, error.to_string()),
+        StoreError::MakerZecTakerSellsLezCapacityReached { .. } => {
+            rpc_error(ZEC_TAKER_SELLS_LEZ_CAPACITY_REACHED, error.to_string())
+        }
         StoreError::MakerOfferExpired
         | StoreError::MakerOfferUnavailable
         | StoreError::MakerOfferReservationConflict => {

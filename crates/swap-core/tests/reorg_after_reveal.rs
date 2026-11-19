@@ -23,11 +23,8 @@ fn coordinator(pair: Pair, direction: SwapDirection, maker_policy: u32) -> SwapC
         SwapDirection::TakerSellsForeign => (Chain::Lez, foreign),
         SwapDirection::TakerSellsLez => (foreign, Chain::Lez),
     };
-    let safety_chains = if pair == Pair::Zcash {
-        [Chain::Lez, Chain::Zcash]
-    } else {
-        [maker_chain, taker_chain]
-    };
+    // The Maker-funded leg refunds first for BTC and ZEC alike.
+    let safety_chains = [maker_chain, taker_chain];
     SwapCoordinator::new_with_confirmation_policies(
         SwapId::new("reorg-after-reveal").unwrap(),
         pair,

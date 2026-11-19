@@ -3,6 +3,10 @@
 Status: Accepted; corrected from role-relative to construction-relative claim
 ordering — 2026-07-11
 
+Superseded in part by [ADR 0216](0216-zec-taker-reveals-first-in-both-directions.md)
+(2026-11-18): the ZEC claim and refund order. The text below is kept as
+decided.
+
 ```mermaid
 flowchart TB
     Terms["Signed pair + direction + roles"] --> FirstLock["Taker funds first"]

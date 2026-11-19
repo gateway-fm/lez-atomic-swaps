@@ -7,12 +7,15 @@ use lez_swap_core::{
 fn zec_deadlines_are_addressable_by_chain_in_both_directions() {
     let lez = ChainPosition::timestamp(Chain::Lez, 1_000);
     let zec = ChainPosition::block_height(Chain::Zcash, 2_000);
-    let safety = TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100)
+    // The Maker-funded leg refunds first: LEZ in TakerSellsForeign, Zcash in TakerSellsLez.
+    let forward = TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100)
         .expect("valid LEZ-before-ZEC safety interval");
+    let reverse = TimelockSafety::between(Chain::Zcash, Chain::Lez, 1_000, 1_200, 100)
+        .expect("valid ZEC-before-LEZ safety interval");
 
-    for (direction, maker, taker) in [
-        (SwapDirection::TakerSellsForeign, lez, zec),
-        (SwapDirection::TakerSellsLez, zec, lez),
+    for (direction, maker, taker, safety) in [
+        (SwapDirection::TakerSellsForeign, lez, zec, forward),
+        (SwapDirection::TakerSellsLez, zec, lez, reverse),
     ] {
         let schedule = RecoverySchedule::new(Pair::Zcash, direction, maker, taker, safety)
             .expect("direction-correct ZEC schedule");

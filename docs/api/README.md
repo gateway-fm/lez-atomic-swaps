@@ -469,8 +469,23 @@ never prepared or sent: the row reports `refund_available` with `refund` as
 its action instead of the claim, a claim request is refused, and a claim
 admitted inside the window but never sent runs as the swap's recovery
 (`lez_claim_window_closed` names a claim the actor refused). A claim sent
-inside the window is still followed; it must still be included before the LEZ refund time, so the profile's required margin has to exceed the network's inclusion latency (30 s on the devnet's 10 s blocks, a parameter to size per network). In both directions the LEZ claimant is
-the Zcash funder, so its settlement after the window is its Zcash refund.
+inside the window is still followed; it must still be included before the LEZ refund time, so the profile's required margin has to exceed the network's inclusion latency (30 s on the devnet's 10 s blocks, a parameter to size per network). When the Taker sells ZEC
+it is the LEZ claimant and the Zcash funder, so its settlement after the
+window is its Zcash refund.
+
+A Zcash swap in which the Taker sells LEZ follows the same rule with the
+chains swapped ([ADR 0216](../architecture/0216-zec-taker-reveals-first-in-both-directions.md)):
+the Taker holds the preimage and its claim is the revealing claim of the
+Maker-funded Zcash output; the Maker's actor claims the Taker's LEZ by
+itself once that claim is confirmed. The claim is offered only after the
+Maker's funding reaches the profile's Zcash confirmations, and its window
+closes when no more than the profile's reveal margin of blocks is left
+before the Zcash refund height, or at the LEZ refund time minus the
+required margin, whichever comes first. After it, the Taker's settlement is its
+LEZ refund at the LEZ refund time; it does not wait for the Maker's Zcash
+refund, which opens earlier and only the Maker can sign. A refund request
+before the LEZ refund time waits (`awaiting_deadline`) and broadcasts
+nothing.
 Bitcoin swaps admit only the reported action.
 
 ## Retries, errors, and observation limits

@@ -8,9 +8,10 @@ use lez_zec_swap_sdk::{
     CanonicalZcashOutputObservation, ClaimPreimage, FollowupClaimObservationV1,
     MakerLockObservationV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
     PreparedRefundSubmissionV1, RefundEligibilityObservationV1, RefundObservationV1,
-    RefundSubmitOutcomeV1, TakerFirstLockObservationV1, ZcashClaimContextV1, ZcashClaimPort,
-    ZcashFirstLockPort, ZcashFundingContextV1, ZcashMakerLockObservationPort, ZcashRefundPort,
-    ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecProfileId, ZecRefundProfile,
+    RefundSubmitOutcomeV1, RevealingClaimObservationV1, TakerFirstLockObservationV1,
+    ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort, ZcashFundingContextV1,
+    ZcashMakerLockObservationPort, ZcashRefundPort, ZcashTakerFirstLockObservationPort,
+    ZecAgreementV1, ZecProfileId, ZecRefundProfile,
 };
 
 use crate::{
@@ -246,6 +247,16 @@ where
     ) -> Result<FollowupClaimObservationV1, Self::Error> {
         self.spending
             .observe_counterparty_followup_claim(agreement, context)
+            .await
+    }
+
+    async fn observe_counterparty_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.spending
+            .observe_counterparty_revealing_claim(agreement, context)
             .await
     }
 
