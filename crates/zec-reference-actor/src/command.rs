@@ -1434,11 +1434,13 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             .drive_refund_after_lost_followup(wall_clock_ms())
             .await
         {
+            // Reported as every Zcash refund is (`refunded`, phase `refunded`;
+            // issue #178): `completed` there was refused by the Node.
             Ok(lez_zec_swap_sdk::RefundDriveOutcome::Refunded { .. }) => {
                 Ok(ActorEffectOutputV1::from_active(
                     config,
                     ActorEffectCommandV1::Claim,
-                    ActorEffectOutcomeV1::Completed,
+                    lost_claim_refunded_outcome(),
                     &active,
                 ))
             }
@@ -2334,8 +2336,15 @@ const fn lost_claim_refund_step(outcome: &RefundDriveOutcome) -> LostClaimRefund
     }
 }
 
+/// The claim command's outcome once the Maker's Zcash refund after a lost LEZ
+/// claim is recorded (phase `refunded`): `refunded`, as every refund path
+/// reports it, never `completed` (issue #178).
+const fn lost_claim_refunded_outcome() -> ActorEffectOutcomeV1 {
+    ActorEffectOutcomeV1::Refunded
+}
+
 /// The claim command's output for the Maker's Zcash refund after its LEZ claim
-/// was lost: completed once refunded, `lez_claim_cannot_land` once the HTLC
+/// was lost: refunded once recorded, `lez_claim_cannot_land` once the HTLC
 /// is the Taker's, otherwise a named wait (an error is a retry).
 fn lost_claim_refund_output<Lez, Zcash, Store>(
     config: &ActorConfig,
@@ -2346,7 +2355,7 @@ fn lost_claim_refund_output<Lez, Zcash, Store>(
         return Err(ActorCommandError::ClaimUnavailable);
     };
     let outcome = match lost_claim_refund_step(refund) {
-        LostClaimRefundStep::Refunded => ActorEffectOutcomeV1::Completed,
+        LostClaimRefundStep::Refunded => lost_claim_refunded_outcome(),
         LostClaimRefundStep::CannotLand => return Err(ActorCommandError::LezClaimCannotLand),
         LostClaimRefundStep::Submitted => ActorEffectOutcomeV1::Submitted {
             operation: ActorOperationV1::ZcashRefund,
@@ -2356,7 +2365,7 @@ fn lost_claim_refund_output<Lez, Zcash, Store>(
             operation: ActorOperationV1::ZcashRefund,
         },
     };
-    let refunded = outcome == ActorEffectOutcomeV1::Completed;
+    let refunded = outcome == lost_claim_refunded_outcome();
     let output =
         ActorEffectOutputV1::from_active(config, ActorEffectCommandV1::Claim, outcome, active);
     Ok(if refunded {
@@ -3562,6 +3571,16 @@ mod tests {
             assert_eq!(wait.chain, "lez");
             assert_eq!(wait.until_unix_seconds, Some(at / 1000));
         }
+    }
+
+    #[test]
+    fn a_lost_claim_refund_is_reported_as_refunded() {
+        // Issue #178: the Node accepts a claim's `completed` only at phase
+        // `completed`; the recorded Zcash refund is phase `refunded`.
+        assert_eq!(
+            serde_json::to_value(lost_claim_refunded_outcome()).expect("outcome")["outcome"],
+            json!("refunded")
+        );
     }
 
     #[test]

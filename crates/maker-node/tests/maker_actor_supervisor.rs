@@ -2570,6 +2570,56 @@ fn a_superseded_lez_claim_past_the_old_replan_limit_is_retried_not_failed() {
     );
 }
 
+/// The Maker's Zcash refund after its LEZ claim was lost, as the actor's
+/// claim command reports it (`lost_claim_refund_output`): outcome
+/// `refunded`, phase `refunded`, next action `complete`.
+fn lost_claim_refund_program(at: u64) -> String {
+    format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
+           claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"refunded\",\"phase\":\"refunded\",\"revision\":5,\"next_action\":\"complete\"}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n"
+    )
+}
+
+#[test]
+fn a_maker_zcash_refund_after_a_lost_lez_claim_ends_the_swap_refunded() {
+    // Issue #178, item 1: the claim command reported the Maker's Zcash refund
+    // after a lost LEZ claim (the Taker's LEZ refund final, or the escrow open
+    // past the refund time; one output for both) as `completed` with phase
+    // `refunded`, which the supervisor's parser refused: the swap ended
+    // failed (`actor_output_invalid`) instead of refunded.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let id = "m5-lost-claim-refunded";
+    register_gated_actor(&mut store, root.path(), id, |_| {
+        lost_claim_refund_program(unix_now_ms() - 60_000)
+    });
+    let (swap, resolution, class) = run_due(
+        &mut store,
+        MakerActorLeaseOwner::new([0x85; 16]).unwrap(),
+        10,
+    );
+    assert_eq!(swap, id);
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (MakerActorSupervisorResolution::Terminal, None)
+    );
+    let swap_id = SwapId::new(id).unwrap();
+    assert_eq!(
+        store
+            .maker_actor_progress(&swap_id)
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active("refunded", 5, "complete").unwrap()
+    );
+}
+
 #[test]
 fn a_maker_lez_claim_admitted_elsewhere_holds_the_next_one() {
     // Review 3, item 4: the gate admitted a claim and its in-flight marker was

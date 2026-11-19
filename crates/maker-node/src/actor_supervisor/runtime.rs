@@ -1836,7 +1836,11 @@ fn exact_absorbing_effect(
                 ActorEffectCommand::Drive | ActorEffectCommand::Claim,
                 "completed",
                 "completed"
-            ) | (ActorEffectCommand::Recover, "refunded", "refunded")
+            ) | (
+                ActorEffectCommand::Recover | ActorEffectCommand::Claim,
+                "refunded",
+                "refunded"
+            )
         ),
         MakerActorKindV1::Bitcoin => matches!(
             (command, outcome, phase),
@@ -1895,6 +1899,8 @@ fn known_effect_outcome(
                 | "projected"
                 | "completed"
         ),
+        // `refunded`: the Maker's Zcash refund after its LEZ claim was lost,
+        // which the claim command drives (issue #178).
         (MakerActorKindV1::Zcash, ActorEffectCommand::Claim) => matches!(
             outcome,
             "submitted"
@@ -1902,6 +1908,7 @@ fn known_effect_outcome(
                 | "awaiting_safe_zcash_funding"
                 | "projected"
                 | "completed"
+                | "refunded"
         ),
         (MakerActorKindV1::Zcash, ActorEffectCommand::Recover) => matches!(
             outcome,
