@@ -197,11 +197,15 @@ spend's depth). A Zcash reorg deeper than the profile's depth after a fact
 was recorded is not revisited. `TakerSellsLez` deviates from RFP-003 F4,
 which puts the LEZ refund first in both directions; ADR 0216 records why.
 
-<!-- Part D: rewrite when TakerSellsForeign through the Nodes lands (handover steps 17-21). -->
-The Node-driven settlement on the local Docker stack and the M6 PoC
-certificates cover `TakerSellsLez`. `TakerSellsForeign` through the Nodes is
-not claimed here; it is covered at SDK level and by the PoC corridor tests
-only, and the evidence set says so.
+The Node-driven settlement on the local Docker stack covers both
+directions: `TakerSellsForeign` since the M2 regression of 2026-11-11, and
+`TakerSellsLez` in the ADR 0216 order since the 0.3.3 regression of
+`fab36d52`
+([`RESULTS.txt`](evidence/regression-0.3.3-2026-11-19-macos-arm64/RESULTS.txt)):
+94 of 97 tests passed on the first pass and the remaining 3 passed on a
+separate rerun on a new chain, with one operator running both parties on
+one host. The M6 PoC certificates and the M2 regression ran `TakerSellsLez`
+under the order ADR 0216 replaced.
 
 ## Recovery profiles
 
