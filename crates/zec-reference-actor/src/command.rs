@@ -64,6 +64,22 @@ pub struct ActorEffectOutputV1 {
     phase: ActorPhaseV1,
     revision: u64,
     next_action: ActorNextActionV1,
+    /// What the attempt waits for, when it held its step for a reason it can
+    /// bound by a chain's own clock (reporting only; never a Node decision).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wait: Option<ActorWaitV1>,
+}
+
+/// A wait the actor names: `kind` on `chain`, until the chain's clock passes
+/// `until_unix_seconds`, read at `chain_unix_seconds`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ActorWaitV1 {
+    kind: &'static str,
+    chain: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    until_unix_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_unix_seconds: Option<u64>,
 }
 
 impl ActorEffectOutputV1 {
@@ -81,7 +97,13 @@ impl ActorEffectOutputV1 {
             phase: active.status().into(),
             revision: active.revision(),
             next_action: reported_next_action(active, config, wall_clock_ms()).into(),
+            wait: None,
         }
+    }
+
+    fn waiting_for(mut self, wait: ActorWaitV1) -> Self {
+        self.wait = Some(wait);
+        self
     }
 }
 
@@ -1427,6 +1449,49 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             }
         };
     }
+    let lez_refund_at_ms = active.agreement().lez_refund_at_ms();
+    // Past the LEZ refund time by the host's clock, the LEZ chain's own clock
+    // decides whether the Maker's follow-up claim can still be included
+    // (review 4, M2).
+    if is_maker_followup_lez_claim(&active) && wall_clock_ms().value() >= lez_refund_at_ms {
+        let finalized_ms = match lez.observe_finalized_lez_clock().await {
+            Ok((_, timestamp_ms)) => Some(timestamp_ms),
+            Err(error) => {
+                eprintln!("actor claim: the finalized LEZ clock could not be read: {error:?}");
+                None
+            }
+        };
+        if followup_lez_claim_drive(lez_refund_at_ms, finalized_ms)
+            == FollowupLezClaimDrive::ObserveOnly
+        {
+            // No block can include it and it takes no nonce: it holds no other claim.
+            clear_revealing_claim_in_flight(config);
+            let outcome = claim_attempt(
+                active.observe_followup_lez_claim_past_window().await,
+                ActorCommandError::ClaimUnavailable,
+            )?;
+            eprintln!(
+                "actor claim: the Maker's LEZ claim is past its window by LEZ time ({finalized_ms:?} >= {lez_refund_at_ms}); nothing is submitted, the swap waits for the Taker's LEZ refund ({outcome:?})"
+            );
+            let completed = matches!(outcome, ClaimDriveOutcome::Completed { .. })
+                || active.status() == Phase::Completed;
+            let output = ActorEffectOutputV1::from_active(
+                config,
+                ActorEffectCommandV1::Claim,
+                if completed {
+                    ActorEffectOutcomeV1::Completed
+                } else {
+                    claim_outcome(outcome)
+                },
+                &active,
+            );
+            return Ok(if completed {
+                output
+            } else {
+                output.waiting_for(lost_lez_claim_wait(lez_refund_at_ms, finalized_ms))
+            });
+        }
+    }
     let outcome = if active.status() == Phase::Completed {
         ActorEffectOutcomeV1::Completed
     } else {
@@ -1438,12 +1503,16 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         )
         .await?
     };
-    Ok(ActorEffectOutputV1::from_active(
-        config,
-        ActorEffectCommandV1::Claim,
-        outcome,
-        &active,
-    ))
+    let past_window = is_maker_followup_lez_claim(&active)
+        && matches!(outcome, ActorEffectOutcomeV1::AwaitingObservation { .. })
+        && wall_clock_ms().value() >= lez_refund_at_ms;
+    let output =
+        ActorEffectOutputV1::from_active(config, ActorEffectCommandV1::Claim, outcome, &active);
+    Ok(if past_window {
+        output.waiting_for(lost_lez_claim_wait(lez_refund_at_ms, None))
+    } else {
+        output
+    })
 }
 
 /// One bounded drive attempt failed closed. The lifecycle error's Debug form
@@ -1970,9 +2039,22 @@ where
                 planned_nonce,
                 live_nonce,
             } => {
-                if replans.len() >= MAX_REVEALING_CLAIM_REPLANS as usize {
+                let exhausted = || {
                     clear_revealing_claim_in_flight(config);
-                    return Err(ActorCommandError::RevealingClaimReplanExhausted);
+                    if replan_exhaustion_fails(
+                        is_maker_followup_lez_claim(active),
+                        wall_clock_ms().value(),
+                        active.agreement().lez_refund_at_ms(),
+                    ) {
+                        Err(ActorCommandError::RevealingClaimReplanExhausted)
+                    } else {
+                        Ok(claim_outcome(ClaimDriveOutcome::AwaitingStableObservation(
+                            step,
+                        )))
+                    }
+                };
+                if replans.len() >= MAX_REVEALING_CLAIM_REPLANS as usize {
+                    return exhausted();
                 }
                 let open = active
                     .open_revealing_claim_submission()
@@ -1988,8 +2070,7 @@ where
                     Ok(replanned) => replanned,
                     Err(error) if is_claim_replan_exhausted(&error) => {
                         eprintln!("actor claim refused: {error:?}");
-                        clear_revealing_claim_in_flight(config);
-                        return Err(ActorCommandError::RevealingClaimReplanExhausted);
+                        return exhausted();
                     }
                     Err(error) => {
                         eprintln!("actor claim unavailable: {error:?}");
@@ -2083,6 +2164,71 @@ const fn lez_claim_cannot_land(
     } else {
         None
     }
+}
+
+/// What the Maker of `TakerSellsLez` at claim evidence does with its
+/// follow-up LEZ claim this attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FollowupLezClaimDrive {
+    /// Drive it: prepare, observe, submit, re-plan.
+    Drive,
+    /// Its window is closed by LEZ time: observe it only (it may have landed
+    /// before), submit nothing, and wait for the Taker's LEZ refund.
+    ObserveOnly,
+}
+
+/// The follow-up LEZ claim's drive from the finalized LEZ clock
+/// (`finalized_ms`, its last finalized block's timestamp, when read).
+/// The escrow admits a claim only in a block whose timestamp is before
+/// `refund_at`, and block timestamps do not go back: once the finalized one is
+/// at or past it, no block can include the claim (review 4, M2). Without a
+/// reading the claim is driven: the window may still be open.
+const fn followup_lez_claim_drive(
+    lez_refund_at_ms: u64,
+    finalized_ms: Option<u64>,
+) -> FollowupLezClaimDrive {
+    match finalized_ms {
+        Some(finalized_ms) if finalized_ms >= lez_refund_at_ms => {
+            FollowupLezClaimDrive::ObserveOnly
+        }
+        _ => FollowupLezClaimDrive::Drive,
+    }
+}
+
+/// Whether the re-plan bound, reached at `now_ms`, stops the swap
+/// (`lez_revealing_claim_replan_exhausted`). Not for the Maker's follow-up
+/// LEZ claim past the LEZ refund time: such a claim is lost to the other
+/// swaps' nonces, not to an error, and the swap stays at its claim until the
+/// Taker's LEZ refund is final, then recovers its Zcash (review 4, M2).
+const fn replan_exhaustion_fails(
+    maker_followup_lez_claim: bool,
+    now_ms: u64,
+    lez_refund_at_ms: u64,
+) -> bool {
+    !(maker_followup_lez_claim && now_ms >= lez_refund_at_ms)
+}
+
+/// The wait a Maker's follow-up LEZ claim past its window reports.
+const fn lost_lez_claim_wait(lez_refund_at_ms: u64, finalized_ms: Option<u64>) -> ActorWaitV1 {
+    ActorWaitV1 {
+        kind: "taker_lez_refund_after_lost_claim",
+        chain: "lez",
+        until_unix_seconds: Some(lez_refund_at_ms / 1000),
+        chain_unix_seconds: match finalized_ms {
+            Some(finalized_ms) => Some(finalized_ms / 1000),
+            None => None,
+        },
+    }
+}
+
+/// Whether `active` is the Maker of `TakerSellsLez` at claim evidence, the
+/// one actor whose LEZ claim is the follow-up claim.
+fn is_maker_followup_lez_claim<Lez, Zcash, Store>(
+    active: &lez_zec_swap_sdk::ActiveZecSwap<Lez, Zcash, Store>,
+) -> bool {
+    active.agreement().direction() == SwapDirection::TakerSellsLez
+        && active.local_participant() == Participant::Maker
+        && active.status() == Phase::ClaimEvidenceAvailable
 }
 
 /// The Maker of `TakerSellsLez` with claim evidence recorded has no other
@@ -3210,6 +3356,41 @@ mod tests {
             lez_claim_cannot_land(at, at, true),
             Some(LezClaimCannotLand::EscrowRefunded)
         );
+    }
+
+    #[test]
+    fn a_maker_lez_claim_past_its_window_by_lez_time_is_observed_and_never_resubmitted() {
+        // Review 4, M2: past `refund_at` with the Taker's LEZ refund not yet
+        // final, the Maker's follow-up claim was resubmitted on every requeue.
+        // Once the finalized LEZ block time is at or past `refund_at` no block
+        // can include it: it is only observed (it may have landed earlier).
+        let at = 1_800_000;
+        for finalized in [None, Some(at - 1)] {
+            assert_eq!(
+                followup_lez_claim_drive(at, finalized),
+                FollowupLezClaimDrive::Drive,
+                "{finalized:?}"
+            );
+        }
+        for finalized in [at, at + 1, at + 600_000] {
+            assert_eq!(
+                followup_lez_claim_drive(at, Some(finalized)),
+                FollowupLezClaimDrive::ObserveOnly,
+                "{finalized}"
+            );
+        }
+    }
+
+    #[test]
+    fn re_plans_of_a_maker_lez_claim_past_its_refund_time_do_not_stop_the_swap() {
+        // Review 4, M2: a Maker claim past `refund_at` that other swaps keep
+        // superseding reached the re-plan bound and the swap failed, so the
+        // Maker never reached its Zcash refund after the Taker's LEZ refund.
+        let at = 1_800_000;
+        assert!(replan_exhaustion_fails(true, at - 1, at));
+        assert!(replan_exhaustion_fails(false, at + 1, at));
+        assert!(!replan_exhaustion_fails(true, at, at));
+        assert!(!replan_exhaustion_fails(true, at + 600_000, at));
     }
 
     #[test]

@@ -170,7 +170,12 @@ direction's agreements are byte-identical to those signed before.
   mempool only is a wait: the Taker's claim never expires but can be
   evicted, which leaves the HTLC unspent again. The Maker gives up its LEZ claim only on the
   escrow being refunded, never on its own clock: the escrow's claim window
-  ends at `refund_at` by the sequencer's block time.
+  ends at `refund_at` by the sequencer's block time. Once the finalized LEZ
+  block time is at or past `refund_at` it submits the claim no more and only
+  observes it (it may have landed earlier); the swap stays at its claim,
+  holding no other claim and counted by no capacity, reported as waiting
+  for the Taker's LEZ refund (`taker_lez_refund_after_lost_claim`), and
+  re-plans exhausted past `refund_at` do not stop it.
 
 - The Maker reads the preimage from any consensus-valid claim of the HTLC
   (the claim branch of this contract with a 32-byte preimage of the digest),

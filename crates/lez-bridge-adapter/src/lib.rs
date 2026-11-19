@@ -185,6 +185,35 @@ impl LezBridgeWitnessedClaimPresenceTransport for BridgeClient {
     }
 }
 
+/// One read of the finalized LEZ clock: the last finalized block's height and
+/// consensus timestamp from the official indexer. A block timestamp is the only
+/// clock the escrow's validity window (`..refund_at`) is checked against; once
+/// the finalized one is at or past `refund_at`, no later block can include a
+/// claim of that escrow.
+#[async_trait]
+pub trait LezBridgeFinalizedClockTransport: Send + Sync {
+    /// Concrete transport failure.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Reads the finalized clock once.
+    async fn observe_finalized_clock(
+        &self,
+        request: lez_bridge_protocol::ObserveFinalizedClockRequest,
+    ) -> Result<lez_bridge_protocol::ObserveFinalizedClockResult, Self::Error>;
+}
+
+#[async_trait]
+impl LezBridgeFinalizedClockTransport for BridgeClient {
+    type Error = BridgeClientError;
+
+    async fn observe_finalized_clock(
+        &self,
+        request: lez_bridge_protocol::ObserveFinalizedClockRequest,
+    ) -> Result<lez_bridge_protocol::ObserveFinalizedClockResult, Self::Error> {
+        BridgeClient::observe_finalized_clock(self, request).await
+    }
+}
+
 /// One fresh-client attempt at exact owner first-lock observation or submission.
 ///
 /// A process-local bridge client rejects request-ID reuse. Context-owning SDK

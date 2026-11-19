@@ -355,6 +355,60 @@ impl<Factory, Contexts, Store, Funding>
     ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
 where
     Factory: FreshLezBridgeTransportFactory,
+    Factory::Transport: crate::LezBridgeFinalizedClockTransport,
+{
+    /// Reads the finalized LEZ clock once, as (height, consensus timestamp in
+    /// Unix milliseconds) of the last finalized block. Read-only and stateless,
+    /// so it takes a fresh request ID and no journal slot.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no fresh transport opens, randomness is unavailable, or the
+    /// sidecar refuses or answers for another context or runtime (a moving
+    /// finalized tip included: the caller reads again on its next attempt).
+    pub async fn observe_finalized_lez_clock(
+        &self,
+    ) -> Result<(u64, u64), ContextOwningLezPortError> {
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| {
+            ContextOwningLezPortError::Context("OS randomness is unavailable".into())
+        })?;
+        let request_id = lez_bridge_protocol::RequestId::new(format!(
+            "clock-{:032x}",
+            u128::from_be_bytes(random)
+        ))
+        .map_err(|error| ContextOwningLezPortError::Context(Box::new(error)))?;
+        let context = lez_bridge_protocol::MessageContext::new(
+            self.run_id.clone(),
+            request_id,
+            bridge_participant(self.local_participant),
+        );
+        let transport = self
+            .factory
+            .fresh_transport()
+            .map_err(|error| ContextOwningLezPortError::Factory(Box::new(error)))?;
+        let result = crate::LezBridgeFinalizedClockTransport::observe_finalized_clock(
+            &transport,
+            lez_bridge_protocol::ObserveFinalizedClockRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+            ),
+        )
+        .await
+        .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
+        if result.context != context || result.runtime != self.runtime {
+            return Err(ContextOwningLezPortError::Adapter(
+                "finalized LEZ clock answered for another request or runtime".into(),
+            ));
+        }
+        Ok((result.clock.height, result.clock.timestamp_ms))
+    }
+}
+
+impl<Factory, Contexts, Store, Funding>
+    ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
+where
+    Factory: FreshLezBridgeTransportFactory,
 {
     fn fresh_adapter(
         &self,
