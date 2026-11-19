@@ -353,26 +353,38 @@ impl RefundIntentV1 {
     }
 
     /// `TakerSellsLez`: the Maker's Zcash refund intent with claim evidence recorded, its
-    /// follow-up LEZ claim lost. `lez_refund` must be the Taker's confirmed LEZ refund (the
-    /// adapter's evidence: depth checked, at or past the LEZ refund time); only then can the
-    /// Maker's LEZ claim never land, and only then may it take back its Zcash.
+    /// follow-up LEZ claim lost. `proof` shows the Maker's LEZ claim can never land: the
+    /// Taker's confirmed LEZ refund, or the escrow still open in the finalized LEZ state at a
+    /// finalized time at or past the LEZ refund time (the escrow takes a claim only before
+    /// it). Only then may the Maker take back its Zcash.
     ///
     /// # Errors
     ///
-    /// Rejects another role, step, direction or phase, and LEZ refund evidence of another step
-    /// or before the LEZ refund time.
+    /// Rejects another role, step, direction or phase, LEZ refund evidence of another step,
+    /// and a proof dated before the LEZ refund time.
     pub fn after_lost_followup(
         agreement: &ZecAgreementV1,
         coordinator: &SwapCoordinator,
         local_participant: Participant,
         staged_revision: u64,
         prepared: PreparedRefundSubmissionV1,
-        lez_refund: &RefundEvidenceV1,
+        proof: &LostFollowupProofV1,
     ) -> Result<Self, RefundError> {
-        if lez_refund.step != RefundStepV1::Lez {
-            return Err(RefundError::StepMismatch);
+        match proof {
+            LostFollowupProofV1::TakerLezRefund(lez_refund) => {
+                if lez_refund.step != RefundStepV1::Lez {
+                    return Err(RefundError::StepMismatch);
+                }
+                RefundStepV1::Lez.validate_deadline(agreement, lez_refund.position)?;
+            }
+            LostFollowupProofV1::EscrowOpenPastRefundTime(open) => {
+                if open.swap_id != *agreement.coordinator().id()
+                    || open.finalized_lez_time_ms < agreement.lez_refund_at_ms()
+                {
+                    return Err(RefundError::DeadlineNotReached(RefundStepV1::Lez));
+                }
+            }
         }
-        RefundStepV1::Lez.validate_deadline(agreement, lez_refund.position)?;
         Self::build(
             agreement,
             coordinator,
@@ -483,6 +495,54 @@ impl RefundIntentV1 {
         } else {
             Err(RefundError::ContextMismatch)
         }
+    }
+}
+
+/// Why the `TakerSellsLez` Maker's follow-up LEZ claim can never land, so that it may
+/// refund its Zcash after recording claim evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LostFollowupProofV1 {
+    /// The Taker's LEZ refund, confirmed (the adapter's finalized observation).
+    TakerLezRefund(RefundEvidenceV1),
+    /// The escrow still open at a finalized LEZ time past the refund time.
+    EscrowOpenPastRefundTime(LezEscrowOpenPastRefundTimeV1),
+}
+
+/// The escrow of one agreement read as still funded (neither claimed nor refunded) in the
+/// finalized LEZ state, at a finalized block time at or past the agreement's LEZ refund
+/// time. The escrow admits a claim only in a block before that time and block times do not
+/// go back, so no claim of it can ever land. Like [`RefundEvidenceV1`], it must come from
+/// the LEZ adapter's finalized observation, never be assembled from other facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LezEscrowOpenPastRefundTimeV1 {
+    swap_id: lez_swap_core::SwapId,
+    finalized_lez_time_ms: u64,
+}
+
+impl LezEscrowOpenPastRefundTimeV1 {
+    /// The escrow of `agreement` read funded at the finalized LEZ time
+    /// `finalized_lez_time_ms`.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a finalized time before the agreement's LEZ refund time.
+    pub fn new(
+        agreement: &ZecAgreementV1,
+        finalized_lez_time_ms: u64,
+    ) -> Result<Self, RefundError> {
+        if finalized_lez_time_ms < agreement.lez_refund_at_ms() {
+            return Err(RefundError::DeadlineNotReached(RefundStepV1::Lez));
+        }
+        Ok(Self {
+            swap_id: agreement.coordinator().id().clone(),
+            finalized_lez_time_ms,
+        })
+    }
+
+    /// The finalized LEZ block time the escrow was read at, Unix milliseconds.
+    #[must_use]
+    pub const fn finalized_lez_time_ms(&self) -> u64 {
+        self.finalized_lez_time_ms
     }
 }
 

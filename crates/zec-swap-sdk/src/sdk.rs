@@ -1669,7 +1669,52 @@ where
         &mut self,
         now: crate::LezUnixMilliseconds,
     ) -> Result<RefundDriveOutcome, ZecSdkError> {
-        match self.drive_refund(now).await? {
+        let outcome = self.drive_refund(now).await?;
+        self.spent_only_at_claim_depth(outcome).await
+    }
+
+    /// `TakerSellsLez`, the Maker at claim evidence: its Zcash refund once its escrow is read
+    /// still open at a finalized LEZ time past the refund time, the Taker's LEZ refund or
+    /// not (review 5, item 2: a Taker that never refunds left the Maker's Zcash in the HTLC).
+    /// A spent HTLC is reported as in [`Self::drive_refund_after_lost_followup`].
+    ///
+    /// # Errors
+    ///
+    /// Rejects another role, direction or phase; otherwise as
+    /// [`Self::drive_refund_after_lost_followup`].
+    pub async fn drive_refund_with_open_escrow(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+        open: crate::LezEscrowOpenPastRefundTimeV1,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        let _ = now;
+        self.replay_refund_transitions().await?;
+        if self.local_participant() != Participant::Maker
+            || self.agreement().direction() != SwapDirection::TakerSellsLez
+        {
+            return Err(ZecSdkError::RefundNotReady(self.status()));
+        }
+        let outcome = match self.status() {
+            Phase::Refunded => RefundDriveOutcome::Refunded {
+                revision: self.revision,
+            },
+            Phase::ClaimEvidenceAvailable => {
+                self.drive_owned_refund(
+                    RefundStepV1::Zcash,
+                    Some(&crate::LostFollowupProofV1::EscrowOpenPastRefundTime(open)),
+                )
+                .await?
+            }
+            phase => return Err(ZecSdkError::RefundNotReady(phase)),
+        };
+        self.spent_only_at_claim_depth(outcome).await
+    }
+
+    async fn spent_only_at_claim_depth(
+        &self,
+        outcome: RefundDriveOutcome,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        match outcome {
             RefundDriveOutcome::AwaitingFunding {
                 step: RefundStepV1::Zcash,
                 reason: crate::RefundFundingWaitReasonV1::Spent,
@@ -2795,8 +2840,11 @@ where
                 .map_err(|error| ZecSdkError::LezRefund(Box::new(error)))?
             {
                 RefundObservationV1::Confirmed(lez_refund) => {
-                    self.drive_owned_refund(RefundStepV1::Zcash, Some(&lez_refund))
-                        .await
+                    self.drive_owned_refund(
+                        RefundStepV1::Zcash,
+                        Some(&crate::LostFollowupProofV1::TakerLezRefund(lez_refund)),
+                    )
+                    .await
                 }
                 RefundObservationV1::Absent | RefundObservationV1::Unstable => Ok(
                     RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Lez),
@@ -2909,7 +2957,7 @@ where
     async fn drive_owned_refund(
         &mut self,
         step: RefundStepV1,
-        lez_refund: Option<&crate::RefundEvidenceV1>,
+        lez_refund: Option<&crate::LostFollowupProofV1>,
     ) -> Result<RefundDriveOutcome, ZecSdkError> {
         let intent = if let Some(intent) = self.load_refund_intent().await? {
             intent
@@ -3106,7 +3154,7 @@ where
     async fn stage_refund_intent(
         &self,
         prepared: PreparedRefundSubmissionV1,
-        lez_refund: Option<&crate::RefundEvidenceV1>,
+        lez_refund: Option<&crate::LostFollowupProofV1>,
     ) -> Result<(), ZecSdkError> {
         let intent = match lez_refund {
             Some(lez_refund) => RefundIntentV1::after_lost_followup(

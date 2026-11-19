@@ -409,6 +409,44 @@ impl<Factory, Contexts, Store, Funding>
     ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
 where
     Factory: FreshLezBridgeTransportFactory,
+    Factory::Transport: crate::LezBridgeFinalizedClockTransport + LezBridgeRefundTransport,
+{
+    /// For the claimant: whether the escrow is still funded in the finalized LEZ
+    /// state, and the finalized LEZ time it was read at (Unix milliseconds).
+    /// Read-only; a fresh request ID, no journal slot, a one-block window at the
+    /// finalized tip.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::observe_finalized_lez_clock`], and the adapter's refusal of a
+    /// non-claimant or of inconsistent escrow facts.
+    pub async fn observe_finalized_lez_escrow_open(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<(u64, bool), ContextOwningLezPortError> {
+        let (height, _) = self.observe_finalized_lez_clock().await?;
+        let window = DiscoveryWindow::new(height, 1)
+            .map_err(|error| ContextOwningLezPortError::Context(Box::new(error)))?;
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| {
+            ContextOwningLezPortError::Context("OS randomness is unavailable".into())
+        })?;
+        let request_id = lez_bridge_protocol::RequestId::new(format!(
+            "escrow-{:032x}",
+            u128::from_be_bytes(random)
+        ))
+        .map_err(|error| ContextOwningLezPortError::Context(Box::new(error)))?;
+        self.fresh_adapter()?
+            .observe_finalized_escrow_open(agreement, request_id, window)
+            .await
+            .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))
+    }
+}
+
+impl<Factory, Contexts, Store, Funding>
+    ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
+where
+    Factory: FreshLezBridgeTransportFactory,
 {
     fn fresh_adapter(
         &self,

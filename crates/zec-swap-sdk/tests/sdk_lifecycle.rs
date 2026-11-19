@@ -11,19 +11,20 @@ use lez_zec_swap_sdk::{
     FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockRecordError,
     FirstLockStepV1, FirstLockSupersessionError, FirstLockSupersessionInputV1,
     FirstLockSupersessionV1, FirstLockTransitionError, FirstLockTransitionRecordV1,
-    LezEnvironmentV1, LezNodeRemovalSnapshotV1, LezObservationEventV1,
-    LezObservationReconciliationV1, LezObservationTrackerError, LezObservationTrackerV1,
-    LezStableTipV1, MAX_FIRST_LOCK_REPLANS, MAX_FIRST_LOCK_SUBMISSION_BYTES,
-    MAX_ZEC_AGREEMENT_RECORD_BYTES, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    MakerLockObservationV1, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
-    ObservedTakerFirstLockEvidenceV1, ObservedTakerFirstLockTransitionError,
-    ObservedTakerFirstLockTransitionRecordV1, PreparedFirstLockSubmissionV1,
-    PreparedRefundSubmissionV1, RecoveryStore, RefundDriveOutcome, RefundEligibilityObservationV1,
-    RefundEvidenceV1, RefundFundingWaitReasonV1, RefundIntentRecordV1, RefundIntentV1,
-    RefundRecordError, RefundStepV1, RefundSubmitOutcomeV1, RefundTransitionRecordV1,
-    RefundTransitionV1, TakerFirstLockObservationV1, ZcashClaimContextError, ZcashFundingContextV1,
-    ZcashFundingObservationV1, ZcashFundingWaitReasonV1, ZecAgreementV1Error, ZecLifecycleAction,
-    ZecPairSdk, ZecProfileId, ZecSdkError,
+    LezEnvironmentV1, LezEscrowOpenPastRefundTimeV1, LezNodeRemovalSnapshotV1,
+    LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerError,
+    LezObservationTrackerV1, LezStableTipV1, LostFollowupProofV1, MAX_FIRST_LOCK_REPLANS,
+    MAX_FIRST_LOCK_SUBMISSION_BYTES, MAX_ZEC_AGREEMENT_RECORD_BYTES,
+    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockObservationV1,
+    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
+    ObservedTakerFirstLockTransitionError, ObservedTakerFirstLockTransitionRecordV1,
+    PreparedFirstLockSubmissionV1, PreparedRefundSubmissionV1, RecoveryStore, RefundDriveOutcome,
+    RefundEligibilityObservationV1, RefundEvidenceV1, RefundFundingWaitReasonV1,
+    RefundIntentRecordV1, RefundIntentV1, RefundRecordError, RefundStepV1, RefundSubmitOutcomeV1,
+    RefundTransitionRecordV1, RefundTransitionV1, TakerFirstLockObservationV1,
+    ZcashClaimContextError, ZcashFundingContextV1, ZcashFundingObservationV1,
+    ZcashFundingWaitReasonV1, ZecAgreementV1Error, ZecLifecycleAction, ZecPairSdk, ZecProfileId,
+    ZecSdkError,
 };
 use sha2::{Digest as _, Sha256};
 use zcash_encoding::ReverseHex;
@@ -6748,7 +6749,7 @@ async fn only_the_maker_with_the_takers_lez_refund_in_hand_may_refund_its_zcash_
         Participant::Maker,
         revision,
         prepared.clone(),
-        &lez_refund,
+        &LostFollowupProofV1::TakerLezRefund(lez_refund.clone()),
     )
     .expect("intent with the Taker's LEZ refund");
     // A Zcash refund cannot stand in for the LEZ one.
@@ -6768,7 +6769,7 @@ async fn only_the_maker_with_the_takers_lez_refund_in_hand_may_refund_its_zcash_
             Participant::Maker,
             revision,
             prepared.clone(),
-            &zcash_refund,
+            &LostFollowupProofV1::TakerLezRefund(zcash_refund.clone()),
         )
         .is_err()
     );
@@ -6780,7 +6781,7 @@ async fn only_the_maker_with_the_takers_lez_refund_in_hand_may_refund_its_zcash_
             Participant::Taker,
             revision,
             prepared,
-            &lez_refund,
+            &LostFollowupProofV1::TakerLezRefund(lez_refund),
         )
         .is_err()
     );
@@ -6803,4 +6804,139 @@ async fn only_the_maker_with_the_takers_lez_refund_in_hand_may_refund_its_zcash_
         ),
         Err(lez_zec_swap_sdk::RefundError::ClaimEvidenceRecorded { .. })
     ));
+}
+
+#[tokio::test]
+async fn a_maker_whose_lez_claim_missed_its_window_refunds_its_zcash_while_the_escrow_stays_open() {
+    // Review 5, item 2: past the LEZ refund time a Taker that never refunds its
+    // LEZ (the reference Taker does not, once its claim left) left the Maker in
+    // its lost-claim wait forever, its Zcash in the HTLC and exposed to a late
+    // Taker claim. Once the escrow is read still open at a finalized LEZ time
+    // past the refund time no claim of it can land, and the Maker refunds.
+    let id = "sdk-lost-maker-lez-claim-open-escrow";
+    let secret = [0xbc; 32];
+    let now = LezUnixMilliseconds::new(0);
+    let direction = SwapDirection::TakerSellsLez;
+    let mut fixture = activate_claim_actor_fixture(id, direction, Participant::Taker, secret).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    let agreement = fixture.maker.agreement().clone();
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker reveals"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker reads the reveal"),
+        ClaimDriveOutcome::Projected { .. }
+    ));
+    // The Taker's claim drops out; the Taker never refunds its LEZ.
+    fixture.corridor.spend_zcash_htlc_as(None);
+    assert!(
+        LezEscrowOpenPastRefundTimeV1::new(&agreement, agreement.lez_refund_at_ms() - 1).is_err(),
+        "an open escrow before the refund time proves nothing"
+    );
+    let open = LezEscrowOpenPastRefundTimeV1::new(&agreement, agreement.lez_refund_at_ms())
+        .expect("open at the refund time");
+    fixture.refunds.set_eligibility(
+        RefundStepV1::Zcash,
+        RefundEligibilityObservationV1::canonical(refund_position(&agreement, RefundStepV1::Zcash)),
+    );
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund_with_open_escrow(now, open.clone())
+            .await
+            .expect("the Maker refunds its Zcash"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
+    );
+    fixture.refunds.confirm(RefundStepV1::Zcash);
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_refund_with_open_escrow(now, open)
+            .await
+            .expect("projected"),
+        RefundDriveOutcome::Refunded { .. }
+    ));
+    assert_eq!(fixture.maker.status(), Phase::Refunded);
+}
+
+#[tokio::test]
+async fn lez_refund_evidence_dated_before_the_refund_time_proves_no_lost_claim() {
+    // Review 5, item 5.
+    let id = "sdk-lost-maker-lez-claim-early-evidence";
+    let direction = SwapDirection::TakerSellsLez;
+    let mut fixture =
+        activate_claim_actor_fixture(id, direction, Participant::Taker, [0xbd; 32]).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    let agreement = fixture.maker.agreement().clone();
+    let early = ChainPosition::lez_timestamp_from_milliseconds_floor(LezUnixMilliseconds::new(
+        agreement.lez_refund_at_ms() - 1_000,
+    ));
+    assert!(matches!(
+        RefundEvidenceV1::new(
+            &agreement,
+            RefundStepV1::Lez,
+            refund_submission_id(RefundStepV1::Lez),
+            "early-lez-refund",
+            early,
+            3,
+        ),
+        Err(lez_zec_swap_sdk::RefundError::DeadlineNotReached(
+            RefundStepV1::Lez
+        ))
+    ));
+}
+
+#[tokio::test]
+async fn a_maker_zcash_refund_staged_before_the_reveal_is_not_rebroadcast_while_its_lez_claim_can_land()
+ {
+    // Review 5, item 2 (the ADR 0216 race): the Maker's Zcash refund, sent at
+    // BothLegsLocked before the Taker's claim was seen, must not go out again
+    // once the Maker recorded the reveal and drives its LEZ claim, unless that
+    // claim can no longer land.
+    let id = "sdk-maker-refund-before-reveal";
+    let now = LezUnixMilliseconds::new(0);
+    let direction = SwapDirection::TakerSellsLez;
+    let mut fixture =
+        activate_claim_actor_fixture(id, direction, Participant::Taker, [0xbe; 32]).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    let agreement = fixture.maker.agreement().clone();
+    fixture.refunds.set_eligibility(
+        RefundStepV1::Zcash,
+        RefundEligibilityObservationV1::canonical(refund_position(&agreement, RefundStepV1::Zcash)),
+    );
+    assert_eq!(
+        fixture.maker.drive_refund(now).await.expect("refund sent"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
+    );
+    assert_eq!(fixture.refunds.submissions().len(), 1);
+    // The Taker's claim is seen (it won the race in the mempool).
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker reveals"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker reads the reveal"),
+        ClaimDriveOutcome::Projected { .. }
+    ));
+    assert_eq!(fixture.maker.status(), Phase::ClaimEvidenceAvailable);
+    for _ in 0..3 {
+        assert_eq!(
+            fixture.maker.drive_refund(now).await.expect("no refund"),
+            RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Lez)
+        );
+    }
+    assert_eq!(
+        fixture.refunds.submissions().len(),
+        1,
+        "the staged refund is not rebroadcast"
+    );
 }

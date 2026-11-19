@@ -1485,6 +1485,37 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             );
             let completed = matches!(outcome, ClaimDriveOutcome::Completed { .. })
                 || active.status() == Phase::Completed;
+            if !completed {
+                // No claim of the escrow can land once it is still open at a
+                // finalized LEZ time past the refund time: the Maker refunds its
+                // Zcash whether or not the Taker ever refunds its LEZ (review 5,
+                // item 2).
+                match lez
+                    .observe_finalized_lez_escrow_open(active.agreement())
+                    .await
+                {
+                    Ok((finalized_ms, true)) => {
+                        if let Ok(open) = lez_zec_swap_sdk::LezEscrowOpenPastRefundTimeV1::new(
+                            active.agreement(),
+                            finalized_ms,
+                        ) {
+                            let refund = active
+                                .drive_refund_with_open_escrow(wall_clock_ms(), open)
+                                .await;
+                            eprintln!(
+                                "actor claim: the escrow is open at finalized LEZ time {finalized_ms} past the refund time; the Maker's Zcash refund: {refund:?}"
+                            );
+                            return lost_claim_refund_output(config, &active, &refund);
+                        }
+                    }
+                    Ok((_, false)) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "actor claim: the finalized LEZ escrow could not be read: {error:?}"
+                        );
+                    }
+                }
+            }
             let output = ActorEffectOutputV1::from_active(
                 config,
                 ActorEffectCommandV1::Claim,
@@ -2247,6 +2278,69 @@ const fn lost_lez_claim_wait(lez_refund_at_ms: u64, finalized_ms: Option<u64>) -
             None => None,
         },
     }
+}
+
+/// What the Maker's Zcash refund after a lost LEZ claim did, as the claim
+/// command reports it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LostClaimRefundStep {
+    /// The Zcash refund is recorded: the swap is refunded.
+    Refunded,
+    /// The HTLC is spent by the Taker's claim at depth: nothing is left.
+    CannotLand,
+    /// The refund went out (or was rebroadcast).
+    Submitted,
+    /// The refund waits (deadline, depth, an unstable view, a mempool spend).
+    Waiting,
+}
+
+const fn lost_claim_refund_step(outcome: &RefundDriveOutcome) -> LostClaimRefundStep {
+    match outcome {
+        RefundDriveOutcome::Refunded { .. } => LostClaimRefundStep::Refunded,
+        RefundDriveOutcome::AwaitingFunding {
+            step: RefundStepV1::Zcash,
+            reason: RefundFundingWaitReasonV1::Spent,
+        } => LostClaimRefundStep::CannotLand,
+        RefundDriveOutcome::Submitted(_) => LostClaimRefundStep::Submitted,
+        _ => LostClaimRefundStep::Waiting,
+    }
+}
+
+/// The claim command's output for the Maker's Zcash refund after its LEZ claim
+/// was lost: completed once refunded, `lez_claim_cannot_land` once the HTLC
+/// is the Taker's, otherwise a named wait (an error is a retry).
+fn lost_claim_refund_output<Lez, Zcash, Store>(
+    config: &ActorConfig,
+    active: &lez_zec_swap_sdk::ActiveZecSwap<Lez, Zcash, Store>,
+    refund: &Result<RefundDriveOutcome, lez_zec_swap_sdk::ZecSdkError>,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    let Ok(refund) = refund else {
+        return Err(ActorCommandError::ClaimUnavailable);
+    };
+    let outcome = match lost_claim_refund_step(refund) {
+        LostClaimRefundStep::Refunded => ActorEffectOutcomeV1::Completed,
+        LostClaimRefundStep::CannotLand => return Err(ActorCommandError::LezClaimCannotLand),
+        LostClaimRefundStep::Submitted => ActorEffectOutcomeV1::Submitted {
+            operation: ActorOperationV1::ZcashRefund,
+            replans: Vec::new(),
+        },
+        LostClaimRefundStep::Waiting => ActorEffectOutcomeV1::AwaitingObservation {
+            operation: ActorOperationV1::ZcashRefund,
+        },
+    };
+    let refunded = outcome == ActorEffectOutcomeV1::Completed;
+    let output =
+        ActorEffectOutputV1::from_active(config, ActorEffectCommandV1::Claim, outcome, active);
+    Ok(if refunded {
+        output
+    } else {
+        output.waiting_for(ActorWaitV1 {
+            kind: "zcash_refund_after_lost_lez_claim",
+            chain: "zcash",
+            until_unix_seconds: None,
+            chain_unix_seconds: None,
+        })
+    })
 }
 
 /// Whether `active` is the Maker of `TakerSellsLez` at claim evidence, the
@@ -3436,6 +3530,39 @@ mod tests {
         assert!(replan_exhaustion_fails(false, at + 1, at));
         assert!(!replan_exhaustion_fails(true, at, at));
         assert!(!replan_exhaustion_fails(true, at + 600_000, at));
+    }
+
+    #[test]
+    fn the_makers_zcash_refund_after_a_lost_lez_claim_reports_by_name() {
+        // Review 5, items 2 and 5: the observe-only branch's refund result.
+        assert_eq!(
+            lost_claim_refund_step(&RefundDriveOutcome::Refunded { revision: 7 }),
+            LostClaimRefundStep::Refunded
+        );
+        assert_eq!(
+            lost_claim_refund_step(&RefundDriveOutcome::AwaitingFunding {
+                step: RefundStepV1::Zcash,
+                reason: RefundFundingWaitReasonV1::Spent,
+            }),
+            LostClaimRefundStep::CannotLand
+        );
+        assert_eq!(
+            lost_claim_refund_step(&RefundDriveOutcome::Submitted(RefundStepV1::Zcash)),
+            LostClaimRefundStep::Submitted
+        );
+        for waiting in [
+            RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Zcash),
+            RefundDriveOutcome::AwaitingDeadline(RefundStepV1::Zcash),
+            RefundDriveOutcome::AwaitingFunding {
+                step: RefundStepV1::Zcash,
+                reason: RefundFundingWaitReasonV1::Reorged,
+            },
+        ] {
+            assert_eq!(
+                lost_claim_refund_step(&waiting),
+                LostClaimRefundStep::Waiting
+            );
+        }
     }
 
     #[test]

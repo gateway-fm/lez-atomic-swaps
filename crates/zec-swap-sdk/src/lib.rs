@@ -138,9 +138,10 @@ pub use profile::{
     ZecProfileId, ZecRefundProfile, ZecRevealOrder,
 };
 pub use refund::{
-    MAX_REFUND_SUBMISSION_BYTES, PreparedRefundSubmissionV1, RefundDriveOutcome,
-    RefundEligibilityObservationV1, RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1,
-    RefundIntentV1, RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1, RefundTransitionV1,
+    LezEscrowOpenPastRefundTimeV1, LostFollowupProofV1, MAX_REFUND_SUBMISSION_BYTES,
+    PreparedRefundSubmissionV1, RefundDriveOutcome, RefundEligibilityObservationV1, RefundError,
+    RefundEvidenceV1, RefundFundingWaitReasonV1, RefundIntentV1, RefundObservationV1, RefundStepV1,
+    RefundSubmitOutcomeV1, RefundTransitionV1,
 };
 pub use refund_record::{
     REFUND_RECORD_SCHEMA_V1, RefundIntentRecordV1, RefundRecordError, RefundTransitionRecordV1,
