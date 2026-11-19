@@ -547,7 +547,7 @@ where
                     confirmations,
                     in_active_chain,
                 )?;
-                Self::refund_evidence(agreement, &canonical).map(RefundObservationV1::Confirmed)
+                Self::refund_observation(agreement, &canonical)
             }
         }
     }
@@ -1065,6 +1065,16 @@ where
         Ok(canonical)
     }
 
+    // A refund in a block below the leg's required depth is not evidence yet: it is
+    // reported as `Unstable` (wait), never as an error, so a caller observing it mid-burial
+    // (the Taker reading the Maker's refund, or the owner its own) waits instead of failing.
+    fn refund_observation(
+        agreement: &ZecAgreementV1,
+        canonical: &CanonicalZcashSpendObservation,
+    ) -> Result<RefundObservationV1, ZebraRefundError<R::Error, S::Error>> {
+        refund_evidence_or_wait(Self::refund_evidence(agreement, canonical))
+    }
+
     fn refund_evidence(
         agreement: &ZecAgreementV1,
         canonical: &CanonicalZcashSpendObservation,
@@ -1154,7 +1164,7 @@ where
                     confirmations,
                     true,
                 )?;
-                Self::refund_evidence(agreement, &canonical).map(RefundObservationV1::Confirmed)
+                Self::refund_observation(agreement, &canonical)
             }
         }
     }
@@ -2268,6 +2278,23 @@ fn stable_tip(before: ZebraChainInfo, after: ZebraChainInfo) -> ZcashStableTip {
 
 fn same_tip(before: ZebraChainInfo, after: ZebraChainInfo) -> bool {
     before.tip_hash() == after.tip_hash() && before.tip_height() == after.tip_height()
+}
+
+/// Maps a refund's evidence to an observation: below its required depth it waits.
+fn refund_evidence_or_wait<RE, SE>(
+    evidence: Result<RefundEvidenceV1, ZebraRefundError<RE, SE>>,
+) -> Result<RefundObservationV1, ZebraRefundError<RE, SE>>
+where
+    RE: std::error::Error + Send + Sync + 'static,
+    SE: std::error::Error + Send + Sync + 'static,
+{
+    match evidence {
+        Ok(evidence) => Ok(RefundObservationV1::Confirmed(evidence)),
+        Err(ZebraClaimError::Refund(RefundError::InsufficientConfirmations { .. })) => {
+            Ok(RefundObservationV1::Unstable)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]
@@ -5110,6 +5137,31 @@ mod tests {
                 .observe_counterparty_refund(&fixture.agreement, &fixture.context)
                 .await,
             Err(ZebraClaimError::Rpc(FakeError::Transport))
+        ));
+    }
+
+    #[test]
+    fn a_refund_below_its_required_depth_waits_instead_of_failing() {
+        // Review 3, item 5: RefundEvidenceV1::new refuses a refund below the leg's depth
+        // (InsufficientConfirmations); the adapter returned that as an error, so the Taker
+        // reading the Maker's Zcash refund mid-burial failed its drive instead of waiting.
+        let under = refund_evidence_or_wait::<FakeError, FakeError>(Err(ZebraClaimError::Refund(
+            RefundError::InsufficientConfirmations {
+                step: RefundStepV1::Zcash,
+                required: 10,
+                actual: 1,
+            },
+        )));
+        assert_eq!(
+            under.expect("a wait, not an error"),
+            RefundObservationV1::Unstable
+        );
+        let other = refund_evidence_or_wait::<FakeError, FakeError>(Err(
+            ZebraClaimError::WrongRefundSpendBranch,
+        ));
+        assert!(matches!(
+            other,
+            Err(ZebraClaimError::WrongRefundSpendBranch)
         ));
     }
 
