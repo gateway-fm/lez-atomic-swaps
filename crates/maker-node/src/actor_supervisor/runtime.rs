@@ -1111,12 +1111,14 @@ fn revealing_claim_held_back(
     // profile's margin (review 4, L2), plus the time to stop the child.
     let bound_ms = admission_bound_ms(attempt_timeout, read("required_margin_ms"));
     let own_hold_ms = bound_ms.saturating_add(ADMISSION_STOP_GRACE_MS);
-    // A submitted claim holds the nonce until its swap's LEZ refund time, its
-    // swap failed or not: a swap that failed after submitting (its output
-    // unreadable, say) may have its claim still pending at the nonce (review 4,
-    // L3). The actor removes its marker itself on the failures where its claim
-    // can no longer land; an old-format marker without a time of a failed swap
-    // holds nothing (it held every claim forever; review 3, item 3).
+    // A submitted claim holds the nonce until its swap's LEZ refund time. A
+    // failed swap is driven no more, so nothing removes its marker once its
+    // claim lands: its marker holds for one admission bound after the failure
+    // (review 5, item 1), time for a claim it left pending to be included,
+    // and an old-format marker without a time not at all (review 3, item 3).
+    // A claim of a failed swap still pending after that costs the next claim
+    // one re-plan at the nonce, never funds. The actor removes its marker
+    // itself where its claim can no longer land.
     let in_flight = peers().find(|record| {
         let state = record.manifest().state_database_path();
         let failed = record.schedule_state() == lez_swap_store::MakerActorScheduleState::Failed;
@@ -1131,7 +1133,13 @@ fn revealing_claim_held_back(
         let refund_at_ms = zec_reference_actor::revealing_claim_in_flight_refund_at_ms(state);
         zec_reference_actor::revealing_claim_in_flight_marker(state)
             .is_some_and(|marker| marker.is_file())
-            && !(failed && refund_at_ms.is_none())
+            && !(failed
+                && (refund_at_ms.is_none()
+                    || record
+                        .updated_at()
+                        .saturating_mul(1000)
+                        .saturating_add(own_hold_ms)
+                        <= now_ms))
             && in_flight_claim_holds(refund_at_ms, now_ms)
     });
     let earlier = in_flight.is_none().then(|| {

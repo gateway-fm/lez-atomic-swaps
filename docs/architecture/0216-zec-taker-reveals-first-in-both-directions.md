@@ -213,7 +213,14 @@ direction's agreements are byte-identical to those signed before.
   `claim_lez`/`claim_zcash` meaning the chain claimed, and adds `refund_lez`
   and the claim operations `zcash_revealing_claim` and `lez_followup_claim`.
 - The Maker Node's one-LEZ-claim-in-flight gate covers the Maker's follow-up
-  LEZ claim, as it covered its revealing claim before.
+  LEZ claim, as it covered its revealing claim before. A submitted claim's
+  in-flight marker holds the others until its swap's LEZ refund time, or
+  until its actor removes it (the claim final, or unable to land). A swap
+  stopped as failed is driven no more, so its marker holds for one
+  admission bound after the failure and is then ignored: a claim it left
+  pending costs the next claim one re-plan at the nonce, never funds. The
+  Node reads no LEZ account nonce, so it cannot release the hold the moment
+  that claim lands.
 - A `TakerSellsLez` swap stored by a Node built before this ADR cannot be
   resumed: its agreement names a legacy profile and is refused.
 - The Taker must claim ZEC while the Zcash refund is at least

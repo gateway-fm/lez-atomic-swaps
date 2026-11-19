@@ -148,7 +148,10 @@ follow-up LEZ claim uses the `LezClaimPort` follow-up methods
 (`prepare_followup_claim` and the rest).
 
 A Maker Node signs every LEZ claim with one account, so its follow-up LEZ
-claims go one at a time, the swap with the earliest LEZ refund time first,
+claims go one at a time (a submitted claim holds the next until it is final
+or its swap's LEZ refund time passes; a failed swap's claim for one
+admission bound after the failure), the swap with the earliest LEZ refund
+time first,
 and it accepts at most `zec_taker_sells_lez_capacity(profile)` open
 `TakerSellsLez` ZEC swaps (refused with `zec_taker_sells_lez_capacity_reached`):
 3 under `deterministic-local-devnet-v7`/`-v8`, where `M = 120 s` holds three

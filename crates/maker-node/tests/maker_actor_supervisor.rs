@@ -2226,24 +2226,19 @@ fn a_failed_swaps_lez_claim_in_flight_holds_no_other_claim() {
     );
 }
 
-#[test]
-fn a_failed_swaps_timed_claim_in_flight_holds_the_next_until_its_refund_time() {
-    // Review 4, L3: 3bf22848 let a failed swap's in-flight marker hold nothing
-    // whatever the failure, including one after the claim was submitted (its
-    // output unreadable): that claim may still be pending at the nonce, and the
-    // next swap's claim would compete with it. A timed marker of a failed swap
-    // holds until its refund time like any other; only an old-format marker
-    // with no time is ignored (it held forever), and the actor removes its
-    // marker itself on the failures where its claim can no longer land.
-    let root = tempdir().unwrap();
-    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    let claims = root.path().join("lez-claims-submitted");
+/// A swap whose claim was submitted (its timed in-flight marker written)
+/// and whose attempt then failed (`actor_output_invalid`) at scheduler time
+/// `failed_at` (Unix seconds), then the next swap's claim at the gate.
+fn failed_after_submit_then_next(
+    root: &Path,
+    store: &mut SqliteSwapStore,
+    names: (&str, &str),
+    failed_at: u64,
+) -> (MakerActorSupervisorResolution, Option<String>) {
     let now_ms = unix_now_ms();
-    let owner = MakerActorLeaseOwner::new([0x7c; 16]).unwrap();
-    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
-    let holder = "m5-failed-after-submit";
+    let (holder, follower) = names;
     let holder_refund_at = now_ms + 3_600_000;
-    let holder_state = register_gated_actor(&mut store, root.path(), holder, |_| {
+    let holder_state = register_gated_actor(store, root, holder, |_| {
         format!(
             "#!/bin/sh\n\
              test \"$1\" = \"--config-fd\" || exit 91\n\
@@ -2254,37 +2249,81 @@ fn a_failed_swaps_timed_claim_in_flight_holds_the_next_until_its_refund_time() {
              esac\n",
         )
     });
-    // The claim was submitted (its marker records the refund time) before the
-    // attempt's output failed.
     fs::write(
         zec_reference_actor::revealing_claim_in_flight_marker(&holder_state).unwrap(),
         format!("follow-up LEZ claim submitted\nlez_refund_at_ms={holder_refund_at}\n"),
     )
     .unwrap();
-    let (swap, resolution, class) = run_due(&mut store, owner, 10);
+    let (swap, resolution, class) = run_due(
+        store,
+        MakerActorLeaseOwner::new([0x7c; 16]).unwrap(),
+        failed_at,
+    );
     assert_eq!(swap, holder);
     assert_eq!(resolution, MakerActorSupervisorResolution::Failed);
     assert_eq!(class.as_deref(), Some("actor_output_invalid"));
-
-    let follower = "m5-failed-after-submit-follower";
-    register_gated_actor(&mut store, root.path(), follower, |state| {
+    let claims = root.join("lez-claims-submitted");
+    register_gated_actor(store, root, follower, |state| {
         gated_lez_claim_program(
             follower,
             state,
-            &root.path().join("follower-log"),
+            &root.join("follower-log"),
             &claims,
             now_ms + 1_800_000,
         )
     });
-    let (swap, resolution, class) = run_due(&mut store, owner, 20);
+    let (swap, resolution, class) = run_due(
+        store,
+        MakerActorLeaseOwner::new([0x7c; 16]).unwrap(),
+        unix_now_ms() / 1000 + 1,
+    );
     assert_eq!(swap, follower);
+    (resolution, class)
+}
+
+#[test]
+fn a_failed_swaps_claim_in_flight_holds_the_next_for_one_admission_bound_after_its_failure() {
+    // Review 5, item 1: after review 4 (L3) a failed swap's timed in-flight
+    // marker held every other claim until that swap's refund time. A failed
+    // swap is driven no more, so nothing clears its marker once its claim
+    // lands: the next claim (with an earlier refund time) never went out. A
+    // failed swap's marker now holds for one admission bound after the
+    // failure, long enough for a claim it left pending to be included; a claim
+    // still pending after that costs the next claim one re-plan, never funds.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    // Failed long ago (scheduler time 10 s): it holds nothing.
     assert_eq!(
-        (resolution, class.as_deref()),
+        failed_after_submit_then_next(
+            root.path(),
+            &mut store,
+            ("m5-failed-long-ago", "m5-failed-long-ago-next"),
+            10,
+        ),
+        (MakerActorSupervisorResolution::Requeued, None),
+        "a failed swap's claim holds the next one no longer than one admission bound"
+    );
+}
+
+#[test]
+fn a_swap_that_just_failed_after_submitting_holds_the_next_claim() {
+    // Review 4, L3: within the bound the failed swap's pending claim still
+    // holds the nonce.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    assert_eq!(
+        failed_after_submit_then_next(
+            root.path(),
+            &mut store,
+            ("m5-just-failed", "m5-just-failed-next"),
+            unix_now_ms() / 1000,
+        ),
         (
             MakerActorSupervisorResolution::Backoff,
-            Some("lez_revealing_claim_in_flight")
+            Some("lez_revealing_claim_in_flight".to_owned())
         ),
-        "a failed swap's submitted claim holds the nonce until its refund time"
     );
 }
 
