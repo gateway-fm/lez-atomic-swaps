@@ -52,6 +52,17 @@ as well (sign-off, tests with every behavioural change).
 - Upstream components keep their own versions. Protocol, schema and profile
   identifiers are not release versions.
 
+## Checks, merges and tags
+
+- Run `scripts/check-all.sh` before every push. It runs the format, Clippy
+  and rustdoc checks of every Cargo workspace with CI's flags; `--fast`
+  covers formatting everywhere and the root workspace's lints.
+- A pull request is merged only when all its checks have finished green. A
+  check that is still running is not green.
+- A tag is cut only on a commit whose CI run has finished green; the release
+  workflows refuse any other. A published tag is never moved: a further
+  change gets a new version.
+
 ## Pull requests and issues
 
 - The evidence of a full regression is committed to the pull request the
