@@ -1941,10 +1941,7 @@ where
             prepared.exact_submission(),
             self.identity.consensus_branch_id(),
         )?;
-        let prepared_height = u32::from(transaction.expiry_height())
-            .checked_sub(agreement.transaction_policy().expiry_delta_blocks())
-            .map(BlockHeight::from_u32)
-            .ok_or(ZebraClaimError::ClaimExpiryPolicyMismatch)?;
+        let prepared_height = claim_prepared_height::<R::Error, S::Error>(agreement, &transaction)?;
         let expected_output = agreement.binding().expected_output();
         let funding_output = TxOut::new(
             expected_output.value(),
@@ -2107,6 +2104,31 @@ where
     Ok(())
 }
 
+/// The height a claim was prepared at, read back from its expiry (prepared
+/// height + the profile's delta). A TakerSellsLez claim has no expiry (the
+/// Taker's revealing claim must stay broadcastable), so its template does not
+/// depend on the height and any height rebuilds it.
+fn claim_prepared_height<RE, SE>(
+    agreement: &ZecAgreementV1,
+    transaction: &Transaction,
+) -> Result<BlockHeight, ZebraClaimError<RE, SE>>
+where
+    RE: std::error::Error + Send + Sync + 'static,
+    SE: std::error::Error + Send + Sync + 'static,
+{
+    if agreement.direction() == SwapDirection::TakerSellsLez {
+        return if u32::from(transaction.expiry_height()) == 0 {
+            Ok(BlockHeight::from_u32(0))
+        } else {
+            Err(ZebraClaimError::ClaimExpiryPolicyMismatch)
+        };
+    }
+    u32::from(transaction.expiry_height())
+        .checked_sub(agreement.transaction_policy().expiry_delta_blocks())
+        .map(BlockHeight::from_u32)
+        .ok_or(ZebraClaimError::ClaimExpiryPolicyMismatch)
+}
+
 fn expected_spend<RE, SE>(
     agreement: &ZecAgreementV1,
     outpoint: OutPoint,
@@ -2122,10 +2144,7 @@ where
         Script(Code(output.contract().p2sh_script_pubkey().to_vec())),
     );
     let transaction = decode_transaction::<RE, SE>(raw_transaction, output.consensus_branch_id())?;
-    let prepared_height = u32::from(transaction.expiry_height())
-        .checked_sub(agreement.transaction_policy().expiry_delta_blocks())
-        .map(BlockHeight::from_u32)
-        .ok_or(ZebraClaimError::ClaimExpiryPolicyMismatch)?;
+    let prepared_height = claim_prepared_height::<RE, SE>(agreement, &transaction)?;
     let request = agreement
         .claim_spend_request(outpoint, funding, prepared_height)
         .map_err(ZebraClaimError::Agreement)?;
@@ -5914,9 +5933,11 @@ mod tests {
                 ];
                 claim
             }),
-            ("expiry height 0", {
+            // The template's expiry is 0 (no expiry) since review 3; a Taker may
+            // still claim with one.
+            ("an expiry height", {
                 let mut claim = ForeignClaim::template(&fixture);
-                claim.expiry_height = 0;
+                claim.expiry_height = 5_000;
                 claim
             }),
             ("SIGHASH_SINGLE|ANYONECANPAY", {

@@ -1613,3 +1613,74 @@ fn to_high_s(mut compact: [u8; 64]) -> [u8; 64] {
     compact[32..].copy_from_slice(&high_s);
     compact
 }
+
+#[test]
+fn the_takers_revealing_zcash_claim_never_expires_under_taker_reveals_first_profiles() {
+    // Review 3, item 1: the Taker's claim carried an expiry height (prepared
+    // height + the profile's expiry delta). Left unmined that long it dropped out
+    // of every mempool and the Taker could only re-broadcast the expired bytes,
+    // while the Maker may already have read the preimage from it. Under the
+    // Taker-reveals-first profiles the claim has no expiry (0, ZIP-203), so the
+    // exact bytes stay valid until the HTLC is spent; the refund and the funding
+    // keep their expiry, and TakerSellsForeign is unchanged.
+    let reverse = legacy_fixture(
+        SwapDirection::TakerSellsLez,
+        ZecProfileId::DeterministicLocalV3,
+    );
+    let mut reverse = reverse;
+    let parameters = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV3);
+    let delay = parameters.lez_refund_delay().value();
+    reverse.earlier_latest_ms =
+        (reverse.lez_anchor + delay - parameters.required_margin().value()) * 1_000;
+    reverse.later_earliest = reverse.lez_anchor + delay;
+    let agreement = reverse.validate().expect("TakerSellsLez agreement");
+    let funding_output = TxOut::new(
+        agreement.binding().expected_output().value(),
+        Script(Code(
+            agreement
+                .binding()
+                .expected_output()
+                .contract()
+                .p2sh_script_pubkey()
+                .to_vec(),
+        )),
+    );
+    let current_height = BlockHeight::from_u32(100);
+    let claim = agreement
+        .claim_spend_request(
+            OutPoint::new([0x44; 32], 0),
+            funding_output.clone(),
+            current_height,
+        )
+        .expect("claim request");
+    assert_eq!(claim.expiry_height(), BlockHeight::from_u32(0), "no expiry");
+    let refund = agreement
+        .refund_spend_request(OutPoint::new([0x44; 32], 0), funding_output, current_height)
+        .expect("refund request");
+    assert_eq!(refund.expiry_height(), BlockHeight::from_u32(140));
+
+    let forward = legacy_fixture(
+        SwapDirection::TakerSellsForeign,
+        ZecProfileId::DeterministicLocalV1,
+    )
+    .validate()
+    .expect("TakerSellsForeign agreement");
+    let forward_output = TxOut::new(
+        forward.binding().expected_output().value(),
+        Script(Code(
+            forward
+                .binding()
+                .expected_output()
+                .contract()
+                .p2sh_script_pubkey()
+                .to_vec(),
+        )),
+    );
+    assert_eq!(
+        forward
+            .claim_spend_request(OutPoint::new([0x45; 32], 0), forward_output, current_height)
+            .expect("forward claim")
+            .expiry_height(),
+        BlockHeight::from_u32(140)
+    );
+}

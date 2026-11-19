@@ -1309,7 +1309,15 @@ impl ZecAgreementV1 {
             funding_output,
             TransparentAddress::PublicKeyHash(*destination.public_key_hash()),
             zatoshis(fee)?,
-            self.expiry_height(current_height)?,
+            if claim && self.record.body.direction() == SwapDirection::TakerSellsLez {
+                // The Taker's revealing claim never expires (ZIP-203: 0): once sent its
+                // preimage may be public, and its exact bytes must stay broadcastable
+                // until the HTLC is spent (review 3, item 1). TakerSellsLez agreements
+                // exist only under the Taker-reveals-first profiles.
+                BlockHeight::from_u32(0)
+            } else {
+                self.expiry_height(current_height)?
+            },
             self.binding.expected_output().consensus_branch_id(),
         )
         .map_err(ZecAgreementExecutionError::Spend)
