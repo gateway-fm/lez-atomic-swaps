@@ -2012,56 +2012,39 @@ where
     }
 }
 
-/// How long past the LEZ refund time the Maker still looks for its follow-up
-/// LEZ claim in a block before it gives the claim up. The escrow's
-/// `claim_native` is valid only in a block stamped before the refund time,
-/// and the sequencer stamps blocks with its own clock, which may lag this
-/// host's; within this grace a claim already in the mempool can still land.
-const LEZ_CLAIM_EXPIRY_GRACE_MS: u64 = 60_000;
-
 /// Why a Maker's follow-up LEZ claim (`TakerSellsLez`) can no longer land.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LezClaimCannotLand {
     /// The Taker's LEZ refund is on the chain: the escrow is empty.
     EscrowRefunded,
-    /// The LEZ refund time passed (and the grace) with no claim of this swap
-    /// in a block: no later block can include one.
-    RefundTimePassed,
 }
 
 impl std::fmt::Display for LezClaimCannotLand {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::EscrowRefunded => "the Taker's LEZ refund is on the chain",
-            Self::RefundTimePassed => {
-                "the LEZ refund time passed with no claim of this swap in a block"
-            }
         })
     }
 }
 
 /// Whether the Maker's follow-up LEZ claim can no longer land, from what was
-/// observed at `now_ms`: never before the swap's LEZ refund time (the Taker
-/// cannot refund before it and the claim is valid until it); after it, once
-/// the Taker's LEZ refund is confirmed; past the grace, once no claim of this
-/// swap is in a block (`claim_in_a_block`: the owned claim found, final or
-/// not).
+/// observed at `now_ms` (the host's clock, used only to skip the observation
+/// before the refund time): once the Taker's LEZ refund is confirmed. Nothing
+/// is decided from the host's clock: the escrow's claim window ends at
+/// `refund_at` by the sequencer's block timestamp, which can lag, so a claim
+/// the host thinks late may still be included (review 3, item 2). A claim
+/// that cannot be included any more and an escrow nobody refunds leave the
+/// swap at its claim, holding no other claim (the gate's time rule) and
+/// counted by no capacity (its refund time passed).
 const fn lez_claim_cannot_land(
     now_ms: u64,
     lez_refund_at_ms: u64,
     taker_refund_confirmed: bool,
-    claim_in_a_block: bool,
 ) -> Option<LezClaimCannotLand> {
-    if now_ms < lez_refund_at_ms {
-        None
-    } else if taker_refund_confirmed {
+    if now_ms >= lez_refund_at_ms && taker_refund_confirmed {
         Some(LezClaimCannotLand::EscrowRefunded)
-    } else if claim_in_a_block
-        || now_ms < lez_refund_at_ms.saturating_add(LEZ_CLAIM_EXPIRY_GRACE_MS)
-    {
-        None
     } else {
-        Some(LezClaimCannotLand::RefundTimePassed)
+        None
     }
 }
 
@@ -2110,38 +2093,10 @@ where
                 false
             }
         };
-    let claim_in_a_block = if taker_refund_confirmed
-        || now_ms < refund_at_ms.saturating_add(LEZ_CLAIM_EXPIRY_GRACE_MS)
-    {
-        false
-    } else {
-        match active.open_revealing_claim_submission().await {
-            Err(lez_zec_swap_sdk::ZecSdkError::MissingClaimIntent) => false,
-            Err(error) => {
-                eprintln!("actor claim unavailable: {error:?}");
-                return Err(ActorCommandError::ClaimUnavailable);
-            }
-            Ok(prepared) => {
-                match lez_zec_swap_sdk::LezClaimPort::observe_prepared_followup_claim(
-                    lez, agreement, &prepared,
-                )
-                .await
-                {
-                    Ok(lez_zec_swap_sdk::RevealingClaimObservationV1::Absent) => false,
-                    Ok(_) => true,
-                    Err(error) => {
-                        eprintln!("actor claim unavailable: {error:?}");
-                        return Err(ActorCommandError::ClaimUnavailable);
-                    }
-                }
-            }
-        }
-    };
     Ok(lez_claim_cannot_land(
         now_ms,
         refund_at_ms,
         taker_refund_confirmed,
-        claim_in_a_block,
     ))
 }
 
@@ -3196,28 +3151,27 @@ mod tests {
     }
 
     #[test]
-    fn a_maker_lez_claim_cannot_land_once_refunded_or_past_its_refund_time() {
+    fn a_maker_lez_claim_cannot_land_only_once_the_escrow_is_refunded() {
+        // Review 3, item 2: the escrow's claim window is `..refund_at` against the
+        // sequencer's block timestamp, not the Maker host's clock; a lagging
+        // sequencer can still include a claim the host thinks is late. The Maker
+        // gives up only on the escrow actually being refunded.
         let at = 1_800_000;
-        let grace = LEZ_CLAIM_EXPIRY_GRACE_MS;
-        // Before the refund time nothing is given up, whatever was seen.
-        for (refunded, in_block) in [(false, false), (true, false), (false, true)] {
-            assert_eq!(lez_claim_cannot_land(at - 1, at, refunded, in_block), None);
+        for (now, refunded) in [
+            (at - 1, false),
+            (at - 1, true),
+            (at + 60_000, false),
+            (at + 600_000, false),
+        ] {
+            assert_eq!(
+                lez_claim_cannot_land(now, at, refunded),
+                None,
+                "{now} {refunded}"
+            );
         }
-        // The Taker's refund on the chain ends it at once.
         assert_eq!(
-            lez_claim_cannot_land(at, at, true, false),
+            lez_claim_cannot_land(at, at, true),
             Some(LezClaimCannotLand::EscrowRefunded)
-        );
-        // Inside the grace a claim in the mempool can still land.
-        assert_eq!(
-            lez_claim_cannot_land(at + grace - 1, at, false, false),
-            None
-        );
-        // Past it, a claim in a block is followed to final; none, never lands.
-        assert_eq!(lez_claim_cannot_land(at + grace, at, false, true), None);
-        assert_eq!(
-            lez_claim_cannot_land(at + grace, at, false, false),
-            Some(LezClaimCannotLand::RefundTimePassed)
         );
     }
 
