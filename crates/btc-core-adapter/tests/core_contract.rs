@@ -17,8 +17,8 @@ use lez_btc_core_adapter::{
     AuthorizedClaimSubmission, AuthorizedFundingSubmission, AuthorizedRefundSubmission,
     BitcoinCoreAdapter, BitcoinCoreRpc, ClaimObservation, ClaimSubmissionAcquire,
     ClaimSubmissionAttempt, ClaimSubmissionState, ClaimSubmissionStore, CoreAdapterError,
-    CoreConnectivityPolicy, ExactFundingObservation, FundingObservation, RefundObservation,
-    SendFailure,
+    CoreConnectivityPolicy, ExactFundingObservation, FundingObservation, READINESS_REREADS,
+    RefundObservation, SendFailure,
 };
 
 use support::{
@@ -57,6 +57,8 @@ struct MockResponses {
     chains: VecDeque<GetBlockchainInfo>,
     genesis: GetBlockHash,
     indexes: GetIndexInfo,
+    /// Answers to successive `getindexinfo` calls before `indexes` (#156).
+    index_queue: VecDeque<GetIndexInfo>,
     raw: VecDeque<Option<GetRawTransactionVerbose>>,
     headers: VecDeque<GetBlockHeaderVerbose>,
     spender: VecDeque<GetTxSpendingPrevout>,
@@ -84,6 +86,7 @@ impl MockRpc {
                 ]),
                 genesis: GetBlockHash(REGTEST_GENESIS.to_owned()),
                 indexes: index_info_at(true, true, height),
+                index_queue: VecDeque::new(),
                 raw: VecDeque::new(),
                 headers: VecDeque::from([block_header(
                     TIP_A,
@@ -163,7 +166,8 @@ impl BitcoinCoreRpc for MockRpc {
     async fn get_index_info(&self) -> Result<GetIndexInfo, Self::Error> {
         let mut inner = self.inner.lock().expect("mock lock");
         inner.calls.push("getindexinfo");
-        Ok(inner.indexes.clone())
+        let next = inner.index_queue.pop_front();
+        Ok(next.unwrap_or_else(|| inner.indexes.clone()))
     }
 
     async fn get_raw_transaction(
@@ -1771,4 +1775,216 @@ async fn caller_authorized_claim_validates_identity_and_witness_before_send() {
         AuthorizedClaimSubmission::Unknown
     );
     assert!(!already_known_rpc.calls().contains(&"sendrawtransaction"));
+}
+
+/// #156: a Core whose miner connects one block between the tip read and the
+/// index read on each of the first `blocks` readiness checks: each check sees
+/// `txindex` one block ahead of the tip it just read, then a quiet check.
+fn blocks_arriving_during_checks(blocks: u32) -> MockRpc {
+    let rpc = MockRpc::ready();
+    {
+        let mut inner = rpc.inner.lock().expect("mock lock");
+        inner.chains = (0..=blocks)
+            .map(|offset| chain_info_at(TIP_A, 200 + offset))
+            .collect();
+        inner.index_queue = (1..=blocks)
+            .map(|offset| index_info_at(true, true, 200 + offset))
+            .collect();
+        inner.indexes = index_info_at(true, true, 200 + blocks);
+    }
+    rpc
+}
+
+fn accept_claim(rpc: &MockRpc, fixture: &support::SwapFixture) {
+    rpc.push_mempool(Ok(mempool_allowed(&fixture.claim)));
+    rpc.push_send(Ok(SendRawTransaction(
+        fixture.claim.compute_txid().to_string(),
+    )));
+    rpc.push_spender(spender(
+        fixture.agreement.cooperative_claim().funding_outpoint(),
+        &fixture.claim,
+    ));
+}
+
+/// #156: a block arriving during the pre-send readiness check is absorbed by
+/// the check itself: it reads the tip and the index again, and the claim goes
+/// to Core in the same attempt, for every count of consecutive blocks up to
+/// the bound.
+#[tokio::test]
+async fn blocks_arriving_during_the_presend_check_are_absorbed_up_to_the_bound() {
+    let fixture = swap_fixture();
+    for blocks in 1..=READINESS_REREADS {
+        let rpc = blocks_arriving_during_checks(blocks);
+        accept_claim(&rpc, &fixture);
+        assert_eq!(
+            isolated_adapter(rpc.clone())
+                .submit_authorized_claim(
+                    &fixture.agreement,
+                    &serialize(&fixture.claim),
+                    fixture.claim.compute_txid(),
+                )
+                .await
+                .expect("claim submitted"),
+            AuthorizedClaimSubmission::Accepted {
+                transaction_id: fixture.claim.compute_txid(),
+            },
+            "{blocks} block(s) arriving"
+        );
+        let calls = rpc.calls();
+        let count = |name| calls.iter().filter(|call| **call == name).count();
+        assert_eq!(
+            count("getblockchaininfo"),
+            usize::try_from(blocks).unwrap() + 1
+        );
+        assert_eq!(count("getindexinfo"), usize::try_from(blocks).unwrap() + 1);
+        assert_eq!(count("getblockhash"), 1, "genesis is checked once");
+        assert_eq!(count("sendrawtransaction"), 1);
+    }
+}
+
+/// #156: blocks arriving on more consecutive checks than the bound: nothing
+/// is offered to Core and the outcome is `NotAttempted`, so the caller keeps
+/// the send authority; the next attempt on a quieter chain sends.
+#[tokio::test]
+async fn blocks_arriving_past_the_bound_leave_the_send_not_attempted_and_retryable() {
+    let fixture = swap_fixture();
+    let racing = blocks_arriving_during_checks(READINESS_REREADS + 1);
+    assert_eq!(
+        isolated_adapter(racing.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &serialize(&fixture.claim),
+                fixture.claim.compute_txid(),
+            )
+            .await
+            .expect("a refusal before the offer is an outcome"),
+        AuthorizedClaimSubmission::NotAttempted {
+            reason: "required_index_not_ready"
+        }
+    );
+    let calls = racing.calls();
+    assert!(!calls.contains(&"testmempoolaccept"), "{calls:?}");
+    assert!(!calls.contains(&"sendrawtransaction"), "{calls:?}");
+
+    let quiet = MockRpc::ready();
+    accept_claim(&quiet, &fixture);
+    assert_eq!(
+        isolated_adapter(quiet)
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &serialize(&fixture.claim),
+                fixture.claim.compute_txid(),
+            )
+            .await
+            .expect("the later attempt sends"),
+        AuthorizedClaimSubmission::Accepted {
+            transaction_id: fixture.claim.compute_txid(),
+        }
+    );
+}
+
+/// An index that stays behind the tip is refused after the re-reads: it
+/// could miss a transaction the tip holds, and nothing is sent on that view.
+/// The Maker's funding reports it as not attempted.
+#[tokio::test]
+async fn an_index_that_stays_behind_the_tip_is_refused_after_the_rereads() {
+    let fixture = swap_fixture();
+    let behind = || {
+        let rpc = MockRpc::ready();
+        {
+            let mut inner = rpc.inner.lock().expect("mock lock");
+            inner.chains = std::iter::repeat_n(chain_info_at(TIP_A, 200), 8).collect();
+            inner.indexes = index_info_at(true, true, 199);
+        }
+        rpc
+    };
+    let rpc = behind();
+    assert!(matches!(
+        isolated_adapter(rpc.clone())
+            .ensure_ready(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::RequiredIndexNotReady("txindex"))
+    ));
+    let reads = rpc
+        .calls()
+        .iter()
+        .filter(|call| **call == "getindexinfo")
+        .count();
+    assert_eq!(reads, usize::try_from(READINESS_REREADS).unwrap() + 1);
+
+    let funding_rpc = behind();
+    assert_eq!(
+        isolated_adapter(funding_rpc.clone())
+            .submit_authorized_funding(
+                &fixture.agreement,
+                &serialize(&fixture.funding),
+                fixture.funding.compute_txid(),
+            )
+            .await
+            .expect("a refusal before the offer is an outcome"),
+        AuthorizedFundingSubmission::NotAttempted {
+            reason: "required_index_not_ready"
+        }
+    );
+    let calls = funding_rpc.calls();
+    assert!(!calls.contains(&"testmempoolaccept"), "{calls:?}");
+
+    // An unsynced index is not a block arriving: refused without re-reads.
+    let unsynced = MockRpc::ready();
+    unsynced.inner.lock().expect("mock lock").indexes = index_info(false, true);
+    assert!(matches!(
+        isolated_adapter(unsynced.clone())
+            .ensure_ready(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::RequiredIndexNotReady("txindex"))
+    ));
+    assert_eq!(
+        unsynced.calls(),
+        vec![
+            "getnetworkinfo",
+            "getblockchaininfo",
+            "getblockhash",
+            "getindexinfo"
+        ]
+    );
+}
+
+/// A header announced ahead of its block (`headers != blocks`) is the other
+/// shape of a block arriving: absorbed by a re-read, and past the bound the
+/// refund is not attempted.
+#[tokio::test]
+async fn a_header_ahead_of_its_block_is_reread_and_past_the_bound_not_attempted() {
+    let fixture = swap_fixture();
+    let mut announced = chain_info_at(TIP_A, 200);
+    announced.headers = 201;
+
+    let arriving = MockRpc::ready();
+    arriving.inner.lock().expect("mock lock").chains =
+        VecDeque::from([announced.clone(), chain_info_at(TIP_A, 200)]);
+    isolated_adapter(arriving.clone())
+        .ensure_ready(&fixture.agreement)
+        .await
+        .expect("the block arrived on the re-read");
+
+    let stuck = MockRpc::ready();
+    stuck.inner.lock().expect("mock lock").chains = std::iter::repeat_n(announced, 8).collect();
+    assert_eq!(
+        isolated_adapter(stuck.clone())
+            .submit_authorized_refund(
+                &fixture.agreement,
+                &serialize(&fixture.refund),
+                fixture.refund.compute_txid(),
+            )
+            .await
+            .expect("a refusal before the offer is an outcome"),
+        AuthorizedRefundSubmission::NotAttempted {
+            reason: "chain_not_ready"
+        }
+    );
+    let reads = stuck
+        .calls()
+        .iter()
+        .filter(|call| **call == "getblockchaininfo")
+        .count();
+    assert_eq!(reads, usize::try_from(READINESS_REREADS).unwrap() + 1);
 }

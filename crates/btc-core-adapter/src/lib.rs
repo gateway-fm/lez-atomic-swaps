@@ -38,6 +38,18 @@ pub const BITCOIN_CORE_SUBVERSION_PREFIX: &str = "/Satoshi:";
 /// Largest raw transaction accepted from the local RPC boundary.
 pub const MAX_RAW_TRANSACTION_BYTES: usize = 1_000_000;
 
+/// How many times the readiness check reads the tip and `txindex` again when
+/// they disagree because a block is arriving (#156). A block connects and
+/// reaches `txindex` within milliseconds; three re-reads absorb a block
+/// landing between the reads even on a 2 s regtest chain over a slow link,
+/// and add at most about 0.6 s plus six round trips to one check.
+pub const READINESS_REREADS: u32 = 3;
+
+/// The pause before each re-read: long enough for the index to apply the
+/// block that just connected, short against any block interval (2 s on the
+/// devnet's regtest miner, about 600 s on Bitcoin).
+pub const READINESS_REREAD_PAUSE: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// Typed RPC boundary used by the adapter and deterministic tests.
 #[async_trait]
 pub trait BitcoinCoreRpc: Send + Sync {
@@ -454,6 +466,15 @@ pub enum AuthorizedRefundSubmission {
     Rejected,
     /// Exact acceptance cannot be proved and no retry is permitted.
     Unknown,
+    /// Bitcoin Core refused its readiness check before the transaction was
+    /// offered to it: no `testmempoolaccept` and no `sendrawtransaction` was
+    /// made, so nothing can be in flight. `reason` names the refusal (for
+    /// example `required_index_not_ready`). The caller may restore its send
+    /// authority and attempt again.
+    NotAttempted {
+        /// Stable payload-free name of the readiness refusal.
+        reason: &'static str,
+    },
 }
 
 /// Result of one caller-authorized exact funding submission.
@@ -475,6 +496,15 @@ pub enum AuthorizedFundingSubmission {
     Rejected,
     /// Exact acceptance cannot be proved and no retry is permitted.
     Unknown,
+    /// Bitcoin Core refused its readiness check before the transaction was
+    /// offered to it: no `testmempoolaccept` and no `sendrawtransaction` was
+    /// made, so nothing can be in flight. `reason` names the refusal (for
+    /// example `required_index_not_ready`). The caller may restore its send
+    /// authority and attempt again.
+    NotAttempted {
+        /// Stable payload-free name of the readiness refusal.
+        reason: &'static str,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -491,6 +521,9 @@ enum ExactSubmissionOutcome {
     },
     Rejected,
     Unknown,
+    NotAttempted {
+        reason: &'static str,
+    },
 }
 
 enum FundingState {
@@ -576,6 +609,15 @@ pub enum AuthorizedClaimSubmission {
     Rejected,
     /// The attempt outcome cannot be proven and must never be retried.
     Unknown,
+    /// Bitcoin Core refused its readiness check before the transaction was
+    /// offered to it: no `testmempoolaccept` and no `sendrawtransaction` was
+    /// made, so nothing can be in flight. `reason` names the refusal (for
+    /// example `required_index_not_ready`). The caller may restore its send
+    /// authority and attempt again.
+    NotAttempted {
+        /// Stable payload-free name of the readiness refusal.
+        reason: &'static str,
+    },
 }
 
 impl From<AuthorizedClaimSubmission> for ClaimSubmissionState {
@@ -585,7 +627,11 @@ impl From<AuthorizedClaimSubmission> for ClaimSubmissionState {
                 Self::Accepted { transaction_id }
             }
             AuthorizedClaimSubmission::Rejected => Self::Rejected,
-            AuthorizedClaimSubmission::Unknown => Self::Unknown,
+            // The durable-store path has no way to give its attempt back, so
+            // a refused readiness check stays as conservative as before.
+            AuthorizedClaimSubmission::Unknown | AuthorizedClaimSubmission::NotAttempted { .. } => {
+                Self::Unknown
+            }
         }
     }
 }
@@ -692,6 +738,27 @@ pub enum CoreAdapterError<RpcError: StdError + 'static, StoreError: StdError + '
     BroadcastIdentityMismatch,
 }
 
+impl<RpcError: StdError + 'static, StoreError: StdError + 'static>
+    CoreAdapterError<RpcError, StoreError>
+{
+    /// Stable payload-free name of a readiness refusal, as a submission that
+    /// was not attempted reports it.
+    #[must_use]
+    pub const fn readiness_reason(&self) -> &'static str {
+        match self {
+            Self::Rpc(_) => "rpc_unavailable",
+            Self::Store(_) => "store_unavailable",
+            Self::WrongCoreVersion => "wrong_core_version",
+            Self::ConnectivityPolicyMismatch => "connectivity_policy_mismatch",
+            Self::ChainNotReady => "chain_not_ready",
+            Self::BitcoinGenesisMismatch => "bitcoin_genesis_mismatch",
+            Self::RequiredIndexNotReady(_) => "required_index_not_ready",
+            Self::MalformedResponse(_) => "malformed_response",
+            _ => "not_ready",
+        }
+    }
+}
+
 /// Agreement-aware typed Bitcoin Core adapter.
 #[derive(Clone, Debug)]
 pub struct BitcoinCoreAdapter<R> {
@@ -765,33 +832,61 @@ where
         if !connectivity_matches {
             return Err(CoreAdapterError::ConnectivityPolicyMismatch);
         }
-        let chain = self
-            .rpc
-            .get_blockchain_info()
-            .await
-            .map_err(CoreAdapterError::Rpc)?;
         let profile_network = self.connectivity.network();
-        let tip = parse_ready_chain(&chain, profile_network)?;
-        let genesis = self
-            .rpc
-            .get_genesis_hash()
-            .await
-            .map_err(CoreAdapterError::Rpc)?;
-        let observed_genesis = parse_block_hash(&genesis.0, "genesis hash")?;
-        let agreement_genesis = BlockHash::from_byte_array(*agreement.bitcoin_genesis_hash());
-        let profile_genesis = genesis_block(profile_network).block_hash();
-        if agreement_genesis != profile_genesis || observed_genesis != profile_genesis {
-            return Err(CoreAdapterError::BitcoinGenesisMismatch);
+        let mut genesis_checked = false;
+        let mut rereads = 0;
+        loop {
+            let chain = self
+                .rpc
+                .get_blockchain_info()
+                .await
+                .map_err(CoreAdapterError::Rpc)?;
+            let tip = match parse_ready_chain(&chain, profile_network) {
+                Ok(tip) => tip,
+                // A header announced ahead of its block: a block is arriving.
+                Err(_)
+                    if rereads < READINESS_REREADS && block_arriving(&chain, profile_network) =>
+                {
+                    rereads += 1;
+                    tokio::time::sleep(READINESS_REREAD_PAUSE).await;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if !genesis_checked {
+                let genesis = self
+                    .rpc
+                    .get_genesis_hash()
+                    .await
+                    .map_err(CoreAdapterError::Rpc)?;
+                let observed_genesis = parse_block_hash(&genesis.0, "genesis hash")?;
+                let agreement_genesis =
+                    BlockHash::from_byte_array(*agreement.bitcoin_genesis_hash());
+                let profile_genesis = genesis_block(profile_network).block_hash();
+                if agreement_genesis != profile_genesis || observed_genesis != profile_genesis {
+                    return Err(CoreAdapterError::BitcoinGenesisMismatch);
+                }
+                genesis_checked = true;
+            }
+            let indexes = self
+                .rpc
+                .get_index_info()
+                .await
+                .map_err(CoreAdapterError::Rpc)?;
+            // `txospenderindex` is Core 31's and no public provider has it; its
+            // absence selects the index-free lookup in `spender_of`.
+            match require_index(&indexes, "txindex", tip.height) {
+                Ok(()) => return Ok(tip),
+                // A synced index at another height than the tip just read:
+                // a block connected between the two reads, or the index is
+                // still applying one. Read both again (#156).
+                Err(_) if rereads < READINESS_REREADS && index_synced(&indexes, "txindex") => {
+                    rereads += 1;
+                    tokio::time::sleep(READINESS_REREAD_PAUSE).await;
+                }
+                Err(error) => return Err(error),
+            }
         }
-        let indexes = self
-            .rpc
-            .get_index_info()
-            .await
-            .map_err(CoreAdapterError::Rpc)?;
-        // `txospenderindex` is Core 31's and no public provider has it; its
-        // absence selects the index-free lookup in `spender_of`.
-        require_index(&indexes, "txindex", tip.height)?;
-        Ok(tip)
     }
 
     /// Observes the exact funding transaction under a stable-tip bracket.
@@ -1212,6 +1307,9 @@ where
                 }
                 ExactSubmissionOutcome::Rejected => AuthorizedFundingSubmission::Rejected,
                 ExactSubmissionOutcome::Unknown => AuthorizedFundingSubmission::Unknown,
+                ExactSubmissionOutcome::NotAttempted { reason } => {
+                    AuthorizedFundingSubmission::NotAttempted { reason }
+                }
             },
         )
     }
@@ -1254,6 +1352,9 @@ where
                 },
                 ExactSubmissionOutcome::Rejected => AuthorizedRefundSubmission::Rejected,
                 ExactSubmissionOutcome::Unknown => AuthorizedRefundSubmission::Unknown,
+                ExactSubmissionOutcome::NotAttempted { reason } => {
+                    AuthorizedRefundSubmission::NotAttempted { reason }
+                }
             },
         )
     }
@@ -1328,6 +1429,9 @@ where
                 }
                 ExactSubmissionOutcome::Rejected => AuthorizedClaimSubmission::Rejected,
                 ExactSubmissionOutcome::Unknown => AuthorizedClaimSubmission::Unknown,
+                ExactSubmissionOutcome::NotAttempted { reason } => {
+                    AuthorizedClaimSubmission::NotAttempted { reason }
+                }
             },
         )
     }
@@ -1369,7 +1473,15 @@ where
         transaction: &Transaction,
         transaction_bytes: &[u8],
     ) -> Result<ExactSubmissionOutcome, CoreAdapterError<R::Error>> {
-        self.ensure_ready(agreement).await?;
+        // Nothing has been offered to Core yet: a refused readiness check
+        // (a block landing between its reads, a transport error, a node
+        // still syncing) leaves no transaction in flight and is reported as
+        // such, so the caller can give its single-send authority back.
+        if let Err(refusal) = self.ensure_ready(agreement).await {
+            return Ok(ExactSubmissionOutcome::NotAttempted {
+                reason: refusal.readiness_reason(),
+            });
+        }
         let transaction_id = transaction.compute_txid();
         let witness_transaction_id = transaction.compute_wtxid();
         let Ok(mempool) = self.rpc.test_mempool_accept(transaction_bytes).await else {
@@ -1836,6 +1948,22 @@ where
         height,
         median_time_unix_seconds,
     })
+}
+
+/// Whether a chain refused by `parse_ready_chain` is only a block arriving:
+/// a header ahead of its block, with every other readiness field in order.
+fn block_arriving(chain: &GetBlockchainInfo, network: Network) -> bool {
+    if chain.headers <= chain.blocks {
+        return false;
+    }
+    let mut settled = chain.clone();
+    settled.headers = chain.blocks;
+    parse_ready_chain::<std::convert::Infallible>(&settled, network).is_ok()
+}
+
+/// Whether one named index exists and reports itself synced.
+fn index_synced(indexes: &GetIndexInfo, name: &str) -> bool {
+    indexes.0.get(name).is_some_and(|index| index.synced)
 }
 
 fn require_index<R>(

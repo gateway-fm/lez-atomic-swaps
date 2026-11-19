@@ -898,7 +898,10 @@ async fn terminal_action(
         outcomes,
     )
     .await;
-    first_attempt_reply(effect_config.is_zec(), first_attempt)?;
+    first_attempt_reply(
+        node_retries_first_attempt(effect_config.is_zec(), action),
+        first_attempt,
+    )?;
     revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock).await?;
     Ok(action_commit(&admission))
 }
@@ -1253,20 +1256,28 @@ async fn admit_terminal_action(
     .map_err(|_| ActionError::RegistryUnavailable)?
 }
 
-/// What the caller hears about the first attempt of an admitted action. A
-/// Zcash action is admitted durably and the Node's own supervisor executes it
-/// from here on (its row names the class while it backs off): a refusal of
-/// this first attempt, right after the status said the action is available,
-/// is a transient of the chains (the funding observation reads unstable when
-/// a block lands between its two tip samples) and the supervisor's to retry,
-/// so the caller gets the admission. A Bitcoin action is executed here and
-/// its failure is the caller's; every other error stays an error for both.
+/// Whether the Node itself retries an admitted action whose first attempt was
+/// refused: every Zcash action (its supervisor), and a Bitcoin claim (the
+/// observer retries it while the claim window is open, #156). A Bitcoin
+/// refund keeps its reply.
+const fn node_retries_first_attempt(pair_is_zec: bool, action: TakerTerminalActionV1) -> bool {
+    pair_is_zec || matches!(action, TakerTerminalActionV1::Claim)
+}
+
+/// What the caller hears about the first attempt of an admitted action. An
+/// action the Node retries itself is admitted durably and executed by the
+/// Node from here on (a Zcash row names the class while it backs off): a
+/// refusal of this first attempt, right after the status said the action is
+/// available, is a transient of the chains (an observation reads unstable
+/// when a block lands between two reads) and the Node's to retry, so the
+/// caller gets the admission. Any other action's failure is the caller's;
+/// every other error stays an error for both.
 fn first_attempt_reply(
-    pair_is_zec: bool,
+    retried_by_node: bool,
     attempt: Result<(), ActionError>,
 ) -> Result<(), ActionError> {
     match attempt {
-        Err(ActionError::DependencyUnavailable) if pair_is_zec => {
+        Err(ActionError::DependencyUnavailable) if retried_by_node => {
             report_actor_failure(
                 "first attempt after admission",
                 &"retried by the supervisor",
@@ -2648,6 +2659,60 @@ const fn taker_observation_phase(phase: Phase) -> bool {
     )
 }
 
+/// The swap's admitted action as the observer needs it: whether a refund is
+/// admitted, and the generation an admitted claim was requested at.
+async fn admitted_actions(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    swap_id: &SwapId,
+) -> (bool, Option<u64>) {
+    let admission = lookup_admitted_action_for_swap(initiation, swap_id)
+        .await
+        .ok()
+        .flatten();
+    let refund = admission
+        .as_ref()
+        .is_some_and(|admission| admission.action() == TakerFacadeActionV1::Refund);
+    let claim_generation = admission
+        .as_ref()
+        .filter(|admission| admission.action() == TakerFacadeActionV1::Claim)
+        .map(TakerActionAdmissionV1::requested_after_generation);
+    (refund, claim_generation)
+}
+
+/// One retry of an admitted Bitcoin claim by the observer (#156); the claim
+/// marker is left once the drive went through, as after the owner's request.
+async fn retry_admitted_claim(config: &RouteActor, outcomes: &LastOutcomes) {
+    if config
+        .effect(TakerTerminalActionV1::Claim, outcomes)
+        .await
+        .is_ok()
+    {
+        mark_claim_submitted(config.state_db());
+        eprintln!(
+            "taker actor {}: the admitted claim went through on the observer's retry",
+            config.swap_id().as_str()
+        );
+    }
+}
+
+/// Whether the observer drives an admitted Bitcoin claim (#156): no claim of
+/// this swap went through yet, both legs are locked, the status still offers
+/// the claim, and it offers it at the generation the claim was admitted at.
+/// Past the claim window the status offers the refund instead and the claim
+/// is never driven.
+fn observer_retries_admitted_claim(
+    claim_submitted: bool,
+    phase: Phase,
+    state: TakerSwapStateV1,
+    admitted_claim_generation: Option<u64>,
+    revision: u64,
+) -> bool {
+    !claim_submitted
+        && phase == Phase::BothLegsLocked
+        && state == TakerSwapStateV1::ClaimAvailable
+        && admitted_claim_generation == Some(revision)
+}
+
 /// Drives every Node-owned Bitcoin swap that is waiting on a chain
 /// observation, once per pass, under the same held lock the monitor uses.
 async fn observe_dynamic_swaps(state: &TakerServiceState) {
@@ -2678,10 +2743,8 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
         let receipt = prepared.execution().receipt_output().to_path_buf();
         let actor_root = prepared.execution().actor_root().to_path_buf();
         let swap_id = prepared.swap_id().clone();
-        let admitted_refund = matches!(
-            lookup_admitted_action_for_swap(&initiation, &swap_id).await,
-            Ok(Some(admission)) if admission.action() == TakerFacadeActionV1::Refund
-        );
+        let (admitted_refund, admitted_claim_generation) =
+            admitted_actions(&initiation, &swap_id).await;
         let loaded = tokio::task::spawn_blocking(move || {
             let config = RouteActor::load_for_monitor(
                 Pair::Bitcoin,
@@ -2701,7 +2764,13 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
         let Ok(Ok((config, held_lock))) = loaded else {
             continue;
         };
-        let Ok(LifecycleStatus::Active { phase, state, .. }) = config.status().await else {
+        let Ok(LifecycleStatus::Active {
+            phase,
+            revision,
+            state,
+            ..
+        }) = config.status().await
+        else {
             continue;
         };
         // An admitted refund is driven here until it lands. Its recover command
@@ -2732,6 +2801,22 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
         // through the recovery command, which for the Taker only observes.
         let claim_submitted =
             claim_submitted_marker(config.state_db()).is_some_and(|marker| marker.is_file());
+        // An admitted claim whose attempt did not go through (Core refused its
+        // readiness check before the claim was offered, #156) is retried here
+        // while the claim window is open: the status still offers the claim at
+        // the generation it was admitted at. The actor sends it at most once;
+        // past the window the status no longer offers it and nothing is sent.
+        if observer_retries_admitted_claim(
+            claim_submitted,
+            phase,
+            state,
+            admitted_claim_generation,
+            revision,
+        ) {
+            retry_admitted_claim(&config, outcomes).await;
+            drop(held_lock);
+            continue;
+        }
         let claim_pending = phase == Phase::BothLegsLocked && claim_submitted;
         if taker_observation_phase(phase) || claim_pending {
             let _ = config.observe(outcomes).await;
@@ -3587,7 +3672,7 @@ mod tests {
 
     /// 9afd25a8: an admitted Zcash action whose first attempt is refused is
     /// the supervisor's to retry, so the caller gets the admission; a Bitcoin
-    /// action keeps its reply, and every other error stays an error.
+    /// refund keeps its reply, and every other error stays an error.
     #[test]
     fn a_refused_first_attempt_is_the_supervisors_for_zcash_and_the_callers_for_bitcoin() {
         assert!(first_attempt_reply(true, Err(ActionError::DependencyUnavailable)).is_ok());
@@ -3601,6 +3686,84 @@ mod tests {
         ));
         assert!(first_attempt_reply(true, Ok(())).is_ok());
         assert!(first_attempt_reply(false, Ok(())).is_ok());
+    }
+
+    /// #156: the observer retries an admitted Bitcoin claim only while the
+    /// status still offers it at the admitted generation and none went through.
+    #[test]
+    fn the_observer_retries_an_admitted_btc_claim_only_inside_its_window() {
+        let open = TakerSwapStateV1::ClaimAvailable;
+        assert!(observer_retries_admitted_claim(
+            false,
+            Phase::BothLegsLocked,
+            open,
+            Some(2),
+            2
+        ));
+        // Already through, not admitted, admitted at another generation.
+        assert!(!observer_retries_admitted_claim(
+            true,
+            Phase::BothLegsLocked,
+            open,
+            Some(2),
+            2
+        ));
+        assert!(!observer_retries_admitted_claim(
+            false,
+            Phase::BothLegsLocked,
+            open,
+            None,
+            2
+        ));
+        assert!(!observer_retries_admitted_claim(
+            false,
+            Phase::BothLegsLocked,
+            open,
+            Some(1),
+            2
+        ));
+        // The window closed: the status offers the refund instead.
+        assert!(!observer_retries_admitted_claim(
+            false,
+            Phase::BothLegsLocked,
+            TakerSwapStateV1::RefundAvailable,
+            Some(2),
+            2
+        ));
+        // Not both legs locked.
+        assert!(!observer_retries_admitted_claim(
+            false,
+            Phase::TakerLockConfirmed,
+            open,
+            Some(2),
+            2
+        ));
+    }
+
+    /// #156: a Bitcoin claim whose first attempt is refused keeps its
+    /// admission and the Node's observer retries it, so one press of Claim
+    /// is enough; a Bitcoin refund still answers the caller.
+    #[test]
+    fn a_refused_first_btc_claim_attempt_is_the_nodes_to_retry() {
+        assert!(node_retries_first_attempt(
+            false,
+            TakerTerminalActionV1::Claim
+        ));
+        assert!(!node_retries_first_attempt(
+            false,
+            TakerTerminalActionV1::Refund
+        ));
+        assert!(node_retries_first_attempt(
+            true,
+            TakerTerminalActionV1::Refund
+        ));
+        assert!(
+            first_attempt_reply(
+                node_retries_first_attempt(false, TakerTerminalActionV1::Claim),
+                Err(ActionError::DependencyUnavailable)
+            )
+            .is_ok()
+        );
     }
 
     #[test]

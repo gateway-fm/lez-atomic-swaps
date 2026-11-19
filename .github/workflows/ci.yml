@@ -87,7 +87,7 @@ jobs:
         run: ./scripts/install-ci-ripgrep.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.18.0
+          node-version: 24.22.3
           cache: npm
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
