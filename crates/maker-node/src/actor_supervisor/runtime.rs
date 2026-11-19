@@ -2713,11 +2713,28 @@ mod tests {
             assert!(parse_status(&bytes, kind).is_err());
         }
 
+        // A claim that ends refunded is the Maker's Zcash refund after its LEZ
+        // claim was lost (issue #178): exactly `refunded` at phase `refunded`.
+        assert!(
+            parse_effect(
+                &effect("claim", "refunded", "refunded", 4, "complete"),
+                ActorEffectCommand::Claim,
+                MakerActorKindV1::Zcash,
+            )
+            .is_ok_and(|parsed| parsed.terminal)
+        );
         for (command, output_command, outcome, phase, next_action) in [
             (
                 ActorEffectCommand::Claim,
                 "claim",
                 "refunded",
+                "completed",
+                "complete",
+            ),
+            (
+                ActorEffectCommand::Claim,
+                "claim",
+                "completed",
                 "refunded",
                 "complete",
             ),
