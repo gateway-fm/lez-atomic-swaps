@@ -1812,6 +1812,54 @@ pub fn lez_claim_waiting_refund_at_ms(role_state_db: &Path) -> Option<u64> {
         .ok()
 }
 
+/// The marker a Maker Node writes when its one-LEZ-claim gate admits this
+/// swap's LEZ claim, before the claim is signed: its LEZ refund time and the
+/// admission time (ms). Another worker's gate treats it as a claim in flight
+/// until the claim's own in-flight marker replaces it, the swap's refund time
+/// passes, or [`LEZ_CLAIM_ADMISSION_HOLD_MS`] after admission (an attempt that
+/// died before submitting holds nothing longer). Removed at this swap's next
+/// gate evaluation. (`<swap>/actor/<role>/lez-claim-admitted`.)
+#[must_use]
+pub fn lez_claim_admitted_marker(role_state_db: &Path) -> Option<PathBuf> {
+    Some(role_state_db.parent()?.parent()?.join("lez-claim-admitted"))
+}
+
+/// How long an admitted, not yet submitted LEZ claim holds the others: one
+/// claim attempt's bound.
+pub const LEZ_CLAIM_ADMISSION_HOLD_MS: u64 = 300_000;
+
+/// Records this swap's LEZ claim as admitted (`Some((refund_at_ms, now_ms))`),
+/// or removes the record (`None`).
+pub fn record_lez_claim_admitted(role_state_db: &Path, admission: Option<(u64, u64)>) {
+    let Some(marker) = lez_claim_admitted_marker(role_state_db) else {
+        return;
+    };
+    match admission {
+        Some((refund_at_ms, now_ms)) => {
+            let _ = fs::write(
+                marker,
+                format!("lez_refund_at_ms={refund_at_ms}\nadmitted_at_ms={now_ms}\n"),
+            );
+        }
+        None => {
+            let _ = fs::remove_file(marker);
+        }
+    }
+}
+
+/// The (refund time, admission time) an admitted marker records, when present
+/// and well formed.
+#[must_use]
+pub fn lez_claim_admission(role_state_db: &Path) -> Option<(u64, u64)> {
+    let text = fs::read_to_string(lez_claim_admitted_marker(role_state_db)?).ok()?;
+    let field = |key: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(key))
+            .and_then(|value| value.trim().parse::<u64>().ok())
+    };
+    Some((field("lez_refund_at_ms=")?, field("admitted_at_ms=")?))
+}
+
 fn valid_swap_id_text(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128

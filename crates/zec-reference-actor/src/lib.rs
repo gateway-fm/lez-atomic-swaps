@@ -19,10 +19,12 @@ mod test_crash_hook;
 
 pub use command::{
     ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusProjectionV1,
-    ActorStatusV1, execute_actor_command, lez_claim_waiting_marker, lez_claim_waiting_refund_at_ms,
-    lez_depositor_balance_marker, record_lez_claim_waiting, record_revealing_claim_holder,
-    revealing_claim_held_by_marker, revealing_claim_hold_attention_ms,
-    revealing_claim_hold_needs_attention, revealing_claim_holder, revealing_claim_in_flight_marker,
+    ActorStatusV1, LEZ_CLAIM_ADMISSION_HOLD_MS, execute_actor_command, lez_claim_admission,
+    lez_claim_admitted_marker, lez_claim_waiting_marker, lez_claim_waiting_refund_at_ms,
+    lez_depositor_balance_marker, record_lez_claim_admitted, record_lez_claim_waiting,
+    record_revealing_claim_holder, revealing_claim_held_by_marker,
+    revealing_claim_hold_attention_ms, revealing_claim_hold_needs_attention,
+    revealing_claim_holder, revealing_claim_in_flight_marker,
     revealing_claim_in_flight_refund_at_ms, revealing_claim_submitted_marker,
 };
 

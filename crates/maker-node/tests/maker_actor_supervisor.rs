@@ -2225,3 +2225,64 @@ fn a_failed_swaps_lez_claim_in_flight_holds_no_other_claim() {
         "a failed swap's claim holds no other"
     );
 }
+
+#[test]
+fn a_maker_lez_claim_admitted_elsewhere_holds_the_next_one() {
+    // Review 3, item 4: the gate admitted a claim and its in-flight marker was
+    // written only once the claim was submitted, so a second supervisor worker
+    // could admit another claim in between and both were signed at one nonce
+    // (one superseded, a re-plan burnt). An admitted claim now announces
+    // itself (`lez-claim-admitted`, its refund time and admission time) and
+    // holds others like a claim in flight, for a bounded time.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let claims = root.path().join("lez-claims-submitted");
+    let now_ms = unix_now_ms();
+    let owner = MakerActorLeaseOwner::new([0x7b; 16]).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let admitted = "m5-admitted-elsewhere";
+    let admitted_state = register_gated_actor(&mut store, root.path(), admitted, |_| {
+        claim_logging_program(
+            &root.path().join("admitted-log"),
+            "claim_evidence_available",
+            "claim_lez",
+        )
+    });
+    fs::write(
+        zec_reference_actor::lez_claim_waiting_marker(&admitted_state)
+            .unwrap()
+            .with_file_name("lez-claim-admitted"),
+        format!(
+            "lez_refund_at_ms={}\nadmitted_at_ms={now_ms}\n",
+            now_ms + 3_600_000
+        ),
+    )
+    .unwrap();
+    // Its attempt runs on another worker: leased here.
+    store
+        .claim_maker_actor(
+            &SwapId::new(admitted).unwrap(),
+            MakerActorLeaseOwner::new([0x7d; 16]).unwrap(),
+            10,
+        )
+        .unwrap()
+        .expect("admitted swap's lease");
+    let next = "m5-admitted-elsewhere-next";
+    register_gated_actor(&mut store, root.path(), next, |state| {
+        gated_lez_claim_program(
+            next,
+            state,
+            &root.path().join("next-log"),
+            &claims,
+            now_ms + 1_800_000,
+        )
+    });
+    let (swap, resolution, class) = run_due(&mut store, owner, 10);
+    assert_eq!(swap, next);
+    assert_eq!(resolution, MakerActorSupervisorResolution::Backoff);
+    assert_eq!(class.as_deref(), Some("lez_revealing_claim_in_flight"));
+    assert!(
+        !claims.exists(),
+        "nothing signed while another claim is admitted"
+    );
+}

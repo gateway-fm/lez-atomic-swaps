@@ -653,14 +653,19 @@ fn run_claimed_attempt_with_lock(
             return Ok(ClaimedAttempt::Backoff(class));
         }
         attempted = command.name();
-        let effect = match run_child(
+        let run = run_child(
             store,
             lease,
             &held_lock,
             ActorInvocation::Effect(command),
             config,
             cancellation,
-        ) {
+        );
+        // The admission of this swap's LEZ claim, if the gate made one, lasts as
+        // long as this attempt: submitted, the claim's own in-flight marker holds
+        // the others now; not submitted, it holds nothing.
+        release_lez_claim_admission(lease);
+        let effect = match run {
             Ok(output) => output,
             Err(ChildRunError::Retry(class)) => return Ok(ClaimedAttempt::Backoff(class)),
             Err(ChildRunError::Fail(class)) => return Ok(ClaimedAttempt::Failed(class)),
@@ -902,6 +907,19 @@ fn classify_deployment(error: &MakerActorProcessError) -> ChildRunError {
     }
 }
 
+/// Removes this swap's LEZ-claim admission marker (review 3, item 4).
+fn release_lez_claim_admission(lease: &MakerActorLeaseV1) {
+    #[cfg(feature = "pair-zec")]
+    if lease.record().manifest().kind() == MakerActorKindV1::Zcash {
+        zec_reference_actor::record_lez_claim_admitted(
+            lease.record().manifest().state_database_path(),
+            None,
+        );
+    }
+    #[cfg(not(feature = "pair-zec"))]
+    let _ = lease;
+}
+
 /// Why an effect waits this attempt, if it does: the effect cutoff, or the
 /// one-Maker-LEZ-claim-in-flight gate — named
 /// `lez_revealing_claim_held_near_refund` (a stable reason identifier; the
@@ -959,6 +977,10 @@ enum RevealingClaimHold {
 /// attempt failed before it was submitted), orders nothing
 /// ([`waiting_claim_orders`]); its next attempt at the gate orders it again.
 #[cfg(feature = "pair-zec")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the gate reads every peer marker in one pass: in flight, admitted, waiting"
+)]
 fn revealing_claim_held_back(
     store: &SqliteSwapStore,
     lease: &MakerActorLeaseV1,
@@ -978,6 +1000,7 @@ fn revealing_claim_held_back(
     if !submits_maker_lez_claim(command, next_action) {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
         zec_reference_actor::record_lez_claim_waiting(own_state, None);
+        zec_reference_actor::record_lez_claim_admitted(own_state, None);
         return RevealingClaimHold::Open;
     }
     let read = |key: &str| {
@@ -995,11 +1018,14 @@ fn revealing_claim_held_back(
     {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
         zec_reference_actor::record_lez_claim_waiting(own_state, None);
+        zec_reference_actor::record_lez_claim_admitted(own_state, None);
         return RevealingClaimHold::Open;
     }
     // Announced before the others are read: of two claims arriving at once,
     // at least one sees the other.
     let own_refund_at_ms = read("lez_refund_at_ms").unwrap_or(u64::MAX);
+    // A previous admission of this swap's claim is over: this is its next attempt.
+    zec_reference_actor::record_lez_claim_admitted(own_state, None);
     zec_reference_actor::record_lez_claim_waiting(own_state, Some(own_refund_at_ms));
     let Ok(records) = store.list_maker_actor_processes() else {
         // Unknown peers: hold the claim back rather than race a nonce.
@@ -1028,6 +1054,13 @@ fn revealing_claim_held_back(
         let state = record.manifest().state_database_path();
         if record.schedule_state() == lez_swap_store::MakerActorScheduleState::Failed {
             return false;
+        }
+        // Admitted on another worker and not submitted yet: it is about to sign at the
+        // nonce (review 3, item 4), for a bounded time.
+        if zec_reference_actor::lez_claim_admission(state)
+            .is_some_and(|admission| admission_holds(admission, now_ms))
+        {
+            return true;
         }
         zec_reference_actor::revealing_claim_in_flight_marker(state)
             .is_some_and(|marker| marker.is_file())
@@ -1060,6 +1093,25 @@ fn revealing_claim_held_back(
         }
         hold => hold,
     };
+    if hold == RevealingClaimHold::Open {
+        // Announced before the others are read again: of two workers admitting at
+        // once, the one admitted later (ties by swap id) sees the other and yields.
+        zec_reference_actor::record_lez_claim_admitted(own_state, Some((own_refund_at_ms, now_ms)));
+        let admitted_before = peers().any(|record| {
+            record.schedule_state() != lez_swap_store::MakerActorScheduleState::Failed
+                && zec_reference_actor::lez_claim_admission(record.manifest().state_database_path())
+                    .is_some_and(|admission| {
+                        admission_holds(admission, now_ms)
+                            && (admission.1, record.swap_id().as_str())
+                                < (now_ms, manifest.swap_id().as_str())
+                    })
+        });
+        if admitted_before {
+            zec_reference_actor::record_lez_claim_admitted(own_state, None);
+            zec_reference_actor::record_revealing_claim_holder(own_state, None);
+            return RevealingClaimHold::Held;
+        }
+    }
     let Some(holder) = blocker.filter(|_| hold == RevealingClaimHold::HeldNearRefund) else {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
         return hold;
@@ -1082,6 +1134,18 @@ fn revealing_claim_held_back(
 #[cfg(feature = "pair-zec")]
 fn waits_behind(own: (u64, &str), other: (u64, &str), now_ms: u64) -> bool {
     other.0 > now_ms && other < own
+}
+
+/// Whether another swap's admitted, not yet submitted LEZ claim
+/// (`(refund_at_ms, admitted_at_ms)`) holds this one at `now_ms`: until its
+/// refund time and at most one attempt's bound after its admission.
+#[cfg(feature = "pair-zec")]
+const fn admission_holds(admission: (u64, u64), now_ms: u64) -> bool {
+    admission.0 > now_ms
+        && admission
+            .1
+            .saturating_add(zec_reference_actor::LEZ_CLAIM_ADMISSION_HOLD_MS)
+            > now_ms
 }
 
 /// Whether another swap's LEZ claim in flight (its in-flight marker present)
