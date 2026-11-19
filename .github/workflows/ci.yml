@@ -9,11 +9,81 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request supersedes its older run. A commit on main
+# and a tag always get a complete run: outside pull requests the group also
+# names the commit, because GitHub keeps one pending run per group and drops
+# the older pending one even when cancel-in-progress is false.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name != 'pull_request' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The lint jobs come first and need no container: a formatting, Clippy or
+  # rustdoc error in any of the Cargo workspaces is reported within minutes,
+  # not at the end of the slow job that also builds and tests that workspace.
+  # Both run scripts/check-all.sh, the command a contributor runs before a
+  # push; the slow jobs below keep their own checks.
+  lint:
+    name: fast lint (fmt of every workspace, root Clippy and rustdoc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.96.0
+          components: rustfmt, clippy
+      - run: ./scripts/check-all.sh --fast --rust-only
+
+  lint-separate:
+    name: lint of the separate Cargo workspaces (${{ matrix.shard }})
+    # Sharded so that each shard reports within about ten minutes on a cold
+    # runner. scripts/test-check-all-workspaces.sh fails when a workspace
+    # check-all.sh lints is in no shard or in two.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: provisional LEZ v0.2
+            manifests: compat/lez-v0.2-provisional/Cargo.toml
+          - shard: provisional escrow guest, methods and deployer
+            manifests: >-
+              compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
+              compat/lez-v0.2-provisional/escrow/methods/Cargo.toml
+              compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
+          - shard: sidecar, SPEL escrow and standalone
+            manifests: >-
+              compat/lez-v0_2-sidecar/Cargo.toml
+              compat/spel-zec-escrow/Cargo.toml
+              compat/spel-zec-escrow/methods/guest/Cargo.toml
+              compat/spel-zec-escrow/methods/Cargo.toml
+              compat/lez-standalone-e2e/Cargo.toml
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.96.0
+          components: rustfmt, clippy
+      - name: Install the smart-card library the LEZ v0.2.4 wallet crate links
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libpcsclite-dev
+      - name: Lint this shard's workspaces
+        env:
+          MANIFESTS: ${{ matrix.manifests }}
+        run: |
+          set -euo pipefail
+          read -r -a manifests <<<"$MANIFESTS"
+          args=()
+          for manifest in "${manifests[@]}"; do
+            args+=(--workspace "$manifest")
+          done
+          ./scripts/check-all.sh --separate --rust-only "${args[@]}"
+
   ci-quality:
     name: shell, workflow, Dockerfile, and Compose quality
     runs-on: ubuntu-24.04

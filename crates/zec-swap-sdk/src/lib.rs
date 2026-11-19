@@ -46,8 +46,9 @@ pub use claim::{
     ClaimSupersessionInputV1, ClaimSupersessionV1, FollowupClaimEvidenceV1,
     FollowupClaimObservationV1, FollowupClaimTransitionV1, MAX_CLAIM_SUBMISSION_BYTES,
     MAX_REVEALING_CLAIM_REPLANS, ObservedFollowupClaimTransitionV1,
-    ObservedRevealingClaimTransitionV1, PreparedClaimSubmissionV1, RevealingClaimEvidenceV1,
-    RevealingClaimObservationV1, RevealingClaimTransitionV1, ZcashFundingWaitReasonV1,
+    ObservedRevealingClaimTransitionV1, PreparedClaimSubmissionV1,
+    REVEALING_CLAIM_REPLAN_ATTENTION, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
+    RevealingClaimTransitionV1, ZcashFundingWaitReasonV1,
 };
 pub use claim_material::{
     ClaimMaterialContext, ClaimMaterialPurpose, ClaimSubmissionContext,

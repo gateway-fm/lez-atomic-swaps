@@ -56,6 +56,7 @@ if [[ ! -x images/maker-node/lez-maker-node \
    || ! -x images/maker-node/lez-btc-maker-actor \
    || ! -x images/taker-node/lez-btc-taker-actor \
    || ! -x images/maker-node/lez-v02-bridge-poc \
+   || ! -x images/maker-node/lez-v02-escrow-claim-probe \
    || ! -x images/taker-node/lez-v02-bridge-poc \
    || ! -x images/lez-services/lez-runtime-healthcheck ]]; then
     cat >&2 <<'MISSING'
@@ -72,7 +73,8 @@ The Node-owned Bitcoin lifecycle (ADR 0213) also needs the actor programs
 images/maker-node/lez-btc-maker-actor, images/taker-node/lez-btc-taker-actor)
 and the LEZ v0.2 role sidecar, which links libpython3.12 and is built in the
 ephemeral builder image (scripts/from-scratch.sh --only build ->
-provision/data/sidecar/lez-v02-bridge-poc -> both node images).
+provision/data/sidecar/lez-v02-bridge-poc -> both node images, and the
+test-only provision/data/sidecar/lez-v02-escrow-claim-probe -> images/maker-node/).
 MISSING
     exit 1
 fi

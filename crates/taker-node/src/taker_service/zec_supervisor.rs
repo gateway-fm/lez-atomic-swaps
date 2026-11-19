@@ -546,11 +546,10 @@ pub(super) fn failure_of(error: ActorCommandError) -> AttemptFailure {
         ActorCommandError::LezDepositorBalanceInsufficient => {
             AttemptFailure::Retry("lez_depositor_balance_insufficient")
         }
-        // The LEZ first lock was re-planned the bounded number of times and
-        // its nonce was taken again: nothing is on the chain, the swap stops
-        // by name (D1).
+        // The revealing LEZ claim's re-plans reported exhausted (an actor
+        // before issue #172): a retry, never a stop, while it can land.
         ActorCommandError::RevealingClaimReplanExhausted => {
-            AttemptFailure::Fail("lez_revealing_claim_replan_exhausted")
+            AttemptFailure::Retry("lez_revealing_claim_replan_exhausted")
         }
         // The actor refused a revealing claim after the window closed (nothing
         // sent; LEZ selling ZEC, Zcash selling LEZ); its next status names the

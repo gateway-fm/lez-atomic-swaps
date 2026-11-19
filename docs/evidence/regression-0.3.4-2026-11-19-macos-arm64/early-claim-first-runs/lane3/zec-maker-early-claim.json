@@ -1,0 +1,123 @@
+{
+  "scenario": "zec-maker-early-claim",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179509906403",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-devnet-swap-179509906503",
+  "corridor": "zec-devnet-179509906503",
+  "profile": "deterministic-local-devnet-v8",
+  "onchain_swap_id": "64dcb7093111f4acebe5f99140e61117312a37d902422fb95a515974509afff2",
+  "escrow_program_id": "c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b",
+  "secret_digest": "18b9a212635b4c05714791140d103f93d836924890b01bbcacaad5fafaa3fd80",
+  "maker_search": {
+    "roots": [
+      "/var/lib/lez/maker",
+      "/var/lib/lez/zec",
+      "/run/lez/maker"
+    ],
+    "files": 45,
+    "bytes": 2582201,
+    "preimage_files": [],
+    "digest_files": [
+      "/var/lib/lez/maker/maker.sqlite3-wal",
+      "/var/lib/lez/zec/actors/6967b4a9034e4e9d17c66388e82bfca2208f312e7df7ab62500ad7d66b94f6a4/maker/state/actor.sqlite3",
+      "/var/lib/lez/zec/actors/6967b4a9034e4e9d17c66388e82bfca2208f312e7df7ab62500ad7d66b94f6a4/shared/agreement-v2.borsh",
+      "/var/lib/lez/zec/corridor/shared/agreement-v2.borsh"
+    ]
+  },
+  "taker_control_preimage_files": [
+    "/var/lib/lez/zec/corridor/taker/claim-preimage.key"
+  ],
+  "claim_probes": {
+    "a zero preimage": {
+      "transaction_id": "c3f378ea5567c7b48fd9ea033a333b0d6f7901021643bfd862d4f98c1f33010d",
+      "submission": {
+        "decision": "accepted",
+        "error_code": null,
+        "error_message": null
+      },
+      "included": false,
+      "included_in_block": null,
+      "before": {
+        "sequencer_tip": 661,
+        "tip_timestamp_ms": 1795099135146,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2051000,
+        "claimant_nonce": 2
+      },
+      "after": {
+        "sequencer_tip": 684,
+        "tip_timestamp_ms": 1795099166197,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2051000,
+        "claimant_nonce": 2
+      },
+      "escrow_kept_custody": true,
+      "submitted_before_refund_at": true
+    },
+    "the digest as the preimage": {
+      "transaction_id": "65a25bf83b1c9c8bab3c252a825dad5f4db9d37c12e6ada65ff74da628902116",
+      "submission": {
+        "decision": "accepted",
+        "error_code": null,
+        "error_message": null
+      },
+      "included": false,
+      "included_in_block": null,
+      "before": {
+        "sequencer_tip": 684,
+        "tip_timestamp_ms": 1795099166197,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2051000,
+        "claimant_nonce": 2
+      },
+      "after": {
+        "sequencer_tip": 707,
+        "tip_timestamp_ms": 1795099195998,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2051000,
+        "claimant_nonce": 2
+      },
+      "escrow_kept_custody": true,
+      "submitted_before_refund_at": true
+    }
+  },
+  "taker_terminal_state": "refunded",
+  "maker_terminal_phase": "refunded",
+  "zcash_funding_outpoint_unspent": true,
+  "lez_balances_before": {
+    "maker": 2051000,
+    "taker": 1949000
+  },
+  "lez_balances_after": {
+    "maker": 2051000,
+    "taker": 1949000
+  },
+  "result": "passed",
+  "seconds": 536
+}

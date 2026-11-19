@@ -226,7 +226,16 @@ direction's agreements are byte-identical to those signed before.
   `claim_lez`/`claim_zcash` meaning the chain claimed, and adds `refund_lez`
   and the claim operations `zcash_revealing_claim` and `lez_followup_claim`.
 - The Maker Node's one-LEZ-claim-in-flight gate covers the Maker's follow-up
-  LEZ claim, as it covered its revealing claim before. A submitted claim's
+  LEZ claim, as it covered its revealing claim before. A LEZ claim whose
+  nonce was taken by another transaction of the same account is re-planned
+  at the live nonce, at most once per attempt, for as long as it can land
+  (issue #172): before 0.3.4 the sixth re-plan stopped the swap while its
+  claim could still land. Past five re-plans the actor reports
+  `lez_claim_nonce_contention` so the operator learns of it; the protocol's
+  bound (16,384) is out of reach inside any profile's LEZ refund window.
+  The Maker's own LEZ escrow locks and refunds for other swaps sign with the
+  same account and do not pass the gate, so they can take a claim's nonce;
+  each such collision costs the claim one re-plan, never funds. A submitted claim's
   in-flight marker holds the others until its swap's LEZ refund time, or
   until its actor removes it (the claim final, or unable to land). A swap
   stopped as failed is driven no more, so its marker holds for one
@@ -275,10 +284,14 @@ Passed under `cargo test` on 2026-11-18:
   `taker_sells_lez_refunds_follow_the_earlier_zcash_refund_either_way`,
   `each_funder_is_offered_its_refund_step_in_a_reorg_phase_without_claim_evidence`.
 
-Not run yet: the Node matrix on the Docker devnet under
-`deterministic-local-devnet-v7`/`-v8` (zec-happy, zec-maker-refund,
-zec-taker-refund, the restart, concurrency and catalog scenarios in
-`TakerSellsLez`), the desk journeys, the BTC regression on the same commit,
-and a public Testnet corridor under `public-testnet-v3`. The M2 regression of
-2026-11-11 ran `TakerSellsLez` under the order this ADR replaces and is not
-evidence for it.
+Run on the Docker devnet in the 0.3.3 regression of `fab36d52`
+([`RESULTS.txt`](../evidence/regression-0.3.3-2026-11-19-macos-arm64/RESULTS.txt)):
+every test of the full suite, 97, among them the Node matrix (zec-happy,
+zec-maker-refund, zec-taker-refund, zec-refund-then-maker-lock, the restart,
+concurrency and catalog scenarios) and the desk journeys in `TakerSellsLez`
+under `deterministic-local-devnet-v7`/`-v8`, and the BTC regression on the
+same commit. 94 of 97 tests passed on the first pass and the remaining 3
+passed on a separate rerun on a new chain; one operator ran both parties on
+one host. The M2 regression of 2026-11-11 ran `TakerSellsLez` under the order
+this ADR replaces and is not evidence for it. No public Testnet corridor has
+run under `public-testnet-v3` (see Consequences).

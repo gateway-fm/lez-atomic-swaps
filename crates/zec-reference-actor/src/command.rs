@@ -23,8 +23,9 @@ use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimPreimage, ClaimStepV1, FirstLockDriveOutcome,
     FirstLockPlanV1, FirstLockStepV1, FirstLockSupersessionV1, MAX_FIRST_LOCK_REPLANS,
     MAX_REVEALING_CLAIM_REPLANS, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, RecoveryStore, RefundDriveOutcome,
-    RefundFundingWaitReasonV1, RefundStepV1, ZecLifecycleAction, ZecPairSdk,
+    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, REVEALING_CLAIM_REPLAN_ATTENTION,
+    RecoveryStore, RefundDriveOutcome, RefundFundingWaitReasonV1, RefundStepV1, ZecLifecycleAction,
+    ZecPairSdk,
 };
 use secp256k1::SecretKey;
 use serde::Serialize;
@@ -1333,12 +1334,12 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         _ => return Err(ActorCommandError::DriveUnavailable),
     };
 
-    Ok(ActorEffectOutputV1::from_active(
-        config,
-        ActorEffectCommandV1::Drive,
-        outcome,
-        &active,
-    ))
+    let output =
+        ActorEffectOutputV1::from_active(config, ActorEffectCommandV1::Drive, outcome, &active);
+    Ok(match claim_contention_wait(&active).await {
+        Some(wait) => output.waiting_for(wait),
+        None => output,
+    })
 }
 
 /// Runs only the agreement-derived claim state machine.
@@ -1433,11 +1434,13 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             .drive_refund_after_lost_followup(wall_clock_ms())
             .await
         {
+            // Reported as every Zcash refund is (`refunded`, phase `refunded`;
+            // issue #178): `completed` there was refused by the Node.
             Ok(lez_zec_swap_sdk::RefundDriveOutcome::Refunded { .. }) => {
                 Ok(ActorEffectOutputV1::from_active(
                     config,
                     ActorEffectCommandV1::Claim,
-                    ActorEffectOutcomeV1::Completed,
+                    lost_claim_refunded_outcome(),
                     &active,
                 ))
             }
@@ -1551,6 +1554,8 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         ActorEffectOutputV1::from_active(config, ActorEffectCommandV1::Claim, outcome, &active);
     Ok(if past_window {
         output.waiting_for(lost_lez_claim_wait(lez_refund_at_ms, None))
+    } else if let Some(wait) = claim_contention_wait(&active).await {
+        output.waiting_for(wait)
     } else {
         output
     })
@@ -2098,22 +2103,15 @@ where
                 planned_nonce,
                 live_nonce,
             } => {
-                let exhausted = || {
-                    clear_revealing_claim_in_flight(config);
-                    if replan_exhaustion_fails(
-                        is_maker_followup_lez_claim(active),
-                        wall_clock_ms().value(),
-                        active.agreement().lez_refund_at_ms(),
-                    ) {
-                        Err(ActorCommandError::RevealingClaimReplanExhausted)
-                    } else {
-                        Ok(claim_outcome(ClaimDriveOutcome::AwaitingStableObservation(
-                            step,
-                        )))
-                    }
-                };
-                if replans.len() >= MAX_REVEALING_CLAIM_REPLANS as usize {
-                    return exhausted();
+                // One re-plan per attempt: a claim superseded again in the same
+                // attempt waits for the next one (the Node's requeue delay), so
+                // re-plans are bounded in rate and never exhausted while the
+                // claim can land (issue #172). The claim's in-flight marker
+                // stays: it is still this swap's claim at the account's nonce.
+                if replans.len() >= REVEALING_CLAIM_REPLANS_PER_ATTEMPT {
+                    return Ok(claim_outcome(ClaimDriveOutcome::AwaitingStableObservation(
+                        step,
+                    )));
                 }
                 let open = active
                     .open_revealing_claim_submission()
@@ -2128,8 +2126,15 @@ where
                 {
                     Ok(replanned) => replanned,
                     Err(error) if is_claim_replan_exhausted(&error) => {
-                        eprintln!("actor claim refused: {error:?}");
-                        return exhausted();
+                        // The protocol bound, out of reach inside any LEZ
+                        // refund window; the swap is never failed for it.
+                        eprintln!(
+                            "actor claim: the LEZ claim reached the protocol's re-plan bound; it is not re-planned again ({error:?}); needs attention (lez_claim_nonce_contention)"
+                        );
+                        clear_revealing_claim_in_flight(config);
+                        return Ok(claim_outcome(ClaimDriveOutcome::AwaitingStableObservation(
+                            step,
+                        )));
                     }
                     Err(error) => {
                         eprintln!("actor claim unavailable: {error:?}");
@@ -2254,17 +2259,42 @@ const fn followup_lez_claim_drive(
     }
 }
 
-/// Whether the re-plan bound, reached at `now_ms`, stops the swap
-/// (`lez_revealing_claim_replan_exhausted`). Not for the Maker's follow-up
-/// LEZ claim past the LEZ refund time: such a claim is lost to the other
-/// swaps' nonces, not to an error, and the swap stays at its claim until the
-/// Taker's LEZ refund is final, then recovers its Zcash (review 4, M2).
-const fn replan_exhaustion_fails(
-    maker_followup_lez_claim: bool,
-    now_ms: u64,
+/// Re-plans of the owned LEZ claim in one attempt (issue #172).
+const REVEALING_CLAIM_REPLANS_PER_ATTEMPT: usize = 1;
+
+/// The wait an owned LEZ claim reports once it was re-planned more than
+/// [`REVEALING_CLAIM_REPLAN_ATTENTION`] times (`supersessions`): the account's
+/// nonce keeps being taken, by the Maker's own other LEZ transactions or by
+/// the operator's. It goes on being re-planned until the LEZ refund time; the
+/// operator is told by name (issue #172).
+const fn lez_claim_contention_wait(
+    supersessions: usize,
     lez_refund_at_ms: u64,
-) -> bool {
-    !(maker_followup_lez_claim && now_ms >= lez_refund_at_ms)
+) -> Option<ActorWaitV1> {
+    if supersessions > REVEALING_CLAIM_REPLAN_ATTENTION as usize {
+        Some(ActorWaitV1 {
+            kind: "lez_claim_nonce_contention",
+            chain: "lez",
+            until_unix_seconds: Some(lez_refund_at_ms / 1000),
+            chain_unix_seconds: None,
+        })
+    } else {
+        None
+    }
+}
+
+/// The contention wait of `active`'s owned LEZ claim, read from its recorded
+/// re-plans (none when they cannot be read).
+async fn claim_contention_wait<Lez, Zcash, Store>(
+    active: &lez_zec_swap_sdk::ActiveZecSwap<Lez, Zcash, Store>,
+) -> Option<ActorWaitV1>
+where
+    Lez: lez_zec_swap_sdk::LezClaimPort,
+    Zcash: lez_zec_swap_sdk::ZcashClaimPort + lez_zec_swap_sdk::ZcashRefundPort,
+    Store: lez_zec_swap_sdk::ClaimRecoveryStore + lez_zec_swap_sdk::RefundRecoveryStore,
+{
+    let count = active.claim_supersessions().await.ok()?.len();
+    lez_claim_contention_wait(count, active.agreement().lez_refund_at_ms())
 }
 
 /// The wait a Maker's follow-up LEZ claim past its window reports.
@@ -2306,8 +2336,15 @@ const fn lost_claim_refund_step(outcome: &RefundDriveOutcome) -> LostClaimRefund
     }
 }
 
+/// The claim command's outcome once the Maker's Zcash refund after a lost LEZ
+/// claim is recorded (phase `refunded`): `refunded`, as every refund path
+/// reports it, never `completed` (issue #178).
+const fn lost_claim_refunded_outcome() -> ActorEffectOutcomeV1 {
+    ActorEffectOutcomeV1::Refunded
+}
+
 /// The claim command's output for the Maker's Zcash refund after its LEZ claim
-/// was lost: completed once refunded, `lez_claim_cannot_land` once the HTLC
+/// was lost: refunded once recorded, `lez_claim_cannot_land` once the HTLC
 /// is the Taker's, otherwise a named wait (an error is a retry).
 fn lost_claim_refund_output<Lez, Zcash, Store>(
     config: &ActorConfig,
@@ -2318,7 +2355,7 @@ fn lost_claim_refund_output<Lez, Zcash, Store>(
         return Err(ActorCommandError::ClaimUnavailable);
     };
     let outcome = match lost_claim_refund_step(refund) {
-        LostClaimRefundStep::Refunded => ActorEffectOutcomeV1::Completed,
+        LostClaimRefundStep::Refunded => lost_claim_refunded_outcome(),
         LostClaimRefundStep::CannotLand => return Err(ActorCommandError::LezClaimCannotLand),
         LostClaimRefundStep::Submitted => ActorEffectOutcomeV1::Submitted {
             operation: ActorOperationV1::ZcashRefund,
@@ -2328,7 +2365,7 @@ fn lost_claim_refund_output<Lez, Zcash, Store>(
             operation: ActorOperationV1::ZcashRefund,
         },
     };
-    let refunded = outcome == ActorEffectOutcomeV1::Completed;
+    let refunded = outcome == lost_claim_refunded_outcome();
     let output =
         ActorEffectOutputV1::from_active(config, ActorEffectCommandV1::Claim, outcome, active);
     Ok(if refunded {
@@ -3521,15 +3558,29 @@ mod tests {
     }
 
     #[test]
-    fn re_plans_of_a_maker_lez_claim_past_its_refund_time_do_not_stop_the_swap() {
-        // Review 4, M2: a Maker claim past `refund_at` that other swaps keep
-        // superseding reached the re-plan bound and the swap failed, so the
-        // Maker never reached its Zcash refund after the Taker's LEZ refund.
+    fn a_lez_claim_past_the_old_replan_limit_is_reported_as_needing_attention() {
+        // Issue #172: the claim goes on being re-planned past five re-plans;
+        // the operator learns of it by name from the actor's wait.
         let at = 1_800_000;
-        assert!(replan_exhaustion_fails(true, at - 1, at));
-        assert!(replan_exhaustion_fails(false, at + 1, at));
-        assert!(!replan_exhaustion_fails(true, at, at));
-        assert!(!replan_exhaustion_fails(true, at + 600_000, at));
+        for count in [0, 1, 5] {
+            assert_eq!(lez_claim_contention_wait(count, at), None, "{count}");
+        }
+        for count in [6, 7, 100] {
+            let wait = lez_claim_contention_wait(count, at).expect("named");
+            assert_eq!(wait.kind, "lez_claim_nonce_contention");
+            assert_eq!(wait.chain, "lez");
+            assert_eq!(wait.until_unix_seconds, Some(at / 1000));
+        }
+    }
+
+    #[test]
+    fn a_lost_claim_refund_is_reported_as_refunded() {
+        // Issue #178: the Node accepts a claim's `completed` only at phase
+        // `completed`; the recorded Zcash refund is phase `refunded`.
+        assert_eq!(
+            serde_json::to_value(lost_claim_refunded_outcome()).expect("outcome")["outcome"],
+            json!("refunded")
+        );
     }
 
     #[test]

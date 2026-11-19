@@ -67,10 +67,17 @@ pub enum ClaimDriveOutcome {
     },
 }
 
-/// Upper bound on re-plans of one owned revealing claim; past it the actor
-/// stops the swap by name (attention required, never a refund). Equal to the
-/// sidecar's `MAX_REVEALING_CLAIM_REPLANS`.
-pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 5;
+/// Upper bound on re-plans of one owned revealing claim, equal to the bridge
+/// protocol's `MAX_REVEALING_CLAIM_REPLANS`: one per attempt, attempts at least
+/// a second apart, so no claim reaches it inside the longest LEZ refund delay
+/// of any profile (14,400 s). A claim that can still land keeps being
+/// re-planned (issue #172).
+pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 16_384;
+
+/// Re-plans of one claim past which its actor reports it as needing
+/// attention (the account's nonce keeps being taken), while it goes on
+/// re-planning: the bound the protocol had before issue #172.
+pub const REVEALING_CLAIM_REPLAN_ATTENTION: u32 = 5;
 
 /// One re-plan of the owned revealing LEZ claim, durable beside the claim
 /// intent it replaced: both nonces, both transaction identities and the

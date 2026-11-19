@@ -260,6 +260,12 @@ SwapWait swapWait(const QJsonObject& lastOutcome, const QString& role)
         return {"The LEZ claim missed its window" + (until > 0 ? " (" + clockDisplay(until) + ")" : QString())
                     + "; waiting for the LEZ escrow to settle before the Zcash refund" + nowTime,
                 true};
+    // Issue #172: the LEZ claim's nonce keeps being taken by other
+    // transactions of the account; the claim is re-planned each time.
+    if (kind == QStringLiteral("lez_claim_nonce_contention"))
+        return {"The LEZ claim keeps losing its nonce to other transactions of this account; re-planning it"
+                    + (until > 0 ? " until " + clockDisplay(until) : QString()),
+                timeHolds};
     if (kind == QStringLiteral("zcash_refund_after_lost_lez_claim"))
         return {"The LEZ claim can no longer land; refunding the Zcash", true};
     // A kind this desk does not know yet, by its bound.

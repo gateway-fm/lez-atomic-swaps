@@ -48,10 +48,12 @@ Cross-chain ordering is validated separately with conservative Unix-time bounds:
 advance, congestion, inclusion, configured reorg recovery, and sequencer
 admission-to-validation slack. `later_refund_earliest` uses the fastest
 plausible later-chain clock including permitted clock drift. Bitcoin maps these
-chains from its reviewed first-funded-longer role flow. ZEC always uses LEZ as
-earlier and Zcash as later, exactly matching RFP F4 even when trade direction
-swaps participant roles. These values validate negotiated terms; runtime expiry
-still uses only the relevant chain's typed consensus position.
+chains from its reviewed first-funded-longer role flow. ZEC follows the same
+rule ([ADR 0216](0216-zec-taker-reveals-first-in-both-directions.md)): the
+Maker-funded leg refunds first. In `TakerSellsForeign` LEZ is earlier and
+Zcash later, matching RFP F4; in `TakerSellsLez` Zcash is earlier and LEZ
+later, a documented deviation from F4. These values validate negotiated
+terms; runtime expiry still uses only the relevant chain's typed consensus position.
 
 ## Consequences
 

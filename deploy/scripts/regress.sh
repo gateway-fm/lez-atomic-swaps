@@ -95,6 +95,8 @@ tier_tests() { # tier_tests <tier>
         for s in happy restart-taker restart-maker survivor concurrent node-offline; do echo "ui:btc:$s:$d"; done
       done
       echo "node:zec:zec-claim-collision:TakerSellsForeign"
+      # selling LEZ only: the Maker's claim on the Taker's LEZ with what it holds (TM-0030)
+      echo "node:zec:zec-maker-early-claim:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # last: each makes its own chain, one no other test can run on
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;

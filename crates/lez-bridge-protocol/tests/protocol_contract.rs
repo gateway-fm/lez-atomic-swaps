@@ -1882,7 +1882,7 @@ fn supersede_revealing_claim_roundtrip() {
     let decoded: SupersedeRevealingClaimResult =
         serde_json::from_str(&serde_json::to_string(&result).unwrap()).unwrap();
     assert_eq!(decoded, result);
-    assert_eq!(lez_bridge_protocol::MAX_REVEALING_CLAIM_REPLANS, 5);
+    assert_eq!(lez_bridge_protocol::MAX_REVEALING_CLAIM_REPLANS, 16_384);
     assert_eq!(
         lez_bridge_protocol::METHOD_SUPERSEDE_REVEALING_CLAIM,
         "lez_bridge.v1.supersede_revealing_claim"

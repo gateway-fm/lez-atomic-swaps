@@ -37,3 +37,19 @@ regexes = [
   '''lez_token_program_id["'':= .]+[0-9a-f]{64}''',
   '''token_program_id["'':= .]+[0-9a-f]{64}''',
 ]
+
+# The devnet scenario zec-maker-early-claim prints the swap's SHA-256 hash-lock
+# digest, which both parties and both chains see: it is public by design. The
+# preimage is never written to these files; the scenario fails if it is found.
+[[rules.allowlists]]
+description = "Public hash-lock digests in the zec-maker-early-claim evidence"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^docs/evidence/regression-[^/]+/early-claim-first-runs/.+$''',
+  '''^docs/evidence/regression-[^/]+/logs/node-zec-zec-maker-early-claim-[^/]+\.log$''',
+  '''^docs/evidence/regression-[^/]+/e2e/zec-maker-early-claim\.json$''',
+]
+regexes = [
+  '''(?:stored_)?secret_digest["'':= .]+[0-9a-f]{64}''',
+]

@@ -3129,7 +3129,10 @@ impl NativeEscrowPlanner {
                 .load::<SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult>(kind)?;
             match (loaded, absent_from) {
                 (None, None) => absent_from = Some(index),
-                (None, Some(_)) => {}
+                // The lineage is contiguous: the slot after the first absent
+                // one is checked for corruption, and the scan ends there (the
+                // bound is large since issue #172).
+                (None, Some(_)) => break,
                 (Some(_), Some(_)) => {
                     return Err(DurableReservationError::CorruptReservation.into());
                 }

@@ -29,7 +29,7 @@ that `regress.sh` uses); `scripts/host.sh` refuses an older bash at the start
 of every script and names that command.
 
 ```sh
-tar -xzf lez-swap-stack-v0.3.3-arm64.tar.gz && cd lez-swap-stack-v0.3.3-arm64
+tar -xzf lez-swap-stack-v0.3.4-arm64.tar.gz && cd lez-swap-stack-v0.3.4-arm64
 ./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → desk suites
 ./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two desks
 ```
@@ -48,7 +48,9 @@ fails `start.sh` prints its whole output, stops both Nodes and exits 2. The same
 when `LEZ_IMAGE_PREFIX` and `LEZ_IMAGE_TAG` are exported.
 
 The images are built by `.github/workflows/release-images.yml` when a GitHub
-release is published (never on pushes or pull requests), from the very phases
+release is published (never on pushes or pull requests), and only when the
+tagged commit has finished, green `ci.yml` and `public-readiness.yml` runs
+(its first job, `scripts/check-release-ci.sh`, fails otherwise), from the very phases
 `from-scratch.sh` runs below, on GitHub's arm64 runners; the bundle is
 attached to that release only after a fresh runner has started the stack from
 it (ADR 0215). Publish the release with its notes first; the assets follow

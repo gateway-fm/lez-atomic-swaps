@@ -2200,11 +2200,10 @@ fn a_failed_swaps_lez_claim_in_flight_holds_no_other_claim() {
              test \"$1\" = \"--config-fd\" || exit 91\n\
              case \"$3\" in\n\
                status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
-               claim) exit {code} ;;\n\
+               claim) printf '%s\\n' 'not an effect' ;;\n\
                *) exit 95 ;;\n\
              esac\n",
             at = now_ms + 3_600_000,
-            code = zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE,
         )
     });
     // An old-format marker (no refund time) left by a claim that never landed.
@@ -2216,10 +2215,7 @@ fn a_failed_swaps_lez_claim_in_flight_holds_no_other_claim() {
     let (swap, resolution, class) = run_due(&mut store, owner, 10);
     assert_eq!(swap, holder);
     assert_eq!(resolution, MakerActorSupervisorResolution::Failed);
-    assert_eq!(
-        class.as_deref(),
-        Some("lez_revealing_claim_replan_exhausted")
-    );
+    assert_eq!(class.as_deref(), Some("actor_output_invalid"));
 
     let follower = "m5-failed-holder-follower";
     register_gated_actor(&mut store, root.path(), follower, |state| {
@@ -2536,6 +2532,91 @@ fn an_admission_marker_holds_for_its_own_recorded_hold() {
             Some("lez_revealing_claim_in_flight")
         ),
         "admitted a minute ago with a ten-minute hold: it still holds"
+    );
+}
+
+#[test]
+fn a_superseded_lez_claim_past_the_old_replan_limit_is_retried_not_failed() {
+    // Issue #172: the actor's re-plan exhaustion was turned into Fail and the
+    // scheduler never picked the swap up again, while its claim could still
+    // land. It is a backoff now: the next attempt re-plans.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let at = unix_now_ms() + 3_600_000;
+    register_gated_actor(&mut store, root.path(), "m5-replans-past-old-limit", |_| {
+        format!(
+            "#!/bin/sh\n\
+             test \"$1\" = \"--config-fd\" || exit 91\n\
+             case \"$3\" in\n\
+               status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
+               claim) exit {code} ;;\n\
+               *) exit 95 ;;\n\
+             esac\n",
+            code = zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE,
+        )
+    });
+    let (_, resolution, class) = run_due(
+        &mut store,
+        MakerActorLeaseOwner::new([0x84; 16]).unwrap(),
+        10,
+    );
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (
+            MakerActorSupervisorResolution::Backoff,
+            Some("lez_revealing_claim_replan_exhausted")
+        )
+    );
+}
+
+/// The Maker's Zcash refund after its LEZ claim was lost, as the actor's
+/// claim command reports it (`lost_claim_refund_output`): outcome
+/// `refunded`, phase `refunded`, next action `complete`.
+fn lost_claim_refund_program(at: u64) -> String {
+    format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
+           claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"refunded\",\"phase\":\"refunded\",\"revision\":5,\"next_action\":\"complete\"}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n"
+    )
+}
+
+#[test]
+fn a_maker_zcash_refund_after_a_lost_lez_claim_ends_the_swap_refunded() {
+    // Issue #178, item 1: the claim command reported the Maker's Zcash refund
+    // after a lost LEZ claim (the Taker's LEZ refund final, or the escrow open
+    // past the refund time; one output for both) as `completed` with phase
+    // `refunded`, which the supervisor's parser refused: the swap ended
+    // failed (`actor_output_invalid`) instead of refunded.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let id = "m5-lost-claim-refunded";
+    register_gated_actor(&mut store, root.path(), id, |_| {
+        lost_claim_refund_program(unix_now_ms() - 60_000)
+    });
+    let (swap, resolution, class) = run_due(
+        &mut store,
+        MakerActorLeaseOwner::new([0x85; 16]).unwrap(),
+        10,
+    );
+    assert_eq!(swap, id);
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (MakerActorSupervisorResolution::Terminal, None)
+    );
+    let swap_id = SwapId::new(id).unwrap();
+    assert_eq!(
+        store
+            .maker_actor_progress(&swap_id)
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active("refunded", 5, "complete").unwrap()
     );
 }
 

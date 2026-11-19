@@ -1470,13 +1470,13 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         Some(zec_reference_actor::LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE) => {
             ChildRunError::Retry("lez_claim_window_closed")
         }
-        // The Zcash actor re-planned its LEZ claim (the Maker's follow-up claim
-        // in TakerSellsLez) the bounded number of times and its nonce was
-        // taken again: the claim is never abandoned for a refund; the swap
-        // needs attention by name (FINDINGS 24).
+        // An actor that reports its LEZ claim's re-plans exhausted (an actor
+        // before issue #172; the current one re-plans while the claim can
+        // land and never exits so): a backoff, not a failure, so the swap is
+        // attempted again while its claim can still land.
         #[cfg(feature = "pair-zec")]
         Some(zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE) => {
-            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+            ChildRunError::Retry("lez_revealing_claim_replan_exhausted")
         }
         // The Zcash actor's LEZ escrow initialization was refused because its
         // escrow account already exists without it (another swap with the same
@@ -1836,7 +1836,11 @@ fn exact_absorbing_effect(
                 ActorEffectCommand::Drive | ActorEffectCommand::Claim,
                 "completed",
                 "completed"
-            ) | (ActorEffectCommand::Recover, "refunded", "refunded")
+            ) | (
+                ActorEffectCommand::Recover | ActorEffectCommand::Claim,
+                "refunded",
+                "refunded"
+            )
         ),
         MakerActorKindV1::Bitcoin => matches!(
             (command, outcome, phase),
@@ -1895,6 +1899,8 @@ fn known_effect_outcome(
                 | "projected"
                 | "completed"
         ),
+        // `refunded`: the Maker's Zcash refund after its LEZ claim was lost,
+        // which the claim command drives (issue #178).
         (MakerActorKindV1::Zcash, ActorEffectCommand::Claim) => matches!(
             outcome,
             "submitted"
@@ -1902,6 +1908,7 @@ fn known_effect_outcome(
                 | "awaiting_safe_zcash_funding"
                 | "projected"
                 | "completed"
+                | "refunded"
         ),
         (MakerActorKindV1::Zcash, ActorEffectCommand::Recover) => matches!(
             outcome,
@@ -2706,11 +2713,28 @@ mod tests {
             assert!(parse_status(&bytes, kind).is_err());
         }
 
+        // A claim that ends refunded is the Maker's Zcash refund after its LEZ
+        // claim was lost (issue #178): exactly `refunded` at phase `refunded`.
+        assert!(
+            parse_effect(
+                &effect("claim", "refunded", "refunded", 4, "complete"),
+                ActorEffectCommand::Claim,
+                MakerActorKindV1::Zcash,
+            )
+            .is_ok_and(|parsed| parsed.terminal)
+        );
         for (command, output_command, outcome, phase, next_action) in [
             (
                 ActorEffectCommand::Claim,
                 "claim",
                 "refunded",
+                "completed",
+                "complete",
+            ),
+            (
+                ActorEffectCommand::Claim,
+                "claim",
+                "completed",
                 "refunded",
                 "complete",
             ),
@@ -2880,7 +2904,7 @@ mod exit_classification_tests {
         );
         assert!(matches!(
             classify_exit(claim_exhausted),
-            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+            ChildRunError::Retry("lez_revealing_claim_replan_exhausted")
         ));
         // FINDINGS 26: a claim refused after its window (nothing sent) backs
         // off; the next status names the actor's own refund.

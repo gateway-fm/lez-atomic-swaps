@@ -851,3 +851,34 @@ fn every_operation_name_inserts_under_the_journal_check() {
         assert!(!reserved.was_replay());
     }
 }
+
+/// Issue #172: claim re-plans past the fifth have their own operations up to
+/// the protocol bound, and each inserts under the journal's CHECK.
+#[test]
+fn claim_replans_past_the_fifth_insert_under_the_journal_check() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("bridge-context-claim-replans.sqlite");
+    let mut journal = SqliteBridgeOperationJournal::open(&path).expect("open journal");
+    for index in [6, 7, 100, lez_bridge_protocol::MAX_REVEALING_CLAIM_REPLANS] {
+        let operation =
+            BridgeOperationKind::revealing_claim_supersede(index).expect("within the bound");
+        let reserved = journal
+            .begin_or_resume(
+                &key(
+                    "run-replans",
+                    &format!("swap-replan-{index}"),
+                    Participant::Maker,
+                    operation,
+                ),
+                &request(&format!("replan-{index}"), None),
+            )
+            .unwrap_or_else(|error| panic!("re-plan {index} must insert: {error}"));
+        assert!(!reserved.was_replay());
+    }
+    assert!(
+        BridgeOperationKind::revealing_claim_supersede(
+            lez_bridge_protocol::MAX_REVEALING_CLAIM_REPLANS + 1
+        )
+        .is_none()
+    );
+}

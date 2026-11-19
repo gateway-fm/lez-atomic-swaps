@@ -90,6 +90,9 @@ pub(crate) enum ReservationKind {
     NativeClaimSupersession3,
     NativeClaimSupersession4,
     NativeClaimSupersession5,
+    /// A re-plan of the owned revealing claim past the fifth (issue #172):
+    /// the lineage index, at most the protocol bound.
+    NativeClaimSupersessionN(u32),
     XmrNativeEscrowV3,
     XmrNativeClaimAuthorizationV3,
     XmrNativeClaimV3,
@@ -133,12 +136,25 @@ impl ReservationKind {
             3 => Some(Self::NativeClaimSupersession3),
             4 => Some(Self::NativeClaimSupersession4),
             5 => Some(Self::NativeClaimSupersession5),
+            6..=lez_bridge_protocol::MAX_REVEALING_CLAIM_REPLANS => {
+                Some(Self::NativeClaimSupersessionN(index))
+            }
             _ => None,
         }
     }
 
-    const fn filename(self) -> &'static str {
+    fn filename(self) -> std::borrow::Cow<'static, str> {
         match self {
+            Self::NativeClaimSupersessionN(index) => {
+                std::borrow::Cow::Owned(format!("native-claim-supersession.{index}.v1.json"))
+            }
+            other => std::borrow::Cow::Borrowed(other.fixed_filename()),
+        }
+    }
+
+    const fn fixed_filename(self) -> &'static str {
+        match self {
+            Self::NativeClaimSupersessionN(_) => "native-claim-supersession.n.v1.json",
             Self::NativeEscrow => "native-escrow-reservation.v1.json",
             Self::NativeEscrowSupersession1 => "native-escrow-supersession.1.v1.json",
             Self::NativeEscrowSupersession2 => "native-escrow-supersession.2.v1.json",
@@ -598,7 +614,7 @@ impl DurableReservationStore {
         self.reject_partial(expected_kind)?;
         let descriptor = match openat(
             self.directory.descriptor(),
-            expected_kind.filename(),
+            expected_kind.filename().as_ref(),
             OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         ) {
@@ -693,7 +709,7 @@ impl DurableReservationStore {
                 self.directory.descriptor(),
                 temporary_name.as_str(),
                 self.directory.descriptor(),
-                kind.filename(),
+                kind.filename().as_ref(),
                 RenameFlags::NOREPLACE,
             )
             .map_err(|error| {

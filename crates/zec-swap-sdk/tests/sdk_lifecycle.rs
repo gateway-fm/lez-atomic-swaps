@@ -6940,3 +6940,96 @@ async fn a_maker_zcash_refund_staged_before_the_reveal_is_not_rebroadcast_while_
         "the staged refund is not rebroadcast"
     );
 }
+
+#[tokio::test]
+async fn a_maker_lez_claim_keeps_being_replanned_past_the_old_limit_and_lands_in_its_window() {
+    // Issue #172: after five re-plans the Maker's follow-up LEZ claim was
+    // exhausted while it could still land, and the Taker kept the ZEC and
+    // refunded its LEZ. Every superseded claim is now re-planned while the
+    // LEZ window is open; here seven in a row, then the claim lands.
+    let id = "sdk-claim-replan-past-old-limit";
+    let secret = [0xbf; 32];
+    let direction = SwapDirection::TakerSellsLez;
+    let now = LezUnixMilliseconds::new(0);
+    let mut fixture = activate_claim_actor_fixture(id, direction, Participant::Taker, secret).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    let agreement = fixture.maker.agreement().clone();
+    fixture
+        .corridor
+        .expose_funding_as(exact_zcash_funding_observation(&agreement));
+    reveal_on_zcash(&mut fixture).await;
+    let mut current = [0xc1; 32];
+    for replan_index in 1..=7_u32 {
+        *fixture
+            .corridor
+            .supersede_claim
+            .lock()
+            .expect("supersede claim lock") = Some((
+            current,
+            u128::from(replan_index),
+            u128::from(replan_index) + 1,
+        ));
+        assert!(matches!(
+            drive_actor_at(&mut fixture, Participant::Maker, now)
+                .await
+                .expect("superseded is an outcome"),
+            ClaimDriveOutcome::Superseded { .. }
+        ));
+        let open = fixture
+            .maker
+            .open_revealing_claim_submission()
+            .await
+            .expect("open claim");
+        assert_eq!(open.expected_submission_id(), &current);
+        let mut replanned_id = [0xc4; 32];
+        replanned_id[1] = u8::try_from(replan_index).unwrap();
+        let mut exact = vec![0x6c, 0x65, 0x7a];
+        exact.extend_from_slice(&secret);
+        exact.push(u8::try_from(replan_index + 1).unwrap());
+        let replanned = lez_zec_swap_sdk::PreparedClaimSubmissionV1::new(
+            ClaimStepV1::FollowupLez,
+            replanned_id,
+            exact,
+        )
+        .expect("re-planned claim");
+        let supersession = lez_zec_swap_sdk::ClaimSupersessionV1::new(
+            lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+                replan_index,
+                superseded_id: current,
+                superseded_nonce: u128::from(replan_index),
+                replanned_id,
+                replanned_nonce: u128::from(replan_index) + 1,
+                lez_refund_margin_ms: 60_000,
+            },
+        )
+        .unwrap_or_else(|error| panic!("re-plan {replan_index}: {error}"));
+        fixture
+            .maker
+            .restage_revealing_claim(&replanned, &supersession)
+            .await
+            .unwrap_or_else(|error| panic!("restage {replan_index}: {error:?}"));
+        current = replanned_id;
+    }
+    assert_eq!(
+        fixture
+            .maker
+            .claim_supersessions()
+            .await
+            .expect("lineage")
+            .len(),
+        7
+    );
+    assert_eq!(
+        drive_actor_at(&mut fixture, Participant::Maker, now)
+            .await
+            .expect("the claim goes out"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+    );
+    fixture.corridor.confirm_lez_claim(secret);
+    assert!(matches!(
+        drive_actor_at(&mut fixture, Participant::Maker, now)
+            .await
+            .expect("the claim lands"),
+        ClaimDriveOutcome::Projected { .. }
+    ));
+}

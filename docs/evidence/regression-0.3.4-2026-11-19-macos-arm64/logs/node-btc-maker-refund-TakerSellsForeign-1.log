@@ -1,0 +1,20 @@
+[17:28:00] === maker-refund (stamp 1795105680)
+[17:28:00] preflight: indexer historical reads
+[17:28:00]   indexer serves historical reads at the tip (5166)
+[17:28:00] preflight: LEZ finality check waived by request
+[17:28:01]   Maker published offer-e2e-1795105680
+[17:28:02]   Taker took offer-e2e-1795105680: swap d86e8e5de605 (not_activated)
+[17:28:02]   Taker locked bitcoin: 64b2e42a234b (replay=False)
+[17:28:02]   [0 s] waiting for the Taker's d86e8e5de605 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 5165, tip 5168 (3 unfinalized) [heartbeat]
+[17:28:09]   [6 s] waiting for the Taker's d86e8e5de605 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5165, tip 5168 (3 unfinalized) [heartbeat]
+[17:28:43]   [41 s] waiting for the Taker's d86e8e5de605 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 5192, tip 5199 (7 unfinalized) [heartbeat]
+[17:28:44]   Maker locked; the Taker never claims. Waiting for the Maker's refund deadline (115s after the take)
+[17:28:44]   waiting 101s for the Maker's refund deadline
+[17:28:44]   [0 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 5192, tip 5199 (7 unfinalized) [heartbeat]
+[17:29:44]   [60 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 5240, tip 5247 (7 unfinalized) [heartbeat]
+[17:30:25]   Maker refund queued: {"schema_version": 1, "swap_id": "d86e8e5de605ff3eb9d1537a0f15bc63cbaac0234bc37d634981589a768adb55", "action": "refund", "requested_after_generation": 33, "was_
+[17:30:26]   [0 s] waiting for the Taker's refund of d86e8e5de605 to land: taker refund_available (refund admitted) | maker maker_leg_refunded | LEZ finalized 5274, tip 5279 (5 unfinalized) [heartbeat]
+[17:30:26]   refund request admitted (attempt 1, state refund_available)
+[17:30:36]   both legs refunded
+[17:30:37]   the Bitcoin refund 64b85e999a1e is a script-path spend: three witness items
+[17:30:37] === maker-refund: passed in 157s

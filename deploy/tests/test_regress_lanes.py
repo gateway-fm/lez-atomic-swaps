@@ -278,6 +278,14 @@ class Tiers(unittest.TestCase):
                 self.assertIn(f'node:btc:{scenario}:{direction}', full)
         self.assertEqual(len(full), len(set(full)))
 
+    def test_full_has_the_maker_early_claim_selling_lez_only(self):
+        full = self.tier('full')
+        self.assertIn('node:zec:zec-maker-early-claim:TakerSellsLez', full)
+        self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
+        self.assertEqual(len(full), 98)
+
     def test_smoke_is_unchanged(self):
         self.assertEqual(self.tier('smoke'), [
             'node:btc:happy:TakerSellsLez', 'node:zec:zec-happy:TakerSellsLez',
