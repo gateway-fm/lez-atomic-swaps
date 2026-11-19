@@ -49,6 +49,13 @@ scripts/zec-provision.sh --direction …, which also recreates both Nodes, then
                                          the agreement's height and the Maker refunds
                                          Zcash first; the Taker refunds LEZ at the LEZ
                                          refund time; refund found in a block
+    node-e2e.py --pair Zcash zec-maker-early-claim  selling LEZ only: the Taker's LEZ
+                                         lock final, the Maker without zebra; the Maker's
+                                         files hold the digest and never the preimage, a
+                                         claim_native signed by the Maker's claimant key
+                                         with a zero preimage and with the digest is
+                                         refused by the escrow, and the Taker refunds its
+                                         LEZ at the LEZ refund time (ADR 0216, TM-0030)
     node-e2e.py --pair Zcash zec-balance-refusal  the Taker's LEZ account cannot fund the
                                          lot: the first drive is refused by name, the Node
                                          shows attention_required with the reason, the
@@ -107,6 +114,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime
+import hashlib
 import json
 import os
 import pathlib
@@ -186,7 +194,7 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 # container: a native Node reaches the chains directly, with nothing to cut.
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
-                  "zec-offline-after-lock"}
+                  "zec-offline-after-lock", "zec-maker-early-claim"}
 HEALTH = {"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
 MINER = f"{PREFIX}-btc-miner"
 # The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
@@ -4670,6 +4678,291 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
             "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]}}
 
 
+# ---- TM-0030: the Maker cannot claim the Taker's LEZ with what it holds ----
+
+# The corridor entry 0 as both Node containers mount it (zec-provision.sh):
+# shared/ (the signed agreement), and each role's own half.
+ZEC_CORRIDOR_ROOT = "/var/lib/lez/zec/corridor"
+# The Maker's files: its Node's swap store and state (maker_state), and its
+# ZEC volume (zec_maker: the corridor template and agreement, the per-swap
+# actor roots under actors/, the sidecar state and log), and its run directory.
+ZEC_MAKER_SEARCH_ROOTS = ("/var/lib/lez/maker", "/var/lib/lez/zec", "/run/lez/maker")
+# Files the search must have read, or the Maker's layout has moved and the
+# search proves nothing: the Node's swap store and the signed agreement.
+ZEC_MAKER_REQUIRED_FILES = ("/var/lib/lez/maker/maker.sqlite3", f"{ZEC_CORRIDOR_ROOT}/shared/agreement-v2.borsh")
+ZEC_MAKER_ACTOR_ROOT = "/var/lib/lez/zec/actors/"
+# The test-only probe the devnet Maker image carries beside its package
+# (compat/lez-v0_2-sidecar/src/bin/lez-v02-escrow-claim-probe.rs).
+ZEC_ESCROW_CLAIM_PROBE = "/usr/local/bin/lez-v02-escrow-claim-probe"
+# zec-swap-sdk lez_derivation.rs derive_lez_swap_id_v1: the escrow's on-chain
+# swap id is SHA-256 of this domain and the application swap id.
+LEZ_SWAP_ID_V1_DOMAIN = b"logos.gateway.lez-swap-id.v1\0"
+
+# Runs inside a Node container. Reads the preimage and the digest (hex, one per
+# line) from stdin, so neither is on a command line; walks the roots given as
+# arguments without following symbolic links and reports every regular file
+# read with its size, and which files contain the preimage (raw bytes, lower-
+# and upper-case hex, base64) or the digest (raw bytes, hex).
+ZEC_SECRET_SEARCH = r'''
+import base64, json, os, sys
+preimage = bytes.fromhex(sys.stdin.readline().strip())
+digest = bytes.fromhex(sys.stdin.readline().strip())
+needles = {"preimage_raw": preimage, "preimage_hex": preimage.hex().encode(),
+           "preimage_hex_upper": preimage.hex().upper().encode(), "preimage_base64": base64.b64encode(preimage),
+           "digest_raw": digest, "digest_hex": digest.hex().encode(), "digest_hex_upper": digest.hex().upper().encode()}
+overlap = max(len(n) for n in needles.values()) - 1
+files, unreadable, hits = [], [], {key: [] for key in needles}
+for root in sys.argv[1:]:
+    if not os.path.isdir(root):
+        unreadable.append([root, "not a directory"])
+        continue
+    for directory, subdirectories, names in os.walk(root, onerror=lambda e: unreadable.append([e.filename, e.strerror])):
+        subdirectories.sort()
+        for name in sorted(names):
+            path = os.path.join(directory, name)
+            if os.path.islink(path) or not os.path.isfile(path):
+                continue
+            found, tail, size = set(), b"", 0
+            try:
+                with open(path, "rb") as handle:
+                    while chunk := handle.read(1 << 20):
+                        size += len(chunk)
+                        window = tail + chunk
+                        found.update(key for key, needle in needles.items() if needle in window)
+                        tail = window[-overlap:]
+            except FileNotFoundError:
+                continue  # a journal the Node removed between the walk and the read
+            except OSError as error:
+                unreadable.append([path, error.strerror])
+                continue
+            files.append([path, size])
+            for key in found:
+                hits[key].append(path)
+print(json.dumps({"roots": sys.argv[1:], "files": files, "bytes": sum(s for _, s in files),
+                  "unreadable": unreadable, "hits": hits}))
+'''
+
+
+def zec_secret_search(role: str, roots: tuple[str, ...], preimage: bytes, digest: bytes) -> dict:
+    """ZEC_SECRET_SEARCH in the role's Node container, the secret on stdin."""
+    result = subprocess.run(["docker", "exec", "-i", NODES[role][0], "python3", "-c", ZEC_SECRET_SEARCH, *roots],
+                            input=f"{preimage.hex()}\n{digest.hex()}\n", capture_output=True, text=True,
+                            check=False, timeout=900)
+    if result.returncode != 0 or not result.stdout.strip():
+        raise Failure(f"the search of the {role}'s files failed: exit {result.returncode}: {result.stderr.strip()[-300:]}")
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def zec_taker_claim_preimage() -> bytes:
+    """The swap's preimage from the Taker's half of the preparation
+    (local_poc.rs material_paths: <corridor>/taker/claim-preimage.key, the 32
+    raw bytes). It stays in this process; the log carries its SHA-256 only."""
+    path = f"{ZEC_CORRIDOR_ROOT}/taker/claim-preimage.key"
+    reader = "import sys; sys.stdout.write(open(sys.argv[1], 'rb').read().hex())"
+    result = subprocess.run(node_command("taker", ["python3", "-c", reader, path]), capture_output=True, text=True,
+                            check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"the Taker's preimage file {path} is unreadable: {result.stderr.strip()[-200:]}")
+    raw = bytes.fromhex(result.stdout.strip())
+    if len(raw) != 32:
+        text = raw.decode(errors="replace").strip()
+        if len(text) != 64:
+            raise Failure(f"the Taker's preimage file {path} holds {len(raw)} bytes, neither 32 raw bytes nor 64 hex characters")
+        raw = bytes.fromhex(text)
+    return raw
+
+
+def zec_maker_escrow_program_id() -> str:
+    """The escrow program the Maker's corridor template names (the entrypoint
+    checks it against the chain's before it starts the Maker's sidecar)."""
+    reader = "import json, sys; print(json.load(open(sys.argv[1]))['bridge']['runtime']['escrow_program_id'])"
+    result = subprocess.run(node_command("maker", ["python3", "-c", reader, f"{ZEC_CORRIDOR_ROOT}/maker/actor-config.json"]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0 or len(result.stdout.strip()) != 64:
+        raise Failure(f"the Maker's corridor template names no escrow program: {result.stderr.strip()[-200:]}")
+    return result.stdout.strip()
+
+
+def zec_escrow_claim_probe(label: str, onchain_swap_id: str, program_id: str, preimage_hex: str) -> dict:
+    """One claim_native signed by the Maker's claimant key (the Maker's half of
+    the preparation: <corridor>/maker/lez-signer.key) with `preimage_hex`,
+    submitted from inside the Maker's container over its sequencer route by the
+    test-only probe. Logs the probe's whole evidence and fails unless the
+    escrow kept the custody: still Funded, custody balance unchanged."""
+    argv = [ZEC_ESCROW_CLAIM_PROBE, "--sequencer-url", "http://127.0.0.1:3040/", "--escrow-program-id", program_id,
+            "--swap-id", onchain_swap_id, "--private-key-file", f"{ZEC_CORRIDOR_ROOT}/maker/lez-signer.key",
+            "--preimage-hex", preimage_hex, "--observe-seconds", "30"]
+    log(f"  claim_native as the Maker with {label}: {' '.join(argv)}")
+    result = subprocess.run(node_command("maker", argv), capture_output=True, text=True, check=False,
+                            stdin=subprocess.DEVNULL, timeout=300)
+    for line in result.stderr.strip().splitlines():
+        log(f"    probe stderr: {line}")
+    if not result.stdout.strip():
+        raise Failure(f"the escrow claim probe ({label}) gave no evidence: exit {result.returncode}")
+    evidence = json.loads(result.stdout.strip().splitlines()[-1])
+    for line in json.dumps(evidence, indent=2, sort_keys=True).splitlines():
+        log(f"    {line}")
+    before, after, submission = evidence["before"], evidence["after"], evidence["submission"]
+    log(f"  {label}: sequencer {submission['decision']}"
+        f"{' (' + str(submission['error_code']) + ': ' + str(submission['error_message']) + ')' if submission['error_code'] is not None else ''}, "
+        f"{'included in block ' + str(evidence['included_in_block']) if evidence['included'] else 'not included'} "
+        f"after {evidence['observed_seconds']} s; escrow {before['status']} → {after['status']}, custody "
+        f"{before['custody_balance']} → {after['custody_balance']}, Maker's LEZ {before['claimant_balance']} → "
+        f"{after['claimant_balance']}")
+    if result.returncode == 3 or not evidence["escrow_kept_custody"]:
+        raise Failure(f"the escrow paid the Maker's claim with {label}: the Maker took the Taker's LEZ without "
+                      "funding Zcash (TM-0030)")
+    if result.returncode != 0:
+        raise Failure(f"the escrow claim probe ({label}) failed: exit {result.returncode}")
+    if not evidence["submitted_before_refund_at"]:
+        raise Failure(f"the claim with {label} went in at or after the escrow's refund time: its refusal "
+                      "would be the window's, not the preimage's")
+    if after["status"] != "Funded" or evidence["presented_preimage_matches_digest"]:
+        raise Failure(f"the claim with {label} did not test what it should: escrow {after['status']}, "
+                      f"preimage matches the digest: {evidence['presented_preimage_matches_digest']}")
+    return evidence
+
+
+def scenario_zec_maker_early_claim(stamp: str) -> dict:
+    """TM-0030, ADR 0216, on the devnet: selling LEZ, the Maker must not be able
+    to claim the Taker's locked LEZ without funding Zcash, as release 0.3.2's
+    Maker (which held the preimage) could. Under the refund journeys' profile
+    (-v8): the Taker's LEZ lock is taken to finality with the Maker's zebra
+    route cut, as in zec-taker-refund, so the Maker observes the lock and
+    cannot fund Zcash. With the Maker's Node up, its files (swap store, ZEC
+    actor roots, corridor template and agreement, sidecar state) are searched
+    for the preimage read from the Taker's half of the preparation: no file
+    holds it, the agreement holds its digest; the same search over the Taker's
+    files finds it, so the search can find it. Then two claim_native
+    transactions signed by the Maker's claimant key go to the escrow from the
+    Maker's container, one with a zero preimage and one with the digest as the
+    preimage: the escrow stays Funded with its custody, and neither pays the
+    Maker. The Maker is stopped (it never funds Zcash), the Taker refunds its
+    LEZ at the LEZ refund time, the Maker reconciles, and both Nodes end
+    refunded; both parties' LEZ accounts end where they started."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-maker-early-claim is the selling-LEZ scenario (--direction TakerSellsLez): selling ZEC "
+                      "the Taker is the LEZ claimant and the Maker holds no LEZ claim to attempt")
+    corridor = zec_provision(profile=zec_refund_profile())
+    if corridor["profile"] != "deterministic-local-devnet-v8":
+        raise Failure(f"the corridor runs under {corridor['profile']}, not deterministic-local-devnet-v8")
+    lez_accounts = {role: lez_owner_account(role) for role in ("maker", "taker")}
+    lez_before = {role: lez_account_balance(account) for role, account in lez_accounts.items()}
+    log(f"  LEZ accounts before the take: {lez_before}")
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
+
+    # (i) the Taker's LEZ lock, final; (ii) the Maker without zebra.
+    log("  cutting the Maker Node's zebra route: it will observe the Taker's lock but cannot fund Zcash")
+    zec_cut_maker_zebra_route()
+    try:
+        zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=1500, corridor=corridor,
+                             mine_pending_only=True, describe="(Taker LEZ lock confirmed, Maker without zebra)")
+        maker = wait_maker_phase(swap_id, ZEC_PAST_FIRST_LOCK, timeout=900,
+                                 describe="(Maker observing the Taker's LEZ lock without zebra)")
+        lock = taker_lez_lock_effect(swap_id)
+        if lock:
+            block = lez_transaction_block("maker", lock)
+            if block is None:
+                raise Failure(f"the Taker's confirmed LEZ lock {lock[:12]} is not on the Maker's sequencer route")
+            wait_lez_final_through(block, timing_profile(), "the Taker's LEZ lock")
+            log(f"  the Taker's LEZ lock {lock} is in block {block}, final")
+        else:
+            log("  the Taker's view lists no LEZ lock effect; its actor past taker_lock_confirmed and the Maker at "
+                f"{maker} (the Maker reads the lock from LEZ finality) are what say it is final")
+        if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
+            raise Failure(f"the Taker actor is at {zec_actor_phase(config)}: the Maker funded Zcash with its route cut")
+        if zec_outpoint_unspent(outpoint) is not True or zec_mempool():
+            raise Failure("the Maker's Zcash funding went out although its zebra route was cut")
+        log(f"  the Maker is at {maker} and has not funded Zcash: outpoint {outpoint[0][:12]}:{outpoint[1]} unspent, "
+            "zebra's mempool empty")
+
+        # (iii) what the Maker holds.
+        preimage = zec_taker_claim_preimage()
+        digest = hashlib.sha256(preimage).digest()
+        log(f"  the swap's preimage is read from the Taker's half ({ZEC_CORRIDOR_ROOT}/taker/claim-preimage.key, "
+            f"32 bytes, kept in the harness and never logged); its SHA-256 is {digest.hex()}")
+        log("  searching the Maker's files for the preimage (raw, hex, HEX, base64) and the digest (raw, hex, HEX)")
+        found = zec_secret_search("maker", ZEC_MAKER_SEARCH_ROOTS, preimage, digest)
+        for path, size in found["files"]:
+            log(f"    searched {path} ({size} bytes)")
+        for path, why in found["unreadable"]:
+            log(f"    could not read {path}: {why}")
+        log(f"  searched {len(found['files'])} files, {found['bytes']} bytes, under {', '.join(found['roots'])}")
+        for key, paths in sorted(found["hits"].items()):
+            log(f"    {key}: {len(paths)} file(s){': ' + ', '.join(paths) if paths else ''}")
+        searched = {path for path, _ in found["files"]}
+        missing = [path for path in ZEC_MAKER_REQUIRED_FILES if path not in searched]
+        if missing or not any(path.startswith(ZEC_MAKER_ACTOR_ROOT) for path in searched):
+            raise Failure(f"the search did not read the Maker's swap store, agreement and actor state "
+                          f"(missing {missing or [ZEC_MAKER_ACTOR_ROOT]}): the Maker's layout has moved")
+        if found["unreadable"]:
+            raise Failure(f"the search could not read {len(found['unreadable'])} of the Maker's paths")
+        leaked = sorted({path for key, paths in found["hits"].items() if key.startswith("preimage") for path in paths})
+        if leaked:
+            raise Failure(f"the Maker's files hold the swap's preimage: {leaked} (TM-0030)")
+        digest_files = sorted({path for key, paths in found["hits"].items() if key.startswith("digest") for path in paths})
+        if not digest_files:
+            raise Failure("no Maker file holds the digest either: the search did not see the agreement it read")
+        log(f"  the Maker's files hold the digest ({len(digest_files)} file(s)) and never the preimage")
+        control = zec_secret_search("taker", ("/var/lib/lez/zec",), preimage, digest)
+        control_hits = sorted({path for key, paths in control["hits"].items() if key.startswith("preimage") for path in paths})
+        log(f"  control: the same search over the Taker's /var/lib/lez/zec ({len(control['files'])} files, "
+            f"{control['bytes']} bytes) finds the preimage in {control_hits}")
+        if not control_hits:
+            raise Failure("the search does not find the preimage in the Taker's half either: it proves nothing")
+
+        # (iv) a claim with what the Maker holds.
+        onchain_swap_id = hashlib.sha256(LEZ_SWAP_ID_V1_DOMAIN + swap_id.encode()).hexdigest()
+        program_id = zec_maker_escrow_program_id()
+        log(f"  the escrow of swap {swap_id}: on-chain swap id {onchain_swap_id} (derive_lez_swap_id_v1), "
+            f"program {program_id}")
+        probes = {}
+        for label, value in (("a zero preimage", bytes(32)), ("the digest as the preimage", digest)):
+            probes[label] = zec_escrow_claim_probe(label, onchain_swap_id, program_id, value.hex())
+            if probes[label]["stored_secret_digest"] != digest.hex():
+                raise Failure(f"the escrow's digest {probes[label]['stored_secret_digest']} is not the SHA-256 of "
+                              "the Taker's preimage: the search looked for another secret")
+        log("  compared: SHA-256 of the Taker's preimage = the digest the escrow stores = the digest found in the "
+            "Maker's files; the escrow refused both claims and holds the Taker's LEZ")
+
+        # (v) the Taker's refund, as in zec-taker-refund.
+        log("  stopping the Maker Node so it never funds Zcash")
+        node_stop("maker")
+        wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
+        taker = zec_refund_until_terminal(swap_id, stamp, timeout=1800)
+        log(f"  Taker refunded its LEZ escrow; Taker ended {taker['state']}")
+    finally:
+        node_start("maker")
+        wait_healthy("maker")
+    if maker_view(swap_id).get("schedule_state") != "terminal":
+        result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-early-claim-{stamp}")
+        log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+    phase = wait_maker_terminal(swap_id, timeout=1200, describe="(reconciling the refunded LEZ leg)")
+    if zec_outpoint_unspent(outpoint) is not True:
+        raise Failure("the provisioned coinbase outpoint was spent: the Maker funded Zcash after all")
+    log(f"  zebra: the provisioned coinbase outpoint {outpoint[0][:12]}:{outpoint[1]} is still unspent; Maker ended {phase}")
+    if phase not in {"refunded", "taker_leg_refunded"}:
+        raise Failure(f"the Maker ended in {phase}, not a refunded phase")
+    lez_after = {role: lez_account_balance(account) for role, account in lez_accounts.items()}
+    log(f"  LEZ accounts {lez_before} → {lez_after}")
+    if lez_after != lez_before:
+        raise Failure(f"the LEZ accounts did not end where they started: {lez_before} → {lez_after}")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "onchain_swap_id": onchain_swap_id, "escrow_program_id": program_id, "secret_digest": digest.hex(),
+            "maker_search": {"roots": found["roots"], "files": len(found["files"]), "bytes": found["bytes"],
+                             "preimage_files": [], "digest_files": digest_files},
+            "taker_control_preimage_files": control_hits,
+            "claim_probes": {label: {key: evidence[key] for key in
+                                     ("transaction_id", "submission", "included", "included_in_block", "before",
+                                      "after", "escrow_kept_custody", "submitted_before_refund_at")}
+                             for label, evidence in probes.items()},
+            "taker_terminal_state": taker["state"], "maker_terminal_phase": phase,
+            "zcash_funding_outpoint_unspent": True, "lez_balances_before": lez_before, "lez_balances_after": lez_after}
+
+
 ZEC_STEPS = ("maker-down-after-first-lock", "refund-point", "maker-up-reconcile", "maker-completes", "maker-lez-refund",
              "claim-window-closed", "maker-zcash-refund", "taker-claim-broadcast", "maker-read-reveal")
 
@@ -4901,6 +5194,7 @@ ZEC_SCENARIOS = {
     "zec-early-lock": scenario_zec_early_lock,
     "zec-offline-after-lock": scenario_zec_offline_after_lock,
     "zec-refund-then-maker-lock": scenario_zec_refund_then_maker_lock,
+    "zec-maker-early-claim": scenario_zec_maker_early_claim,
     "zec-replay": scenario_zec_replay,
     "zec-wrong-inputs": scenario_zec_wrong_inputs,
     "zec-restart-taker": lambda stamp: scenario_zec_restart(stamp, "taker"),

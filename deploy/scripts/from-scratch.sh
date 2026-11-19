@@ -570,11 +570,15 @@ sidecar_tree_stamp() {
   if git -C "$REPO_ROOT" diff --quiet HEAD -- compat/lez-v0_2-sidecar; then echo "$tree"; else echo "$tree-dirty-$dirty"; fi
 }
 
+# lez-v02-escrow-claim-probe is a test-only tool: the devnet Maker image
+# carries it beside the Node package (images/maker-node/Dockerfile) for the
+# zec-maker-early-claim scenario; no role package contains it.
 build_sidecar() {
-  log "building the LEZ sidecar and the identity tool"
+  log "building the LEZ sidecar, the identity tool and the escrow claim probe"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --bin lez-v02-bridge-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
+      --bin lez-v02-bridge-poc --bin lez-v02-escrow-claim-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc \
+      /cache/target/sidecar/debug/lez-v02-escrow-claim-probe \
       /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
@@ -666,6 +670,8 @@ phase_stage() {
   [[ "$staged" == "$expected" ]] || fail "the staged sidecar ($PROVISION/sidecar/lez-v02-bridge-poc, tree ${staged:-unstamped}) was not built from this checkout's compat/lez-v0_2-sidecar ($expected); run from-scratch.sh --only build:sidecar first"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
+  # test-only, outside the Maker's package: the zec-maker-early-claim scenario
+  install -m 0755 "$PROVISION/sidecar/lez-v02-escrow-claim-probe" "$DEPLOY_ROOT/images/maker-node/"
   for role in maker taker; do
     cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
     cp "$PROVISION/sidecar/source-tree.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-tree.txt"
