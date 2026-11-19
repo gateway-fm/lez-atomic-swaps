@@ -2248,11 +2248,10 @@ fn a_failed_swaps_timed_claim_in_flight_holds_the_next_until_its_refund_time() {
             "#!/bin/sh\n\
              test \"$1\" = \"--config-fd\" || exit 91\n\
              case \"$3\" in\n\
-               status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
+               status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{holder_refund_at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
                claim) printf '%s\\n' 'not an effect' ;;\n\
                *) exit 95 ;;\n\
              esac\n",
-            at = holder_refund_at,
         )
     });
     // The claim was submitted (its marker records the refund time) before the

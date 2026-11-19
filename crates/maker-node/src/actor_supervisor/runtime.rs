@@ -991,6 +991,12 @@ fn revealing_claim_held_back(
     if manifest.kind() != MakerActorKindV1::Zcash {
         return RevealingClaimHold::Open;
     }
+    // The supervisor's workers are threads of this process: one gate decision
+    // and its admission write at a time, so two workers can never both read
+    // the others before either announced its admission (review 4, L1).
+    let _gate = LEZ_CLAIM_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let own_state = manifest.state_database_path();
     let status = serde_json::from_slice::<Value>(status).ok();
     let next_action = status
@@ -1096,13 +1102,17 @@ fn revealing_claim_held_back(
         // Announced before the others are read again: of two workers admitting at
         // once, the one admitted later (ties by swap id) sees the other and yields.
         zec_reference_actor::record_lez_claim_admitted(own_state, Some((own_refund_at_ms, now_ms)));
+        // Within this process the gate's lock already orders them; this covers
+        // an admission written by another process sharing the swaps' state.
         let admitted_before = peers().any(|record| {
             record.schedule_state() != lez_swap_store::MakerActorScheduleState::Failed
                 && zec_reference_actor::lez_claim_admission(record.manifest().state_database_path())
                     .is_some_and(|admission| {
                         admission_holds(admission, now_ms)
-                            && (admission.1, record.swap_id().as_str())
-                                < (now_ms, manifest.swap_id().as_str())
+                            && yields_to_admission(
+                                (admission.1, record.swap_id().as_str()),
+                                (now_ms, manifest.swap_id().as_str()),
+                            )
                     })
         });
         if admitted_before {
@@ -1124,6 +1134,18 @@ fn revealing_claim_held_back(
     }
     zec_reference_actor::record_revealing_claim_holder(own_state, Some(holder));
     RevealingClaimHold::HeldNearRefund
+}
+
+/// One gate decision at a time in this process (review 4, L1).
+#[cfg(feature = "pair-zec")]
+static LEZ_CLAIM_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Whether a claim admitted at `own` (admission time in ms, swap id) yields to
+/// another swap's admission at `other`: the earlier admission goes, ties by
+/// swap id.
+#[cfg(feature = "pair-zec")]
+fn yields_to_admission(other: (u64, &str), own: (u64, &str)) -> bool {
+    other < own
 }
 
 /// Whether a claim (`own`: its swap's LEZ refund time in ms and swap id)
@@ -2612,6 +2634,19 @@ mod exit_classification_tests {
         assert!(!waits_behind((5_000, "a"), (900, "b"), now));
         // A status without a refund time waits behind every live one.
         assert!(waits_behind((u64::MAX, "a"), (5_000, "b"), now));
+    }
+
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn of_two_admitted_lez_claims_the_later_admission_yields() {
+        // Review 4, L1: the tie-break had no test. Of two admissions seen by
+        // each other, exactly one yields: the later one, ties by swap id.
+        use super::yields_to_admission;
+        assert!(yields_to_admission((100, "b"), (105, "a")));
+        assert!(!yields_to_admission((105, "a"), (100, "b")));
+        assert!(yields_to_admission((100, "a"), (100, "b")));
+        assert!(!yields_to_admission((100, "b"), (100, "a")));
+        assert!(!yields_to_admission((100, "a"), (100, "a")));
     }
 
     #[test]
