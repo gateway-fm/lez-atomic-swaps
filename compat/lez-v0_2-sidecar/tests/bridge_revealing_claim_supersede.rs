@@ -530,7 +530,7 @@ async fn a_claim_is_replanned_past_the_old_limit_and_its_lineage_survives_a_rest
     // Issue #172: the sixth re-plan was refused (`ReplanExhausted`) while the
     // claim could still land. A claim is re-planned for as long as its nonce
     // keeps being taken, up to a bound no LEZ refund window reaches.
-    assert!(MAX_REVEALING_CLAIM_REPLANS > 5);
+    const { assert!(MAX_REVEALING_CLAIM_REPLANS > 5) };
     let (signer, key) = account(55);
     let (depositor, _) = account(56);
     let chain = Chain::new();
