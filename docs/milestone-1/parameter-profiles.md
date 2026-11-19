@@ -219,6 +219,8 @@ principal outputs never absorb an unnegotiated fee.
   (`H_z − 10`), after ten confirmations of the Maker's funding. The slowest
   pace is three times NU7's 25 s target.
 
+  Known limit of `public-testnet-v3`: the Maker funds Zcash only once the Taker's LEZ lock has `lez_confirmations` (2) and, on the LEZ v0.2 testnet (`PublicTestnetV0_2`), is finalized (`classify_unchanged_lez_maker_eligibility`). LEZ testnet finality has been recorded at one to two hours, while the Maker must fund while `tip + R + C < H_z`, about 74 Zcash blocks (roughly 28 minutes at Testnet's measured pace) after the anchor, and the pace check refuses funding that late as well. As sized, the profile therefore never reaches Zcash funding on the public networks; no public-network run is claimed for it, and it is not retuned without measurements of LEZ testnet finality and claim latency.
+
   `deterministic-local-devnet-v7`, for devnet swaps that claim: a claim needs
   the Maker's funding, one confirmation, the Taker's claim and one
   confirmation — four blocks a swap, eight for the two swaps of one signer

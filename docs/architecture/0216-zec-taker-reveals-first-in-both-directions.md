@@ -155,6 +155,21 @@ direction's agreements are byte-identical to those signed before.
 
 ## Consequences
 
+- Known limit of `public-testnet-v3`: the Maker funds Zcash only once the Taker's LEZ lock has `lez_confirmations` (2) and, on the LEZ v0.2 testnet (`PublicTestnetV0_2`), is finalized (`classify_unchanged_lez_maker_eligibility`). LEZ testnet finality has been recorded at one to two hours, while the Maker must fund while `tip + R + C < H_z`, about 74 Zcash blocks (roughly 28 minutes at Testnet's measured pace) after the anchor, and the pace check refuses funding that late as well. As sized, the profile therefore never reaches Zcash funding on the public networks; no public-network run is claimed for it, and it is not retuned without measurements of LEZ testnet finality and claim latency.
+- Refunding from the Zcash refund height shortens how long an unmined Taker
+  claim is tolerated: a claim not mined by then can lose the race to the
+  Maker's refund. The Taker's protection is its reveal margin (it claims only
+  while `tip + R < H_z`) and its claim having no expiry (it is re-broadcast
+  byte for byte while the HTLC is unspent). On the Regtest and devnet profiles
+  (one Zcash confirmation) a one-block reorg of the Maker's refund could leave
+  the Taker with both legs; those profiles serve harness chains only.
+- A Maker whose LEZ claim was lost (the Taker's claim never mined, the
+  Taker's LEZ refund final) recovers its Zcash while the HTLC is unspent at
+  its refund height; with the HTLC spent by the Taker's claim it stops as
+  `lez_claim_cannot_land`. The Maker gives up its LEZ claim only on the
+  escrow being refunded, never on its own clock: the escrow's claim window
+  ends at `refund_at` by the sequencer's block time.
+
 - The Maker reads the preimage from any consensus-valid claim of the HTLC
   (the claim branch of this contract with a 32-byte preimage of the digest),
   not only from claims in the SDK's template, and commits it on first sight,
