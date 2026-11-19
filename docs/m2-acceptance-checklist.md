@@ -71,7 +71,11 @@ stack and are kept as the record of that submission shape.
   (`docs/evidence/regression-0.3.2-2026-11-14-macos-arm64/`). The 97 at
   `0a42823f` (the fix for #156, version 0.3.3) on an Apple-silicon Mac: 97
   of 97, each on its first try, 98 minutes on three lanes
-  (`docs/evidence/regression-0.3.3-2026-11-16-macos-arm64/`).
+  (`docs/evidence/regression-0.3.3-2026-11-16-macos-arm64/`). The 97 at
+  `fab36d52` (ZEC selling LEZ in the Taker-reveals-first order, version
+  0.3.3) on an Apple-silicon Mac: 97 of 97, 94 on the first try and 3 on a
+  rerun after one Taker container hung at start-up, 99 minutes on three
+  lanes (`docs/evidence/regression-0.3.3-2026-11-19-macos-arm64/`).
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.
