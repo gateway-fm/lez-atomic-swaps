@@ -6613,3 +6613,69 @@ async fn a_maker_whose_lez_claim_was_lost_refunds_its_zcash_once_the_takers_lez_
     ));
     assert_eq!(fixture.maker.status(), Phase::Refunded);
 }
+
+#[tokio::test]
+async fn a_maker_whose_lez_claim_was_lost_waits_while_the_takers_zcash_claim_is_only_in_the_mempool()
+ {
+    // Review 4, M1: with the Taker's LEZ refund final, the Maker's refund
+    // eligibility reads the HTLC as spent as soon as the Taker's claim is in
+    // the mempool. That claim never expires and can still be evicted, leaving
+    // the HTLC unspent again; the Maker gives up only once the spend is a
+    // Taker claim at the profile's Zcash depth.
+    let id = "sdk-lost-maker-lez-claim-mempool-spend";
+    let secret = [0xba; 32];
+    let now = LezUnixMilliseconds::new(0);
+    let direction = SwapDirection::TakerSellsLez;
+    let mut fixture = activate_claim_actor_fixture(id, direction, Participant::Taker, secret).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    let agreement = fixture.maker.agreement().clone();
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker reveals"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker reads the reveal"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::RevealingZcash,
+            ..
+        }
+    ));
+    fixture.refunds.set_eligibility(
+        RefundStepV1::Lez,
+        RefundEligibilityObservationV1::canonical(refund_position(&agreement, RefundStepV1::Lez)),
+    );
+    fixture.refunds.confirm(RefundStepV1::Lez);
+    fixture.refunds.set_eligibility(
+        RefundStepV1::Zcash,
+        RefundEligibilityObservationV1::FundingUnavailable(RefundFundingWaitReasonV1::Spent),
+    );
+    // The Taker's claim is in the mempool only.
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund_after_lost_followup(now)
+            .await
+            .expect("a mempool spend is a wait"),
+        RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Zcash)
+    );
+    assert_eq!(fixture.maker.status(), Phase::ClaimEvidenceAvailable);
+    // Mined to the profile's depth, the HTLC is lost to the Taker's claim.
+    fixture
+        .corridor
+        .bury_zcash_claim(zcash_claim_depth(&agreement));
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund_after_lost_followup(now)
+            .await
+            .expect("a final claim spend ends the wait"),
+        RefundDriveOutcome::AwaitingFunding {
+            step: RefundStepV1::Zcash,
+            reason: RefundFundingWaitReasonV1::Spent,
+        }
+    );
+}

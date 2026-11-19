@@ -165,8 +165,10 @@ direction's agreements are byte-identical to those signed before.
   the Taker with both legs; those profiles serve harness chains only.
 - A Maker whose LEZ claim was lost (the Taker's claim never mined, the
   Taker's LEZ refund final) recovers its Zcash while the HTLC is unspent at
-  its refund height; with the HTLC spent by the Taker's claim it stops as
-  `lez_claim_cannot_land`. The Maker gives up its LEZ claim only on the
+  its refund height; with the HTLC spent by the Taker's claim at the
+  profile's Zcash depth it stops as `lez_claim_cannot_land`. A spend in the
+  mempool only is a wait: the Taker's claim never expires but can be
+  evicted, which leaves the HTLC unspent again. The Maker gives up its LEZ claim only on the
   escrow being refunded, never on its own clock: the escrow's claim window
   ends at `refund_at` by the sequencer's block time.
 

@@ -1624,6 +1624,81 @@ where
     }
 }
 
+// `TakerSellsLez`: the Maker whose follow-up LEZ claim missed its window both observes that
+// claim and recovers its Zcash, so it needs every claim and refund port.
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Lez: LezClaimPort + LezRefundPort + LezFirstLockPort,
+    Zcash: ZcashClaimPort + ZcashRefundPort + ZcashFirstLockPort,
+    Store: ClaimRecoveryStore + RefundRecoveryStore,
+{
+    /// `TakerSellsLez`, the Maker at claim evidence: its follow-up LEZ claim is observed and
+    /// never submitted (the caller saw the escrow's claim window closed by LEZ time). A claim
+    /// that landed before the window closed completes the swap as [`Self::drive_claim`] would.
+    ///
+    /// # Errors
+    ///
+    /// Rejects another role, direction or phase, and preserves store and adapter errors.
+    pub async fn observe_followup_lez_claim_past_window(
+        &mut self,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        self.replay_claim_transitions().await?;
+        if self.local_participant() != Participant::Maker
+            || self.agreement().direction() != SwapDirection::TakerSellsLez
+            || self.status() != Phase::ClaimEvidenceAvailable
+        {
+            return Err(ZecSdkError::ClaimNotReady(self.status()));
+        }
+        self.drive_owned_followup_lez_claim(false).await
+    }
+
+    /// `TakerSellsLez`, the Maker at claim evidence whose LEZ claim can no longer land: the
+    /// recovery of [`Self::drive_refund`], except that a spent HTLC is reported as spent
+    /// ([`RefundDriveOutcome::AwaitingFunding`] with `Spent`) only once the spender is the
+    /// Taker's claim at the profile's Zcash depth.
+    ///
+    /// Refund eligibility reads a mempool spend as spent too, and the Taker's claim never
+    /// expires but can be evicted, unspending the HTLC again (review 4, M1): until it is that
+    /// deep the spend is a wait ([`RefundDriveOutcome::AwaitingStableObservation`]). The
+    /// Maker's own refund never gets here: its exact identity is observed first.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::drive_refund`], and a Zcash claim observation failure.
+    pub async fn drive_refund_after_lost_followup(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        match self.drive_refund(now).await? {
+            RefundDriveOutcome::AwaitingFunding {
+                step: RefundStepV1::Zcash,
+                reason: crate::RefundFundingWaitReasonV1::Spent,
+            } => {}
+            outcome => return Ok(outcome),
+        }
+        let context = ZcashClaimContextV1::after_reveal(self.agreement(), &self.coordinator)
+            .map_err(ZecSdkError::from)?;
+        let observation = self
+            .zcash
+            .observe_counterparty_revealing_claim(self.agreement(), &context)
+            .await
+            .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+        let depth = crate::ZecRefundProfile::for_id(self.agreement().binding().profile_id())
+            .zcash_confirmations();
+        Ok(match observation {
+            RevealingClaimObservationV1::Confirmed(evidence)
+                if evidence.confirmations() >= depth =>
+            {
+                RefundDriveOutcome::AwaitingFunding {
+                    step: RefundStepV1::Zcash,
+                    reason: crate::RefundFundingWaitReasonV1::Spent,
+                }
+            }
+            _ => RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Zcash),
+        })
+    }
+}
+
 // The claim drive also reads the Maker's Zcash refund (`TakerSellsLez`: a Taker whose claim can no
 // longer land records it and turns to its LEZ refund), so it needs the Zcash refund observation
 // and the refund journal as well.
@@ -1675,7 +1750,7 @@ where
                 if self.local_participant() == self.agreement().revealing_claimant().other() =>
             {
                 if revealing_on_zcash {
-                    self.drive_owned_followup_lez_claim().await
+                    self.drive_owned_followup_lez_claim(true).await
                 } else {
                     self.drive_owned_followup_claim().await
                 }
@@ -2174,9 +2249,19 @@ where
     /// `TakerSellsLez`: the Maker claims the Taker's LEZ with the preimage it read from the
     /// Taker's Zcash claim. The preimage is public by then, so there is no claim window: the
     /// claim is sent until the escrow's own validity window (the LEZ refund time) refuses it.
-    async fn drive_owned_followup_lez_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+    ///
+    /// With `submit` false nothing is prepared or sent: a retained claim is only
+    /// observed (a claim past its window that may still have landed).
+    async fn drive_owned_followup_lez_claim(
+        &mut self,
+        submit: bool,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
         let (intent, protected) = if let Some(retained) = self.load_claim_intent().await? {
             retained
+        } else if !submit {
+            return Ok(ClaimDriveOutcome::AwaitingStableObservation(
+                ClaimStepV1::FollowupLez,
+            ));
         } else {
             let preimage = self.load_claim_material().await?;
             let prepared = self
@@ -2200,6 +2285,9 @@ where
             .await
             .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?
         {
+            RevealingClaimObservationV1::Absent if !submit => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupLez),
+            ),
             RevealingClaimObservationV1::Absent => {
                 let outcome = self
                     .lez

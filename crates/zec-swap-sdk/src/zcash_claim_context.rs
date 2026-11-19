@@ -150,6 +150,23 @@ impl ZcashClaimContextV1 {
         ZcashFundingContextV1::from_active(agreement, coordinator).map(|funding| Self { funding })
     }
 
+    /// `TakerSellsLez` after the reveal (claim evidence recorded): the same context, to
+    /// re-observe the Taker's revealing claim's depth when the Maker's follow-up LEZ
+    /// claim was lost (review 4, M1). Never used to prepare or submit a claim.
+    pub(crate) fn after_reveal(
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+    ) -> Result<Self, ZcashClaimContextError> {
+        if crate::ClaimStepV1::revealing(agreement).chain() != Chain::Zcash
+            || coordinator.phase() != Phase::ClaimEvidenceAvailable
+        {
+            return Err(ZcashClaimContextError::ClaimNotReady {
+                actual: coordinator.phase(),
+            });
+        }
+        ZcashFundingContextV1::from_active(agreement, coordinator).map(|funding| Self { funding })
+    }
+
     /// Shared agreement- and outpoint-bound funding identity.
     #[must_use]
     pub const fn funding_context(&self) -> &ZcashFundingContextV1 {

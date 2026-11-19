@@ -1394,9 +1394,13 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         clear_revealing_claim_in_flight(config);
         // The Taker's LEZ refund is final: if the Taker's Zcash claim was never
         // mined the HTLC is unspent, and the Maker recovers its Zcash at the
-        // refund height (review 3, item 1). Only a spent HTLC (the Taker's claim
-        // mined) ends the swap by name.
-        return match active.drive_refund(wall_clock_ms()).await {
+        // refund height (review 3, item 1). Only an HTLC spent by the Taker's
+        // claim at the profile's Zcash depth ends the swap by name; a claim in
+        // the mempool only can still be evicted, so it is a wait (review 4, M1).
+        return match active
+            .drive_refund_after_lost_followup(wall_clock_ms())
+            .await
+        {
             Ok(lez_zec_swap_sdk::RefundDriveOutcome::Refunded { .. }) => {
                 Ok(ActorEffectOutputV1::from_active(
                     config,
