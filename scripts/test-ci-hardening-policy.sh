@@ -126,6 +126,10 @@ require_fixed 'readonly gated_workflows=(ci.yml public-readiness.yml)' scripts/c
 
 require_fixed 'tags: ["m*-complete*"]' "$ci_workflow"
 require_fixed './scripts/run-ci-quality-gates.sh' "$ci_workflow"
+require_fixed 'run: ./scripts/check-all.sh --fast --rust-only' "$ci_workflow"
+require_fixed './scripts/check-all.sh --separate --rust-only "${args[@]}"' "$ci_workflow"
+[[ "$(awk '/^jobs:/ { getline; while ($0 ~ /^ *#/) getline; sub(/:$/, ""); sub(/^ +/, ""); print; exit }' "$ci_workflow")" == lint ]] \
+  || fail "$ci_workflow must open with the lint job"
 require_fixed './scripts/test-spin-lock-remediation.sh' "$ci_workflow"
 require_fixed './scripts/check-spin-lock-remediation.sh' "$ci_workflow"
 require_fixed './scripts/check-github-action-pins.sh' "$ci_workflow"

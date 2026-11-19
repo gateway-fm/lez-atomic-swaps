@@ -73,6 +73,25 @@ for step in 'cargo clippy --locked --workspace --all-targets' \
     || fail "the '${step}' step of ${ci_workflow} excludes other crates than ${check_all}"
 done
 
+# Every separate workspace that check-all.sh lints is in exactly one shard of
+# the lint-separate job of ci.yml.
+sharded="$(
+  awk '
+    /^  lint-separate:/ { on = 1; next }
+    on && /^  [A-Za-z0-9_-]+:$/ { exit }
+    on && /^ +manifests:/ { block = 1; sub(/^ +manifests: *(>-)?/, ""); if ($0 != "") print; next }
+    on && block && /^ +compat\/[^ ]+Cargo\.toml$/ { sub(/^ +/, ""); print; next }
+    { block = 0 }
+  ' "$ci_workflow" | LC_ALL=C sort
+)"
+lintable="$("$check_all" --list-separate-lint | LC_ALL=C sort)"
+if [[ "$sharded" != "$lintable" ]]; then
+  echo "check-all workspace policy: the lint-separate shards of ${ci_workflow} differ from what ${check_all} lints" >&2
+  diff <(printf '%s\n' "$lintable") <(printf '%s\n' "$sharded") \
+    | sed -n 's/^< /  in no shard: /p; s/^> /  in a shard twice or not linted: /p' >&2
+  exit 1
+fi
+
 # Root workspace: the rust job of ci.yml.
 require_fixed 'cargo fmt --all --check' "$ci_workflow"
 require_fixed '-- -D warnings' "$ci_workflow"
