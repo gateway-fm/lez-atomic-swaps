@@ -253,6 +253,15 @@ SwapWait swapWait(const QJsonObject& lastOutcome, const QString& role)
                 timeHolds};
     if (kind == QStringLiteral("zcash_refund_height"))
         return {"Waiting for the Zcash refund height", false};
+    // The Maker's follow-up LEZ claim missed the escrow's window (its refund
+    // time has passed by LEZ time): nothing is sent; the Maker waits for the
+    // escrow to settle, then takes its Zcash back.
+    if (kind == QStringLiteral("taker_lez_refund_after_lost_claim"))
+        return {"The LEZ claim missed its window" + (until > 0 ? " (" + clockDisplay(until) + ")" : QString())
+                    + "; waiting for the LEZ escrow to settle before the Zcash refund" + nowTime,
+                true};
+    if (kind == QStringLiteral("zcash_refund_after_lost_lez_claim"))
+        return {"The LEZ claim can no longer land; refunding the Zcash", true};
     // A kind this desk does not know yet, by its bound.
     if (until > 0) return {"Waiting for " + chain + " until " + clockDisplay(until) + nowTime, timeHolds};
     if (untilHeight > 0)
