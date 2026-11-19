@@ -1314,6 +1314,10 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
 /// Unlike `drive`, this boundary cannot fund or lock either leg. A premature
 /// operator request therefore fails closed before an effect RPC rather than
 /// silently advancing a different lifecycle action.
+#[allow(
+    clippy::too_many_lines,
+    reason = "port construction, the lost-claim settlement and the claim drive read as one command"
+)]
 async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandError> {
     let material = config
         .load_drive_material()
@@ -1388,7 +1392,36 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         );
         // Nothing of this swap can take the LEZ account's nonce any more.
         clear_revealing_claim_in_flight(config);
-        return Err(ActorCommandError::LezClaimCannotLand);
+        // The Taker's LEZ refund is final: if the Taker's Zcash claim was never
+        // mined the HTLC is unspent, and the Maker recovers its Zcash at the
+        // refund height (review 3, item 1). Only a spent HTLC (the Taker's claim
+        // mined) ends the swap by name.
+        return match active.drive_refund(wall_clock_ms()).await {
+            Ok(lez_zec_swap_sdk::RefundDriveOutcome::Refunded { .. }) => {
+                Ok(ActorEffectOutputV1::from_active(
+                    config,
+                    ActorEffectCommandV1::Claim,
+                    ActorEffectOutcomeV1::Completed,
+                    &active,
+                ))
+            }
+            Ok(lez_zec_swap_sdk::RefundDriveOutcome::AwaitingFunding {
+                reason: RefundFundingWaitReasonV1::Spent,
+                ..
+            }) => Err(ActorCommandError::LezClaimCannotLand),
+            Ok(outcome) => {
+                eprintln!(
+                    "actor claim: the Maker's Zcash refund after the lost LEZ claim: {outcome:?}"
+                );
+                Err(ActorCommandError::ClaimUnavailable)
+            }
+            Err(error) => {
+                eprintln!(
+                    "actor claim: the Maker's Zcash refund after the lost LEZ claim: {error:?}"
+                );
+                Err(ActorCommandError::ClaimUnavailable)
+            }
+        };
     }
     let outcome = if active.status() == Phase::Completed {
         ActorEffectOutcomeV1::Completed

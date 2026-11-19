@@ -2105,7 +2105,7 @@ where
 }
 
 /// The height a claim was prepared at, read back from its expiry (prepared
-/// height + the profile's delta). A TakerSellsLez claim has no expiry (the
+/// height + the profile's delta). A `TakerSellsLez` claim has no expiry (the
 /// Taker's revealing claim must stay broadcastable), so its template does not
 /// depend on the height and any height rebuilds it.
 fn claim_prepared_height<RE, SE>(

@@ -73,6 +73,16 @@ impl RefundStepV1 {
         coordinator: &SwapCoordinator,
     ) -> Result<(), RefundError> {
         if coordinator.claim_evidence().is_some() {
+            // The one exception: the TakerSellsLez Maker's Zcash refund after its
+            // follow-up LEZ claim was lost (SwapCoordinator::
+            // refund_maker_leg_after_lost_followup; the SDK admits it only once
+            // the Taker's LEZ refund is final).
+            if self == Self::Zcash
+                && agreement.direction() == SwapDirection::TakerSellsLez
+                && coordinator.phase() == Phase::ClaimEvidenceAvailable
+            {
+                return Ok(());
+            }
             return Err(RefundError::ClaimEvidenceRecorded {
                 step: self,
                 phase: coordinator.phase(),
@@ -663,7 +673,9 @@ impl RefundTransitionV1 {
             });
         }
         let mut next = coordinator.clone();
-        if owner == Participant::Maker {
+        if owner == Participant::Maker && coordinator.claim_evidence().is_some() {
+            next.refund_maker_leg_after_lost_followup(self.evidence.position)
+        } else if owner == Participant::Maker {
             next.refund_maker_leg(self.evidence.position)
         } else {
             next.refund_taker_leg(self.evidence.position)

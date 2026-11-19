@@ -1308,6 +1308,36 @@ impl SwapCoordinator {
         Ok(())
     }
 
+    /// ZEC `TakerSellsLez`: the Maker recovers its Zcash leg after its follow-up LEZ
+    /// claim was lost. The Maker read the preimage from a Taker claim that was never
+    /// mined (claim evidence is recorded) and its LEZ claim did not land before the
+    /// Taker refunded its LEZ. The caller must have observed that LEZ refund final
+    /// and the HTLC unspent; this admits the Maker's refund at its deadline and ends
+    /// the swap refunded. Nothing else is refunded once claim evidence is recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-phase error outside that state, or the deadline errors.
+    pub fn refund_maker_leg_after_lost_followup(
+        &mut self,
+        observed: ChainPosition,
+    ) -> Result<(), Error> {
+        if self.pair != Pair::Zcash
+            || self.direction != SwapDirection::TakerSellsLez
+            || self.phase != Phase::ClaimEvidenceAvailable
+        {
+            return Err(Error::InvalidPhase {
+                expected: Phase::ClaimEvidenceAvailable,
+                actual: self.phase,
+            });
+        }
+        if !self.recovery_schedule.maker_deadline_reached(observed)? {
+            return Err(Error::TimelockNotExpired);
+        }
+        self.phase = Phase::Refunded;
+        Ok(())
+    }
+
     /// Records the canonical taker refund that unlocks event-gated maker recovery.
     ///
     /// # Errors

@@ -2692,6 +2692,28 @@ where
         if let Some(wait) = self.settle_own_lock(now).await? {
             return Ok(wait);
         }
+        if self.local_participant() == Participant::Maker
+            && self.agreement().direction() == SwapDirection::TakerSellsLez
+            && self.status() == Phase::ClaimEvidenceAvailable
+        {
+            // The Maker read the preimage but its LEZ claim has not landed: once the
+            // Taker's LEZ refund is final that claim never will, and the Maker
+            // recovers its Zcash if the HTLC is still unspent at its refund height
+            // (review 3, item 1). Until then no refund is admitted.
+            return match self
+                .lez
+                .observe_counterparty_refund(self.agreement())
+                .await
+                .map_err(|error| ZecSdkError::LezRefund(Box::new(error)))?
+            {
+                RefundObservationV1::Confirmed(_) => {
+                    self.drive_owned_refund(RefundStepV1::Zcash).await
+                }
+                RefundObservationV1::Absent | RefundObservationV1::Unstable => Ok(
+                    RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Lez),
+                ),
+            };
+        }
         let step = match self.status() {
             Phase::Refunded => {
                 return Ok(RefundDriveOutcome::Refunded {

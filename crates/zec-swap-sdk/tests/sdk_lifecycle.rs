@@ -6546,3 +6546,70 @@ async fn taker_restart_after_broadcasting_its_zcash_claim_observes_commits_and_f
     );
     assert_eq!(fixture.taker.status(), Phase::Completed);
 }
+
+#[tokio::test]
+async fn a_maker_whose_lez_claim_was_lost_refunds_its_zcash_once_the_takers_lez_refund_is_final() {
+    // Review 3, item 1 (Maker side): the Maker read the Taker's preimage from a
+    // claim that never got mined, and its own LEZ claim did not land before the
+    // Taker refunded its LEZ. With claim evidence recorded no refund was
+    // admitted, so the Maker's Zcash stayed in the HTLC with no path out. Once
+    // the Taker's LEZ refund is final the LEZ claim can never land, and while
+    // the HTLC is unspent at its refund height the Maker refunds its Zcash.
+    let id = "sdk-lost-maker-lez-claim";
+    let secret = [0xb9; 32];
+    let now = LezUnixMilliseconds::new(0);
+    let direction = SwapDirection::TakerSellsLez;
+    let mut fixture = activate_claim_actor_fixture(id, direction, Participant::Taker, secret).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    let agreement = fixture.maker.agreement().clone();
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker reveals"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker reads the reveal"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::RevealingZcash,
+            ..
+        }
+    ));
+    assert_eq!(fixture.maker.status(), Phase::ClaimEvidenceAvailable);
+    // The Taker's claim drops out and is never mined: the HTLC is unspent.
+    fixture.corridor.spend_zcash_htlc_as(None);
+    // Before the Taker's LEZ refund is final the Maker does not refund.
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund(now)
+            .await
+            .expect("waits for the LEZ refund"),
+        RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Lez)
+    );
+    fixture.refunds.set_eligibility(
+        RefundStepV1::Lez,
+        RefundEligibilityObservationV1::canonical(refund_position(&agreement, RefundStepV1::Lez)),
+    );
+    fixture.refunds.confirm(RefundStepV1::Lez);
+    fixture.refunds.set_eligibility(
+        RefundStepV1::Zcash,
+        RefundEligibilityObservationV1::canonical(refund_position(&agreement, RefundStepV1::Zcash)),
+    );
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund(now)
+            .await
+            .expect("the Maker refunds its Zcash"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
+    );
+    fixture.refunds.confirm(RefundStepV1::Zcash);
+    assert!(matches!(
+        fixture.maker.drive_refund(now).await.expect("projected"),
+        RefundDriveOutcome::Refunded { .. }
+    ));
+    assert_eq!(fixture.maker.status(), Phase::Refunded);
+}
