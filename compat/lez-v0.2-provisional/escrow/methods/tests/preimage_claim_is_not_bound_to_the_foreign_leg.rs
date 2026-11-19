@@ -200,7 +200,10 @@ fn escrow_pays_the_claimant_holding_the_preimage_whatever_the_foreign_leg() {
         .expect("the claimant with the preimage is paid without any foreign evidence");
     assert_eq!(metadata(&state, metadata_id).status, EscrowStatus::Claimed);
     assert_eq!(state.get_account_by_id(custody).balance, 0);
-    assert_eq!(state.get_account_by_id(maker).balance, maker_before + AMOUNT);
+    assert_eq!(
+        state.get_account_by_id(maker).balance,
+        maker_before + AMOUNT
+    );
     assert_eq!(state.get_account_by_id(taker).balance, taker_before);
 
     let refund = transaction(
