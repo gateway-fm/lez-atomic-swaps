@@ -649,17 +649,19 @@ fn run_claimed_attempt_with_lock(
             Ok(command) => command,
             Err(attempt) => return Ok(attempt),
         };
-        if let Some(class) = effect_held_back(store, lease, config, command, &status) {
-            return Ok(ClaimedAttempt::Backoff(class));
-        }
+        let deadline = match effect_held_back(store, lease, config, command, &status) {
+            Ok(deadline) => deadline,
+            Err(class) => return Ok(ClaimedAttempt::Backoff(class)),
+        };
         attempted = command.name();
-        let run = run_child(
+        let run = run_child_until(
             store,
             lease,
             &held_lock,
             ActorInvocation::Effect(command),
             config,
             cancellation,
+            deadline,
         );
         // The admission of this swap's LEZ claim, if the gate made one, lasts as
         // long as this attempt: submitted, the claim's own in-flight marker holds
@@ -794,6 +796,28 @@ fn run_child(
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<Vec<u8>, ChildRunError> {
+    run_child_until(
+        store,
+        lease,
+        held_lock,
+        invocation,
+        config,
+        cancellation,
+        None,
+    )
+}
+
+/// [`run_child`], stopped at `deadline` too when one is given (an admitted LEZ
+/// claim: its admission holds the others only that long; review 4, L2).
+fn run_child_until(
+    store: &mut SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    held_lock: &ActorHeldLock,
+    invocation: ActorInvocation,
+    config: &MakerActorSupervisorConfig,
+    cancellation: &MakerActorSupervisorCancellation,
+    deadline: Option<Instant>,
+) -> Result<Vec<u8>, ChildRunError> {
     ensure_invocation_admitted(invocation, config, cancellation)?;
     let actor_command = invocation.name();
     let artifacts =
@@ -879,7 +903,7 @@ fn run_child(
             .map_err(ChildRunError::Scheduling)?;
         return Err(ChildRunError::Retry("actor_output_unavailable"));
     };
-    let status = wait_for_child(&mut child, invocation, config, cancellation);
+    let status = wait_for_child(&mut child, invocation, config, cancellation, deadline);
     let output = match reader.join() {
         Ok(result) => result.map_err(|_| ChildRunError::Fail("actor_output_invalid")),
         Err(_) => Err(ChildRunError::Fail("actor_output_invalid")),
@@ -907,6 +931,26 @@ fn classify_deployment(error: &MakerActorProcessError) -> ChildRunError {
     }
 }
 
+/// Removes every Zcash swap's LEZ-claim admission marker. For a starting
+/// supervisor, when no claim attempt can be running: a marker then is a crashed
+/// Node's and must hold nothing (review 4, L2).
+pub fn clear_maker_lez_claim_admissions(store: &SqliteSwapStore) {
+    #[cfg(feature = "pair-zec")]
+    if let Ok(records) = store.list_maker_actor_processes() {
+        for record in records
+            .iter()
+            .filter(|record| record.manifest().kind() == MakerActorKindV1::Zcash)
+        {
+            zec_reference_actor::record_lez_claim_admitted(
+                record.manifest().state_database_path(),
+                None,
+            );
+        }
+    }
+    #[cfg(not(feature = "pair-zec"))]
+    let _ = store;
+}
+
 /// Removes this swap's LEZ-claim admission marker (review 3, item 4).
 fn release_lez_claim_admission(lease: &MakerActorLeaseV1) {
     #[cfg(feature = "pair-zec")]
@@ -927,21 +971,28 @@ fn release_lez_claim_admission(lease: &MakerActorLeaseV1) {
 /// refund time is near, with the holder named beside its state for the
 /// monitor; `lez_claim_waits_for_earlier_refund` while no claim is in flight
 /// and another swap's claim with an earlier LEZ refund time goes first.
+///
+/// `Ok(Some(deadline))`: the gate admitted this swap's LEZ claim, and the
+/// attempt is stopped by then, before its admission stops holding the others.
 fn effect_held_back(
     store: &SqliteSwapStore,
     lease: &MakerActorLeaseV1,
     config: &MakerActorSupervisorConfig,
     command: ActorEffectCommand,
     status: &[u8],
-) -> Option<&'static str> {
+) -> Result<Option<Instant>, &'static str> {
     if config.effect_cutoff_reached() {
-        return Some("actor_effect_cutoff");
+        return Err("actor_effect_cutoff");
     }
-    match revealing_claim_held_back(store, lease, command, status) {
-        RevealingClaimHold::Open => None,
-        RevealingClaimHold::Held => Some("lez_revealing_claim_in_flight"),
-        RevealingClaimHold::HeldNearRefund => Some("lez_revealing_claim_held_near_refund"),
-        RevealingClaimHold::WaitsForEarlierRefund => Some("lez_claim_waits_for_earlier_refund"),
+    // Taken before the admission is stamped, so the deadline is never later
+    // than the admission's own bound.
+    let gate_started = Instant::now();
+    match revealing_claim_held_back(store, lease, command, status, config.attempt_timeout) {
+        RevealingClaimHold::Open => Ok(None),
+        RevealingClaimHold::Admitted { bound } => Ok(Some(gate_started + bound)),
+        RevealingClaimHold::Held => Err("lez_revealing_claim_in_flight"),
+        RevealingClaimHold::HeldNearRefund => Err("lez_revealing_claim_held_near_refund"),
+        RevealingClaimHold::WaitsForEarlierRefund => Err("lez_claim_waits_for_earlier_refund"),
     }
 }
 
@@ -951,6 +1002,10 @@ fn effect_held_back(
 #[cfg_attr(not(feature = "pair-zec"), allow(dead_code))]
 enum RevealingClaimHold {
     Open,
+    /// Open, and this swap's claim is admitted for at most `bound`.
+    Admitted {
+        bound: Duration,
+    },
     Held,
     HeldNearRefund,
     /// No claim is in flight, and another swap's claim waits with an earlier
@@ -986,6 +1041,7 @@ fn revealing_claim_held_back(
     lease: &MakerActorLeaseV1,
     command: ActorEffectCommand,
     status: &[u8],
+    attempt_timeout: Duration,
 ) -> RevealingClaimHold {
     let manifest = lease.record().manifest();
     if manifest.kind() != MakerActorKindV1::Zcash {
@@ -1051,6 +1107,10 @@ fn revealing_claim_held_back(
             .as_millis(),
     )
     .unwrap_or(u64::MAX);
+    // An admission holds the others for one attempt's bound, at most half the
+    // profile's margin (review 4, L2), plus the time to stop the child.
+    let bound_ms = admission_bound_ms(attempt_timeout, read("required_margin_ms"));
+    let own_hold_ms = bound_ms.saturating_add(ADMISSION_STOP_GRACE_MS);
     // A submitted claim holds the nonce until its swap's LEZ refund time, its
     // swap failed or not: a swap that failed after submitting (its output
     // unreadable, say) may have its claim still pending at the nonce (review 4,
@@ -1064,7 +1124,7 @@ fn revealing_claim_held_back(
         // nonce (review 3, item 4), for a bounded time. A failed swap's attempt is over.
         if !failed
             && zec_reference_actor::lez_claim_admission(state)
-                .is_some_and(|admission| admission_holds(admission, now_ms))
+                .is_some_and(|admission| admission_holds(admission, own_hold_ms, now_ms))
         {
             return true;
         }
@@ -1101,16 +1161,23 @@ fn revealing_claim_held_back(
     if hold == RevealingClaimHold::Open {
         // Announced before the others are read again: of two workers admitting at
         // once, the one admitted later (ties by swap id) sees the other and yields.
-        zec_reference_actor::record_lez_claim_admitted(own_state, Some((own_refund_at_ms, now_ms)));
+        zec_reference_actor::record_lez_claim_admitted(
+            own_state,
+            Some(zec_reference_actor::LezClaimAdmission {
+                lez_refund_at_ms: own_refund_at_ms,
+                admitted_at_ms: now_ms,
+                hold_ms: Some(own_hold_ms),
+            }),
+        );
         // Within this process the gate's lock already orders them; this covers
         // an admission written by another process sharing the swaps' state.
         let admitted_before = peers().any(|record| {
             record.schedule_state() != lez_swap_store::MakerActorScheduleState::Failed
                 && zec_reference_actor::lez_claim_admission(record.manifest().state_database_path())
                     .is_some_and(|admission| {
-                        admission_holds(admission, now_ms)
+                        admission_holds(admission, own_hold_ms, now_ms)
                             && yields_to_admission(
-                                (admission.1, record.swap_id().as_str()),
+                                (admission.admitted_at_ms, record.swap_id().as_str()),
                                 (now_ms, manifest.swap_id().as_str()),
                             )
                     })
@@ -1123,6 +1190,11 @@ fn revealing_claim_held_back(
     }
     let Some(holder) = blocker.filter(|_| hold == RevealingClaimHold::HeldNearRefund) else {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
+        if hold == RevealingClaimHold::Open {
+            return RevealingClaimHold::Admitted {
+                bound: Duration::from_millis(bound_ms),
+            };
+        }
         return hold;
     };
     let holder = holder.swap_id().as_str();
@@ -1157,16 +1229,34 @@ fn waits_behind(own: (u64, &str), other: (u64, &str), now_ms: u64) -> bool {
     other.0 > now_ms && other < own
 }
 
-/// Whether another swap's admitted, not yet submitted LEZ claim
-/// (`(refund_at_ms, admitted_at_ms)`) holds this one at `now_ms`: until its
-/// refund time and at most one attempt's bound after its admission.
+/// Whether another swap's admitted, not yet submitted LEZ claim holds this
+/// one at `now_ms`: until its refund time and its recorded hold after its
+/// admission (`default_hold_ms`, this Node's own, for a marker that records
+/// none).
 #[cfg(feature = "pair-zec")]
-const fn admission_holds(admission: (u64, u64), now_ms: u64) -> bool {
-    admission.0 > now_ms
-        && admission
-            .1
-            .saturating_add(zec_reference_actor::LEZ_CLAIM_ADMISSION_HOLD_MS)
-            > now_ms
+const fn admission_holds(
+    admission: zec_reference_actor::LezClaimAdmission,
+    default_hold_ms: u64,
+    now_ms: u64,
+) -> bool {
+    let hold_ms = match admission.hold_ms {
+        Some(hold_ms) => hold_ms,
+        None => default_hold_ms,
+    };
+    admission.lez_refund_at_ms > now_ms && admission.admitted_at_ms.saturating_add(hold_ms) > now_ms
+}
+
+/// How long the Node may stop a claim attempt after admitting it.
+#[cfg(feature = "pair-zec")]
+const ADMISSION_STOP_GRACE_MS: u64 = 2_000;
+
+/// An admitted LEZ claim's attempt bound: the attempt timeout, and at most
+/// half the profile's required margin `M` (from the actor's status), so that
+/// a stuck attempt never holds the others for a margin's worth of time.
+#[cfg(feature = "pair-zec")]
+fn admission_bound_ms(attempt_timeout: Duration, required_margin_ms: Option<u64>) -> u64 {
+    let timeout_ms = u64::try_from(attempt_timeout.as_millis()).unwrap_or(u64::MAX);
+    required_margin_ms.map_or(timeout_ms, |margin_ms| timeout_ms.min(margin_ms / 2))
 }
 
 /// Whether another swap's LEZ claim in flight (its in-flight marker present)
@@ -1249,6 +1339,7 @@ const fn revealing_claim_held_back(
     _lease: &MakerActorLeaseV1,
     _command: ActorEffectCommand,
     _status: &[u8],
+    _attempt_timeout: Duration,
 ) -> RevealingClaimHold {
     RevealingClaimHold::Open
 }
@@ -1311,8 +1402,10 @@ fn wait_for_child(
     invocation: ActorInvocation,
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
+    deadline: Option<Instant>,
 ) -> Result<ExitStatus, ChildRunError> {
-    let deadline = Instant::now() + config.attempt_timeout;
+    let attempt_deadline = Instant::now() + config.attempt_timeout;
+    let deadline = deadline.map_or(attempt_deadline, |deadline| deadline.min(attempt_deadline));
     loop {
         if let Err(error) = ensure_invocation_admitted(invocation, config, cancellation) {
             kill_and_reap(child);

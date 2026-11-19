@@ -19,7 +19,7 @@ mod test_crash_hook;
 
 pub use command::{
     ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusProjectionV1,
-    ActorStatusV1, LEZ_CLAIM_ADMISSION_HOLD_MS, execute_actor_command, lez_claim_admission,
+    ActorStatusV1, LezClaimAdmission, execute_actor_command, lez_claim_admission,
     lez_claim_admitted_marker, lez_claim_waiting_marker, lez_claim_waiting_refund_at_ms,
     lez_depositor_balance_marker, record_lez_claim_admitted, record_lez_claim_waiting,
     record_revealing_claim_holder, revealing_claim_held_by_marker,

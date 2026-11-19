@@ -18,9 +18,10 @@ mod zec_chat;
 
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
-    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, prepare_maker_actor,
-    supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
-    supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
+    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, clear_maker_lez_claim_admissions,
+    prepare_maker_actor, supervise_one_abandoned_maker_actor,
+    supervise_one_abandoned_maker_actor_until, supervise_one_due_maker_actor,
+    supervise_one_due_maker_actor_until,
 };
 use btc_chat::register_btc_chat_methods;
 pub use btc_chat::{BtcMakerActorProvisioner, BtcMakerRoleAgreementAuthority};

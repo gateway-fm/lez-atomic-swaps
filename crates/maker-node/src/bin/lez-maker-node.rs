@@ -18,6 +18,7 @@ use lez_maker_node::{
     BtcMakerActorProvisioner, BtcMakerLifecycle, BtcMakerRoleAgreementAuthority,
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerRpc,
     ProcessLogosPriceSource, ProcessRouteHealthProbe, RunLocalDelivery, chat_rpc_module,
+    clear_maker_lez_claim_admissions,
     node_config::load_node_arguments,
     owner_rpc_server::{
         OwnedPath, bind_owner_socket, publish_ready_file, server_config, validate_runtime_directory,
@@ -439,6 +440,8 @@ fn configured_actor_supervisor(
     let owner = MakerActorLeaseOwner::random().context("generate actor supervisor lease owner")?;
     let mut store =
         SqliteSwapStore::open(&arguments.database).context("open actor supervisor database")?;
+    // No claim attempt runs yet: an admission marker now is a crashed Node's.
+    clear_maker_lez_claim_admissions(&store);
 
     loop {
         let now = trusted_now_unix_seconds()?;

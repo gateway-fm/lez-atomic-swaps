@@ -219,6 +219,10 @@ impl ActorStatusV1 {
         }
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one field per status value; the status is built in one place"
+    )]
     fn active(
         role: ActorRole,
         phase: Phase,
@@ -227,6 +231,7 @@ impl ActorStatusV1 {
         lez_first_lock_replans: Vec<ActorReplanV1>,
         lez_refund_at_ms: Option<u64>,
         revealing_claim_hold_attention_ms: Option<u64>,
+        required_margin_ms: Option<u64>,
     ) -> Self {
         Self {
             schema_version: STATUS_SCHEMA_VERSION,
@@ -238,6 +243,7 @@ impl ActorStatusV1 {
                 lez_first_lock_replans,
                 lez_refund_at_ms,
                 revealing_claim_hold_attention_ms,
+                required_margin_ms,
             },
         }
     }
@@ -322,6 +328,10 @@ enum ActorStateV1 {
         /// How near that time a held revealing claim needs attention, ms.
         #[serde(skip_serializing_if = "Option::is_none")]
         revealing_claim_hold_attention_ms: Option<u64>,
+        /// The profile's required cross-chain reaction margin `M`, ms: a Maker
+        /// Node bounds a LEZ claim admission by half of it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        required_margin_ms: Option<u64>,
     },
 }
 
@@ -1919,32 +1929,47 @@ pub fn lez_claim_waiting_refund_at_ms(role_state_db: &Path) -> Option<u64> {
 }
 
 /// The marker a Maker Node writes when its one-LEZ-claim gate admits this
-/// swap's LEZ claim, before the claim is signed: its LEZ refund time and the
-/// admission time (ms). Another worker's gate treats it as a claim in flight
-/// until the claim's own in-flight marker replaces it, the swap's refund time
-/// passes, or [`LEZ_CLAIM_ADMISSION_HOLD_MS`] after admission (an attempt that
-/// died before submitting holds nothing longer). Removed at this swap's next
-/// gate evaluation. (`<swap>/actor/<role>/lez-claim-admitted`.)
+/// swap's LEZ claim, before the claim is signed: its LEZ refund time, the
+/// admission time and how long the admission holds (ms). Another worker's gate
+/// treats it as a claim in flight until the claim's own in-flight marker
+/// replaces it, the swap's refund time passes, or the hold ends (the Node stops
+/// the attempt before that; review 4, L2). Removed when the attempt ends, at
+/// this swap's next gate evaluation, and when the supervisor starts.
+/// (`<swap>/actor/<role>/lez-claim-admitted`.)
 #[must_use]
 pub fn lez_claim_admitted_marker(role_state_db: &Path) -> Option<PathBuf> {
     Some(role_state_db.parent()?.parent()?.join("lez-claim-admitted"))
 }
 
-/// How long an admitted, not yet submitted LEZ claim holds the others: one
-/// claim attempt's bound.
-pub const LEZ_CLAIM_ADMISSION_HOLD_MS: u64 = 300_000;
+/// One gate admission: the swap's LEZ refund time, when it was admitted, and
+/// how long it holds the others (ms; `None` in a marker written before the
+/// hold was recorded: the reader then applies its own attempt bound).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LezClaimAdmission {
+    /// The admitted swap's LEZ refund time, Unix milliseconds.
+    pub lez_refund_at_ms: u64,
+    /// The admission time, Unix milliseconds.
+    pub admitted_at_ms: u64,
+    /// How long the admission holds, milliseconds.
+    pub hold_ms: Option<u64>,
+}
 
-/// Records this swap's LEZ claim as admitted (`Some((refund_at_ms, now_ms))`),
-/// or removes the record (`None`).
-pub fn record_lez_claim_admitted(role_state_db: &Path, admission: Option<(u64, u64)>) {
+/// Records this swap's LEZ claim as admitted, or removes the record (`None`).
+pub fn record_lez_claim_admitted(role_state_db: &Path, admission: Option<LezClaimAdmission>) {
     let Some(marker) = lez_claim_admitted_marker(role_state_db) else {
         return;
     };
     match admission {
-        Some((refund_at_ms, now_ms)) => {
+        Some(admission) => {
+            let hold = admission
+                .hold_ms
+                .map_or_else(String::new, |hold_ms| format!("hold_ms={hold_ms}\n"));
             let _ = fs::write(
                 marker,
-                format!("lez_refund_at_ms={refund_at_ms}\nadmitted_at_ms={now_ms}\n"),
+                format!(
+                    "lez_refund_at_ms={}\nadmitted_at_ms={}\n{hold}",
+                    admission.lez_refund_at_ms, admission.admitted_at_ms
+                ),
             );
         }
         None => {
@@ -1953,17 +1978,20 @@ pub fn record_lez_claim_admitted(role_state_db: &Path, admission: Option<(u64, u
     }
 }
 
-/// The (refund time, admission time) an admitted marker records, when present
-/// and well formed.
+/// The admission a marker records, when present and well formed.
 #[must_use]
-pub fn lez_claim_admission(role_state_db: &Path) -> Option<(u64, u64)> {
+pub fn lez_claim_admission(role_state_db: &Path) -> Option<LezClaimAdmission> {
     let text = fs::read_to_string(lez_claim_admitted_marker(role_state_db)?).ok()?;
     let field = |key: &str| {
         text.lines()
             .find_map(|line| line.strip_prefix(key))
             .and_then(|value| value.trim().parse::<u64>().ok())
     };
-    Some((field("lez_refund_at_ms=")?, field("admitted_at_ms=")?))
+    Some(LezClaimAdmission {
+        lez_refund_at_ms: field("lez_refund_at_ms=")?,
+        admitted_at_ms: field("admitted_at_ms=")?,
+        hold_ms: field("hold_ms="),
+    })
 }
 
 fn valid_swap_id_text(value: &str) -> bool {
@@ -2703,6 +2731,14 @@ async fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError
                     .lez_refund_delay()
                     .value(),
                 )),
+                Some(
+                    lez_zec_swap_sdk::ZecRefundProfile::for_id(
+                        active.agreement().binding().profile_id(),
+                    )
+                    .required_margin()
+                    .value()
+                    .saturating_mul(1000),
+                ),
             )
         }
         None => ActorStatusV1::not_activated(config.role()),
@@ -2735,6 +2771,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "every phase, every action, then the wire form"
+    )]
     fn status_projection_preserves_typed_lifecycle_values_and_wire_schema() {
         let not_activated = ActorStatusV1::not_activated(ActorRole::Taker);
         assert_eq!(not_activated.role(), ActorRole::Taker);
@@ -2775,6 +2815,7 @@ mod tests {
                 Vec::new(),
                 None,
                 None,
+                None,
             );
             assert_eq!(status.role(), ActorRole::Maker);
             assert_eq!(
@@ -2806,6 +2847,7 @@ mod tests {
                 Vec::new(),
                 None,
                 None,
+                None,
             );
             assert_eq!(
                 status.projection(),
@@ -2823,6 +2865,7 @@ mod tests {
             23,
             ZecLifecycleAction::ClaimLez,
             Vec::new(),
+            None,
             None,
             None,
         );
@@ -2849,6 +2892,7 @@ mod tests {
             Vec::new(),
             Some(1_800_000),
             Some(600_000),
+            Some(120_000),
         );
         assert_eq!(status.lez_refund_at_ms(), Some(1_800_000));
         assert_eq!(status.revealing_claim_hold_attention_ms(), Some(600_000));

@@ -13,7 +13,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write as _,
     os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Output},
     thread,
     time::{Duration, Instant},
@@ -24,8 +24,8 @@ use btc_reference_actor::ActorConfig as BtcActorConfig;
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorResolution,
-    prepare_maker_actor, supervise_one_abandoned_maker_actor, supervise_one_due_maker_actor,
-    supervise_one_due_maker_actor_until,
+    clear_maker_lez_claim_admissions, prepare_maker_actor, supervise_one_abandoned_maker_actor,
+    supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
 };
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, RecoverySchedule, SwapCoordinator,
@@ -2285,6 +2285,101 @@ fn a_failed_swaps_timed_claim_in_flight_holds_the_next_until_its_refund_time() {
             Some("lez_revealing_claim_in_flight")
         ),
         "a failed swap's submitted claim holds the nonce until its refund time"
+    );
+}
+
+/// One swap whose claim was admitted `admitted_ago_ms` ago by another worker
+/// (or a Node that crashed since), and the next swap's claim at the gate.
+fn admitted_then_next(
+    root: &Path,
+    store: &mut SqliteSwapStore,
+    names: (&str, &str),
+    admitted_ago_ms: u64,
+) -> PathBuf {
+    let now_ms = unix_now_ms();
+    let (admitted, next) = names;
+    let admitted_state = register_gated_actor(store, root, admitted, |_| {
+        claim_logging_program(
+            &root.join("admitted-log"),
+            "claim_evidence_available",
+            "claim_lez",
+        )
+    });
+    fs::write(
+        zec_reference_actor::lez_claim_admitted_marker(&admitted_state).unwrap(),
+        format!(
+            "lez_refund_at_ms={}\nadmitted_at_ms={}\n",
+            now_ms + 3_600_000,
+            now_ms - admitted_ago_ms
+        ),
+    )
+    .unwrap();
+    store
+        .claim_maker_actor(
+            &SwapId::new(admitted).unwrap(),
+            MakerActorLeaseOwner::new([0x7d; 16]).unwrap(),
+            10,
+        )
+        .unwrap()
+        .expect("admitted swap's lease");
+    let claims = root.join("lez-claims-submitted");
+    register_gated_actor(store, root, next, |state| {
+        gated_lez_claim_program(
+            next,
+            state,
+            &root.join("next-log"),
+            &claims,
+            now_ms + 1_800_000,
+        )
+    });
+    admitted_state
+}
+
+#[test]
+fn a_stale_lez_claim_admission_holds_no_longer_than_one_claim_attempt() {
+    // Review 4, L2: an admission marker held every other claim for 300 s
+    // whatever the attempt's own bound (2 s here); after a Node crash that
+    // is more than the devnet profiles' whole margin (120 s). It now holds for
+    // at most the attempt's bound (and half the profile's margin) plus the
+    // time to stop the child.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let owner = MakerActorLeaseOwner::new([0x7e; 16]).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    admitted_then_next(
+        root.path(),
+        &mut store,
+        ("m5-stale-admission", "m5-stale-admission-next"),
+        60_000,
+    );
+    let (swap, resolution, class) = run_due(&mut store, owner, 10);
+    assert_eq!(swap, "m5-stale-admission-next");
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (MakerActorSupervisorResolution::Requeued, None),
+        "an admission older than one attempt holds nothing"
+    );
+}
+
+#[test]
+fn a_starting_supervisor_clears_every_lez_claim_admission() {
+    // Review 4, L2: no claim attempt runs when the supervisor starts, so an
+    // admission marker then is a crashed Node's and holds nothing.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let admitted_state = admitted_then_next(
+        root.path(),
+        &mut store,
+        ("m5-crashed-admission", "m5-crashed-admission-next"),
+        0,
+    );
+    clear_maker_lez_claim_admissions(&store);
+    assert!(
+        !zec_reference_actor::lez_claim_admitted_marker(&admitted_state)
+            .unwrap()
+            .exists(),
+        "the crashed Node's admission is gone"
     );
 }
 
