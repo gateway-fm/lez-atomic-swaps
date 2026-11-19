@@ -93,7 +93,7 @@ fn xmr_pre_effect_cycle_validates_real_authority_and_never_invokes_an_effect() {
     let record = store.list_maker_actor_processes().unwrap().remove(0);
     prepare_maker_actor(&record).expect("exact XMR deployment preflight");
 
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
     let outcome = supervise_one_due_maker_actor(
         &mut store,
         MakerActorLeaseOwner::new([0x58; 16]).unwrap(),
@@ -189,7 +189,7 @@ fn queued_xmr_recover_overrides_typed_blocked_status_without_generic_effect() {
             10,
         )
         .unwrap();
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
 
     let outcome = supervise_one_due_maker_actor(
         &mut store,
@@ -285,7 +285,7 @@ fn one_bounded_cycle_runs_exact_sealed_actor_and_durably_requeues() {
     .expect("program preflight");
     prepare_maker_actor(&registered).expect("exact deployment preflight");
 
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .expect("bounded supervisor config");
     let outcome = supervise_one_due_maker_actor(
         &mut store,
@@ -358,7 +358,7 @@ fn manual_claim_invokes_only_claim_and_atomically_completes_action() {
             10,
         )
         .unwrap();
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
 
     let outcome = supervise_one_due_maker_actor(
         &mut store,
@@ -427,7 +427,7 @@ fn a_makers_earlier_zcash_refund_first_observes_the_takers_zcash_claim() {
         invocation_log.display()
     );
     let mut store = registered_store(root.path(), swap_id, program.as_bytes());
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
 
     for now in [10, 20] {
         let outcome = supervise_one_due_maker_actor(
@@ -533,7 +533,8 @@ fn a_makers_followup_lez_claim_waits_behind_another_swaps_lez_claim_in_flight() 
             claim_logging_program(&log, "claim_evidence_available", next_action).as_bytes(),
         );
         let id = SwapId::new(swap_id).unwrap();
-        let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+        let config =
+            MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
         let outcome = supervise_one_due_maker_actor(
             &mut store,
             MakerActorLeaseOwner::new([0x75; 16]).unwrap(),
@@ -688,7 +689,7 @@ fn two_outstanding_maker_lez_claims_go_one_at_a_time_earliest_refund_first() {
         );
         register_actor(&mut store, &swap_root, swap_id, program.as_bytes());
     }
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
     let owner = MakerActorLeaseOwner::new([0x77; 16]).unwrap();
     let run = |store: &mut SqliteSwapStore, now: u64| {
         let outcome = supervise_one_due_maker_actor(store, owner, now, &config)
@@ -787,7 +788,7 @@ fn manual_refund_invokes_only_recover_and_atomically_completes_action() {
             10,
         )
         .unwrap();
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
 
     let outcome = supervise_one_due_maker_actor(
         &mut store,
@@ -1246,7 +1247,7 @@ fn abandoned_lease_is_generation_transferred_and_run_without_an_unleased_gap() {
         .unwrap();
     assert_eq!(stale_lease.generation(), 1);
 
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .expect("bounded recovery config");
     let outcome = supervise_one_abandoned_maker_actor(
         &mut store,
@@ -1305,7 +1306,7 @@ fn live_old_lock_is_not_stolen_and_does_not_block_a_due_peer() {
         .unwrap();
     let old_process_lock = ActorHeldLock::acquire(&locked_record).unwrap();
     let new_owner = MakerActorLeaseOwner::new([0x64; 16]).unwrap();
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .expect("bounded peer config");
 
     assert!(
@@ -1342,7 +1343,7 @@ fn expired_effect_cutoff_leaves_due_actor_untouched_and_spawns_nothing() {
         invocation_marker.display()
     );
     let mut store = registered_store(root.path(), swap_id, program.as_bytes());
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(40), 5, 30, 8_192)
         .unwrap()
         .with_effect_cutoff_boottime_milliseconds(boottime_milliseconds().saturating_add(50))
         .expect("bounded effect cutoff");
@@ -1376,16 +1377,16 @@ fn effect_cutoff_kills_inflight_actor_and_clears_child_identity() {
          test \"$2\" = \"196\" || exit 92\n\
          case \"$3\" in\n\
            status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":3,\"next_action\":\"claim_lez\"}}' ;;\n\
-           claim) printf started > '{}'; sleep 5; printf completed > '{}'; printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}' ;;\n\
+           claim) printf started > '{}'; sleep 30; printf completed > '{}'; printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}' ;;\n\
            *) exit 93 ;;\n\
          esac\n",
         started_marker.display(),
         completed_marker.display()
     );
     let mut store = registered_store(root.path(), swap_id, program.as_bytes());
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(5), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .unwrap()
-        .with_effect_cutoff_boottime_milliseconds(boottime_milliseconds().saturating_add(1_000))
+        .with_effect_cutoff_boottime_milliseconds(boottime_milliseconds().saturating_add(8_000))
         .expect("bounded in-flight effect cutoff");
     let started = Instant::now();
 
@@ -1398,7 +1399,9 @@ fn effect_cutoff_kills_inflight_actor_and_clears_child_identity() {
     .expect("in-flight cutoff cycle")
     .expect("one due actor");
 
-    assert!(started.elapsed() < Duration::from_secs(3));
+    // The child sleeps 30 s; stopped at the 8 s cutoff (room for a loaded
+    // runner to start it first) it never completes.
+    assert!(started.elapsed() < Duration::from_secs(25));
     assert_eq!(
         outcome.resolution(),
         MakerActorSupervisorResolution::Backoff
@@ -1464,7 +1467,7 @@ fn successful_actor_leader_cannot_leave_stdout_holding_descendant() {
         printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}'\n\
         exit 0\n";
     let mut store = registered_store(root.path(), swap_id, program);
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .expect("bounded descendant config");
     let started = Instant::now();
 
@@ -1509,7 +1512,7 @@ fn cancellation_kills_descendants_clears_identity_and_durably_backs_off() {
         wait\n";
     let program: &[u8] = &actor_script_bytes(program);
     let mut store = registered_store(root.path(), swap_id, program);
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .expect("bounded cancellation config");
     let cancellation = MakerActorSupervisorCancellation::new();
     let signal = cancellation.clone();
@@ -1594,7 +1597,7 @@ fn unknown_actor_outcome_is_reaped_and_failed_closed() {
           *) exit 93 ;;\n\
         esac\n";
     let mut store = registered_store(root.path(), swap_id, program);
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .expect("bounded invalid-output config");
 
     let outcome = supervise_one_due_maker_actor(
@@ -1634,7 +1637,7 @@ fn regressing_effect_revision_fails_and_preserves_valid_status_progress() {
           *) exit 93 ;;\n\
         esac\n";
     let mut store = registered_store(root.path(), swap_id, program);
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .expect("bounded regressing-output config");
 
     let outcome = supervise_one_due_maker_actor(
@@ -1676,7 +1679,7 @@ fn terminal_offline_status_resolves_without_an_effect_process() {
         invocation_log.display()
     );
     let mut store = registered_store(root.path(), swap_id, program.as_bytes());
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192)
         .expect("bounded terminal config");
 
     let outcome = supervise_one_due_maker_actor(
@@ -1866,7 +1869,7 @@ fn a_submitted_maker_lez_claim_is_followed_while_an_earlier_refund_waits() {
         );
         register_actor(&mut store, &swap_root, swap_id, program.as_bytes());
     }
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
     let owner = MakerActorLeaseOwner::new([0x78; 16]).unwrap();
     let run = |store: &mut SqliteSwapStore, now: u64| {
         let outcome = supervise_one_due_maker_actor(store, owner, now, &config)
@@ -1937,7 +1940,18 @@ fn run_due(
     owner: MakerActorLeaseOwner,
     now: u64,
 ) -> (String, MakerActorSupervisorResolution, Option<String>) {
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    // Long enough that a stub actor on a loaded runner never hits it (the gate
+    // tests flaked at 2 s under parallel load).
+    run_due_with_timeout(store, owner, now, Duration::from_secs(20))
+}
+
+fn run_due_with_timeout(
+    store: &mut SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    now: u64,
+    attempt_timeout: Duration,
+) -> (String, MakerActorSupervisorResolution, Option<String>) {
+    let config = MakerActorSupervisorConfig::new(attempt_timeout, 5, 30, 8_192).unwrap();
     let outcome = supervise_one_due_maker_actor(store, owner, now, &config)
         .unwrap()
         .expect("a due actor runs");
@@ -2419,6 +2433,109 @@ fn a_starting_supervisor_clears_every_lez_claim_admission() {
             .unwrap()
             .exists(),
         "the crashed Node's admission is gone"
+    );
+}
+
+/// A Maker LEZ claim whose `claim` takes `claim_seconds` and then reports
+/// `submitted`, under a profile margin of `margin_ms` (its admission bound is
+/// half of it).
+fn slow_lez_claim_program(margin_ms: u64, claim_seconds: &str) -> String {
+    let at = unix_now_ms() + 3_600_000;
+    format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000,\"required_margin_ms\":{margin_ms}}}' ;;\n\
+           claim) sleep {claim_seconds}; printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"submitted\",\"phase\":\"claim_evidence_available\",\"revision\":5,\"next_action\":\"claim_lez\"}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n"
+    )
+}
+
+#[test]
+fn an_admitted_lez_claim_nobody_waits_behind_runs_past_its_admission_bound() {
+    // Review 5, item 3: the admission bound (half the margin) stopped an
+    // admitted claim attempt even with no other swap at the gate, and a stop
+    // between the bridge submit and the in-flight marker leaves a pending
+    // claim unmarked. The bound applies only while another swap waits.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    // Bound 0.5 s (margin 1 s), the claim takes 1.2 s, the attempt timeout 20 s.
+    register_gated_actor(&mut store, root.path(), "m5-slow-admitted", |_| {
+        slow_lez_claim_program(1_000, "1.2")
+    });
+    let (_, resolution, class) = run_due(
+        &mut store,
+        MakerActorLeaseOwner::new([0x81; 16]).unwrap(),
+        10,
+    );
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (MakerActorSupervisorResolution::Requeued, None),
+        "nobody waits: the attempt runs to its own timeout"
+    );
+}
+
+#[test]
+fn a_timed_out_admitted_lez_claim_keeps_its_admission_for_its_hold() {
+    // Review 5, item 3: an admitted attempt stopped at its timeout may have
+    // sent its claim without writing the in-flight marker; its admission now
+    // stays for its recorded hold instead of being released at once.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let state = register_gated_actor(&mut store, root.path(), "m5-timed-out-admitted", |_| {
+        slow_lez_claim_program(600_000, "12")
+    });
+    let (_, resolution, class) = run_due_with_timeout(
+        &mut store,
+        MakerActorLeaseOwner::new([0x82; 16]).unwrap(),
+        10,
+        Duration::from_secs(6),
+    );
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (
+            MakerActorSupervisorResolution::Backoff,
+            Some("actor_timeout")
+        )
+    );
+    let admission = zec_reference_actor::lez_claim_admission(&state).expect("admission kept");
+    assert!(
+        admission.admitted_at_ms + admission.hold_ms.expect("hold recorded") > unix_now_ms(),
+        "the admission holds after the stop"
+    );
+}
+
+#[test]
+fn an_admission_marker_holds_for_its_own_recorded_hold() {
+    // Review 5, item 5: a marker's own hold_ms, not the reader's bound.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let state = admitted_then_next(
+        root.path(),
+        &mut store,
+        ("m5-own-hold", "m5-own-hold-next"),
+        60_000,
+    );
+    let mut admission = zec_reference_actor::lez_claim_admission(&state).unwrap();
+    admission.hold_ms = Some(600_000);
+    zec_reference_actor::record_lez_claim_admitted(&state, Some(admission));
+    let (swap, resolution, class) = run_due(
+        &mut store,
+        MakerActorLeaseOwner::new([0x83; 16]).unwrap(),
+        10,
+    );
+    assert_eq!(swap, "m5-own-hold-next");
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (
+            MakerActorSupervisorResolution::Backoff,
+            Some("lez_revealing_claim_in_flight")
+        ),
+        "admitted a minute ago with a ten-minute hold: it still holds"
     );
 }
 

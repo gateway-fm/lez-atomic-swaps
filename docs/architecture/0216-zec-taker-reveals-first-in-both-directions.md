@@ -233,7 +233,11 @@ direction's agreements are byte-identical to those signed before.
   admission bound after the failure and is then ignored: a claim it left
   pending costs the next claim one re-plan at the nonce, never funds. The
   Node reads no LEZ account nonce, so it cannot release the hold the moment
-  that claim lands.
+  that claim lands. An admitted claim not yet submitted holds the others for
+  min(attempt timeout, M/2); that bound stops its attempt only while another
+  swap waits at the gate, and an attempt stopped at its timeout keeps its
+  admission for its recorded hold (it may have sent the claim without
+  writing its in-flight marker).
 - A `TakerSellsLez` swap stored by a Node built before this ADR cannot be
   resumed: its agreement names a legacy profile and is refused.
 - The Taker must claim ZEC while the Zcash refund is at least
