@@ -6679,3 +6679,128 @@ async fn a_maker_whose_lez_claim_was_lost_waits_while_the_takers_zcash_claim_is_
         }
     );
 }
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn only_the_maker_with_the_takers_lez_refund_in_hand_may_refund_its_zcash_after_claim_evidence()
+ {
+    // Review 4, L5: the exception that admits the Maker's Zcash refund with
+    // claim evidence recorded (its follow-up LEZ claim lost) was open to
+    // either role, and nothing in the SDK transition asked for the Taker's
+    // LEZ refund: only the drive did. A fresh intent now needs the Taker's
+    // confirmed LEZ refund evidence, and no observer may record the refund.
+    let id = "sdk-lost-maker-lez-claim-refund-gate";
+    let secret = [0xbb; 32];
+    let now = LezUnixMilliseconds::new(0);
+    let direction = SwapDirection::TakerSellsLez;
+    let mut fixture = activate_claim_actor_fixture(id, direction, Participant::Taker, secret).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    assert_eq!(
+        fixture.taker.drive_claim(now).await.expect("taker reveals"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_claim(now)
+            .await
+            .expect("maker reads the reveal"),
+        ClaimDriveOutcome::Projected { .. }
+    ));
+    let swap_id = SwapId::new(id).expect("swap ID");
+    let maker_store = refund_store(&fixture, Participant::Maker);
+    let accepted = maker_store.accepted(&swap_id).expect("accepted terms");
+    let revision = fixture.maker.revision();
+    let coordinator = maker_store
+        .coordinator_at(&accepted, revision)
+        .expect("maker coordinator at claim evidence");
+    assert_eq!(coordinator.phase(), Phase::ClaimEvidenceAvailable);
+    let agreement = accepted.agreement();
+    let prepared = PreparedRefundSubmissionV1::new(
+        RefundStepV1::Zcash,
+        refund_submission_id(RefundStepV1::Zcash),
+        refund_submission_bytes(RefundStepV1::Zcash).to_vec(),
+    )
+    .expect("prepared Zcash refund");
+    // Without the Taker's LEZ refund no intent is staged.
+    assert!(matches!(
+        RefundIntentV1::from_active(
+            agreement,
+            &coordinator,
+            Participant::Maker,
+            revision,
+            prepared.clone()
+        ),
+        Err(lez_zec_swap_sdk::RefundError::ClaimEvidenceRecorded { .. })
+    ));
+    let lez_refund = RefundEvidenceV1::new(
+        agreement,
+        RefundStepV1::Lez,
+        refund_submission_id(RefundStepV1::Lez),
+        "taker-lez-refund",
+        refund_position(agreement, RefundStepV1::Lez),
+        3,
+    )
+    .expect("the Taker's LEZ refund");
+    let intent = RefundIntentV1::after_lost_followup(
+        agreement,
+        &coordinator,
+        Participant::Maker,
+        revision,
+        prepared.clone(),
+        &lez_refund,
+    )
+    .expect("intent with the Taker's LEZ refund");
+    // A Zcash refund cannot stand in for the LEZ one.
+    let zcash_refund = RefundEvidenceV1::new(
+        agreement,
+        RefundStepV1::Zcash,
+        refund_submission_id(RefundStepV1::Zcash),
+        "maker-zcash-refund",
+        refund_position(agreement, RefundStepV1::Zcash),
+        3,
+    )
+    .expect("the Maker's Zcash refund");
+    assert!(
+        RefundIntentV1::after_lost_followup(
+            agreement,
+            &coordinator,
+            Participant::Maker,
+            revision,
+            prepared.clone(),
+            &zcash_refund,
+        )
+        .is_err()
+    );
+    // Nor the Taker stage the Maker's refund.
+    assert!(
+        RefundIntentV1::after_lost_followup(
+            agreement,
+            &coordinator,
+            Participant::Taker,
+            revision,
+            prepared,
+            &lez_refund,
+        )
+        .is_err()
+    );
+    // The retained intent replays.
+    let record = RefundIntentRecordV1::from(&intent);
+    assert_eq!(
+        record
+            .revalidate(&accepted, &coordinator, revision)
+            .expect("replayed intent"),
+        intent
+    );
+    // No observer records the Maker's Zcash refund at claim evidence.
+    assert!(matches!(
+        RefundTransitionV1::from_observed(
+            agreement,
+            &coordinator,
+            Participant::Taker,
+            revision,
+            zcash_refund,
+        ),
+        Err(lez_zec_swap_sdk::RefundError::ClaimEvidenceRecorded { .. })
+    ));
+}

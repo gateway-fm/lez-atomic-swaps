@@ -67,17 +67,23 @@ impl RefundStepV1 {
     /// the coordinator's own rule for `refund_maker_leg` and `refund_taker_leg`. The reorg
     /// phases admit the LEZ step and can hold claim evidence, so the phase alone would let
     /// the SDK stage and broadcast a refund the coordinator then refuses to project.
+    ///
+    /// The one exception is the `TakerSellsLez` Maker's own Zcash refund after its follow-up
+    /// LEZ claim was lost (`SwapCoordinator::refund_maker_leg_after_lost_followup`), and only
+    /// where `lost_followup` admits it: an intent staged with the Taker's confirmed LEZ refund
+    /// ([`RefundIntentV1::after_lost_followup`]), that intent replayed, or the transition that
+    /// closes it. Never for the Taker, and never for an observer (review 4, L5).
     pub(crate) fn validate_active(
         self,
         agreement: &ZecAgreementV1,
         coordinator: &SwapCoordinator,
+        local_participant: Participant,
+        lost_followup: bool,
     ) -> Result<(), RefundError> {
         if coordinator.claim_evidence().is_some() {
-            // The one exception: the TakerSellsLez Maker's Zcash refund after its
-            // follow-up LEZ claim was lost (SwapCoordinator::
-            // refund_maker_leg_after_lost_followup; the SDK admits it only once
-            // the Taker's LEZ refund is final).
-            if self == Self::Zcash
+            if lost_followup
+                && local_participant == Participant::Maker
+                && self == Self::Zcash
                 && agreement.direction() == SwapDirection::TakerSellsLez
                 && coordinator.phase() == Phase::ClaimEvidenceAvailable
             {
@@ -336,7 +342,76 @@ impl RefundIntentV1 {
         staged_revision: u64,
         prepared: PreparedRefundSubmissionV1,
     ) -> Result<Self, RefundError> {
-        prepared.step.validate_active(agreement, coordinator)?;
+        Self::build(
+            agreement,
+            coordinator,
+            local_participant,
+            staged_revision,
+            prepared,
+            false,
+        )
+    }
+
+    /// `TakerSellsLez`: the Maker's Zcash refund intent with claim evidence recorded, its
+    /// follow-up LEZ claim lost. `lez_refund` must be the Taker's confirmed LEZ refund (the
+    /// adapter's evidence: depth checked, at or past the LEZ refund time); only then can the
+    /// Maker's LEZ claim never land, and only then may it take back its Zcash.
+    ///
+    /// # Errors
+    ///
+    /// Rejects another role, step, direction or phase, and LEZ refund evidence of another step
+    /// or before the LEZ refund time.
+    pub fn after_lost_followup(
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        local_participant: Participant,
+        staged_revision: u64,
+        prepared: PreparedRefundSubmissionV1,
+        lez_refund: &RefundEvidenceV1,
+    ) -> Result<Self, RefundError> {
+        if lez_refund.step != RefundStepV1::Lez {
+            return Err(RefundError::StepMismatch);
+        }
+        RefundStepV1::Lez.validate_deadline(agreement, lez_refund.position)?;
+        Self::build(
+            agreement,
+            coordinator,
+            local_participant,
+            staged_revision,
+            prepared,
+            true,
+        )
+    }
+
+    /// A retained intent, revalidated: one staged after a lost follow-up claim replays as such.
+    pub(crate) fn retained(
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        local_participant: Participant,
+        staged_revision: u64,
+        prepared: PreparedRefundSubmissionV1,
+    ) -> Result<Self, RefundError> {
+        Self::build(
+            agreement,
+            coordinator,
+            local_participant,
+            staged_revision,
+            prepared,
+            true,
+        )
+    }
+
+    fn build(
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        local_participant: Participant,
+        staged_revision: u64,
+        prepared: PreparedRefundSubmissionV1,
+        lost_followup: bool,
+    ) -> Result<Self, RefundError> {
+        prepared
+            .step
+            .validate_active(agreement, coordinator, local_participant, lost_followup)?;
         let owner = prepared.step.owner(agreement);
         if local_participant != owner {
             return Err(RefundError::WrongRole {
@@ -396,7 +471,7 @@ impl RefundIntentV1 {
                 current: current_revision,
             });
         }
-        let expected = Self::from_active(
+        let expected = Self::retained(
             agreement,
             coordinator,
             self.local_participant,
@@ -560,7 +635,9 @@ impl RefundTransitionV1 {
         predecessor_revision: u64,
         evidence: RefundEvidenceV1,
     ) -> Result<Self, RefundError> {
-        evidence.step.validate_active(agreement, coordinator)?;
+        evidence
+            .step
+            .validate_active(agreement, coordinator, local_participant, false)?;
         let owner = evidence.step.owner(agreement);
         if local_participant == owner {
             return Err(RefundError::WrongObserverRole {
@@ -638,7 +715,12 @@ impl RefundTransitionV1 {
         {
             return Err(RefundError::ContextMismatch);
         }
-        self.evidence.step.validate_active(agreement, coordinator)?;
+        self.evidence.step.validate_active(
+            agreement,
+            coordinator,
+            self.local_participant,
+            self.intent_staged_revision.is_some(),
+        )?;
         self.evidence
             .step
             .validate_deadline(agreement, self.evidence.position)?;

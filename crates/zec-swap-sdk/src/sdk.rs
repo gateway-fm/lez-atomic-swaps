@@ -2794,8 +2794,9 @@ where
                 .await
                 .map_err(|error| ZecSdkError::LezRefund(Box::new(error)))?
             {
-                RefundObservationV1::Confirmed(_) => {
-                    self.drive_owned_refund(RefundStepV1::Zcash).await
+                RefundObservationV1::Confirmed(lez_refund) => {
+                    self.drive_owned_refund(RefundStepV1::Zcash, Some(&lez_refund))
+                        .await
                 }
                 RefundObservationV1::Absent | RefundObservationV1::Unstable => Ok(
                     RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Lez),
@@ -2817,7 +2818,7 @@ where
         };
 
         if self.local_participant() == step.owner(self.agreement()) {
-            self.drive_owned_refund(step).await
+            self.drive_owned_refund(step, None).await
         } else {
             self.observe_counterparty_refund(step).await
         }
@@ -2903,9 +2904,12 @@ where
         }
     }
 
+    /// `lez_refund`: the Taker's confirmed LEZ refund when this is the Maker's Zcash refund
+    /// after its follow-up LEZ claim was lost; a fresh intent is staged only with it.
     async fn drive_owned_refund(
         &mut self,
         step: RefundStepV1,
+        lez_refund: Option<&crate::RefundEvidenceV1>,
     ) -> Result<RefundDriveOutcome, ZecSdkError> {
         let intent = if let Some(intent) = self.load_refund_intent().await? {
             intent
@@ -2914,7 +2918,7 @@ where
                 return Ok(wait);
             }
             let prepared = self.prepare_refund(step).await?;
-            self.stage_refund_intent(prepared).await?;
+            self.stage_refund_intent(prepared, lez_refund).await?;
             self.load_refund_intent()
                 .await?
                 .ok_or(ZecSdkError::MissingRefundIntent)?
@@ -3102,14 +3106,25 @@ where
     async fn stage_refund_intent(
         &self,
         prepared: PreparedRefundSubmissionV1,
+        lez_refund: Option<&crate::RefundEvidenceV1>,
     ) -> Result<(), ZecSdkError> {
-        let intent = RefundIntentV1::from_active(
-            self.agreement(),
-            &self.coordinator,
-            self.local_participant(),
-            self.revision,
-            prepared,
-        )?;
+        let intent = match lez_refund {
+            Some(lez_refund) => RefundIntentV1::after_lost_followup(
+                self.agreement(),
+                &self.coordinator,
+                self.local_participant(),
+                self.revision,
+                prepared,
+                lez_refund,
+            )?,
+            None => RefundIntentV1::from_active(
+                self.agreement(),
+                &self.coordinator,
+                self.local_participant(),
+                self.revision,
+                prepared,
+            )?,
+        };
         match self.store.create_refund_intent(&intent).await {
             Ok(CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame) => Ok(()),
             Ok(CreateFirstLockOutcome::Conflict) => Err(ZecSdkError::RefundIntentConflict),
