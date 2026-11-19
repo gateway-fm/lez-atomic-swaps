@@ -2227,6 +2227,69 @@ fn a_failed_swaps_lez_claim_in_flight_holds_no_other_claim() {
 }
 
 #[test]
+fn a_failed_swaps_timed_claim_in_flight_holds_the_next_until_its_refund_time() {
+    // Review 4, L3: 3bf22848 let a failed swap's in-flight marker hold nothing
+    // whatever the failure, including one after the claim was submitted (its
+    // output unreadable): that claim may still be pending at the nonce, and the
+    // next swap's claim would compete with it. A timed marker of a failed swap
+    // holds until its refund time like any other; only an old-format marker
+    // with no time is ignored (it held forever), and the actor removes its
+    // marker itself on the failures where its claim can no longer land.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let claims = root.path().join("lez-claims-submitted");
+    let now_ms = unix_now_ms();
+    let owner = MakerActorLeaseOwner::new([0x7c; 16]).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let holder = "m5-failed-after-submit";
+    let holder_refund_at = now_ms + 3_600_000;
+    let holder_state = register_gated_actor(&mut store, root.path(), holder, |_| {
+        format!(
+            "#!/bin/sh\n\
+             test \"$1\" = \"--config-fd\" || exit 91\n\
+             case \"$3\" in\n\
+               status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
+               claim) printf '%s\\n' 'not an effect' ;;\n\
+               *) exit 95 ;;\n\
+             esac\n",
+            at = holder_refund_at,
+        )
+    });
+    // The claim was submitted (its marker records the refund time) before the
+    // attempt's output failed.
+    fs::write(
+        zec_reference_actor::revealing_claim_in_flight_marker(&holder_state).unwrap(),
+        format!("follow-up LEZ claim submitted\nlez_refund_at_ms={holder_refund_at}\n"),
+    )
+    .unwrap();
+    let (swap, resolution, class) = run_due(&mut store, owner, 10);
+    assert_eq!(swap, holder);
+    assert_eq!(resolution, MakerActorSupervisorResolution::Failed);
+    assert_eq!(class.as_deref(), Some("actor_output_invalid"));
+
+    let follower = "m5-failed-after-submit-follower";
+    register_gated_actor(&mut store, root.path(), follower, |state| {
+        gated_lez_claim_program(
+            follower,
+            state,
+            &root.path().join("follower-log"),
+            &claims,
+            now_ms + 1_800_000,
+        )
+    });
+    let (swap, resolution, class) = run_due(&mut store, owner, 20);
+    assert_eq!(swap, follower);
+    assert_eq!(
+        (resolution, class.as_deref()),
+        (
+            MakerActorSupervisorResolution::Backoff,
+            Some("lez_revealing_claim_in_flight")
+        ),
+        "a failed swap's submitted claim holds the nonce until its refund time"
+    );
+}
+
+#[test]
 fn a_maker_lez_claim_admitted_elsewhere_holds_the_next_one() {
     // Review 3, item 4: the gate admitted a claim and its in-flight marker was
     // written only once the claim was submitted, so a second supervisor worker

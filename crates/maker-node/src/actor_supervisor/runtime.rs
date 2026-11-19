@@ -1045,29 +1045,28 @@ fn revealing_claim_held_back(
             .as_millis(),
     )
     .unwrap_or(u64::MAX);
-    // A submitted claim holds the nonce until its swap's LEZ refund time, unless
-    // its swap was stopped as failed: a failed swap is driven no more, so its
-    // claim is either already included (the nonce moved on, the next claim is
-    // planned at the live one) or never will be (review 3, item 3; an
-    // old-format marker without a time held every claim forever).
+    // A submitted claim holds the nonce until its swap's LEZ refund time, its
+    // swap failed or not: a swap that failed after submitting (its output
+    // unreadable, say) may have its claim still pending at the nonce (review 4,
+    // L3). The actor removes its marker itself on the failures where its claim
+    // can no longer land; an old-format marker without a time of a failed swap
+    // holds nothing (it held every claim forever; review 3, item 3).
     let in_flight = peers().find(|record| {
         let state = record.manifest().state_database_path();
-        if record.schedule_state() == lez_swap_store::MakerActorScheduleState::Failed {
-            return false;
-        }
+        let failed = record.schedule_state() == lez_swap_store::MakerActorScheduleState::Failed;
         // Admitted on another worker and not submitted yet: it is about to sign at the
-        // nonce (review 3, item 4), for a bounded time.
-        if zec_reference_actor::lez_claim_admission(state)
-            .is_some_and(|admission| admission_holds(admission, now_ms))
+        // nonce (review 3, item 4), for a bounded time. A failed swap's attempt is over.
+        if !failed
+            && zec_reference_actor::lez_claim_admission(state)
+                .is_some_and(|admission| admission_holds(admission, now_ms))
         {
             return true;
         }
+        let refund_at_ms = zec_reference_actor::revealing_claim_in_flight_refund_at_ms(state);
         zec_reference_actor::revealing_claim_in_flight_marker(state)
             .is_some_and(|marker| marker.is_file())
-            && in_flight_claim_holds(
-                zec_reference_actor::revealing_claim_in_flight_refund_at_ms(state),
-                now_ms,
-            )
+            && !(failed && refund_at_ms.is_none())
+            && in_flight_claim_holds(refund_at_ms, now_ms)
     });
     let earlier = in_flight.is_none().then(|| {
         peers().find(|record| {
