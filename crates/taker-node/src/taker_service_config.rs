@@ -114,7 +114,8 @@ pub struct ConfiguredTakerServiceContext {
 impl ConfiguredTakerServiceContext {
     /// Refuses to start while an open ZEC `TakerSellsLez` swap of the earlier
     /// reveal order is held
-    /// ([`ConfiguredTakerInitiationContext::refuse_start_with_legacy_zec_swaps`]).
+    /// (`ConfiguredTakerInitiationContext::refuse_start_with_legacy_zec_swaps`,
+    /// compiled with `pair-zec` only).
     ///
     /// # Errors
     ///
