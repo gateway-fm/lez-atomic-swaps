@@ -480,8 +480,8 @@ const DEFAULT_HELD_CLAIM_RETRY_MS: u64 = 35_000;
 ///
 /// The count and the gate agree on which swaps compete: a swap past its LEZ
 /// refund time is not counted, and its claim, waiting or in flight, holds no
-/// other (it can no longer be included; its actor stops it by name,
-/// `lez_claim_cannot_land`). A claim whose attempt failed before submission
+/// other (it can no longer be included; its actor waits for the Taker's LEZ
+/// refund, then recovers its Zcash or stops by name, `lez_claim_cannot_land`). A claim whose attempt failed before submission
 /// does not hold the others either, so a failing swap delays the queue by
 /// at most its own attempt, not until its refund time.
 #[must_use]

@@ -2265,8 +2265,9 @@ fn is_maker_followup_lez_claim<Lez, Zcash, Store>(
 /// mempool without running the escrow program or checking its validity
 /// window), the block builder drops it with no nonce change (ADR 0006), and
 /// the exact observation finds nothing, so the claim would be resubmitted
-/// forever. Past the LEZ refund time this asks the chain: the Taker's LEZ
-/// refund, then (past the grace) the owned claim itself.
+/// forever. Past the LEZ refund time this asks the chain for the Taker's LEZ
+/// refund; the claim itself stops being submitted once the finalized LEZ time
+/// is past the refund time (`followup_lez_claim_drive`).
 async fn followup_lez_claim_cannot_land<Factory, Contexts, Funding, Zcash>(
     active: &lez_zec_swap_sdk::ActiveZecSwap<
         ContextOwningLezBridgePorts<Factory, Contexts, SqliteZecRecoveryStore, Funding>,

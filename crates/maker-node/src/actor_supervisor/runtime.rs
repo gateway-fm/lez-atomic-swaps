@@ -1385,10 +1385,10 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
             ChildRunError::Fail("lez_escrow_already_initialized")
         }
         // The Zcash actor refused the Maker's follow-up LEZ claim because it
-        // can no longer land (the Taker's LEZ refund is on the chain, or the
-        // LEZ refund time passed with no claim of the swap in a block) and
-        // removed its in-flight marker: the swap stops by name, and its claim
-        // holds no other swap's.
+        // can no longer land (the Taker's LEZ refund is final) and its Zcash
+        // HTLC is spent by the Taker's claim at depth, and it removed its
+        // in-flight marker: the swap stops by name, and its claim holds no
+        // other swap's. A claim that only missed its window waits instead.
         #[cfg(feature = "pair-zec")]
         Some(zec_reference_actor::LEZ_CLAIM_CANNOT_LAND_EXIT_CODE) => {
             ChildRunError::Fail("lez_claim_cannot_land")

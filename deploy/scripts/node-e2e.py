@@ -2879,7 +2879,6 @@ def maker_effect_lines(swap_id: str, since: str) -> list[str]:
     Logos Delivery's lines split the Node's or rotate them away. A Node
     without the file (an older image) is read from the container's log since
     `since` (RFC 3339)."""
-    container = NODES["maker"][0]
     result = subprocess.run(node_command("maker", ["cat", "/run/lez/maker/node.log"]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
     text = result.stdout
