@@ -1,0 +1,100 @@
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1795078508
+  forgetting swaps that referenced the old chain
+[reset 08:55:09] done: swaps forgotten; the Nodes stay stopped
+  [time 08:55:09] forget the old chain's swaps (reset-swaps.sh --offline): 1 s (1 s since up.sh started)
+[reset 08:55:11] done: swaps forgotten (open ones archived as .reset-archive/20261119T085510Z); the Nodes stay stopped
+[lanes 08:55:11] lane 2 stopped
+[reset 08:55:13] done: swaps forgotten (open ones archived as .reset-archive/20261119T085512Z); the Nodes stay stopped
+[lanes 08:55:13] lane 3 stopped
+  [time 08:55:16] stop the old chain: 7 s (8 s since up.sh started)
+  [time 08:55:16] move the old chain's state aside: 0 s (8 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795078516 (2026-11-19T08:55:16Z), root d9f5796ed9d18fe58acd3576b822358d85247367a1239744dda3c64cf1c93be9
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmGwp8dkTgtDADzKVazpct5VfyAmTNkGTt1): runtime/zebra/zebrad.toml
+refund timing: cutoff 100 s, refunds at 115 and 245 s (LEZ step 20 s, stall 40 s)
+runtime generated at runtime
+  [time 08:55:17] runtime config: 1 s (9 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 08:55:17] images: 0 s (9 s since up.sh started)
+[3/6] starting chains…
+ Container lez-zebra Running 
+ Container lez-bitcoin-core Running 
+ Container lez-btc-miner Running 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Starting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 08:55:20] start the chains (compose up): 3 s (12 s since up.sh started)
+  [time 08:55:26] chains healthy: 6 s (18 s since up.sh started)
+  the new LEZ chain finalizes (5 -> 8)
+  [time 08:55:36] the new chain finalizes: 10 s (28 s since up.sh started)
+  [time 08:55:38] indexer check (repair-indexer.sh): 2 s (30 s since up.sh started)
+Regtest wallets ready; Maker 3449.999754 BTC, Taker 5249.999631 BTC spendable.
+  [time 08:55:38] Bitcoin Core wallets (seed-btc-wallets.py): 0 s (30 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+taker-lane03: claimed 2000000 into 4ZS52TjyLddB47WBwj29duP8zeKU5GHc5MnoLgXrFVmj (cdaeb42a19ab982be93111e1d42e0657560ef085066a0788c723c5c1e84d8b7f)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+  [time 08:56:05] market bootstrap: 27 s (57 s since up.sh started)
+[5/6] Nodes…
+ Container lez-sequencer Running 
+ Container lez-bitcoin-core Running 
+ Container lez-network Running 
+ Container lez-maker-node Recreate 
+ Container lez-maker-node Recreated 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+ Container lez-bitcoin-core Healthy 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-taker-node Recreate 
+ Container lez-taker-node Recreated 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+  [time 08:56:08] start the Nodes (compose up): 3 s (60 s since up.sh started)
+  [time 08:56:14] Nodes healthy: 6 s (66 s since up.sh started)
+  [time 08:56:14] Nodes answer owner health: 0 s (66 s since up.sh started)
+[lanes 08:56:29] lane 2 up: lez-l2-{maker,taker}-node (maker-basel-02, taker-limmat-02), Zebra on 127.0.0.1:18242, VNC 5911/5912
+[lanes 08:56:32] lane 3 up: lez-l3-{maker,taker}-node (maker-lane03, taker-lane03), Zebra on 127.0.0.1:18252, VNC 5921/5922
+  [time 08:56:32] lanes 2..3 (lanes.sh up): 18 s (84 s since up.sh started)
+15/15 market checks passed
+  [time 08:56:34] market check (verify-market.py): 2 s (86 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez-sequencer Running 
+ Container lez-network Running 
+ Container lez-heartbeat Running 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+  [time 08:56:35] finality heartbeat: 1 s (87 s since up.sh started)
+[6/6] the parties' desks…
+
+──────────────────────────────────────────────────────────────────
+ LEZ swap stack is up (volumes: lez-*)
+
+   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / 2 s)
+   LEZ indexer RPC       http://127.0.0.1:8779
+   explorers             off (LEZ_EXPLORERS=1 ./scripts/up.sh starts them)
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: lezswap; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: lezswap; the Taker desk)
+   Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health
+
+ logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
+ a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen
+──────────────────────────────────────────────────────────────────
+  [time 08:56:35] desk suites: 0 s (87 s since up.sh started)

@@ -130,6 +130,52 @@ pub trait LezClaimPort: Send + Sync {
         agreement: &ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<RevealingClaimSubmitOutcomeV1, Self::Error>;
+
+    // `TakerSellsLez`: the Maker's LEZ claim follows the Taker's Zcash claim. It is the same
+    // claimant-signed escrow claim, so the follow-up methods reuse the claim methods above and
+    // only relabel the step; an adapter overrides them only to change that.
+
+    /// Derives and signs the Maker's follow-up LEZ claim with the preimage it read on Zcash.
+    async fn prepare_followup_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        let prepared = self.prepare_revealing_claim(agreement, preimage).await?;
+        Ok(prepared
+            .relabeled(crate::ClaimStepV1::FollowupLez)
+            .expect("a LEZ claim relabels to a LEZ step"))
+    }
+    /// Observes the exact durable follow-up LEZ claim identity before any rebroadcast.
+    async fn observe_prepared_followup_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        let as_claim = prepared
+            .relabeled_copy(crate::ClaimStepV1::RevealingLez)
+            .expect("a LEZ claim relabels to a LEZ step");
+        self.observe_prepared_revealing_claim(agreement, &as_claim)
+            .await
+    }
+    /// Observes the counterparty's agreement-bound LEZ claim without a local plan.
+    async fn observe_counterparty_followup_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.observe_counterparty_revealing_claim(agreement).await
+    }
+    /// Submits the exact follow-up LEZ claim bytes reopened from protected storage.
+    async fn submit_followup_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimSubmitOutcomeV1, Self::Error> {
+        let as_claim = prepared
+            .relabeled_copy(crate::ClaimStepV1::RevealingLez)
+            .expect("a LEZ claim relabels to a LEZ step");
+        self.submit_revealing_claim(agreement, &as_claim).await
+    }
 }
 
 /// What the LEZ adapter did with one exact owned revealing claim.
@@ -188,6 +234,65 @@ pub trait ZcashClaimPort: Send + Sync {
         context: &ZcashClaimContextV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<(), Self::Error>;
+
+    /// Observes the counterparty's claim of the exact HTLC outpoint and reads its preimage
+    /// (`TakerSellsLez`: the Maker reads the Taker's revealing Zcash claim).
+    ///
+    /// `Confirmed` for a claim spend of the exact outpoint, in the mempool or in a block at any
+    /// depth, whose input takes this contract's claim branch with a 32-byte preimage hashing to
+    /// the agreement digest (the evidence carries its confirmations, possibly 0): a valid
+    /// preimage stays valid whatever happens to that transaction, so the Maker acts on first
+    /// sight. A moving tip is `Unstable`; an unspent output is `Absent`. A refund spend, or a
+    /// claim with another or malformed preimage, is an error and never yields a preimage.
+    async fn observe_counterparty_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error>;
+
+    // `TakerSellsLez`: the Taker's Zcash claim reveals first. It is the same claimant-signed
+    // HTLC claim as the follow-up, so these reuse the methods above and relabel the step.
+
+    /// Derives and signs the Taker's revealing Zcash claim.
+    async fn prepare_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        let prepared = self
+            .prepare_followup_claim(agreement, context, preimage)
+            .await?;
+        Ok(prepared
+            .relabeled(crate::ClaimStepV1::RevealingZcash)
+            .expect("a Zcash claim relabels to a Zcash step"))
+    }
+    /// Observes the exact durable revealing Zcash claim identity before any rebroadcast.
+    async fn observe_prepared_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        let as_claim = prepared
+            .relabeled_copy(crate::ClaimStepV1::FollowupZcash)
+            .expect("a Zcash claim relabels to a Zcash step");
+        self.observe_prepared_followup_claim(agreement, context, &as_claim)
+            .await
+    }
+    /// Submits the exact revealing Zcash claim bytes reopened from protected storage.
+    async fn submit_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        let as_claim = prepared
+            .relabeled_copy(crate::ClaimStepV1::FollowupZcash)
+            .expect("a Zcash claim relabels to a Zcash step");
+        self.submit_followup_claim(agreement, context, &as_claim)
+            .await
+    }
 }
 
 /// Authenticated, expiring offer discovery supplied by a Delivery adapter.

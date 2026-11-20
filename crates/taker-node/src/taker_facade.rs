@@ -326,7 +326,8 @@ pub struct TakerSwapViewV1 {
     pub state: TakerSwapStateV1,
     /// Sole currently admissible terminal action, when one exists.
     pub available_action: Option<TakerTerminalActionV1>,
-    /// Non-effect guidance shown only after receiving transparent ZEC by claim.
+    /// Non-effect guidance shown once the Taker's claim of transparent ZEC is
+    /// final (selling LEZ).
     pub privacy_guidance: Option<TakerPrivacyGuidanceV1>,
     /// Why the swap needs the owner's attention, when the Node knows
     /// (`lez_depositor_balance_insufficient`: the LEZ lot cannot be funded).
@@ -349,10 +350,12 @@ pub struct TakerSwapViewV1 {
     /// can say which part of the swap a state stands for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_phase: Option<String>,
-    /// Selling ZEC: `true` once the Taker's revealing LEZ claim window closed
-    /// with nothing sent (the agreement's LEZ refund time minus the profile's
-    /// required margin). The row then offers Refund and never the claim; a
-    /// desk names the state "claim window closed" (FINDINGS 26).
+    /// `true` once the Taker's revealing claim window closed with nothing
+    /// sent: selling ZEC its LEZ claim (the agreement's LEZ refund time minus
+    /// the profile's required margin); selling LEZ its Zcash claim (that time,
+    /// or the Zcash refund height minus the profile's reveal margin). The row
+    /// then offers Refund and never the claim; a desk names the state "claim
+    /// window closed" (FINDINGS 26).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_window_closed: Option<bool>,
     /// Why the Node's supervisor last backed off on this swap's actor, or

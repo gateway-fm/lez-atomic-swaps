@@ -12,6 +12,28 @@ use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType};
 /// provisioner states the Zcash refund's earliest wall time with it.
 pub const PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS: u64 = 3_900;
 
+/// The slowest Zcash Testnet pace a Taker-reveals-first public profile is
+/// sized for, milliseconds a block: three times NU7's 25 s target, over three
+/// times the 22.7 s a block Testnet averaged from NU7 to 2026-11-11. In
+/// `TakerSellsLez` the Maker's Zcash refund is the earlier one; its latest
+/// wall time is the Zcash anchor plus the refund window at this pace.
+pub const PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS: u64 = 75_000;
+
+/// Which participant publishes the secret first under a profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZecRevealOrder {
+    /// Profiles up to `deterministic-local-devnet-v6` and `public-testnet-v2`:
+    /// the LEZ recipient claims first and the Zcash refund is the later one.
+    /// Safe only in `TakerSellsForeign`, where the LEZ recipient is the
+    /// first-locking Taker; a `TakerSellsLez` agreement under such a profile is
+    /// refused.
+    LezRecipientFirst,
+    /// The common flow (AGENTS.md): the Taker holds the secret and claims the
+    /// Maker-funded leg first in both directions; the Maker-funded leg refunds
+    /// first.
+    TakerFirst,
+}
+
 /// A reviewed immutable ZEC parameter profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ZecProfileId {
@@ -71,6 +93,28 @@ pub enum ZecProfileId {
     /// [`Self::DeterministicLocalDevnetV4`] on Regtest's NU7: the devnet's
     /// refund journeys' profile (4-minute LEZ refund delay), as V5 is V3's.
     DeterministicLocalDevnetV6,
+    /// The isolated test lane's Taker-reveals-first profile (Regtest NU7):
+    /// in `TakerSellsLez` the Maker's Zcash refund opens first (8 blocks the
+    /// lane mines), the Taker's LEZ refund 120 s after the anchor, and the
+    /// Taker claims ZEC only while 2 blocks and 30 s remain.
+    DeterministicLocalV3,
+    /// The devnet's Taker-reveals-first profile for swaps that claim
+    /// (Regtest NU7): [`Self::DeterministicLocalDevnetV5`]'s 12-minute LEZ
+    /// refund delay with a 16-block Zcash window (two swaps of one signer at
+    /// one anchor use 8 blocks before their claims) and a 120 s margin for
+    /// the Maker's LEZ claim after the Taker's Zcash claim; the Taker claims
+    /// only while 3 blocks remain.
+    DeterministicLocalDevnetV7,
+    /// [`Self::DeterministicLocalDevnetV7`] with an 8-minute LEZ refund delay
+    /// for the refund journeys, which never claim: long enough that the
+    /// Maker's funding falls inside the claim window, short of V7's 12 min.
+    DeterministicLocalDevnetV8,
+    /// Zcash Testnet NU7 and the LEZ v0.2 testnet, Taker reveals first: in
+    /// `TakerSellsLez` the Maker's Zcash refund (95 blocks) is reached by
+    /// 2 h after the anchor at [`PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS`], the
+    /// Taker's LEZ refund is 4 h after it, and the 2 h between give the Maker
+    /// ten Zcash confirmations of the Taker's claim and its LEZ claim.
+    PublicTestnetV3,
 }
 
 impl ZecProfileId {
@@ -88,6 +132,10 @@ impl ZecProfileId {
             Self::DeterministicLocalV2 => "deterministic-local-v2",
             Self::DeterministicLocalDevnetV5 => "deterministic-local-devnet-v5",
             Self::DeterministicLocalDevnetV6 => "deterministic-local-devnet-v6",
+            Self::DeterministicLocalV3 => "deterministic-local-v3",
+            Self::DeterministicLocalDevnetV7 => "deterministic-local-devnet-v7",
+            Self::DeterministicLocalDevnetV8 => "deterministic-local-devnet-v8",
+            Self::PublicTestnetV3 => "public-testnet-v3",
         }
     }
 }
@@ -113,6 +161,17 @@ pub enum ProfileError {
     /// Supplied conservative bounds do not leave the profile's required margin.
     #[error("cross-chain bounds do not leave the profile's required margin")]
     InsufficientSafetyMargin,
+    /// The profile was not sized for this direction: a `TakerSellsLez`
+    /// agreement under a LEZ-recipient-first profile would hand the preimage to
+    /// the Maker while the Taker locks first, and a `TakerSellsForeign`
+    /// agreement under a Taker-reveals-first profile would let the Taker's
+    /// Zcash refund open before the Maker's LEZ refund.
+    #[error("the profile's reveal order is unsafe for this swap direction")]
+    UnsafeRevealOrder,
+    /// The BIP-199 contract's claim branch is not the one the profile means
+    /// ([`ZecRefundProfile::bip199_preimage_rule`]).
+    #[error("the BIP-199 contract's preimage rule does not match the selected profile")]
+    PreimageRuleMismatch,
     /// Role deadlines could not form a valid core recovery schedule.
     #[error("invalid recovery schedule: {0}")]
     InvalidSchedule(lez_swap_core::Error),
@@ -130,11 +189,15 @@ pub struct ZecRefundProfile {
     zcash_refund_blocks: u32,
     required_margin: UnixSeconds,
     expiry_delta_blocks: u32,
+    reveal_order: ZecRevealOrder,
+    zcash_reveal_margin_blocks: u32,
+    zcash_slowest_block_millis: Option<u64>,
 }
 
 impl ZecRefundProfile {
     /// Resolves the exact immutable parameters for a named profile.
     #[must_use]
+    #[allow(clippy::too_many_lines, reason = "one arm per immutable profile")]
     pub const fn for_id(id: ZecProfileId) -> Self {
         match id {
             ZecProfileId::DeterministicLocalV1 => Self {
@@ -147,6 +210,9 @@ impl ZecRefundProfile {
                 zcash_refund_blocks: 4,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
+                reveal_order: ZecRevealOrder::LezRecipientFirst,
+                zcash_reveal_margin_blocks: 0,
+                zcash_slowest_block_millis: None,
             },
             ZecProfileId::DeterministicLocalDevnetV1 => Self {
                 id,
@@ -158,6 +224,9 @@ impl ZecRefundProfile {
                 zcash_refund_blocks: 4,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
+                reveal_order: ZecRevealOrder::LezRecipientFirst,
+                zcash_reveal_margin_blocks: 0,
+                zcash_slowest_block_millis: None,
             },
             ZecProfileId::DeterministicLocalDevnetV2 => Self {
                 id,
@@ -175,6 +244,9 @@ impl ZecRefundProfile {
                 zcash_refund_blocks: 8,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
+                reveal_order: ZecRevealOrder::LezRecipientFirst,
+                zcash_reveal_margin_blocks: 0,
+                zcash_slowest_block_millis: None,
             },
             ZecProfileId::DeterministicLocalDevnetV3 => Self {
                 id,
@@ -186,6 +258,9 @@ impl ZecRefundProfile {
                 zcash_refund_blocks: 8,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
+                reveal_order: ZecRevealOrder::LezRecipientFirst,
+                zcash_reveal_margin_blocks: 0,
+                zcash_slowest_block_millis: None,
             },
             ZecProfileId::DeterministicLocalDevnetV4 => Self {
                 id,
@@ -197,6 +272,9 @@ impl ZecRefundProfile {
                 zcash_refund_blocks: 8,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
+                reveal_order: ZecRevealOrder::LezRecipientFirst,
+                zcash_reveal_margin_blocks: 0,
+                zcash_slowest_block_millis: None,
             },
             ZecProfileId::PublicTestnetV1 => Self {
                 id,
@@ -208,6 +286,9 @@ impl ZecRefundProfile {
                 zcash_refund_blocks: 192,
                 required_margin: UnixSeconds::new(7_200),
                 expiry_delta_blocks: 40,
+                reveal_order: ZecRevealOrder::LezRecipientFirst,
+                zcash_reveal_margin_blocks: 0,
+                zcash_slowest_block_millis: None,
             },
             ZecProfileId::PublicTestnetV2 => Self {
                 id,
@@ -230,6 +311,9 @@ impl ZecRefundProfile {
                 // NU7's 25 s target keeps librustzcash's 120-block default
                 // expiry at the 50 min that 40 blocks of 75 s were.
                 expiry_delta_blocks: 120,
+                reveal_order: ZecRevealOrder::LezRecipientFirst,
+                zcash_reveal_margin_blocks: 0,
+                zcash_slowest_block_millis: None,
             },
             // The NU7 Regtest profiles: their NU6.2 namesakes' parameters,
             // NU7's branch. Expiry stays 40 blocks: on Regtest blocks come
@@ -243,6 +327,66 @@ impl ZecRefundProfile {
             ZecProfileId::DeterministicLocalDevnetV6 => {
                 Self::for_id(ZecProfileId::DeterministicLocalDevnetV4).on_regtest_nu7(id)
             }
+            // Taker reveals first. Regtest: the harness mines every block, so
+            // the earlier refund's latest wall time is declared by the
+            // provisioner (no pace bound).
+            ZecProfileId::DeterministicLocalV3 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu7,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(120),
+                zcash_refund_blocks: 8,
+                required_margin: UnixSeconds::new(30),
+                expiry_delta_blocks: 40,
+                reveal_order: ZecRevealOrder::TakerFirst,
+                zcash_reveal_margin_blocks: 2,
+                zcash_slowest_block_millis: None,
+            },
+            ZecProfileId::DeterministicLocalDevnetV7 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu7,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(720),
+                zcash_refund_blocks: 16,
+                required_margin: UnixSeconds::new(120),
+                expiry_delta_blocks: 40,
+                reveal_order: ZecRevealOrder::TakerFirst,
+                zcash_reveal_margin_blocks: 3,
+                zcash_slowest_block_millis: None,
+            },
+            // 480 s, not V6's 240 s: the Maker stops funding Zcash once the claim
+            // window (refund time minus the 120 s margin) closes, and a devnet
+            // take reaches the Maker's funding about 150 s after the anchor
+            // (provisioning to take 117 s, the Taker's lock 35 s; 2026-11-18). Under
+            // 240 s the window closed at the anchor plus 120 s and the Maker never
+            // funded.
+            ZecProfileId::DeterministicLocalDevnetV8 => Self {
+                id,
+                lez_refund_delay: UnixSeconds::new(480),
+                ..Self::for_id(ZecProfileId::DeterministicLocalDevnetV7)
+            },
+            ZecProfileId::PublicTestnetV3 => Self {
+                id,
+                zcash_network: NetworkType::Test,
+                consensus_branch_id: BranchId::Nu7,
+                lez_confirmations: 2,
+                zcash_confirmations: 10,
+                // Earlier refund (Zcash, TakerSellsLez): the anchor is the tip
+                // plus one, so the refund height is 96 blocks away at most;
+                // 96 x 75 s = 7,200 s. Later refund (LEZ): 7,200 s + the
+                // 7,200 s margin = 14,400 s.
+                lez_refund_delay: UnixSeconds::new(14_400),
+                zcash_refund_blocks: 95,
+                required_margin: UnixSeconds::new(7_200),
+                expiry_delta_blocks: 120,
+                reveal_order: ZecRevealOrder::TakerFirst,
+                zcash_reveal_margin_blocks: 10,
+                zcash_slowest_block_millis: Some(PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS),
+            },
         }
     }
 
@@ -309,6 +453,56 @@ impl ZecRefundProfile {
         self.expiry_delta_blocks
     }
 
+    /// Which participant publishes the secret first under this profile.
+    #[must_use]
+    pub const fn reveal_order(self) -> ZecRevealOrder {
+        self.reveal_order
+    }
+
+    /// Whether this profile admits the direction. Each profile admits only the direction
+    /// whose refund order its numbers were sized for: the LEZ-recipient-first profiles
+    /// `TakerSellsForeign` (the Maker's LEZ refund first), the Taker-reveals-first profiles
+    /// `TakerSellsLez` (the Maker's Zcash refund first).
+    #[must_use]
+    pub const fn admits(self, direction: SwapDirection) -> bool {
+        matches!(
+            (direction, self.reveal_order),
+            (
+                SwapDirection::TakerSellsForeign,
+                ZecRevealOrder::LezRecipientFirst
+            ) | (SwapDirection::TakerSellsLez, ZecRevealOrder::TakerFirst)
+        )
+    }
+
+    /// What the claim branch of this profile's BIP-199 contracts requires of the
+    /// preimage: the Taker-reveals-first profiles check that it is 32 bytes (the
+    /// length the LEZ escrow claims with); the older profiles keep their script byte
+    /// for byte.
+    #[must_use]
+    pub const fn bip199_preimage_rule(self) -> crate::Bip199PreimageRule {
+        match self.reveal_order {
+            ZecRevealOrder::LezRecipientFirst => crate::Bip199PreimageRule::DigestOnly,
+            ZecRevealOrder::TakerFirst => crate::Bip199PreimageRule::Exactly32Bytes,
+        }
+    }
+
+    /// Blocks that must remain before the Zcash refund height when the Taker
+    /// sends its revealing Zcash claim (`TakerSellsLez`): the claim is sent
+    /// only while `tip + margin < refund height`, so it is buried that deep
+    /// before the Maker's refund can be mined.
+    #[must_use]
+    pub const fn zcash_reveal_margin_blocks(self) -> u32 {
+        self.zcash_reveal_margin_blocks
+    }
+
+    /// The slowest Zcash pace, milliseconds a block, a public profile's
+    /// earlier Zcash refund is sized for; `None` on Regtest, where the
+    /// harness mines every block.
+    #[must_use]
+    pub const fn zcash_slowest_block_millis(self) -> Option<u64> {
+        self.zcash_slowest_block_millis
+    }
+
     /// Verifies the actual node network and signing branch against the profile.
     ///
     /// # Errors
@@ -363,12 +557,16 @@ impl ZecRefundProfile {
 
     /// Builds a direction-aware schedule after validating calibrated wall-clock bounds.
     ///
-    /// `later_refund_earliest` must come from measured configuration or a controlled
-    /// deterministic harness. It is never inferred from Zcash's nominal block target.
+    /// The Maker-funded leg's refund is the earlier one: LEZ in `TakerSellsForeign`,
+    /// Zcash in `TakerSellsLez`. `earlier_refund_latest` is the latest wall time the
+    /// earlier refund can open; `later_refund_earliest` the earliest wall time the later
+    /// one can. Both must come from measured configuration or a controlled deterministic
+    /// harness; neither is inferred from Zcash's nominal block target.
     ///
     /// # Errors
     ///
-    /// Returns a missing-calibration, insufficient-margin, or invalid-schedule error.
+    /// Returns an unsafe-reveal-order, missing-calibration, insufficient-margin, or
+    /// invalid-schedule error.
     pub fn recovery_schedule(
         self,
         direction: SwapDirection,
@@ -377,11 +575,18 @@ impl ZecRefundProfile {
         earlier_refund_latest: LezUnixMilliseconds,
         later_refund_earliest: Option<UnixSeconds>,
     ) -> Result<RecoverySchedule, ProfileError> {
+        if !self.admits(direction) {
+            return Err(ProfileError::UnsafeRevealOrder);
+        }
         let later_refund_earliest =
             later_refund_earliest.ok_or(ProfileError::MissingSafetyCalibration)?;
+        let (earlier_chain, later_chain) = match direction {
+            SwapDirection::TakerSellsForeign => (Chain::Lez, Chain::Zcash),
+            SwapDirection::TakerSellsLez => (Chain::Zcash, Chain::Lez),
+        };
         let safety = TimelockSafety::between(
-            Chain::Lez,
-            Chain::Zcash,
+            earlier_chain,
+            later_chain,
             earlier_refund_latest.to_unix_seconds_ceil().value(),
             later_refund_earliest.value(),
             self.required_margin.value(),

@@ -187,7 +187,8 @@ fn swap(id: &str, direction: SwapDirection) -> SwapCoordinator {
             direction,
             ChainPosition::block_height(maker_chain, 100),
             ChainPosition::block_height(taker_chain, 120),
-            TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100).unwrap(),
+            // The Maker-funded leg refunds first in both directions.
+            TimelockSafety::between(maker_chain, taker_chain, 1_000, 1_200, 100).unwrap(),
         )
         .unwrap(),
     )

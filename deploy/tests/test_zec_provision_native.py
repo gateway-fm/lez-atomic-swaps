@@ -51,5 +51,32 @@ class NativeProvision(unittest.TestCase):
         self.assertIn('is not a directory', result.stderr)
 
 
+class ProfilePerDirection(unittest.TestCase):
+    """TakerSellsLez is signed only under the Taker-reveals-first profiles;
+    TakerSellsForeign keeps the ones it has always used. Refused before any
+    chain or container is touched."""
+
+    setUp = NativeProvision.setUp
+    provision = NativeProvision.provision
+
+    def test_taker_sells_lez_refuses_a_legacy_profile(self):
+        result = self.provision('--direction', 'TakerSellsLez', '--profile', 'deterministic-local-devnet-v5')
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("TakerSellsLez corridor's --profile must be deterministic-local-devnet-v7 or -v8", result.stderr)
+
+    def test_taker_sells_foreign_keeps_its_profiles(self):
+        result = self.provision('--direction', 'TakerSellsForeign', '--profile', 'deterministic-local-devnet-v7')
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("TakerSellsForeign corridor's --profile must be deterministic-local-devnet-v5 or -v6", result.stderr)
+
+    def test_the_help_names_the_default_profile_of_each_direction(self):
+        text = FIXTURE.read_text()
+        for line in ('Taker-reveals-first deterministic-local-devnet-v7', 'TakerSellsForeign: deterministic-local-devnet-v5',
+                     'public-testnet-v3 (TakerSellsLez)', "Taker's half only"):
+            self.assertIn(line, text)
+        self.assertIn('regtest:TakerSellsLez) DEFAULT_PROFILE=deterministic-local-devnet-v7', text)
+        self.assertIn('test:TakerSellsLez) DEFAULT_PROFILE=public-testnet-v3', text)
+
+
 if __name__ == '__main__':
     unittest.main()

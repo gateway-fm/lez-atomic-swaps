@@ -4,8 +4,8 @@
 //! A reservation costs the Maker one Zebra read pass and a few private files
 //! in the reservation's swap directory (beside the Bitcoin swaps, so both
 //! share the sidecar port bookkeeping): its Zcash key, a recovery key, the
-//! claim preimage when it funds Zcash, the unsigned draft and the record of
-//! the round. The swap's sidecar and actor template are made only at
+//! unsigned draft and the record of the round (the Maker holds no claim
+//! preimage, ADR 0216). The swap's sidecar and actor template are made only at
 //! `zec_chat_complete_v1`, once a countersigned agreement exists; from then on
 //! the template is in the actor registry and its sidecar is kept running, also
 //! across a Node restart.
@@ -249,6 +249,7 @@ impl ZecMakerReservations {
                     role: ActorRole::Maker,
                     run_id: sidecar.run_id().clone(),
                     swap_id,
+                    direction: record.direction,
                     bridge_endpoint: sidecar.endpoint(),
                     capability_file: sidecar.capability_file().to_path_buf(),
                     runtime: runtime.runtime_descriptor(),

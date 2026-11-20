@@ -526,15 +526,21 @@ async fn a_claim_accepted_once_is_decided_again_and_an_included_claim_is_never_r
 }
 
 #[tokio::test]
-async fn the_sixth_claim_replan_is_refused_by_name() {
+async fn a_claim_is_replanned_past_the_old_limit_and_its_lineage_survives_a_restart() {
+    // Issue #172: the sixth re-plan was refused (`ReplanExhausted`) while the
+    // claim could still land. A claim is re-planned for as long as its nonce
+    // keeps being taken, up to a bound no LEZ refund window reaches.
+    const { assert!(MAX_REVEALING_CLAIM_REPLANS > 5) };
     let (signer, key) = account(55);
     let (depositor, _) = account(56);
     let chain = Chain::new();
     let (endpoint, sequencer) = start_sequencer(chain.clone()).await;
     let directory = secure_directory();
-    let sidecar = start_sidecar(signer, key, &endpoint, directory.path(), &chain).await;
-    let mut current = prepare_claim(&sidecar, signer, depositor).await;
-    for index in 1..=MAX_REVEALING_CLAIM_REPLANS {
+    let sidecar = start_sidecar(signer, key.clone(), &endpoint, directory.path(), &chain).await;
+    let original = prepare_claim(&sidecar, signer, depositor).await;
+    let mut current = original.clone();
+    let mut lineage = Vec::new();
+    for index in 1..=8 {
         chain.set_live_nonce(FIRST_NONCE + u128::from(index));
         let replanned = sidecar
             .client()
@@ -544,25 +550,31 @@ async fn the_sixth_claim_replan_is_refused_by_name() {
                 current.transaction_id,
             ))
             .await
-            .expect("bounded re-plan");
+            .unwrap_or_else(|error| panic!("re-plan {index}: {error:?}"));
         assert_eq!(replanned.replan_index, index);
+        lineage.push(current.transaction_id);
         current = replanned.claim;
     }
-    chain.set_live_nonce(FIRST_NONCE + 10);
-    assert_remote_code(
-        sidecar
-            .client()
-            .supersede_revealing_claim(supersede(
-                signer,
-                "claim-supersede-6",
-                current.transaction_id,
-            ))
-            .await,
-        ErrorCode::ReplanExhausted,
-    );
-    assert_eq!(supersession_files(directory.path()).len(), 5);
+    assert_eq!(supersession_files(directory.path()).len(), 8);
 
+    // After a restart the whole lineage is recovered: every superseded claim
+    // answers with its own re-plan.
     sidecar.server.stop().await.expect("stop");
+    let restarted = start_sidecar(signer, key, &endpoint, directory.path(), &chain).await;
+    assert_eq!(prepare_claim(&restarted, signer, depositor).await, original);
+    let last = restarted
+        .client()
+        .supersede_revealing_claim(supersede(
+            signer,
+            "claim-supersede-8-after-restart",
+            *lineage.last().expect("eight re-plans"),
+        ))
+        .await
+        .expect("recovered eighth supersession");
+    assert_eq!(last.replan_index, 8);
+    assert_eq!(last.claim, current);
+
+    restarted.server.stop().await.expect("stop");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
 }

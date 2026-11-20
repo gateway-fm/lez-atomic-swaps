@@ -45,6 +45,20 @@ fn canonical_snapshot_constructs_evidence_only_after_every_node_fact_is_bound() 
 }
 
 #[test]
+fn the_makers_lez_claim_selling_lez_is_evidence_at_the_lez_legs_depth() {
+    // public-testnet-v3: LEZ needs 2 confirmations, Zcash 10. The Maker's LEZ
+    // claim (TakerSellsLez) spends the Taker-funded LEZ leg, so its depth is
+    // LEZ's, not the Zcash reveal's.
+    let agreement = agreement_under(ZecProfileId::PublicTestnetV3);
+    let evidence = RevealingClaimEvidenceV1::from_lez_claim_snapshot(
+        &agreement,
+        claim_snapshot(&agreement, Mutation::Valid),
+    )
+    .expect("a LEZ claim at the LEZ leg's depth");
+    assert_eq!(evidence.confirmations(), 2);
+}
+
+#[test]
 fn a_tip_that_only_grew_during_the_observation_is_accepted_at_the_pinned_depth() {
     let agreement = agreement();
     let evidence = RevealingClaimEvidenceV1::from_lez_claim_snapshot(
@@ -352,6 +366,9 @@ fn claim_snapshot(agreement: &ZecAgreementV1, mutation: Mutation) -> LezClaimNod
         canonical_block_hash,
         if matches!(mutation, Mutation::Pending) {
             LezInclusionStatusV1::Pending
+        } else if terms.chain().environment() == LezEnvironmentV1::PublicTestnetV0_2 {
+            // The public profile accepts only Bedrock-finalized inclusion.
+            LezInclusionStatusV1::Finalized
         } else {
             LezInclusionStatusV1::Safe
         },
@@ -449,8 +466,12 @@ fn claim_snapshot(agreement: &ZecAgreementV1, mutation: Mutation) -> LezClaimNod
     )
 }
 
-#[allow(clippy::too_many_lines)]
 fn agreement() -> ZecAgreementV1 {
+    agreement_under(ZecProfileId::DeterministicLocalV3)
+}
+
+#[allow(clippy::too_many_lines)]
+fn agreement_under(profile: ZecProfileId) -> ZecAgreementV1 {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
     let secp = Secp256k1::new();
@@ -464,14 +485,39 @@ fn agreement() -> ZecAgreementV1 {
     let onchain_swap_id = derive_lez_swap_id_v1(application_id.as_bytes());
     let metadata_account = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
     let custody_account = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
-    let profile = ZecProfileId::DeterministicLocalV1;
+    // TakerSellsLez needs a Taker-reveals-first profile; the LEZ claim is the
+    // Maker's, signed with the preimage it read from the Taker's Zcash claim.
+    let public = profile == ZecProfileId::PublicTestnetV3;
+    let (network, environment, refund_lock, refund_plan, expiry) = if public {
+        (
+            NetworkType::Test,
+            LezEnvironmentV1::PublicTestnetV0_2,
+            195,
+            ZecRefundPlanV1::new(100, 100, 7_300_000, 14_500),
+            120,
+        )
+    } else {
+        (
+            NetworkType::Regtest,
+            LezEnvironmentV1::DeterministicLocalV0_2,
+            124,
+            ZecRefundPlanV1::new(100, 116, 190_000, 220),
+            40,
+        )
+    };
     let binding = ZecSwapBinding::new(
         profile,
         ExpectedBip199Output::new(
-            NetworkType::Regtest,
-            BranchId::Nu6_2,
+            network,
+            BranchId::Nu7,
             Zatoshis::from_u64(100_000_000).expect("valid value"),
-            Bip199Contract::new(120, refund_hash, secret_digest, claimant_hash),
+            Bip199Contract::for_profile(
+                profile,
+                refund_lock,
+                refund_hash,
+                secret_digest,
+                claimant_hash,
+            ),
         ),
     )
     .expect("profile-bound Zcash output");
@@ -485,7 +531,7 @@ fn agreement() -> ZecAgreementV1 {
         ),
         secret_digest,
         ZecLezTermsV1::new(
-            LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
+            LezChainIdentityV1::new(environment, [8; 32], [7; 32]),
             escrow_program,
             LezAssetV1::Native {
                 authenticated_transfer_program_id: [2; 8],
@@ -504,9 +550,9 @@ fn agreement() -> ZecAgreementV1 {
             10_000,
             ZcashTransparentDestinationV1::p2pkh(refund_hash),
             10_000,
-            40,
+            expiry,
         ),
-        ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        refund_plan,
         NegotiationTranscriptV1::new([5; 32], [6; 32], 1_000),
     );
     let commitment = body.commitment();

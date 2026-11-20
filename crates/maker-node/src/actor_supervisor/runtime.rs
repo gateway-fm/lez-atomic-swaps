@@ -137,6 +137,7 @@ impl MakerActorSupervisorConfig {
                 | "zcash_fund"
                 | "lez_revealing_claim"
                 | "zcash_followup_claim"
+                | "lez_followup_claim"
                 | "claim_lez_tag15"
                 | "sweep_monero_refund"
         ) || !marker.is_absolute()
@@ -648,18 +649,31 @@ fn run_claimed_attempt_with_lock(
             Ok(command) => command,
             Err(attempt) => return Ok(attempt),
         };
-        if let Some(class) = effect_held_back(store, lease, config, command, &status) {
-            return Ok(ClaimedAttempt::Backoff(class));
-        }
+        let admitted = match effect_held_back(store, lease, config, command, &status) {
+            Ok(admitted) => admitted,
+            Err(class) => return Ok(ClaimedAttempt::Backoff(class)),
+        };
         attempted = command.name();
-        let effect = match run_child(
+        let run = run_child_until(
             store,
             lease,
             &held_lock,
             ActorInvocation::Effect(command),
             config,
             cancellation,
-        ) {
+            admitted.as_ref(),
+        );
+        // The admission of this swap's LEZ claim, if the gate made one, lasts as
+        // long as this attempt: submitted, the claim's own in-flight marker holds
+        // the others now; not submitted, it holds nothing. An attempt stopped at
+        // its timeout may have sent the claim without writing that marker: its
+        // admission then holds for its recorded hold from the stop (review 5,
+        // item 3).
+        match (&run, admitted.as_ref()) {
+            (Err(ChildRunError::Retry("actor_timeout")), Some(admitted)) => admitted.renew_now(),
+            _ => release_lez_claim_admission(lease),
+        }
+        let effect = match run {
             Ok(output) => output,
             Err(ChildRunError::Retry(class)) => return Ok(ClaimedAttempt::Backoff(class)),
             Err(ChildRunError::Fail(class)) => return Ok(ClaimedAttempt::Failed(class)),
@@ -788,6 +802,29 @@ fn run_child(
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<Vec<u8>, ChildRunError> {
+    run_child_until(
+        store,
+        lease,
+        held_lock,
+        invocation,
+        config,
+        cancellation,
+        None,
+    )
+}
+
+/// [`run_child`] for an admitted LEZ claim too: past its admission bound it is
+/// stopped while another swap waits at the gate (review 4, L2; review 5,
+/// item 3).
+fn run_child_until(
+    store: &mut SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    held_lock: &ActorHeldLock,
+    invocation: ActorInvocation,
+    config: &MakerActorSupervisorConfig,
+    cancellation: &MakerActorSupervisorCancellation,
+    admitted: Option<&AdmittedLezClaim>,
+) -> Result<Vec<u8>, ChildRunError> {
     ensure_invocation_admitted(invocation, config, cancellation)?;
     let actor_command = invocation.name();
     let deployment_failure = |error| classify_deployment(&error, lease, actor_command);
@@ -827,7 +864,7 @@ fn run_child(
         pause.swap_id == *lease.record().swap_id()
             && matches!(
                 (actor_command, pause.operation.as_ref()),
-                ("claim", "claim_lez_tag15")
+                ("claim", "claim_lez_tag15" | "lez_followup_claim")
                     | ("recover", "sweep_monero_refund")
                     | (
                         "drive",
@@ -836,6 +873,7 @@ fn run_child(
                             | "zcash_fund"
                             | "lez_revealing_claim"
                             | "zcash_followup_claim"
+                            | "lez_followup_claim"
                     )
             )
     }) {
@@ -875,7 +913,7 @@ fn run_child(
             .map_err(ChildRunError::Scheduling)?;
         return Err(ChildRunError::Retry("actor_output_unavailable"));
     };
-    let status = wait_for_child(&mut child, invocation, config, cancellation);
+    let status = wait_for_child(&mut child, invocation, config, cancellation, admitted);
     let output = match reader.join() {
         Ok(result) => result.map_err(|_| ChildRunError::Fail("actor_output_invalid")),
         Err(_) => Err(ChildRunError::Fail("actor_output_invalid")),
@@ -915,77 +953,253 @@ fn classify_deployment(
     }
 }
 
+/// Removes every Zcash swap's LEZ-claim admission marker. For a starting
+/// supervisor, when no claim attempt can be running: a marker then is a crashed
+/// Node's and must hold nothing (review 4, L2).
+pub fn clear_maker_lez_claim_admissions(store: &SqliteSwapStore) {
+    #[cfg(feature = "pair-zec")]
+    if let Ok(records) = store.list_maker_actor_processes() {
+        for record in records
+            .iter()
+            .filter(|record| record.manifest().kind() == MakerActorKindV1::Zcash)
+        {
+            zec_reference_actor::record_lez_claim_admitted(
+                record.manifest().state_database_path(),
+                None,
+            );
+        }
+    }
+    #[cfg(not(feature = "pair-zec"))]
+    let _ = store;
+}
+
+/// Removes this swap's LEZ-claim admission marker (review 3, item 4).
+fn release_lez_claim_admission(lease: &MakerActorLeaseV1) {
+    #[cfg(feature = "pair-zec")]
+    if lease.record().manifest().kind() == MakerActorKindV1::Zcash {
+        zec_reference_actor::record_lez_claim_admitted(
+            lease.record().manifest().state_database_path(),
+            None,
+        );
+    }
+    #[cfg(not(feature = "pair-zec"))]
+    let _ = lease;
+}
+
 /// Why an effect waits this attempt, if it does: the effect cutoff, or the
-/// one-revealing-LEZ-claim-in-flight gate — named
-/// `lez_revealing_claim_held_near_refund` once the held swap's own LEZ refund
-/// time is near, with the holder named beside its state for the monitor.
+/// one-Maker-LEZ-claim-in-flight gate — named
+/// `lez_revealing_claim_held_near_refund` (a stable reason identifier; the
+/// held claim is the Maker's follow-up LEZ claim) once the held swap's own LEZ
+/// refund time is near, with the holder named beside its state for the
+/// monitor; `lez_claim_waits_for_earlier_refund` while no claim is in flight
+/// and another swap's claim with an earlier LEZ refund time goes first.
+///
+/// `Ok(Some(admitted))`: the gate admitted this swap's LEZ claim.
 fn effect_held_back(
     store: &SqliteSwapStore,
     lease: &MakerActorLeaseV1,
     config: &MakerActorSupervisorConfig,
     command: ActorEffectCommand,
     status: &[u8],
-) -> Option<&'static str> {
+) -> Result<Option<AdmittedLezClaim>, &'static str> {
     if config.effect_cutoff_reached() {
-        return Some("actor_effect_cutoff");
+        return Err("actor_effect_cutoff");
     }
-    match revealing_claim_held_back(store, lease, command, status) {
-        RevealingClaimHold::Open => None,
-        RevealingClaimHold::Held => Some("lez_revealing_claim_in_flight"),
-        RevealingClaimHold::HeldNearRefund => Some("lez_revealing_claim_held_near_refund"),
+    let mut admitted = None;
+    match revealing_claim_held_back(
+        store,
+        lease,
+        command,
+        status,
+        config.attempt_timeout,
+        &mut admitted,
+    ) {
+        RevealingClaimHold::Open => Ok(admitted),
+        RevealingClaimHold::Held => Err("lez_revealing_claim_in_flight"),
+        RevealingClaimHold::HeldNearRefund => Err("lez_revealing_claim_held_near_refund"),
+        RevealingClaimHold::WaitsForEarlierRefund => Err("lez_claim_waits_for_earlier_refund"),
     }
 }
 
-/// The one-revealing-claim gate's answer for one effect (always open without
-/// the Zcash pair).
+/// A LEZ claim the gate admitted: its admission marker, renewed while it runs
+/// past its bound with no other swap waiting, and the other Zcash swaps'
+/// states, whose waiting markers end that renewal.
+#[cfg(feature = "pair-zec")]
+#[derive(Debug)]
+struct AdmittedLezClaim {
+    bound_deadline: Instant,
+    own_state: std::path::PathBuf,
+    peers: Vec<std::path::PathBuf>,
+    lez_refund_at_ms: u64,
+    hold_ms: u64,
+}
+
+#[cfg(feature = "pair-zec")]
+impl AdmittedLezClaim {
+    fn another_waits(&self) -> bool {
+        let now_ms = unix_now_ms();
+        self.peers.iter().any(|peer| {
+            zec_reference_actor::lez_claim_waiting_refund_at_ms(peer)
+                .is_some_and(|refund_at_ms| refund_at_ms > now_ms)
+        })
+    }
+
+    /// Renews the admission at most once a second.
+    fn renew(&self) {
+        if zec_reference_actor::lez_claim_admission(&self.own_state)
+            .is_none_or(|admission| admission.admitted_at_ms.saturating_add(1_000) <= unix_now_ms())
+        {
+            self.renew_now();
+        }
+    }
+
+    fn renew_now(&self) {
+        zec_reference_actor::record_lez_claim_admitted(
+            &self.own_state,
+            Some(zec_reference_actor::LezClaimAdmission {
+                lez_refund_at_ms: self.lez_refund_at_ms,
+                admitted_at_ms: unix_now_ms(),
+                hold_ms: Some(self.hold_ms),
+            }),
+        );
+    }
+}
+
+/// Without the Zcash pair the gate admits nothing.
+#[cfg(not(feature = "pair-zec"))]
+#[derive(Debug)]
+struct AdmittedLezClaim {
+    bound_deadline: Instant,
+}
+
+#[cfg(not(feature = "pair-zec"))]
+#[allow(
+    clippy::unused_self,
+    reason = "the Zcash pair's admission has the same shape"
+)]
+impl AdmittedLezClaim {
+    const fn another_waits(&self) -> bool {
+        false
+    }
+
+    const fn renew(&self) {}
+
+    const fn renew_now(&self) {}
+}
+
+#[cfg(feature = "pair-zec")]
+fn unix_now_ms() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
+/// The one-LEZ-claim gate's answer for one effect (always open without the
+/// Zcash pair).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(not(feature = "pair-zec"), allow(dead_code))]
 enum RevealingClaimHold {
     Open,
     Held,
     HeldNearRefund,
+    /// No claim is in flight, and another swap's claim waits with an earlier
+    /// LEZ refund time: it goes first.
+    WaitsForEarlierRefund,
 }
 
-/// The Maker settles every Zcash swap as one LEZ account: its revealing LEZ
-/// claims (`TakerSellsLez`) are planned at that account's committed nonce, so
-/// one is in flight at a time (FINDINGS 24). A Zcash claim at both legs
-/// locked waits while another non-terminal Zcash actor holds its in-flight
-/// marker — written when its claim is submitted, removed when the claim is
-/// final. Durable, never released on a timer.
+/// The Maker settles every Zcash swap as one LEZ account: its LEZ claims (the
+/// follow-up claim in `TakerSellsLez`, with the preimage read from the Taker's
+/// Zcash claim) are planned at that account's committed nonce, so one is in
+/// flight at a time (FINDINGS 24). A Maker LEZ claim (`claim_lez`) waits
+/// while another non-terminal Zcash actor holds its in-flight marker —
+/// written when its claim is submitted, removed when the claim is final or
+/// can no longer land — until that swap's LEZ refund time, which the marker
+/// records: past it the escrow claim cannot be included any more and takes
+/// no nonce (a marker that records no time holds until it is removed).
+///
+/// Waiting claims go in LEZ refund order, not arrival order: each records its
+/// swap's LEZ refund time in its waiting marker before it looks at the
+/// others, and with no claim in flight a claim still waits while another
+/// swap's waiting marker names an earlier refund time (ties by swap id). A
+/// waiting marker past its refund time, or of a swap the schedule ended,
+/// failed, or backed off for a reason other than this gate (its claim
+/// attempt failed before it was submitted), orders nothing
+/// ([`waiting_claim_orders`]); its next attempt at the gate orders it again.
 #[cfg(feature = "pair-zec")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the gate reads every peer marker in one pass: in flight, admitted, waiting"
+)]
 fn revealing_claim_held_back(
     store: &SqliteSwapStore,
     lease: &MakerActorLeaseV1,
     command: ActorEffectCommand,
     status: &[u8],
+    attempt_timeout: Duration,
+    admitted: &mut Option<AdmittedLezClaim>,
 ) -> RevealingClaimHold {
     let manifest = lease.record().manifest();
     if manifest.kind() != MakerActorKindV1::Zcash {
         return RevealingClaimHold::Open;
     }
+    // The supervisor's workers are threads of this process: one gate decision
+    // and its admission write at a time, so two workers can never both read
+    // the others before either announced its admission (review 4, L1).
+    let _gate = LEZ_CLAIM_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let gate_started = Instant::now();
     let own_state = manifest.state_database_path();
     let status = serde_json::from_slice::<Value>(status).ok();
-    let phase = status
+    let next_action = status
         .as_ref()
-        .and_then(|value| value.get("phase"))
+        .and_then(|value| value.get("next_action"))
         .and_then(Value::as_str);
-    if !matches!(command, ActorEffectCommand::Claim) || phase != Some("both_legs_locked") {
+    if !submits_maker_lez_claim(command, next_action) {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
+        zec_reference_actor::record_lez_claim_waiting(own_state, None);
+        zec_reference_actor::record_lez_claim_admitted(own_state, None);
         return RevealingClaimHold::Open;
     }
+    let read = |key: &str| {
+        status
+            .as_ref()
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_u64)
+    };
+    // This swap's own claim is in flight: it holds the nonce and must be
+    // followed to final to release it. Holding it behind a waiting claim with
+    // an earlier refund time deadlocked both (devnet, zec-concurrent selling
+    // LEZ, 2026-11-18): the waiting claim waits for this nonce.
+    if zec_reference_actor::revealing_claim_in_flight_marker(own_state)
+        .is_some_and(|marker| marker.is_file())
+    {
+        zec_reference_actor::record_revealing_claim_holder(own_state, None);
+        zec_reference_actor::record_lez_claim_waiting(own_state, None);
+        zec_reference_actor::record_lez_claim_admitted(own_state, None);
+        return RevealingClaimHold::Open;
+    }
+    // Announced before the others are read: of two claims arriving at once,
+    // at least one sees the other.
+    let own_refund_at_ms = read("lez_refund_at_ms").unwrap_or(u64::MAX);
+    // A previous admission of this swap's claim is over: this is its next attempt.
+    zec_reference_actor::record_lez_claim_admitted(own_state, None);
+    zec_reference_actor::record_lez_claim_waiting(own_state, Some(own_refund_at_ms));
     let Ok(records) = store.list_maker_actor_processes() else {
         // Unknown peers: hold the claim back rather than race a nonce.
         return RevealingClaimHold::Held;
     };
-    let holder = records.iter().find(|record| {
-        record.swap_id() != manifest.swap_id()
-            && record.manifest().kind() == MakerActorKindV1::Zcash
-            && record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal
-            && zec_reference_actor::revealing_claim_in_flight_marker(
-                record.manifest().state_database_path(),
-            )
-            .is_some_and(|marker| marker.is_file())
-    });
+    let peers = || {
+        records.iter().filter(|record| {
+            record.swap_id() != manifest.swap_id()
+                && record.manifest().kind() == MakerActorKindV1::Zcash
+                && record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal
+        })
+    };
     let now_ms = u64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -993,23 +1207,116 @@ fn revealing_claim_held_back(
             .as_millis(),
     )
     .unwrap_or(u64::MAX);
-    let read = |key: &str| {
-        status
-            .as_ref()
-            .and_then(|value| value.get(key))
-            .and_then(Value::as_u64)
-    };
+    // An admission holds the others for one attempt's bound, at most half the
+    // profile's margin (review 4, L2), plus the time to stop the child.
+    let bound_ms = admission_bound_ms(attempt_timeout, read("required_margin_ms"));
+    let own_hold_ms = bound_ms.saturating_add(ADMISSION_STOP_GRACE_MS);
+    // A submitted claim holds the nonce until its swap's LEZ refund time. A
+    // failed swap is driven no more, so nothing removes its marker once its
+    // claim lands: its marker holds for one admission bound after the failure
+    // (review 5, item 1), time for a claim it left pending to be included,
+    // and an old-format marker without a time not at all (review 3, item 3).
+    // A claim of a failed swap still pending after that costs the next claim
+    // one re-plan at the nonce, never funds. The actor removes its marker
+    // itself where its claim can no longer land.
+    let in_flight = peers().find(|record| {
+        let state = record.manifest().state_database_path();
+        let failed = record.schedule_state() == lez_swap_store::MakerActorScheduleState::Failed;
+        // Admitted on another worker and not submitted yet: it is about to sign at the
+        // nonce (review 3, item 4), for a bounded time. A failed swap's attempt is over.
+        if !failed
+            && zec_reference_actor::lez_claim_admission(state)
+                .is_some_and(|admission| admission_holds(admission, own_hold_ms, now_ms))
+        {
+            return true;
+        }
+        let refund_at_ms = zec_reference_actor::revealing_claim_in_flight_refund_at_ms(state);
+        zec_reference_actor::revealing_claim_in_flight_marker(state)
+            .is_some_and(|marker| marker.is_file())
+            && !(failed
+                && (refund_at_ms.is_none()
+                    || record
+                        .updated_at()
+                        .saturating_mul(1000)
+                        .saturating_add(own_hold_ms)
+                        <= now_ms))
+            && in_flight_claim_holds(refund_at_ms, now_ms)
+    });
+    let earlier = in_flight.is_none().then(|| {
+        peers().find(|record| {
+            waiting_claim_orders(record.schedule_state(), record.last_failure_class())
+                && zec_reference_actor::lez_claim_waiting_refund_at_ms(
+                    record.manifest().state_database_path(),
+                )
+                .is_some_and(|refund_at_ms| {
+                    waits_behind(
+                        (own_refund_at_ms, manifest.swap_id().as_str()),
+                        (refund_at_ms, record.swap_id().as_str()),
+                        now_ms,
+                    )
+                })
+        })
+    });
+    let blocker = in_flight.or(earlier.flatten());
     let refund_and_attention_ms =
         read("lez_refund_at_ms").zip(read("revealing_claim_hold_attention_ms"));
-    let hold = claim_hold(holder.is_some(), refund_and_attention_ms, now_ms);
-    let Some(holder) = holder.filter(|_| hold == RevealingClaimHold::HeldNearRefund) else {
+    let hold = match claim_hold(blocker.is_some(), refund_and_attention_ms, now_ms) {
+        RevealingClaimHold::Held if in_flight.is_none() => {
+            RevealingClaimHold::WaitsForEarlierRefund
+        }
+        hold => hold,
+    };
+    if hold == RevealingClaimHold::Open {
+        // Announced before the others are read again: of two workers admitting at
+        // once, the one admitted later (ties by swap id) sees the other and yields.
+        zec_reference_actor::record_lez_claim_admitted(
+            own_state,
+            Some(zec_reference_actor::LezClaimAdmission {
+                lez_refund_at_ms: own_refund_at_ms,
+                admitted_at_ms: now_ms,
+                hold_ms: Some(own_hold_ms),
+            }),
+        );
+        // Within this process the gate's lock already orders them; this covers
+        // an admission written by another process sharing the swaps' state.
+        let admitted_before = peers().any(|record| {
+            record.schedule_state() != lez_swap_store::MakerActorScheduleState::Failed
+                && zec_reference_actor::lez_claim_admission(record.manifest().state_database_path())
+                    .is_some_and(|admission| {
+                        admission_holds(admission, own_hold_ms, now_ms)
+                            && yields_to_admission(
+                                (admission.admitted_at_ms, record.swap_id().as_str()),
+                                (now_ms, manifest.swap_id().as_str()),
+                            )
+                    })
+        });
+        if admitted_before {
+            zec_reference_actor::record_lez_claim_admitted(own_state, None);
+            zec_reference_actor::record_revealing_claim_holder(own_state, None);
+            return RevealingClaimHold::Held;
+        }
+    }
+    let Some(holder) = blocker.filter(|_| hold == RevealingClaimHold::HeldNearRefund) else {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
+        if hold == RevealingClaimHold::Open {
+            // Read after the gate's lock was taken: waiting for it does not
+            // shorten the bound.
+            *admitted = Some(AdmittedLezClaim {
+                bound_deadline: gate_started + Duration::from_millis(bound_ms),
+                own_state: own_state.to_path_buf(),
+                peers: peers()
+                    .map(|record| record.manifest().state_database_path().to_path_buf())
+                    .collect(),
+                lez_refund_at_ms: own_refund_at_ms,
+                hold_ms: own_hold_ms,
+            });
+        }
         return hold;
     };
     let holder = holder.swap_id().as_str();
     if zec_reference_actor::revealing_claim_holder(own_state).as_deref() != Some(holder) {
         eprintln!(
-            "maker {}: revealing LEZ claim held behind swap {holder}'s near this swap's LEZ refund time; needs attention (lez_revealing_claim_held_near_refund)",
+            "maker {}: LEZ claim held behind swap {holder}'s near this swap's LEZ refund time; needs attention (lez_revealing_claim_held_near_refund)",
             manifest.swap_id().as_str()
         );
     }
@@ -1017,7 +1324,110 @@ fn revealing_claim_held_back(
     RevealingClaimHold::HeldNearRefund
 }
 
-/// The gate's answer for a Zcash claim at both legs locked: open without a
+/// One gate decision at a time in this process (review 4, L1).
+#[cfg(feature = "pair-zec")]
+static LEZ_CLAIM_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Whether a claim admitted at `own` (admission time in ms, swap id) yields to
+/// another swap's admission at `other`: the earlier admission goes, ties by
+/// swap id.
+#[cfg(feature = "pair-zec")]
+fn yields_to_admission(other: (u64, &str), own: (u64, &str)) -> bool {
+    other < own
+}
+
+/// Whether a claim (`own`: its swap's LEZ refund time in ms and swap id)
+/// waits behind another waiting claim (`other`): the other's refund time is
+/// earlier (ties by swap id) and not yet passed at `now_ms` (a claim past its
+/// refund time cannot be the one to protect).
+#[cfg(feature = "pair-zec")]
+fn waits_behind(own: (u64, &str), other: (u64, &str), now_ms: u64) -> bool {
+    other.0 > now_ms && other < own
+}
+
+/// Whether another swap's admitted, not yet submitted LEZ claim holds this
+/// one at `now_ms`: until its refund time and its recorded hold after its
+/// admission (`default_hold_ms`, this Node's own, for a marker that records
+/// none).
+#[cfg(feature = "pair-zec")]
+const fn admission_holds(
+    admission: zec_reference_actor::LezClaimAdmission,
+    default_hold_ms: u64,
+    now_ms: u64,
+) -> bool {
+    let hold_ms = match admission.hold_ms {
+        Some(hold_ms) => hold_ms,
+        None => default_hold_ms,
+    };
+    admission.lez_refund_at_ms > now_ms && admission.admitted_at_ms.saturating_add(hold_ms) > now_ms
+}
+
+/// How long the Node may stop a claim attempt after admitting it.
+#[cfg(feature = "pair-zec")]
+const ADMISSION_STOP_GRACE_MS: u64 = 2_000;
+
+/// An admitted LEZ claim's attempt bound: the attempt timeout, and at most
+/// half the profile's required margin `M` (from the actor's status), so that
+/// a stuck attempt never holds the others for a margin's worth of time.
+#[cfg(feature = "pair-zec")]
+fn admission_bound_ms(attempt_timeout: Duration, required_margin_ms: Option<u64>) -> u64 {
+    let timeout_ms = u64::try_from(attempt_timeout.as_millis()).unwrap_or(u64::MAX);
+    required_margin_ms.map_or(timeout_ms, |margin_ms| timeout_ms.min(margin_ms / 2))
+}
+
+/// Whether another swap's LEZ claim in flight (its in-flight marker present)
+/// holds this one at `now_ms`: until the LEZ refund time the marker records.
+/// Past it the escrow claim is outside its validity window and the block
+/// builder drops it without taking the nonce. A marker without a time (one
+/// written before the time was recorded) holds until it is removed.
+#[cfg(feature = "pair-zec")]
+const fn in_flight_claim_holds(refund_at_ms: Option<u64>, now_ms: u64) -> bool {
+    match refund_at_ms {
+        Some(refund_at_ms) => refund_at_ms > now_ms,
+        None => true,
+    }
+}
+
+/// The classes this gate backs a held claim off with: a swap backed off by
+/// one of them is waiting at the gate.
+#[cfg(feature = "pair-zec")]
+const LEZ_CLAIM_GATE_CLASSES: [&str; 3] = [
+    "lez_revealing_claim_in_flight",
+    "lez_revealing_claim_held_near_refund",
+    "lez_claim_waits_for_earlier_refund",
+];
+
+/// Whether another swap's waiting marker orders this claim, by that swap's
+/// schedule: it is due, leased (at the gate, or admitted and running its
+/// claim), or backed off by this gate. A swap that ended, failed, or backed
+/// off for a reason of its own (its claim attempt failed before the claim was
+/// submitted) is not waiting at the gate: its marker would hold every later
+/// claim behind it until its refund time (review item 6).
+#[cfg(feature = "pair-zec")]
+fn waiting_claim_orders(
+    schedule_state: lez_swap_store::MakerActorScheduleState,
+    last_failure_class: Option<&str>,
+) -> bool {
+    use lez_swap_store::MakerActorScheduleState as State;
+    match schedule_state {
+        State::Queued | State::Leased => true,
+        State::Backoff => {
+            last_failure_class.is_some_and(|class| LEZ_CLAIM_GATE_CLASSES.contains(&class))
+        }
+        State::Terminal | State::Failed => false,
+    }
+}
+
+/// Whether this effect is the Maker's LEZ claim, the one the gate serializes:
+/// a claim whose status names `claim_lez`. The Maker's LEZ claim is its
+/// follow-up claim in `TakerSellsLez` (claim evidence available); its Zcash
+/// claim in `TakerSellsForeign` (`claim_zcash`) spends no LEZ nonce.
+#[cfg(feature = "pair-zec")]
+fn submits_maker_lez_claim(command: ActorEffectCommand, next_action: Option<&str>) -> bool {
+    matches!(command, ActorEffectCommand::Claim) && next_action == Some("claim_lez")
+}
+
+/// The gate's answer for a Maker LEZ claim: open without a
 /// holder; held behind one; named once its own LEZ refund time is within the
 /// attention margin (both from the actor's status: a third of the agreement's
 /// LEZ refund delay). Without them the claim is held without the attention.
@@ -1038,13 +1448,15 @@ const fn claim_hold(
     }
 }
 
-/// Without the Zcash pair no Maker actor submits a revealing LEZ claim.
+/// Without the Zcash pair no Maker actor submits a LEZ claim.
 #[cfg(not(feature = "pair-zec"))]
 const fn revealing_claim_held_back(
     _store: &SqliteSwapStore,
     _lease: &MakerActorLeaseV1,
     _command: ActorEffectCommand,
     _status: &[u8],
+    _attempt_timeout: Duration,
+    _admitted: &mut Option<AdmittedLezClaim>,
 ) -> RevealingClaimHold {
     RevealingClaimHold::Open
 }
@@ -1065,19 +1477,21 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         Some(zec_reference_actor::LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE) => {
             ChildRunError::Fail("lez_first_lock_replan_exhausted")
         }
-        // The Zcash actor refused a revealing LEZ claim after its window
-        // closed (nothing sent); its next status names the Zcash refund and
-        // the supervisor recovers (FINDINGS 26).
+        // The Zcash actor refused a revealing claim after its window closed
+        // (nothing sent); its next status names the actor's own refund and
+        // the supervisor recovers (FINDINGS 26). The Maker never makes the
+        // revealing claim, so it is only a backoff here.
         #[cfg(feature = "pair-zec")]
         Some(zec_reference_actor::LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE) => {
             ChildRunError::Retry("lez_claim_window_closed")
         }
-        // The Zcash actor re-planned its revealing LEZ claim the bounded number
-        // of times and its nonce was taken again: the claim is never abandoned
-        // for a refund; the swap needs attention by name (FINDINGS 24).
+        // An actor that reports its LEZ claim's re-plans exhausted (an actor
+        // before issue #172; the current one re-plans while the claim can
+        // land and never exits so): a backoff, not a failure, so the swap is
+        // attempted again while its claim can still land.
         #[cfg(feature = "pair-zec")]
         Some(zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE) => {
-            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+            ChildRunError::Retry("lez_revealing_claim_replan_exhausted")
         }
         // The Zcash actor's LEZ escrow initialization was refused because its
         // escrow account already exists without it (another swap with the same
@@ -1086,6 +1500,15 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         #[cfg(feature = "pair-zec")]
         Some(zec_reference_actor::LEZ_ESCROW_ALREADY_INITIALIZED_EXIT_CODE) => {
             ChildRunError::Fail("lez_escrow_already_initialized")
+        }
+        // The Zcash actor refused the Maker's follow-up LEZ claim because it
+        // can no longer land (the Taker's LEZ refund is final) and its Zcash
+        // HTLC is spent by the Taker's claim at depth, and it removed its
+        // in-flight marker: the swap stops by name, and its claim holds no
+        // other swap's. A claim that only missed its window waits instead.
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_CLAIM_CANNOT_LAND_EXIT_CODE) => {
+            ChildRunError::Fail("lez_claim_cannot_land")
         }
         _ => ChildRunError::Retry("actor_exit_failed"),
     }
@@ -1096,6 +1519,7 @@ fn wait_for_child(
     invocation: ActorInvocation,
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
+    admitted: Option<&AdmittedLezClaim>,
 ) -> Result<ExitStatus, ChildRunError> {
     let deadline = Instant::now() + config.attempt_timeout;
     loop {
@@ -1107,6 +1531,18 @@ fn wait_for_child(
         if remaining.is_zero() {
             kill_and_reap(child);
             return Err(ChildRunError::Retry("actor_timeout"));
+        }
+        // Past its admission bound an admitted LEZ claim is stopped only while
+        // another swap waits at the gate; otherwise its admission is renewed so
+        // a claim arriving later still waits for it (review 5, item 3).
+        if let Some(admitted) = admitted
+            && Instant::now() >= admitted.bound_deadline
+        {
+            if admitted.another_waits() {
+                kill_and_reap(child);
+                return Err(ChildRunError::Retry("actor_timeout"));
+            }
+            admitted.renew();
         }
         let remaining = if invocation.is_effect() {
             config
@@ -1207,7 +1643,11 @@ enum StatusDecision {
     /// The claim window has closed with both legs locked: observe the claim
     /// once more, then recover the Maker's leg, alternating attempt by attempt
     /// so a claim that landed at the last moment is still found and a claim
-    /// that never landed no longer holds the escrow.
+    /// that never landed no longer holds the escrow. A Bitcoin Maker's
+    /// `recover_maker_leg`, and a Zcash Maker's `refund_zcash` with both legs
+    /// locked (`TakerSellsLez`: its earlier refund; a drive observes the
+    /// Taker's revealing Zcash claim, whose preimage pays the Maker's LEZ
+    /// claim).
     ObserveThenRecover,
     /// A Bitcoin Maker whose drive observes the Taker's revealing claim
     /// (both legs locked) or follows it with the Maker's own LEZ claim (the
@@ -1275,13 +1715,17 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()
             {
                 StatusDecision::Run(ActorEffectCommand::Claim)
             } else if matches!(
+                (kind, phase, next_action),
+                (MakerActorKindV1::Bitcoin, _, "recover_maker_leg")
+                    | (MakerActorKindV1::Zcash, "both_legs_locked", "refund_zcash")
+            ) {
+                StatusDecision::ObserveThenRecover
+            } else if matches!(
                 (kind, next_action),
-                (MakerActorKindV1::Zcash, "refund_zcash")
+                (MakerActorKindV1::Zcash, "refund_zcash" | "refund_lez")
                     | (MakerActorKindV1::Bitcoin, "recover_taker_leg")
             ) {
                 StatusDecision::Run(ActorEffectCommand::Recover)
-            } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "recover_maker_leg") {
-                StatusDecision::ObserveThenRecover
             } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "observe_revealing_claim")
             {
                 StatusDecision::ObserveClaim {
@@ -1344,18 +1788,29 @@ fn parse_effect(
             phase,
             next_action,
         ) {
-            // TakerSellsLez: the Maker's own revealing LEZ claim, projected by
-            // a claim or a drive; the Taker's Zcash claim is what remains.
-            (Some("lez_revealing_claim"), "claim_evidence_available", "wait") => false,
-            // TakerSellsForeign: the Taker's revealing LEZ claim, observed and
-            // projected by a drive; the Maker's own Zcash claim is next.
+            // The Taker's revealing claim, observed and projected by a drive;
+            // the Maker's own follow-up claim is next: TakerSellsForeign, the
+            // Taker's LEZ claim and the Maker's Zcash claim; TakerSellsLez, the
+            // Taker's Zcash claim (with its preimage) and the Maker's LEZ claim.
             (Some("lez_revealing_claim"), "claim_evidence_available", "claim_zcash")
+            | (Some("zcash_revealing_claim"), "claim_evidence_available", "claim_lez")
                 if matches!(command, ActorEffectCommand::Drive) =>
             {
                 false
             }
-            (Some("zcash_followup_claim"), "completed", "complete") => true,
-            (Some("lez_revealing_claim" | "zcash_followup_claim"), _, _) => return Err(()),
+            // The Maker's own follow-up claim, projected by a claim or a drive,
+            // completes the swap in either direction.
+            (Some("zcash_followup_claim" | "lez_followup_claim"), "completed", "complete") => true,
+            (
+                Some(
+                    "lez_revealing_claim"
+                    | "zcash_followup_claim"
+                    | "zcash_revealing_claim"
+                    | "lez_followup_claim",
+                ),
+                _,
+                _,
+            ) => return Err(()),
             _ if matches!(command, ActorEffectCommand::Claim) => return Err(()),
             _ => false,
         }
@@ -1398,7 +1853,11 @@ fn exact_absorbing_effect(
                 ActorEffectCommand::Drive | ActorEffectCommand::Claim,
                 "completed",
                 "completed"
-            ) | (ActorEffectCommand::Recover, "refunded", "refunded")
+            ) | (
+                ActorEffectCommand::Recover | ActorEffectCommand::Claim,
+                "refunded",
+                "refunded"
+            )
         ),
         MakerActorKindV1::Bitcoin => matches!(
             (command, outcome, phase),
@@ -1461,6 +1920,8 @@ fn known_effect_outcome(
                 | "projected"
                 | "completed"
         ),
+        // `refunded`: the Maker's Zcash refund after its LEZ claim was lost,
+        // which the claim command drives (issue #178).
         (MakerActorKindV1::Zcash, ActorEffectCommand::Claim) => matches!(
             outcome,
             "submitted"
@@ -1468,6 +1929,7 @@ fn known_effect_outcome(
                 | "awaiting_safe_zcash_funding"
                 | "projected"
                 | "completed"
+                | "refunded"
         ),
         (MakerActorKindV1::Zcash, ActorEffectCommand::Recover) => matches!(
             outcome,
@@ -1532,6 +1994,7 @@ fn known_next_action(kind: MakerActorKindV1, next_action: &str) -> bool {
                 | "claim_lez"
                 | "claim_zcash"
                 | "refund_zcash"
+                | "refund_lez"
                 | "complete"
         ),
         MakerActorKindV1::Bitcoin => matches!(
@@ -2061,21 +2524,70 @@ mod tests {
 
     #[test]
     fn zec_status_routes_claim_and_refund_without_generic_drive() {
-        for (next_action, expected) in [
-            ("claim_lez", ActorEffectCommand::Claim),
-            ("claim_zcash", ActorEffectCommand::Claim),
-            ("refund_zcash", ActorEffectCommand::Recover),
-            ("wait", ActorEffectCommand::Drive),
+        for (phase, next_action, expected) in [
+            // TakerSellsLez: the Maker's follow-up LEZ claim.
+            (
+                "claim_evidence_available",
+                "claim_lez",
+                ActorEffectCommand::Claim,
+            ),
+            // TakerSellsForeign: the Maker's follow-up Zcash claim.
+            (
+                "claim_evidence_available",
+                "claim_zcash",
+                ActorEffectCommand::Claim,
+            ),
+            // TakerSellsLez: the Maker's Zcash refund after the Taker's LEZ refund.
+            (
+                "taker_leg_refunded",
+                "refund_zcash",
+                ActorEffectCommand::Recover,
+            ),
+            // The actor's own LEZ refund after the other leg's.
+            (
+                "maker_leg_refunded",
+                "refund_lez",
+                ActorEffectCommand::Recover,
+            ),
+            ("both_legs_locked", "wait", ActorEffectCommand::Drive),
         ] {
-            let parsed = parse_status(
-                &status("both_legs_locked", 3, next_action),
-                MakerActorKindV1::Zcash,
-            )
-            .unwrap();
+            let parsed =
+                parse_status(&status(phase, 3, next_action), MakerActorKindV1::Zcash).unwrap();
             let StatusDecision::Run(actual) = parsed.decision else {
                 panic!("nonterminal status must select one command");
             };
-            assert_eq!(actual.name(), expected.name());
+            assert_eq!(actual.name(), expected.name(), "{phase} {next_action}");
+        }
+    }
+
+    #[test]
+    fn a_zec_makers_earlier_refund_keeps_observing_the_takers_zcash_claim() {
+        // TakerSellsLez: past the claim window the Maker is told to refund its
+        // Zcash (the earlier refund). A Taker claim submitted inside the
+        // window can still be mined, and its preimage is the Maker's only way
+        // to its LEZ: the refund alternates with the drive that observes it.
+        let parsed = parse_status(
+            &status("both_legs_locked", 3, "refund_zcash"),
+            MakerActorKindV1::Zcash,
+        )
+        .unwrap();
+        assert!(matches!(
+            parsed.decision,
+            StatusDecision::ObserveThenRecover
+        ));
+        for manual_action in [None, Some(MakerActorManualAction::Refund)] {
+            let commands: Vec<_> = (0..4)
+                .map(|attempt_count| {
+                    attempt_command(
+                        MakerActorKindV1::Zcash,
+                        manual_action,
+                        parsed.decision,
+                        attempt_count,
+                    )
+                    .map_or("none", ActorEffectCommand::name)
+                })
+                .collect();
+            assert_eq!(commands, ["drive", "recover", "drive", "recover"]);
         }
     }
 
@@ -2239,31 +2751,57 @@ mod tests {
     }
 
     #[test]
-    fn parser_accepts_exact_nonterminal_zec_claim_projection_only() {
+    fn parser_accepts_a_drive_projecting_the_takers_revealing_claim_in_taker_sells_lez() {
+        // Selling LEZ the Taker's Zcash claim reveals the secret; the Maker's
+        // drive at both_legs_locked observes it and its own LEZ claim is next.
         let exact = serde_json::to_vec(&serde_json::json!({
             "schema_version": 1,
             "role": "maker",
-            "command": "claim",
+            "command": "drive",
             "outcome": "projected",
-            "operation": "lez_revealing_claim",
+            "operation": "zcash_revealing_claim",
             "phase": "claim_evidence_available",
             "revision": 3,
-            "next_action": "wait"
+            "next_action": "claim_lez"
         }))
         .unwrap();
         let parsed =
-            parse_effect(&exact, ActorEffectCommand::Claim, MakerActorKindV1::Zcash).unwrap();
+            parse_effect(&exact, ActorEffectCommand::Drive, MakerActorKindV1::Zcash).unwrap();
         assert!(!parsed.terminal);
+        assert_eq!(
+            parsed.progress,
+            MakerActorProgressObservationV1::active("claim_evidence_available", 3, "claim_lez")
+                .unwrap()
+        );
 
-        let mut drive: Value = serde_json::from_slice(&exact).unwrap();
-        drive["command"] = Value::from("drive");
-        let parsed_drive = parse_effect(
-            &serde_json::to_vec(&drive).unwrap(),
-            ActorEffectCommand::Drive,
-            MakerActorKindV1::Zcash,
-        )
-        .unwrap();
-        assert!(!parsed_drive.terminal);
+        // The claim command never projects someone else's claim.
+        let mut claim: Value = serde_json::from_slice(&exact).unwrap();
+        claim["command"] = Value::from("claim");
+        assert!(
+            parse_effect(
+                &serde_json::to_vec(&claim).unwrap(),
+                ActorEffectCommand::Claim,
+                MakerActorKindV1::Zcash,
+            )
+            .is_err()
+        );
+
+        // The Maker makes no revealing LEZ claim of its own in either
+        // direction, so a projection of one followed by a wait is refused.
+        for command in [ActorEffectCommand::Claim, ActorEffectCommand::Drive] {
+            let mut own: Value = serde_json::from_slice(&exact).unwrap();
+            own["command"] = Value::from(command.name());
+            own["operation"] = Value::from("lez_revealing_claim");
+            own["next_action"] = Value::from("wait");
+            assert!(
+                parse_effect(
+                    &serde_json::to_vec(&own).unwrap(),
+                    command,
+                    MakerActorKindV1::Zcash,
+                )
+                .is_err()
+            );
+        }
 
         for operation in [None, Some("lez_refund")] {
             let mut output: Value = serde_json::from_slice(&exact).unwrap();
@@ -2273,6 +2811,7 @@ mod tests {
                     output.as_object_mut().unwrap().remove("operation");
                 }
             }
+            output["command"] = Value::from("claim");
             assert!(
                 parse_effect(
                     &serde_json::to_vec(&output).unwrap(),
@@ -2284,13 +2823,17 @@ mod tests {
         }
 
         for (command, phase, next_action) in [
-            (ActorEffectCommand::Claim, "completed", "complete"),
+            (ActorEffectCommand::Drive, "completed", "complete"),
             (
-                ActorEffectCommand::Claim,
+                ActorEffectCommand::Drive,
                 "claim_evidence_available",
                 "claim_zcash",
             ),
-            (ActorEffectCommand::Drive, "completed", "complete"),
+            (
+                ActorEffectCommand::Drive,
+                "claim_evidence_available",
+                "wait",
+            ),
         ] {
             let mut output: Value = serde_json::from_slice(&exact).unwrap();
             output["command"] = Value::from(command.name());
@@ -2359,21 +2902,33 @@ mod tests {
             "next_action": "complete"
         });
 
-        for command in [ActorEffectCommand::Claim, ActorEffectCommand::Drive] {
-            let mut output = exact.clone();
-            output["command"] = Value::from(command.name());
-            let parsed = parse_effect(
-                &serde_json::to_vec(&output).unwrap(),
-                command,
-                MakerActorKindV1::Zcash,
-            )
-            .unwrap();
-            assert!(parsed.terminal);
+        // The Maker's follow-up claim: Zcash in TakerSellsForeign, LEZ in
+        // TakerSellsLez.
+        for operation in ["zcash_followup_claim", "lez_followup_claim"] {
+            for command in [ActorEffectCommand::Claim, ActorEffectCommand::Drive] {
+                let mut output = exact.clone();
+                output["command"] = Value::from(command.name());
+                output["operation"] = Value::from(operation);
+                let parsed = parse_effect(
+                    &serde_json::to_vec(&output).unwrap(),
+                    command,
+                    MakerActorKindV1::Zcash,
+                )
+                .unwrap();
+                assert!(parsed.terminal);
+            }
         }
 
         for (operation, phase, next_action) in [
             ("lez_revealing_claim", "completed", "complete"),
+            ("zcash_revealing_claim", "completed", "complete"),
             ("zcash_followup_claim", "claim_evidence_available", "wait"),
+            ("lez_followup_claim", "claim_evidence_available", "wait"),
+            (
+                "lez_followup_claim",
+                "claim_evidence_available",
+                "claim_lez",
+            ),
             ("unknown_claim", "completed", "complete"),
         ] {
             for command in [ActorEffectCommand::Claim, ActorEffectCommand::Drive] {
@@ -2428,11 +2983,28 @@ mod tests {
             assert!(parse_status(&bytes, kind).is_err());
         }
 
+        // A claim that ends refunded is the Maker's Zcash refund after its LEZ
+        // claim was lost (issue #178): exactly `refunded` at phase `refunded`.
+        assert!(
+            parse_effect(
+                &effect("claim", "refunded", "refunded", 4, "complete"),
+                ActorEffectCommand::Claim,
+                MakerActorKindV1::Zcash,
+            )
+            .is_ok_and(|parsed| parsed.terminal)
+        );
         for (command, output_command, outcome, phase, next_action) in [
             (
                 ActorEffectCommand::Claim,
                 "claim",
                 "refunded",
+                "completed",
+                "complete",
+            ),
+            (
+                ActorEffectCommand::Claim,
+                "claim",
+                "completed",
                 "refunded",
                 "complete",
             ),
@@ -2471,6 +3043,7 @@ mod tests {
         for bytes in [
             effect("claim", "projected", "completed", 4, "complete"),
             zec_projected_claim_terminal_effect("lez_revealing_claim"),
+            zec_projected_claim_terminal_effect("zcash_revealing_claim"),
         ] {
             assert!(
                 parse_effect(&bytes, ActorEffectCommand::Claim, MakerActorKindV1::Zcash,).is_err()
@@ -2485,6 +3058,32 @@ mod exit_classification_tests {
     use std::process::ExitStatus;
 
     use super::{ChildRunError, classify_exit};
+
+    #[test]
+    fn the_gate_serializes_only_the_makers_lez_claim() {
+        use super::{ActorEffectCommand, submits_maker_lez_claim};
+        // TakerSellsLez: the Maker's follow-up LEZ claim (claim evidence
+        // available) is planned at its one LEZ account's nonce.
+        assert!(submits_maker_lez_claim(
+            ActorEffectCommand::Claim,
+            Some("claim_lez")
+        ));
+        // TakerSellsForeign: the Maker's Zcash claim spends no LEZ nonce;
+        // drives, refunds and waits are not claims.
+        for (command, next_action) in [
+            (ActorEffectCommand::Claim, Some("claim_zcash")),
+            (ActorEffectCommand::Claim, Some("wait")),
+            (ActorEffectCommand::Claim, None),
+            (ActorEffectCommand::Drive, Some("claim_lez")),
+            (ActorEffectCommand::Drive, Some("wait")),
+            (ActorEffectCommand::Recover, Some("refund_zcash")),
+        ] {
+            assert!(
+                !submits_maker_lez_claim(command, next_action),
+                "{command:?} {next_action:?}"
+            );
+        }
+    }
 
     #[cfg(feature = "pair-zec")]
     #[test]
@@ -2521,6 +3120,35 @@ mod exit_classification_tests {
         );
     }
 
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_waiting_lez_claim_yields_only_to_an_earlier_live_refund_time() {
+        use super::waits_behind;
+        let now = 1_000;
+        assert!(waits_behind((5_000, "a"), (4_000, "b"), now));
+        assert!(!waits_behind((4_000, "b"), (5_000, "a"), now));
+        // Ties go by swap id, so exactly one of two equal claims goes.
+        assert!(waits_behind((5_000, "b"), (5_000, "a"), now));
+        assert!(!waits_behind((5_000, "a"), (5_000, "b"), now));
+        // A claim past its refund time orders nothing.
+        assert!(!waits_behind((5_000, "a"), (900, "b"), now));
+        // A status without a refund time waits behind every live one.
+        assert!(waits_behind((u64::MAX, "a"), (5_000, "b"), now));
+    }
+
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn of_two_admitted_lez_claims_the_later_admission_yields() {
+        // Review 4, L1: the tie-break had no test. Of two admissions seen by
+        // each other, exactly one yields: the later one, ties by swap id.
+        use super::yields_to_admission;
+        assert!(yields_to_admission((100, "b"), (105, "a")));
+        assert!(!yields_to_admission((105, "a"), (100, "b")));
+        assert!(yields_to_admission((100, "a"), (100, "b")));
+        assert!(!yields_to_admission((100, "b"), (100, "a")));
+        assert!(!yields_to_admission((100, "a"), (100, "a")));
+    }
+
     #[test]
     fn the_zec_actor_balance_refusal_backs_off_by_name_and_other_exits_do_not() {
         let refused = ExitStatus::from_raw(
@@ -2546,10 +3174,10 @@ mod exit_classification_tests {
         );
         assert!(matches!(
             classify_exit(claim_exhausted),
-            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+            ChildRunError::Retry("lez_revealing_claim_replan_exhausted")
         ));
         // FINDINGS 26: a claim refused after its window (nothing sent) backs
-        // off; the next status names the Zcash refund and the Maker recovers.
+        // off; the next status names the actor's own refund.
         let window_closed =
             ExitStatus::from_raw(zec_reference_actor::LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE << 8);
         assert!(matches!(
@@ -2563,6 +3191,46 @@ mod exit_classification_tests {
             classify_exit(escrow_taken),
             ChildRunError::Fail("lez_escrow_already_initialized")
         ));
+        // Review item 2: a Maker LEZ claim that can no longer land stops the
+        // swap by name instead of backing off forever.
+        let cannot_land =
+            ExitStatus::from_raw(zec_reference_actor::LEZ_CLAIM_CANNOT_LAND_EXIT_CODE << 8);
+        assert!(matches!(
+            classify_exit(cannot_land),
+            ChildRunError::Fail("lez_claim_cannot_land")
+        ));
+    }
+
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_claim_in_flight_holds_until_its_refund_time_and_a_failed_waiter_orders_nothing() {
+        use super::{in_flight_claim_holds, waiting_claim_orders};
+        use lez_swap_store::MakerActorScheduleState as State;
+        assert!(in_flight_claim_holds(Some(5_000), 4_999));
+        assert!(!in_flight_claim_holds(Some(5_000), 5_000));
+        assert!(in_flight_claim_holds(None, u64::MAX));
+        assert!(waiting_claim_orders(State::Queued, None));
+        assert!(waiting_claim_orders(
+            State::Leased,
+            Some("actor_exit_failed")
+        ));
+        for class in [
+            "lez_revealing_claim_in_flight",
+            "lez_revealing_claim_held_near_refund",
+            "lez_claim_waits_for_earlier_refund",
+        ] {
+            assert!(waiting_claim_orders(State::Backoff, Some(class)), "{class}");
+        }
+        assert!(!waiting_claim_orders(
+            State::Backoff,
+            Some("actor_exit_failed")
+        ));
+        assert!(!waiting_claim_orders(State::Backoff, None));
+        assert!(!waiting_claim_orders(
+            State::Failed,
+            Some("lez_claim_cannot_land")
+        ));
+        assert!(!waiting_claim_orders(State::Terminal, None));
     }
 }
 

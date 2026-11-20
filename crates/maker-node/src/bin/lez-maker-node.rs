@@ -18,6 +18,7 @@ use lez_maker_node::{
     BtcMakerActorProvisioner, BtcMakerLifecycle, BtcMakerRoleAgreementAuthority,
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerRpc,
     ProcessLogosPriceSource, ProcessRouteHealthProbe, RunLocalDelivery, chat_rpc_module,
+    clear_maker_lez_claim_admissions,
     node_config::load_node_arguments,
     owner_rpc_server::{
         OwnedPath, bind_owner_socket, publish_ready_file, server_config, validate_runtime_directory,
@@ -226,7 +227,8 @@ struct ZecArguments {
     /// Owner-only file containing one raw 32-byte claim-recovery key.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id"])]
     maker_claim_key_file: Option<PathBuf>,
-    /// Owner-only file containing the maker-owned 32-byte claim preimage.
+    /// Deprecated and ignored: the Maker holds no claim preimage (the Taker
+    /// holds the swap secret in both directions).
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
     maker_claim_preimage_file: Option<PathBuf>,
     /// Existing owner-private per-swap Maker configs used as authority templates.
@@ -400,6 +402,8 @@ fn configured_actor_supervisor(
     let owner = MakerActorLeaseOwner::random().context("generate actor supervisor lease owner")?;
     let mut store =
         SqliteSwapStore::open(&arguments.database).context("open actor supervisor database")?;
+    // No claim attempt runs yet: an admission marker now is a crashed Node's.
+    clear_maker_lez_claim_admissions(&store);
 
     loop {
         let now = trusted_now_unix_seconds()?;
@@ -518,6 +522,10 @@ async fn main() -> anyhow::Result<()> {
     let route_health_probe = configured_route_health_probe(&arguments)?;
     let pair_authorities = PairAuthorities::configured(&arguments)?;
     let _state_lease = acquire_state_lease(&arguments.database)?;
+    #[cfg(feature = "pair-zec")]
+    lez_maker_node::refuse_start_with_legacy_zec_swaps(
+        &SqliteSwapStore::open(&arguments.database).context("open maker database")?,
+    )?;
     #[cfg(feature = "pair-zec")]
     import_terminal_projection(&arguments).await?;
     let actor_supervisor = configured_actor_supervisor(&arguments)?;
@@ -1108,19 +1116,19 @@ fn configured_zec_authority(
         (None, None, None, None) => Ok(None),
         (Some(claim_key_id), Some(claim_key_file), preimage_file, Some(provisioner)) => {
             // A Node-wide claim preimage was one secret for the whole catalog:
-            // every swap's LEZ claim would reveal every other open swap's. A
-            // completion takes the secret from the agreement's own template;
-            // the flag is deprecated, ignored for one template and refused
-            // for more.
+            // every swap's LEZ claim would reveal every other open swap's. The
+            // Maker holds no claim preimage at all (the Taker holds the swap
+            // secret in both directions); the flag is deprecated, ignored for
+            // one template and refused for more.
             if preimage_file.is_some() {
                 if provisioner.template_count() > 1 {
                     bail!(
-                        "--maker-claim-preimage-file is one secret for a catalog of {} templates; drop the flag, each template carries its own claim preimage",
+                        "--maker-claim-preimage-file is one secret for a catalog of {} templates; drop the flag, the Maker holds no claim preimage",
                         provisioner.template_count()
                     );
                 }
                 eprintln!(
-                    "maker: --maker-claim-preimage-file is deprecated and ignored; the completion takes the claim preimage from the agreement's own template"
+                    "maker: --maker-claim-preimage-file is deprecated and ignored; the Maker holds no claim preimage (the Taker holds the swap secret)"
                 );
             }
             let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;

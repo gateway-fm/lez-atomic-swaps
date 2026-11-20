@@ -461,6 +461,14 @@ pub enum SpendObservationError {
     /// The claim input does not reveal the negotiated SHA-256 preimage.
     #[error("claim input preimage does not match the BIP-199 secret digest")]
     WrongPreimage,
+    /// The claim input pushes a preimage of a length the contract's claim branch
+    /// refuses ([`crate::Bip199PreimageRule::Exactly32Bytes`]); consensus refuses such
+    /// a spend, so it never reveals a usable preimage.
+    #[error("claim input preimage is {length} bytes; the contract requires 32")]
+    PreimageLengthRefused {
+        /// Length of the pushed preimage.
+        length: usize,
+    },
     /// The selected branch public key does not own its immutable role.
     #[error("spend input public key does not control the selected BIP-199 role")]
     WrongSpendingRole,
@@ -803,6 +811,11 @@ fn classify_script_sig(
         if redeem_script != contract.redeem_script() {
             return Err(SpendObservationError::SpendScriptMismatch);
         }
+        if !contract.admits_preimage_length(preimage.len()) {
+            return Err(SpendObservationError::PreimageLengthRefused {
+                length: preimage.len(),
+            });
+        }
         if <[u8; 32]>::from(Sha256::digest(preimage)) != contract.secret_digest() {
             return Err(SpendObservationError::WrongPreimage);
         }
@@ -844,6 +857,88 @@ fn classify_script_sig(
     }
 
     Err(SpendObservationError::InvalidSpendScript)
+}
+
+/// The BIP-199 branch one spend input takes, read from its scriptSig alone.
+#[derive(Clone, Eq, PartialEq)]
+pub enum Bip199SpendBranch {
+    /// The claim branch, with the preimage it pushes (its SHA-256 is the contract digest).
+    Claim {
+        /// The pushed preimage.
+        preimage: Box<[u8]>,
+    },
+    /// The refund branch, which pushes no preimage.
+    Refund,
+}
+
+impl std::fmt::Debug for Bip199SpendBranch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Claim { preimage } => formatter
+                .debug_struct("Claim")
+                .field("preimage_length", &preimage.len())
+                .finish(),
+            Self::Refund => formatter.write_str("Refund"),
+        }
+    }
+}
+
+/// Reads which branch of `contract` a spend input's scriptSig takes and, on the claim branch,
+/// the preimage it reveals.
+///
+/// This is for the counterparty's spend that a node already holds in its mempool or a block:
+/// consensus has checked its signature, signature-hash type, outputs, fee and expiry, and none
+/// of those decide whether the preimage is usable. Only the stack is read: the claim branch is
+/// `[signature, public key, preimage, true, redeem script]` with the contract's redeem script
+/// last, and the preimage is returned only when the contract's claim branch admits its length
+/// ([`crate::Bip199PreimageRule`]) and its SHA-256 is the contract digest. The signature is not
+/// verified here.
+///
+/// # Errors
+///
+/// Rejects an oversized or non-push scriptSig, a redeem script other than the contract's, a
+/// claim stack shorter than five items, a pushed preimage of a length the contract refuses, and
+/// a pushed preimage whose SHA-256 is not the digest.
+pub fn read_bip199_spend_branch(
+    contract: &Bip199Contract,
+    script_sig: &[u8],
+) -> Result<Bip199SpendBranch, SpendObservationError> {
+    if script_sig.len() > ZCASH_MAX_SCRIPT_BYTES {
+        return Err(SpendObservationError::ScriptSigTooLarge {
+            actual: script_sig.len(),
+            maximum: ZCASH_MAX_SCRIPT_BYTES,
+        });
+    }
+    let pushes = Code(script_sig.to_vec())
+        .parse()
+        .map(|parsed| match parsed {
+            Ok(PossiblyBad::Good(Opcode::PushValue(value))) => Ok(value.value()),
+            _ => Err(SpendObservationError::InvalidSpendScript),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let [.., flag, redeem_script] = pushes.as_slice() else {
+        return Err(SpendObservationError::InvalidSpendScript);
+    };
+    if redeem_script.as_slice() != contract.redeem_script() {
+        return Err(SpendObservationError::SpendScriptMismatch);
+    }
+    if !script_bool(flag) {
+        return Ok(Bip199SpendBranch::Refund);
+    }
+    let [.., _signature, _public_key, preimage, _, _] = pushes.as_slice() else {
+        return Err(SpendObservationError::InvalidSpendScript);
+    };
+    if !contract.admits_preimage_length(preimage.len()) {
+        return Err(SpendObservationError::PreimageLengthRefused {
+            length: preimage.len(),
+        });
+    }
+    if <[u8; 32]>::from(Sha256::digest(preimage)) != contract.secret_digest() {
+        return Err(SpendObservationError::WrongPreimage);
+    }
+    Ok(Bip199SpendBranch::Claim {
+        preimage: preimage.clone().into_boxed_slice(),
+    })
 }
 
 fn script_bool(value: &[u8]) -> bool {

@@ -50,7 +50,17 @@ pub const MAX_LAST_OUTCOMES: usize = 1024;
 /// - `lez_refund_time`: a Zcash swap's LEZ refund waits for the agreement's
 ///   LEZ refund time (`until_unix_seconds`, when the actor's status names it);
 /// - `zcash_refund_height`: a Zcash swap's Zcash refund waits for its refund
-///   height (no bound: the actor does not report the height).
+///   height (no bound: the actor does not report the height);
+/// - `taker_lez_refund_after_lost_claim`: the Maker's follow-up LEZ claim
+///   missed the escrow's window (`until_unix_seconds` the LEZ refund time,
+///   `chain_unix_seconds` the finalized LEZ time read); the Maker submits
+///   nothing and waits for the escrow to settle;
+/// - `zcash_refund_after_lost_lez_claim`: that claim can no longer land and
+///   the Maker refunds its Zcash (no bound);
+/// - `lez_claim_nonce_contention`: an owned LEZ claim was re-planned more
+///   than five times because other transactions of the account took its
+///   nonce; it goes on being re-planned until the LEZ refund time
+///   (`until_unix_seconds`).
 ///
 /// New kinds may be added; a reader shows an unknown kind by its bounds.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

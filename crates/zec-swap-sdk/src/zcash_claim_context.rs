@@ -135,7 +135,31 @@ impl ZcashClaimContextV1 {
         agreement: &ZecAgreementV1,
         coordinator: &SwapCoordinator,
     ) -> Result<Self, ZcashClaimContextError> {
-        if coordinator.phase() != Phase::ClaimEvidenceAvailable {
+        // The Zcash claim is the follow-up in TakerSellsForeign and the Taker's revealing
+        // claim in TakerSellsLez, whose phase is BothLegsLocked.
+        let claim_phase = if crate::ClaimStepV1::revealing(agreement).chain() == Chain::Zcash {
+            Phase::BothLegsLocked
+        } else {
+            Phase::ClaimEvidenceAvailable
+        };
+        if coordinator.phase() != claim_phase {
+            return Err(ZcashClaimContextError::ClaimNotReady {
+                actual: coordinator.phase(),
+            });
+        }
+        ZcashFundingContextV1::from_active(agreement, coordinator).map(|funding| Self { funding })
+    }
+
+    /// `TakerSellsLez` after the reveal (claim evidence recorded): the same context, to
+    /// re-observe the Taker's revealing claim's depth when the Maker's follow-up LEZ
+    /// claim was lost (review 4, M1). Never used to prepare or submit a claim.
+    pub(crate) fn after_reveal(
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+    ) -> Result<Self, ZcashClaimContextError> {
+        if crate::ClaimStepV1::revealing(agreement).chain() != Chain::Zcash
+            || coordinator.phase() != Phase::ClaimEvidenceAvailable
+        {
             return Err(ZcashClaimContextError::ClaimNotReady {
                 actual: coordinator.phase(),
             });

@@ -1,11 +1,13 @@
 use lez_zec_swap_sdk::{
-    Bip199Contract, Bip199SpendKind, CanonicalZcashSpendObservation, ExpectedBip199Spend,
-    SpendObservationError, TransparentSpendRequest, ZcashSpendNodeSnapshot, ZcashStableTip,
-    build_claim_transaction, build_refund_transaction,
+    Bip199Contract, Bip199PreimageRule, Bip199SpendBranch, Bip199SpendKind,
+    CanonicalZcashSpendObservation, ExpectedBip199Spend, SpendObservationError,
+    TransparentSpendRequest, ZcashSpendNodeSnapshot, ZcashStableTip, ZecProfileId,
+    build_claim_transaction, build_refund_transaction, read_bip199_spend_branch,
 };
 use orchard::bundle as orchard_bundle;
 use sapling::bundle as sapling_bundle;
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, ecdsa::Signature};
+use sha2::{Digest as _, Sha256};
 use zcash_primitives::{
     block::BlockHash,
     transaction::{
@@ -516,6 +518,72 @@ fn consensus_valid_nonminimal_high_s_and_semantic_stacks_reveal_the_claim() {
     assert!(!observation.sdk_canonical_policy().has_exact_script_sig());
 }
 
+/// The counterparty's reveal is read from the stack alone: the node already enforced
+/// consensus, so the signature is not what decides whether the preimage is usable.
+#[test]
+fn spend_branch_is_read_from_the_stack_without_the_signature() {
+    let (contract, _, claim, refund) = fixture();
+    let script_sig = |transaction: &Transaction| {
+        transaction.transparent_bundle().unwrap().vin[0]
+            .script_sig()
+            .0
+            .0
+            .clone()
+    };
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &script_sig(&claim)),
+        Ok(Bip199SpendBranch::Claim {
+            preimage: PREIMAGE.to_vec().into_boxed_slice()
+        })
+    );
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &script_sig(&refund)),
+        Ok(Bip199SpendBranch::Refund)
+    );
+
+    let pushes = script_pushes(&claim);
+    let mut unsigned = pushes.clone();
+    unsigned[0] = vec![0x30, 0x01];
+    assert!(matches!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&unsigned)),
+        Ok(Bip199SpendBranch::Claim { .. })
+    ));
+    let mut extra_stack = pushes.clone();
+    extra_stack.insert(0, vec![]);
+    assert!(matches!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&extra_stack)),
+        Ok(Bip199SpendBranch::Claim { .. })
+    ));
+
+    let mut wrong_preimage = pushes.clone();
+    wrong_preimage[2] = vec![0x13; 32];
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&wrong_preimage)),
+        Err(SpendObservationError::WrongPreimage)
+    );
+    let mut other_script = pushes.clone();
+    other_script[4] = vec![0x51];
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&other_script)),
+        Err(SpendObservationError::SpendScriptMismatch)
+    );
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &minimally_encode_pushes(&pushes[2..])),
+        Err(SpendObservationError::InvalidSpendScript),
+        "a claim stack needs signature and public key below the preimage"
+    );
+    let mut not_push_only = minimally_encode_pushes(&pushes);
+    not_push_only.insert(0, 0x76);
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &not_push_only),
+        Err(SpendObservationError::InvalidSpendScript)
+    );
+    assert_eq!(
+        read_bip199_spend_branch(&contract, &[]),
+        Err(SpendObservationError::InvalidSpendScript)
+    );
+}
+
 #[test]
 fn consensus_observation_preserves_effects_while_policy_reports_mismatches() {
     let (contract, request, _, _) = fixture();
@@ -764,4 +832,81 @@ fn spend_observation_rejects_invalid_signature_noncanonical_data_and_tip_drift()
         CanonicalZcashSpendObservation::validate(&expected, &wrong_txid),
         Err(SpendObservationError::TransactionIdMismatch)
     );
+}
+
+/// The Taker-reveals-first contract (`OP_SIZE <32> OP_EQUALVERIFY` in the claim branch): a
+/// claim whose preimage is not 32 bytes is never a revealed preimage, neither from the stack
+/// alone nor from a full canonical observation; a 32-byte claim and the refund still are.
+#[test]
+fn size_checked_contract_reads_only_a_32_byte_preimage() {
+    let refund_key = key(1);
+    let claimant_key = key(2);
+    let destination =
+        lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_secret_key(&Secp256k1::new(), &key(3)));
+    for length in [31_usize, 32, 33] {
+        let preimage = vec![0x5a; length];
+        let contract = Bip199Contract::for_profile(
+            ZecProfileId::DeterministicLocalDevnetV7,
+            500_000,
+            pubkey_hash(&refund_key),
+            Sha256::digest(&preimage).into(),
+            pubkey_hash(&claimant_key),
+        );
+        assert_eq!(contract.preimage_rule(), Bip199PreimageRule::Exactly32Bytes);
+        let request = TransparentSpendRequest::new(
+            &contract,
+            OutPoint::new([0x11; 32], 7),
+            TxOut::new(
+                Zatoshis::from_u64(100_000).unwrap(),
+                Script(Code(contract.p2sh_script_pubkey().to_vec())),
+            ),
+            destination,
+            Zatoshis::from_u64(10_000).unwrap(),
+            BlockHeight::from_u32(4_100_000),
+            BranchId::Nu6_2,
+        )
+        .unwrap();
+        let claim = build_claim_transaction(&contract, &request, &claimant_key, &preimage).unwrap();
+        let script_sig = claim.transparent_bundle().unwrap().vin[0]
+            .script_sig()
+            .0
+            .0
+            .clone();
+        let read = read_bip199_spend_branch(&contract, &script_sig);
+        let observed = CanonicalZcashSpendObservation::validate(
+            &expected(contract.clone(), &request),
+            &snapshot(&claim, serialize(&claim)),
+        );
+        if length == 32 {
+            assert_eq!(
+                read,
+                Ok(Bip199SpendBranch::Claim {
+                    preimage: preimage.clone().into_boxed_slice()
+                })
+            );
+            assert!(matches!(
+                observed.unwrap().kind(),
+                Bip199SpendKind::Claim { preimage: seen, .. } if seen.as_ref() == preimage
+            ));
+        } else {
+            assert_eq!(
+                read,
+                Err(SpendObservationError::PreimageLengthRefused { length })
+            );
+            assert_eq!(
+                observed.err(),
+                Some(SpendObservationError::PreimageLengthRefused { length })
+            );
+        }
+        let refund = build_refund_transaction(&contract, &request, &refund_key).unwrap();
+        assert!(matches!(
+            CanonicalZcashSpendObservation::validate(
+                &expected(contract, &request),
+                &snapshot(&refund, serialize(&refund)),
+            )
+            .unwrap()
+            .kind(),
+            Bip199SpendKind::Refund { .. }
+        ));
+    }
 }

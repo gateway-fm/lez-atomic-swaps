@@ -466,7 +466,23 @@ struct SqliteClaimPort {
     followup_confirmed: std::sync::Arc<std::sync::Mutex<bool>>,
     zcash_contexts: std::sync::Arc<std::sync::Mutex<Vec<ZcashClaimContextV1>>>,
     funding_observation: std::sync::Arc<std::sync::Mutex<Option<ZcashFundingObservationV1>>>,
+    /// The simulated Zcash chain's spend of the HTLC outpoint, if any.
+    zcash_htlc_spend: Arc<Mutex<Option<ZcashHtlcSpend>>>,
 }
+
+/// How the simulated Zcash chain spent the agreement's HTLC outpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ZcashHtlcSpend {
+    /// A claim spend carrying `preimage`; zero confirmations is the mempool.
+    Claim {
+        preimage: [u8; 32],
+        confirmations: u32,
+    },
+    /// A refund spend: it carries no preimage.
+    Refund,
+}
+
+const ZCASH_HTLC_CLAIM_ID: [u8; 32] = [0xc2; 32];
 
 type ClaimPayloadLog = Vec<(ClaimStepV1, Vec<u8>)>;
 
@@ -488,6 +504,7 @@ impl Default for SqliteClaimPort {
             followup_confirmed: std::sync::Arc::default(),
             zcash_contexts: std::sync::Arc::default(),
             funding_observation: std::sync::Arc::default(),
+            zcash_htlc_spend: Arc::default(),
         }
     }
 }
@@ -526,6 +543,27 @@ impl SqliteClaimPort {
             .revealing_preimage
             .lock()
             .expect("revealing observation lock") = Some(preimage);
+    }
+
+    /// The LEZ escrow claim landed with `preimage` (whoever signed it).
+    fn confirm_lez_claim(&self, preimage: [u8; 32]) {
+        self.confirm_revealing_claim(preimage);
+    }
+
+    fn spend_zcash_htlc_as(&self, spend: Option<ZcashHtlcSpend>) {
+        *self.zcash_htlc_spend.lock().expect("Zcash HTLC spend lock") = spend;
+    }
+
+    /// Mines the HTLC claim spend to the Zcash leg's depth.
+    fn bury_zcash_claim(&self, agreement: &lez_zec_swap_sdk::ZecAgreementV1) {
+        let mut spend = self.zcash_htlc_spend.lock().expect("Zcash HTLC spend lock");
+        let Some(ZcashHtlcSpend::Claim { preimage, .. }) = *spend else {
+            panic!("no claim spend of the HTLC to bury");
+        };
+        *spend = Some(ZcashHtlcSpend::Claim {
+            preimage,
+            confirmations: zcash_claim_depth(agreement),
+        });
     }
 
     fn confirm_followup_claim(&self) {
@@ -827,6 +865,78 @@ impl LezClaimPort for SqliteClaimPort {
             Ok(lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Accepted)
         }
     }
+
+    // TakerSellsLez: the Maker's LEZ claim is the same escrow claim; the
+    // simulated chain records the follow-up step.
+
+    async fn prepare_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        LezClaimPort::prepare_revealing_claim(self, agreement, preimage)
+            .await?
+            .relabeled(ClaimStepV1::FollowupLez)
+            .map_err(|_| TestPortError("invalid follow-up LEZ submission fixture"))
+    }
+
+    async fn observe_prepared_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        if prepared.step() != ClaimStepV1::FollowupLez
+            || prepared.expected_submission_id() != &[0xc1; 32]
+        {
+            return Err(TestPortError("substituted follow-up LEZ claim identity"));
+        }
+        self.observed_claim_payloads
+            .lock()
+            .expect("observed claim payloads lock")
+            .push((
+                ClaimStepV1::FollowupLez,
+                prepared.exact_submission().to_vec(),
+            ));
+        let as_claim = prepared
+            .relabeled_copy(ClaimStepV1::RevealingLez)
+            .map_err(|_| TestPortError("follow-up LEZ claim relabel"))?;
+        self.revealing_observation(agreement, Some(&as_claim))
+    }
+
+    async fn observe_counterparty_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.revealing_observation(agreement, None)
+    }
+
+    async fn submit_followup_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1, Self::Error> {
+        if prepared.step() != ClaimStepV1::FollowupLez
+            || !prepared
+                .exact_submission()
+                .starts_with(b"sqlite-lez-claim:")
+        {
+            return Err(TestPortError("substituted follow-up LEZ claim bytes"));
+        }
+        self.claim_submissions
+            .lock()
+            .expect("claim submissions lock")
+            .push(ClaimStepV1::FollowupLez);
+        if self
+            .claim_fail_after_accept
+            .lock()
+            .expect("claim failure lock")
+            .contains(&ClaimStepV1::FollowupLez)
+        {
+            Err(TestPortError("claim accepted before transport failure"))
+        } else {
+            Ok(lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Accepted)
+        }
+    }
 }
 
 #[async_trait]
@@ -931,6 +1041,139 @@ impl ZcashClaimPort for SqliteClaimPort {
             Ok(())
         }
     }
+
+    // TakerSellsLez: the Taker's revealing claim is the same HTLC claim spend;
+    // the simulated chain records it as the outpoint's spender.
+
+    async fn prepare_revealing_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        self.record_zcash_context(context);
+        let mut exact = b"sqlite-zec-claim:".to_vec();
+        exact.extend_from_slice(preimage.expose_secret());
+        PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingZcash, ZCASH_HTLC_CLAIM_ID, exact)
+            .map_err(|_| TestPortError("invalid revealing Zcash submission fixture"))
+    }
+
+    async fn observe_prepared_revealing_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        self.record_zcash_context(context);
+        if prepared.step() != ClaimStepV1::RevealingZcash
+            || prepared.expected_submission_id() != &ZCASH_HTLC_CLAIM_ID
+        {
+            return Err(TestPortError("substituted revealing Zcash claim identity"));
+        }
+        self.observed_claim_payloads
+            .lock()
+            .expect("observed claim payloads lock")
+            .push((
+                ClaimStepV1::RevealingZcash,
+                prepared.exact_submission().to_vec(),
+            ));
+        match *self.zcash_htlc_spend.lock().expect("Zcash HTLC spend lock") {
+            None => Ok(FollowupClaimObservationV1::Absent),
+            Some(ZcashHtlcSpend::Refund) => Err(TestPortError("the HTLC was refunded")),
+            Some(ZcashHtlcSpend::Claim { confirmations, .. })
+                if confirmations < zcash_claim_depth(agreement) =>
+            {
+                Ok(FollowupClaimObservationV1::Unstable)
+            }
+            Some(ZcashHtlcSpend::Claim { confirmations, .. }) => FollowupClaimEvidenceV1::new(
+                agreement,
+                ZCASH_HTLC_CLAIM_ID,
+                "sqlite-zcash-revealing-claim",
+                confirmations,
+            )
+            .map(FollowupClaimObservationV1::Confirmed)
+            .map_err(|_| TestPortError("invalid revealing Zcash claim fixture")),
+        }
+    }
+
+    async fn submit_revealing_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        self.record_zcash_context(context);
+        let exact = prepared.exact_submission();
+        let Some(revealed) = exact.strip_prefix(b"sqlite-zec-claim:") else {
+            return Err(TestPortError("substituted revealing Zcash claim bytes"));
+        };
+        let preimage: [u8; 32] = revealed
+            .try_into()
+            .map_err(|_| TestPortError("substituted revealing Zcash claim bytes"))?;
+        self.claim_submissions
+            .lock()
+            .expect("claim submissions lock")
+            .push(ClaimStepV1::RevealingZcash);
+        let mut spend = self.zcash_htlc_spend.lock().expect("Zcash HTLC spend lock");
+        if spend.is_none() {
+            *spend = Some(ZcashHtlcSpend::Claim {
+                preimage,
+                confirmations: 0,
+            });
+        }
+        if self
+            .claim_fail_after_accept
+            .lock()
+            .expect("claim failure lock")
+            .contains(&ClaimStepV1::RevealingZcash)
+        {
+            Err(TestPortError("claim accepted before transport failure"))
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn observe_counterparty_revealing_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.record_zcash_context(context);
+        match *self.zcash_htlc_spend.lock().expect("Zcash HTLC spend lock") {
+            None => Ok(RevealingClaimObservationV1::Absent),
+            // The refund branch carries no preimage: never evidence.
+            Some(ZcashHtlcSpend::Refund) => Err(TestPortError(
+                "the HTLC was spent by the refund branch; it reveals no preimage",
+            )),
+            Some(ZcashHtlcSpend::Claim { preimage, .. })
+                if <[u8; 32]>::from(Sha256::digest(preimage)) != *agreement.secret_digest() =>
+            {
+                Err(TestPortError(
+                    "the claim's preimage does not hash to the agreement digest",
+                ))
+            }
+            // As the Zebra adapter: the preimage is read as soon as the claim is seen, in the
+            // mempool or any block.
+            Some(ZcashHtlcSpend::Claim {
+                preimage,
+                confirmations,
+            }) => RevealingClaimEvidenceV1::from_observed_zcash_claim(
+                agreement,
+                ZCASH_HTLC_CLAIM_ID,
+                "sqlite-zcash-revealing-claim",
+                confirmations,
+                ClaimPreimage::new(preimage),
+            )
+            .map(RevealingClaimObservationV1::Confirmed)
+            .map_err(|_| TestPortError("invalid revealing Zcash claim fixture")),
+        }
+    }
+}
+
+/// The confirmation depth of the agreement's Zcash leg.
+fn zcash_claim_depth(agreement: &lez_zec_swap_sdk::ZecAgreementV1) -> u32 {
+    lez_zec_swap_sdk::ZecRefundProfile::for_id(agreement.binding().profile_id())
+        .zcash_confirmations()
 }
 
 fn refund_id(step: RefundStepV1) -> [u8; 32] {
@@ -1156,6 +1399,37 @@ fn role_name(participant: Participant) -> &'static str {
     }
 }
 
+/// One refund journal entry: a refund step, the role that drives it, and the
+/// predecessor revision it commits at.
+#[derive(Clone, Copy)]
+enum RefundJournalStep {
+    Owned(RefundStepV1, Participant, u64),
+    Observed(RefundStepV1, Participant, u64),
+}
+
+fn assert_observed_refund_row(path: &std::path::Path, role: &str, id: &str, predecessor: u64) {
+    let raw = Connection::open(path).expect("inspect observer refund");
+    let (kind, retained_version, retained_json, staged): (
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+    ) = raw
+        .query_row(
+            "SELECT transition_kind, retained_intent_version,
+                    retained_intent_json, intent_staged_revision
+             FROM zec_sdk_refund_transitions
+             WHERE local_role=?1 AND swap_id=?2 AND predecessor_revision=?3",
+            params![role, id, i64::try_from(predecessor).expect("revision")],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("observer transition row");
+    assert_eq!(
+        (kind.as_str(), retained_version, retained_json, staged),
+        ("observed", None, None, None)
+    );
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn schema_v10_refund_journal_reaches_refunded_and_reopens_in_both_directions() {
@@ -1188,14 +1462,56 @@ async fn schema_v10_refund_journal_reaches_refunded_and_reopens_in_both_directio
 
         let lez_owner = maker.agreement().lez_depositor();
         let zcash_owner = maker.agreement().lez_claimant();
-        for (index, (step, owner)) in [
-            (RefundStepV1::Lez, lez_owner),
-            (RefundStepV1::Zcash, zcash_owner),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let predecessor = 2 + u64::try_from(index).expect("small refund index");
+        let (lez, zcash) = (RefundStepV1::Lez, RefundStepV1::Zcash);
+        let journal = match direction {
+            // The Maker's LEZ refund, observed by the Taker; then the Taker's
+            // Zcash refund, observed by the Maker.
+            SwapDirection::TakerSellsForeign => [
+                RefundJournalStep::Owned(lez, lez_owner, 2),
+                RefundJournalStep::Observed(lez, zcash_owner, 2),
+                RefundJournalStep::Owned(zcash, zcash_owner, 3),
+                RefundJournalStep::Observed(zcash, lez_owner, 3),
+            ],
+            // Each funder refunds its own leg from both legs locked (the
+            // Maker's earlier Zcash refund first), then observes the other's.
+            SwapDirection::TakerSellsLez => [
+                RefundJournalStep::Owned(zcash, zcash_owner, 2),
+                RefundJournalStep::Owned(lez, lez_owner, 2),
+                RefundJournalStep::Observed(zcash, lez_owner, 3),
+                RefundJournalStep::Observed(lez, zcash_owner, 3),
+            ],
+        };
+        for entry in journal {
+            let expected_projection = |step: RefundStepV1, predecessor: u64| {
+                if predecessor == 3 {
+                    RefundDriveOutcome::Refunded {
+                        revision: predecessor + 1,
+                    }
+                } else {
+                    RefundDriveOutcome::Projected {
+                        step,
+                        revision: predecessor + 1,
+                    }
+                }
+            };
+            let (step, owner, predecessor) = match entry {
+                RefundJournalStep::Owned(step, owner, predecessor) => (step, owner, predecessor),
+                RefundJournalStep::Observed(step, observer, predecessor) => {
+                    assert_eq!(
+                        drive_refund_actor(observer, &mut maker, &mut taker)
+                            .await
+                            .expect("observer projects refund"),
+                        expected_projection(step, predecessor),
+                    );
+                    assert_observed_refund_row(
+                        role_path(observer, &maker_path, &taker_path),
+                        role_name(observer),
+                        id,
+                        predecessor,
+                    );
+                    continue;
+                }
+            };
             assert_eq!(
                 drive_refund_actor(owner, &mut maker, &mut taker)
                     .await
@@ -1259,21 +1575,11 @@ async fn schema_v10_refund_journal_reaches_refunded_and_reopens_in_both_directio
             }
             drop(raw);
 
-            let expected_projection = if step == RefundStepV1::Zcash {
-                RefundDriveOutcome::Refunded {
-                    revision: predecessor + 1,
-                }
-            } else {
-                RefundDriveOutcome::Projected {
-                    step,
-                    revision: predecessor + 1,
-                }
-            };
             assert_eq!(
                 drive_refund_actor(owner, &mut maker, &mut taker)
                     .await
                     .expect("owner projects refund"),
-                expected_projection,
+                expected_projection(step, predecessor),
             );
             let owner_transition = match owner {
                 Participant::Maker => {
@@ -1372,53 +1678,6 @@ async fn schema_v10_refund_journal_reaches_refunded_and_reopens_in_both_directio
                 .expect("pending owner intent count");
             assert_eq!(pending, 0);
             drop(raw);
-
-            let observer = if owner == Participant::Maker {
-                Participant::Taker
-            } else {
-                Participant::Maker
-            };
-            let expected_projection = if step == RefundStepV1::Zcash {
-                RefundDriveOutcome::Refunded {
-                    revision: predecessor + 1,
-                }
-            } else {
-                RefundDriveOutcome::Projected {
-                    step,
-                    revision: predecessor + 1,
-                }
-            };
-            assert_eq!(
-                drive_refund_actor(observer, &mut maker, &mut taker)
-                    .await
-                    .expect("observer projects refund"),
-                expected_projection,
-            );
-            let raw = Connection::open(role_path(observer, &maker_path, &taker_path))
-                .expect("inspect observer refund");
-            let (kind, retained_version, retained_json, staged): (
-                String,
-                Option<i64>,
-                Option<String>,
-                Option<i64>,
-            ) = raw
-                .query_row(
-                    "SELECT transition_kind, retained_intent_version,
-                            retained_intent_json, intent_staged_revision
-                     FROM zec_sdk_refund_transitions
-                     WHERE local_role=?1 AND swap_id=?2 AND predecessor_revision=?3",
-                    params![
-                        role_name(observer),
-                        id,
-                        i64::try_from(predecessor).expect("revision")
-                    ],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )
-                .expect("observer transition row");
-            assert_eq!(
-                (kind.as_str(), retained_version, retained_json, staged),
-                ("observed", None, None, None)
-            );
         }
         assert_eq!((maker.status(), maker.revision()), (Phase::Refunded, 4));
         assert_eq!((taker.status(), taker.revision()), (Phase::Refunded, 4));
@@ -1528,7 +1787,7 @@ async fn schema_v9_claim_journal_completes_and_reopens_independent_actors_in_bot
         (
             "sqlite-v9-claim-reverse",
             SwapDirection::TakerSellsLez,
-            Participant::Maker,
+            Participant::Taker,
             [0x92; 32],
         ),
     ] {
@@ -1536,6 +1795,10 @@ async fn schema_v9_claim_journal_completes_and_reopens_independent_actors_in_bot
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one direction's claim journal is followed through a reopen"
+)]
 async fn assert_schema_v9_claim_direction(
     id: &str,
     direction: SwapDirection,
@@ -1582,21 +1845,46 @@ async fn assert_schema_v9_claim_direction(
     };
 
     drive_sqlite_claim_locks(direction, &port, &mut maker, &mut taker).await;
-    drive_sqlite_claims(
+    if direction == SwapDirection::TakerSellsLez {
+        drive_sqlite_taker_sells_lez_claims(
+            id,
+            secret,
+            &port,
+            &maker_store,
+            &mut maker,
+            &mut taker,
+        )
+        .await;
+    } else {
+        drive_sqlite_claims(
+            id,
+            first_claimant,
+            secret,
+            &port,
+            (&maker_store, &taker_store),
+            &mut maker,
+            &mut taker,
+        )
+        .await;
+    }
+    // The Zcash funder is the LEZ claimant. Selling ZEC the Maker's follow-up
+    // binds five contexts; selling LEZ the Taker's revealing claim binds two
+    // (prepare, submit) and its observation one, and the Maker's four
+    // observations (two rejected spends, absent, confirmed) four.
+    assert_sqlite_zcash_claim_contexts(
         id,
-        first_claimant,
-        secret,
+        maker.agreement().lez_claimant(),
+        match direction {
+            SwapDirection::TakerSellsForeign => 5,
+            SwapDirection::TakerSellsLez => 7,
+        },
         &port,
-        (&maker_store, &taker_store),
-        &mut maker,
-        &mut taker,
-    )
-    .await;
-    assert_sqlite_zcash_claim_contexts(id, first_claimant, &port, maker.agreement());
+        maker.agreement(),
+    );
     assert_eq!((maker.status(), maker.revision()), (Phase::Completed, 4));
     assert_eq!((taker.status(), taker.revision()), (Phase::Completed, 4));
-    assert_schema_v9_journal(&maker_path, id, "maker", secret);
-    assert_schema_v9_journal(&taker_path, id, "taker", secret);
+    assert_schema_v9_journal(&maker_path, id, "maker", secret, direction);
+    assert_schema_v9_journal(&taker_path, id, "taker", secret, direction);
     assert_claim_plaintext_absent(&maker_path, secret);
     assert_claim_plaintext_absent(&taker_path, secret);
 
@@ -1638,6 +1926,7 @@ async fn assert_schema_v9_claim_direction(
 fn assert_sqlite_zcash_claim_contexts(
     id: &str,
     zcash_funder: Participant,
+    expected_contexts: usize,
     port: &SqliteClaimPort,
     agreement: &lez_zec_swap_sdk::ZecAgreementV1,
 ) {
@@ -1648,7 +1937,7 @@ fn assert_sqlite_zcash_claim_contexts(
     let contexts = port.zcash_contexts();
     assert_eq!(
         contexts.len(),
-        5,
+        expected_contexts,
         "all schema-v9 prepare/observe/submit paths must carry durable funding context"
     );
     assert!(contexts.iter().all(|context| {
@@ -1663,14 +1952,20 @@ fn assert_sqlite_zcash_claim_contexts(
 }
 
 /// Devnet finding (M2 step 5, zec-maker-refund): with both legs locked the
-/// Maker staged its revealing claim, the submission failed, the Taker refunded
-/// its LEZ leg and the Maker observed that refund. From then on every
-/// claim-capable open of the Maker's store failed closed: the open claim
-/// intent was revalidated against the head coordinator, which the observed
-/// refund had moved past the intent's phase. The intent is now validated where
-/// it was staged when only refund slots follow it, and the Maker can go on to
-/// refund its own leg and reopen at every step.
+/// revealing claimant staged its claim, the submission failed, and a refund
+/// moved its swap past the staged intent. From then on every claim-capable
+/// open of its store failed closed: the open claim intent was revalidated
+/// against the head coordinator, which the refund had moved past the intent's
+/// phase. The intent is now validated where it was staged when only refund
+/// slots follow it. Selling LEZ the revealing claimant is the Taker (its Zcash
+/// claim): the claim never lands, the Maker refunds its Zcash leg, the Taker
+/// refunds its own LEZ leg instead of claiming, and its store reopens at every
+/// step.
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one staged claim is followed through both refunds and three reopens"
+)]
 async fn claim_capable_store_reopens_after_recovery_overtakes_a_staged_claim_intent() {
     let id = "sqlite-claim-intent-overtaken-by-refund";
     let direction = SwapDirection::TakerSellsLez;
@@ -1685,105 +1980,117 @@ async fn claim_capable_store_reopens_after_recovery_overtakes_a_staged_claim_int
         Sha256::digest(secret).into(),
     );
     let swap_id = SwapId::new(id).expect("swap id");
+    let now = lez_zec_swap_sdk::LezUnixMilliseconds::new(0);
     let port = SqliteClaimPort::default();
     let maker_store = claim_store(&maker_path, Participant::Maker);
     let taker_store = claim_store(&taker_path, Participant::Taker);
     let mut maker = claim_sdk(Participant::Maker, port.clone(), maker_store.clone())
+        .activate(accept(&wire, Participant::Maker))
+        .await
+        .expect("maker activation");
+    let mut taker = claim_sdk(Participant::Taker, port.clone(), taker_store.clone())
         .activate_with_claim_preimage(
-            accept(&wire, Participant::Maker),
+            accept(&wire, Participant::Taker),
             ClaimPreimage::new(secret),
         )
         .await
-        .expect("maker protects its activation preimage");
-    let mut taker = claim_sdk(Participant::Taker, port.clone(), taker_store.clone())
-        .activate(accept(&wire, Participant::Taker))
-        .await
-        .expect("taker activation");
+        .expect("taker protects its activation preimage");
     drive_sqlite_claim_locks(direction, &port, &mut maker, &mut taker).await;
-    assert_eq!(maker.status(), Phase::BothLegsLocked);
-    assert_eq!(maker.agreement().lez_claimant(), Participant::Maker);
+    assert_eq!(taker.status(), Phase::BothLegsLocked);
+    assert_eq!(taker.agreement().revealing_claimant(), Participant::Taker);
 
-    // The Maker's revealing claim is staged, then its submission fails.
-    port.fail_claim_after_accept(ClaimStepV1::RevealingLez);
-    assert!(
+    // The Taker's revealing Zcash claim is staged, its submission fails, and
+    // the claim leaves the mempool without a block.
+    port.fail_claim_after_accept(ClaimStepV1::RevealingZcash);
+    assert!(taker.drive_claim(now).await.is_err());
+    assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingZcash]);
+    port.spend_zcash_htlc_as(None);
+    assert_eq!(claim_intent_revisions(&taker_path, "taker", id), (2, None));
+
+    // The Maker refunds its (earlier) Zcash leg; the Taker refunds its own
+    // LEZ leg past its staged claim.
+    assert_eq!(
         maker
-            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .drive_refund(now)
             .await
-            .is_err()
+            .expect("maker submits its Zcash refund"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
     );
-    assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingLez]);
-    assert_eq!(maker_claim_intent_revisions(&maker_path, id), (2, None));
-
-    // The Taker refunds its LEZ leg; the Maker observes it instead of claiming.
+    assert_eq!(
+        maker
+            .drive_refund(now)
+            .await
+            .expect("maker projects its Zcash refund"),
+        RefundDriveOutcome::Projected {
+            step: RefundStepV1::Zcash,
+            revision: 3
+        }
+    );
     assert_eq!(
         taker
-            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .drive_refund(now)
             .await
             .expect("taker submits its LEZ refund"),
         RefundDriveOutcome::Submitted(RefundStepV1::Lez)
     );
     assert_eq!(
         taker
-            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .drive_refund(now)
             .await
-            .expect("taker projects its LEZ refund"),
+            .expect("taker projects its LEZ refund past its staged claim"),
         RefundDriveOutcome::Projected {
             step: RefundStepV1::Lez,
             revision: 3
         }
     );
-    maker
-        .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
-        .await
-        .expect("maker observes the Taker's LEZ refund past its staged claim");
-    assert_eq!(maker.status(), Phase::TakerLegRefunded);
+    assert_eq!(taker.status(), Phase::TakerLegRefunded);
 
-    // Every claim-capable open of the Maker's store works again, and the
-    // journal replays to the observed refund.
-    let reopened = claim_store(&maker_path, Participant::Maker);
-    let mut resumed = claim_sdk(Participant::Maker, port.clone(), reopened)
+    // Every claim-capable open of the Taker's store works again, and the
+    // journal replays to its refund.
+    let reopened = claim_store(&taker_path, Participant::Taker);
+    let mut resumed = claim_sdk(Participant::Taker, port.clone(), reopened)
         .resume_all_capable(&swap_id)
         .await
         .expect("resume through the reopened store")
         .expect("active swap");
     assert_eq!(resumed.status(), Phase::TakerLegRefunded);
 
-    // The Maker refunds its own Zcash leg through the reopened store.
+    // The reopened Taker observes the Maker's Zcash refund and ends.
     assert_eq!(
         resumed
-            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .drive_refund(now)
             .await
-            .expect("maker submits its Zcash refund"),
-        RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
-    );
-    assert_eq!(
-        resumed
-            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
-            .await
-            .expect("maker projects its Zcash refund"),
+            .expect("taker observes the Zcash refund"),
         RefundDriveOutcome::Refunded { revision: 4 }
     );
     let again = claim_sdk(
-        Participant::Maker,
+        Participant::Taker,
         port.clone(),
-        claim_store(&maker_path, Participant::Maker),
+        claim_store(&taker_path, Participant::Taker),
     )
     .resume_all_capable(&swap_id)
     .await
     .expect("resume after the Zcash refund")
     .expect("terminal swap");
     assert_eq!(again.status(), Phase::Refunded);
+    assert_eq!(
+        maker
+            .drive_refund(now)
+            .await
+            .expect("maker observes the LEZ refund"),
+        RefundDriveOutcome::Refunded { revision: 4 }
+    );
 
-    assert_claim_slot_behind_refund_fails_closed(&maker_path, id);
+    assert_claim_slot_behind_refund_fails_closed(&taker_path, "taker", id);
 }
 
-fn maker_claim_intent_revisions(path: &std::path::Path, id: &str) -> (i64, Option<i64>) {
+fn claim_intent_revisions(path: &std::path::Path, role: &str, id: &str) -> (i64, Option<i64>) {
     Connection::open(path)
         .expect("inspect the staged claim intent")
         .query_row(
             "SELECT staged_revision, closed_revision FROM zec_sdk_claim_intents
-             WHERE local_role='maker' AND swap_id=?1",
-            params![id],
+             WHERE local_role=?1 AND swap_id=?2",
+            params![role, id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("one claim intent")
@@ -1791,20 +2098,25 @@ fn maker_claim_intent_revisions(path: &std::path::Path, id: &str) -> (i64, Optio
 
 /// A claim slot behind the staged intent is still corruption: a forged owned
 /// claim transition behind the refund makes the claim-capable open fail closed.
-fn assert_claim_slot_behind_refund_fails_closed(path: &std::path::Path, id: &str) {
+fn assert_claim_slot_behind_refund_fails_closed(path: &std::path::Path, role: &str, id: &str) {
     Connection::open(path)
         .expect("forge a claim slot")
         .execute(
             "INSERT INTO zec_sdk_owned_claim_transitions
              (local_role, swap_id, transition_kind, predecessor_revision, committed_revision,
               intent_staged_revision, payload_version, payload_json)
-             VALUES ('maker', ?1, 'revealing_lez', 2, 3, 2, 1, '{}')",
-            params![id],
+             VALUES (?1, ?2, 'revealing_lez', 2, 3, 2, 1, '{}')",
+            params![role, id],
         )
         .expect("forged row");
+    let participant = if role == "maker" {
+        Participant::Maker
+    } else {
+        Participant::Taker
+    };
     let error = SqliteZecRecoveryStore::open_claim_capable(
         path,
-        Participant::Maker,
+        participant,
         ProtectedClaimKey::new("sqlite-test-claim-key-v1", [0x7a; 32]).expect("test claim key"),
     )
     .expect_err("a claim slot behind the refund fails closed");
@@ -1983,7 +2295,111 @@ async fn drive_sqlite_claims(
         .expect("taker observes completion");
 }
 
-fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str, secret: [u8; 32]) {
+/// `TakerSellsLez`: the Taker claims the Maker's Zcash HTLC (revealing the
+/// preimage), the Maker reads it from that claim and claims the Taker's LEZ.
+async fn drive_sqlite_taker_sells_lez_claims(
+    id: &str,
+    secret: [u8; 32],
+    port: &SqliteClaimPort,
+    maker_store: &SqliteZecRecoveryStore,
+    maker: &mut ClaimActive,
+    taker: &mut ClaimActive,
+) {
+    let now = lez_zec_swap_sdk::LezUnixMilliseconds::new(0);
+    let swap_id = SwapId::new(id).expect("swap ID");
+    // A refund spend or a claim with another preimage is never a reveal: the
+    // Maker's store keeps no claim material.
+    for spend in [
+        ZcashHtlcSpend::Refund,
+        ZcashHtlcSpend::Claim {
+            preimage: [0xee; 32],
+            confirmations: zcash_claim_depth(maker.agreement()),
+        },
+    ] {
+        port.spend_zcash_htlc_as(Some(spend));
+        assert!(
+            matches!(
+                maker.drive_claim(now).await,
+                Err(ZecSdkError::ZcashClaim(_))
+            ),
+            "{spend:?}"
+        );
+        assert!(
+            maker_store
+                .load_claim_material(&swap_id)
+                .await
+                .expect("maker store")
+                .is_none(),
+            "{spend:?} stores no preimage"
+        );
+    }
+    port.spend_zcash_htlc_as(None);
+    assert_eq!(
+        maker.drive_claim(now).await.expect("maker waits"),
+        ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingZcash)
+    );
+    assert_eq!(
+        taker.drive_claim(now).await.expect("submit Zcash reveal"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+    );
+    assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingZcash]);
+    assert!(
+        maker_store
+            .load_claim_material(&swap_id)
+            .await
+            .expect("maker store")
+            .is_none(),
+        "the Maker holds no preimage before it commits the Taker's claim"
+    );
+    // The Maker commits the claim from the mempool (0 confirmations); the reopen that follows
+    // this drive revalidates that record.
+    assert_eq!(
+        maker
+            .drive_claim(now)
+            .await
+            .expect("maker observes the Zcash reveal in the mempool"),
+        ClaimDriveOutcome::Projected {
+            step: ClaimStepV1::RevealingZcash,
+            revision: 3,
+        }
+    );
+    port.bury_zcash_claim(taker.agreement());
+    taker
+        .drive_claim(now)
+        .await
+        .expect("taker projects its Zcash reveal");
+    let recovered = maker_store
+        .load_claim_material(&swap_id)
+        .await
+        .expect("load observed protected preimage")
+        .expect("follower protected preimage");
+    assert_eq!(recovered.expose_secret(), &secret);
+    assert_eq!(
+        maker.drive_claim(now).await.expect("submit LEZ follow-up"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupLez)
+    );
+    assert_eq!(
+        port.claim_submissions(),
+        vec![ClaimStepV1::RevealingZcash, ClaimStepV1::FollowupLez]
+    );
+    port.confirm_lez_claim(secret);
+    maker
+        .drive_claim(now)
+        .await
+        .expect("maker observes completion");
+    taker
+        .drive_claim(now)
+        .await
+        .expect("taker observes completion");
+}
+
+fn assert_schema_v9_journal(
+    path: &std::path::Path,
+    id: &str,
+    role: &str,
+    secret: [u8; 32],
+    direction: SwapDirection,
+) {
     let raw = Connection::open(path).expect("inspect schema-v9 journal");
     let version: i64 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -2053,8 +2469,37 @@ fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str, secret
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("one canonical revealing transition");
-    assert_eq!(revealing_version, i64::from(CLAIM_RECORD_SCHEMA_V2));
-    assert!(revealing_payload.contains("canonical_lez_snapshot"));
+    // The SQL slots keep their names; the payload records the chain step. A
+    // LEZ reveal carries its canonical LEZ snapshot (schema v2); a Zcash reveal
+    // has none (schema v1).
+    match direction {
+        SwapDirection::TakerSellsForeign => {
+            assert_eq!(revealing_version, i64::from(CLAIM_RECORD_SCHEMA_V2));
+            assert!(revealing_payload.contains("canonical_lez_snapshot"));
+            assert!(revealing_payload.contains("revealing_lez"));
+        }
+        SwapDirection::TakerSellsLez => {
+            assert_eq!(revealing_version, i64::from(CLAIM_RECORD_SCHEMA_V1));
+            assert!(!revealing_payload.contains("canonical_lez_snapshot"));
+            assert!(revealing_payload.contains("revealing_zcash"));
+            let followup_payload: String = raw
+                .query_row(
+                    "SELECT payload_json FROM (
+                        SELECT payload_json, transition_kind
+                          FROM zec_sdk_owned_claim_transitions
+                         WHERE local_role = ?1 AND swap_id = ?2
+                        UNION ALL
+                        SELECT payload_json, transition_kind
+                          FROM zec_sdk_observed_claim_transitions
+                         WHERE local_role = ?1 AND swap_id = ?2
+                     ) WHERE transition_kind IN ('followup_zcash', 'observed_followup_zcash')",
+                    params![role, id],
+                    |row| row.get(0),
+                )
+                .expect("one follow-up transition");
+            assert!(followup_payload.contains("followup_lez"));
+        }
+    }
     assert!(!revealing_payload.contains(
         &serde_json::to_string(&secret).expect("serialize forbidden plaintext test value")
     ));
@@ -5421,18 +5866,33 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     .unwrap();
     assert!(
         recovery_store
-            .preflight_maker_zec_scheduled_completion_replay(
+            .preflight_maker_zec_scheduled_completion_replay_for_role(
                 &completion_request,
                 &offer_id,
                 2,
                 &reservation_id,
                 &artifacts.agreement_wire,
-                &ClaimPreimage::new(secret),
+                None,
             )
             .unwrap()
             .is_none(),
         "an absent completion request has no durable replay"
     );
+    // TakerSellsLez: the Taker holds the preimage; a Maker completion that
+    // carries claim material is refused before any effect.
+    assert!(matches!(
+        recovery_store.complete_maker_zec_negotiation_and_register_actor_for_role(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            Some(&ClaimPreimage::new(secret)),
+            &actor,
+            10,
+        ),
+        Err(StoreError::InvalidZecRecoveryState)
+    ));
     let raw = Connection::open(&path).expect("external rollback injector");
     raw.execute_batch(
         "CREATE TRIGGER fail_maker_zec_completion
@@ -5442,13 +5902,13 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     )
     .unwrap();
     assert!(matches!(
-        recovery_store.complete_maker_zec_negotiation_and_register_actor(
+        recovery_store.complete_maker_zec_negotiation_and_register_actor_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &accepted,
-            &ClaimPreimage::new(secret),
+            None,
             &actor,
             10,
         ),
@@ -5502,13 +5962,13 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     assert_eq!(rolled_back_binding_and_claim, (0, 0));
     assert!(
         recovery_store
-            .preflight_maker_zec_scheduled_completion_replay(
+            .preflight_maker_zec_scheduled_completion_replay_for_role(
                 &completion_request,
                 &offer_id,
                 2,
                 &reservation_id,
                 &artifacts.agreement_wire,
-                &ClaimPreimage::new(secret),
+                None,
             )
             .unwrap()
             .is_none(),
@@ -5518,13 +5978,13 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     raw.execute_batch("DROP TRIGGER fail_maker_zec_completion;")
         .unwrap();
     let committed = recovery_store
-        .complete_maker_zec_negotiation_and_register_actor(
+        .complete_maker_zec_negotiation_and_register_actor_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &accepted,
-            &ClaimPreimage::new(secret),
+            None,
             &actor,
             10,
         )
@@ -5549,13 +6009,13 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     )
     .unwrap();
     let durable_replay = recovery_store
-        .preflight_maker_zec_scheduled_completion_replay(
+        .preflight_maker_zec_scheduled_completion_replay_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &artifacts.agreement_wire,
-            &ClaimPreimage::new(secret),
+            None,
         )
         .unwrap()
         .expect("exact committed request survives restart and live expiry");
@@ -5568,68 +6028,57 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     let mut changed_wire = artifacts.agreement_wire.clone();
     changed_wire.push(0);
     assert!(matches!(
-        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &changed_wire,
-            &ClaimPreimage::new(secret),
+            None,
         ),
         Err(StoreError::MakerOfferRequestConflict)
     ));
     assert!(matches!(
-        recovery_store.preflight_maker_zec_scheduled_completion_replay(
-            &completion_request,
-            &offer_id,
-            2,
-            &reservation_id,
-            &artifacts.agreement_wire,
-            &ClaimPreimage::new([0x92; 32]),
-        ),
-        Err(StoreError::MakerOfferRequestConflict)
-    ));
-    assert!(matches!(
-        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay_for_role(
             &completion_request,
             &offer_id,
             1,
             &reservation_id,
             &artifacts.agreement_wire,
-            &ClaimPreimage::new(secret),
+            None,
         ),
         Err(StoreError::MakerOfferRequestConflict)
     ));
     assert!(matches!(
-        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay_for_role(
             &completion_request,
             &offer_id,
             2,
             &request("maker-zec-atomic-other-reservation"),
             &artifacts.agreement_wire,
-            &ClaimPreimage::new(secret),
+            None,
         ),
         Err(StoreError::MakerOfferRequestConflict)
     ));
     assert!(matches!(
-        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay_for_role(
             &completion_request,
             &MakerOfferId::new("maker-zec-atomic-other-offer").unwrap(),
             2,
             &reservation_id,
             &artifacts.agreement_wire,
-            &ClaimPreimage::new(secret),
+            None,
         ),
         Err(StoreError::MakerOfferRequestConflict)
     ));
     let replay = recovery_store
-        .complete_maker_zec_negotiation_and_register_actor(
+        .complete_maker_zec_negotiation_and_register_actor_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &accepted,
-            &ClaimPreimage::new(secret),
+            None,
             &actor,
             11,
         )
@@ -5644,13 +6093,13 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     )
     .unwrap();
     let delayed_replay = recovery_store
-        .complete_maker_zec_negotiation_and_register_actor(
+        .complete_maker_zec_negotiation_and_register_actor_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &changed_acceptance,
-            &ClaimPreimage::new(secret),
+            None,
             &actor,
             12,
         )
@@ -5669,13 +6118,13 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     )
     .unwrap();
     assert!(matches!(
-        recovery_store.complete_maker_zec_negotiation_and_register_actor(
+        recovery_store.complete_maker_zec_negotiation_and_register_actor_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &accepted,
-            &ClaimPreimage::new(secret),
+            None,
             &changed_actor,
             10,
         ),
@@ -5690,24 +6139,24 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
         1
     );
     assert!(matches!(
-        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &artifacts.agreement_wire,
-            &ClaimPreimage::new(secret),
+            None,
         ),
         Err(StoreError::InvalidMakerActorRegistration)
     ));
     assert!(matches!(
-        recovery_store.complete_maker_zec_negotiation_and_register_actor(
+        recovery_store.complete_maker_zec_negotiation_and_register_actor_for_role(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &accepted,
-            &ClaimPreimage::new(secret),
+            None,
             &actor,
             10,
         ),
@@ -5905,14 +6354,16 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     assert_eq!(durable.accepted_at(), ACCEPTED_AT);
     assert_eq!(durable.local_participant(), Participant::Maker);
     assert_eq!(durable.revision(), 0);
-    let recovered_secret = ClaimRecoveryStore::load_claim_material(
-        &recovery_store,
-        accepted.agreement().coordinator().id(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(recovered_secret.expose_secret(), &secret);
+    assert!(
+        ClaimRecoveryStore::load_claim_material(
+            &recovery_store,
+            accepted.agreement().coordinator().id(),
+        )
+        .await
+        .unwrap()
+        .is_none(),
+        "the Maker's store holds no claim material before the Taker's Zcash claim"
+    );
     drop(recovery_store);
     assert_claim_plaintext_absent(&path, secret);
 }
@@ -5969,6 +6420,220 @@ fn agreement_wire_direction_with_lez_amount_and_digest(
     .agreement_wire
 }
 
+/// One staged Maker ZEC negotiation (published offer, reserved, proposed)
+/// ready for completion, and the actor manifest the completion registers.
+struct StagedMakerZecCompletion {
+    offer_id: MakerOfferId,
+    reservation_id: RequestId,
+    completion_request: RequestId,
+    accepted: AcceptedZecAgreementV1,
+    actor: MakerActorManifestV1,
+}
+
+/// Configures the `TakerSellsLez` pair once and stages `count` negotiations,
+/// each on its own offer and swap.
+fn stage_maker_zec_completions(
+    path: &std::path::Path,
+    data: &std::path::Path,
+    count: usize,
+) -> Vec<StagedMakerZecCompletion> {
+    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+    let request = |value: String| RequestId::new(value).expect("bounded request ID");
+    let foreign_units = 100_000_000;
+    let lez_units = 250_000_000;
+    let mut store = SqliteSwapStore::open(path).unwrap();
+    for (label, previous, enabled) in [("create", None, false), ("enable", Some(1), true)] {
+        store
+            .configure_maker_pair(
+                &request(format!("capacity-pair-{label}")),
+                previous,
+                &MakerPairConfigurationV1::new(
+                    route,
+                    enabled,
+                    MakerPriceSourceKind::Local,
+                    foreign_units,
+                    foreign_units,
+                    300,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        if !enabled {
+            store
+                .set_local_price(
+                    &request("capacity-price-create".to_owned()),
+                    None,
+                    &LocalPriceV1::new(route, 5, 2).unwrap(),
+                )
+                .unwrap();
+        }
+    }
+    (0..count)
+        .map(|index| {
+            let offer_id = MakerOfferId::new(format!("capacity-offer-{index}")).unwrap();
+            let reservation_id = request(format!("capacity-reservation-{index}"));
+            let swap_id = format!("capacity-swap-{index}");
+            let delivery_commitment = [0x40 + u8::try_from(index).unwrap(); 32];
+            let digest: [u8; 32] = Sha256::digest([0x90 + u8::try_from(index).unwrap(); 32]).into();
+            let artifacts = negotiation_artifacts(
+                &swap_id,
+                SwapDirection::TakerSellsLez,
+                lez_units,
+                digest,
+                maker_zec_chat_session_id(&reservation_id),
+                delivery_commitment,
+                308,
+            );
+            store
+                .publish_local_offer(
+                    &request(format!("capacity-publish-{index}")),
+                    &offer_id,
+                    route,
+                    8,
+                )
+                .unwrap();
+            let staged = MakerZecNegotiationV1::proposed(
+                reservation_id.clone(),
+                delivery_commitment,
+                artifacts.maker_key,
+                artifacts.taker_key,
+                foreign_units,
+                lez_units,
+                9,
+                artifacts.agreement_commitment,
+                artifacts.proposal_wire.clone(),
+            )
+            .unwrap();
+            store
+                .stage_zec_maker_negotiation(
+                    &request(format!("capacity-stage-{index}")),
+                    &offer_id,
+                    1,
+                    &staged,
+                )
+                .unwrap();
+            let accepted = accept(&artifacts.agreement_wire, Participant::Maker);
+            let actor = MakerActorManifestV1::new(
+                accepted.agreement().coordinator().id().clone(),
+                MakerActorKindV1::Zcash,
+                data.join(format!("capacity-actor-config-{index}.json")),
+                [0xa1; 32],
+                data.join("lez-zec-reference-actor"),
+                [0xb2; 32],
+                data.join(format!("capacity-actor-state-{index}.sqlite3")),
+            )
+            .unwrap();
+            StagedMakerZecCompletion {
+                offer_id,
+                reservation_id,
+                completion_request: request(format!("capacity-completion-{index}")),
+                accepted,
+                actor,
+            }
+        })
+        .collect()
+}
+
+/// FINDING 3: a Maker settles its `TakerSellsLez` follow-up LEZ claims one at
+/// a time, so it holds at most as many open swaps as fit the profile's
+/// margin. Below the capacity a completion is accepted, at it the next one is
+/// refused by name (nothing is written), and once a swap ends the refused one
+/// is accepted. An exact replay is answered at the capacity.
+#[test]
+fn a_maker_accepts_taker_sells_lez_swaps_up_to_its_capacity_and_again_after_one_ends() {
+    let data = TempDir::new().expect("temporary maker application store");
+    let path = data.path().join("maker-capacity.sqlite3");
+    let staged = stage_maker_zec_completions(&path, data.path(), 3);
+    let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
+        &path,
+        Participant::Maker,
+        claim_key("maker-capacity-key", [0x72; 32]),
+    )
+    .unwrap();
+    let complete = |swap: &StagedMakerZecCompletion| {
+        recovery_store.complete_maker_zec_negotiation_and_register_actor_within_capacity(
+            &swap.completion_request,
+            &swap.offer_id,
+            2,
+            &swap.reservation_id,
+            &swap.accepted,
+            &swap.actor,
+            10,
+            2,
+        )
+    };
+    let now = ACCEPTED_AT.value();
+
+    assert!(!complete(&staged[0]).unwrap().was_replay());
+    assert_eq!(
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(now)
+            .unwrap(),
+        1
+    );
+    assert!(!complete(&staged[1]).unwrap().was_replay());
+    let refused = complete(&staged[2]).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            StoreError::MakerZecTakerSellsLezCapacityReached {
+                open: 2,
+                capacity: 2
+            }
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        refused
+            .to_string()
+            .starts_with("zec_taker_sells_lez_capacity_reached"),
+        "the refusal is named: {refused}"
+    );
+    assert!(
+        complete(&staged[1]).unwrap().was_replay(),
+        "an exact replay is answered at the capacity"
+    );
+    // Swaps past their LEZ refund time no longer count.
+    let lez_refund_at = staged[0].accepted.agreement().lez_refund_at_ms() / 1_000;
+    assert_eq!(
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(lez_refund_at)
+            .unwrap(),
+        0
+    );
+
+    // The first swap completes: its actor's schedule ends.
+    let mut schedule = SqliteSwapStore::open(&path).unwrap();
+    let lease = schedule
+        .claim_maker_actor(
+            staged[0].accepted.agreement().coordinator().id(),
+            lez_swap_store::MakerActorLeaseOwner::new([0x7c; 16]).unwrap(),
+            10,
+        )
+        .unwrap()
+        .expect("the first swap's actor is due");
+    schedule
+        .resolve_maker_actor_attempt(
+            &lease,
+            lez_swap_store::MakerActorAttemptResolution::Terminal,
+            11,
+        )
+        .unwrap();
+    assert_eq!(
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(now)
+            .unwrap(),
+        1
+    );
+    assert!(!complete(&staged[2]).unwrap().was_replay());
+    assert_eq!(
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(now)
+            .unwrap(),
+        2
+    );
+}
+
 struct NegotiationArtifacts {
     proposal_wire: Vec<u8>,
     agreement_wire: Vec<u8>,
@@ -6002,20 +6667,37 @@ fn negotiation_artifacts(
     let onchain_swap_id = derive_lez_swap_id_v1(id.as_bytes());
     let metadata_account = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
     let custody_account = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
+    // TakerSellsLez needs a Taker-reveals-first profile (deterministic-local-v3):
+    // LEZ deadline 100 s + 120 s, Zcash refund 116 + 8, and the Maker's earlier
+    // Zcash refund declared to open by the LEZ deadline minus the 30 s margin.
+    let (profile, branch, refund_lock, refund_plan) = match direction {
+        SwapDirection::TakerSellsForeign => (
+            ZecProfileId::DeterministicLocalV1,
+            BranchId::Nu6_2,
+            120,
+            ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        ),
+        SwapDirection::TakerSellsLez => (
+            ZecProfileId::DeterministicLocalV3,
+            BranchId::Nu7,
+            124,
+            ZecRefundPlanV1::new(100, 116, 190_000, 220),
+        ),
+    };
     let binding = ZecSwapBinding::new(
-        ZecProfileId::DeterministicLocalV1,
+        profile,
         ExpectedBip199Output::new(
             NetworkType::Regtest,
-            BranchId::Nu6_2,
+            branch,
             Zatoshis::from_u64(100_000_000).expect("value"),
-            Bip199Contract::new(120, refund_hash, digest, claimant_hash),
+            Bip199Contract::for_profile(profile, refund_lock, refund_hash, digest, claimant_hash),
         ),
     )
     .expect("binding");
     let body = ZecAgreementBodyV1::new(
         id.to_owned(),
         direction,
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(profile),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_key),
             ZecParticipantIdentityV1::new([4; 32], taker_key),
@@ -6043,7 +6725,7 @@ fn negotiation_artifacts(
             10_000,
             40,
         ),
-        ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        refund_plan,
         NegotiationTranscriptV1::new(session_id, offer_commitment, expires_at_unix_seconds),
     );
     let commitment = body.commitment();

@@ -174,7 +174,8 @@ pub struct ZecReserveRequestV1 {
     pub taker_lez_account: [u8; 32],
     /// `TakerSellsForeign` only: the Taker's funding outpoint.
     pub taker_funding: Option<ZecOutpointV1>,
-    /// `TakerSellsForeign` only: SHA-256 of the Taker's claim preimage.
+    /// SHA-256 of the Taker's claim preimage, in both directions (ADR 0216:
+    /// the Taker holds the swap secret).
     pub taker_secret_digest: Option<[u8; 32]>,
 }
 
@@ -192,7 +193,8 @@ pub struct ZecReserveResponseV1 {
     pub zebra_genesis: [u8; 32],
     /// `TakerSellsLez` only: the Maker's funding outpoint.
     pub maker_funding: Option<ZecOutpointV1>,
-    /// `TakerSellsLez` only: SHA-256 of the Maker's claim preimage.
+    /// Always `None` since ADR 0216 (the Maker holds no preimage); a Taker
+    /// refuses an answer that names one.
     pub maker_secret_digest: Option<[u8; 32]>,
 }
 

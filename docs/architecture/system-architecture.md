@@ -1267,9 +1267,11 @@ sequenceDiagram
     Note over Maker,Taker: Both independent stores finish revision 4 Completed
 ```
 
-The direction changes actor ownership, not the atomic reveal order. In both
-canonical runs the Zcash funding is confirmed before the LEZ claim reveals the preimage,
-and the exact Zcash follow-up spend occurs only after that reveal. The retained
+In both canonical runs the Zcash funding is confirmed before the LEZ claim reveals the preimage,
+and the exact Zcash follow-up spend occurs only after that reveal. The
+`TakerSellsLez` run above used the order ADR 0216 replaced; in that direction
+the taker now reveals by claiming the Zcash output and the maker follows on
+LEZ. The retained
 host ports above are evidence addresses from these isolated runs, not reusable
 service discovery values; every new run must receive an explicit fresh local
 tuple.
@@ -1891,11 +1893,13 @@ actual-node diagrams.
 
 ### LEZ and transparent Zcash
 
-Both ZEC product directions preserve one chain-relative reveal order: the LEZ
-recipient claims LEZ first and publishes the SHA-256 preimage; the ZEC recipient
-then spends the exact BIP-199 output with that preimage. In
-`TakerSellsForeign`, the taker funds ZEC first, the maker funds LEZ second, the
-taker reveals on LEZ, and the maker follows on ZEC.
+Both ZEC product directions follow the flow BTC follows
+([ADR 0216](0216-zec-taker-reveals-first-in-both-directions.md)): the taker
+locks first and holds the SHA-256 preimage, claims the maker-funded leg first
+and so publishes it, and the maker follows on the taker-funded leg; with no
+reveal, the maker-funded leg refunds first. In `TakerSellsForeign`, the taker
+funds ZEC first, the maker funds LEZ second, the taker reveals on LEZ, and the
+maker follows on ZEC.
 
 <!-- atomic-sequence: lez-zec-transparent/taker-sells-foreign -->
 
@@ -1956,9 +1960,12 @@ sequenceDiagram
 ```
 
 In `TakerSellsLez`, the taker funds LEZ first and the maker funds ZEC second.
-The maker is now the LEZ recipient and therefore the revealing claimant; the
-taker follows on ZEC. Direction changes ownership, never the LEZ-before-ZEC
-claim or refund order.
+The taker still holds the preimage and reveals first, now by claiming the
+maker-funded ZEC output; the maker follows on LEZ. The maker's ZEC refund is
+the earlier one and the taker's LEZ refund the later one, a deliberate
+departure from RFP F4's LEZ-first refund (ADR 0216): with the LEZ refund
+first, the maker would hold the preimage while the taker's LEZ is locked and
+could claim it without funding ZEC.
 
 <!-- atomic-sequence: lez-zec-transparent/taker-sells-lez -->
 
@@ -1987,31 +1994,31 @@ sequenceDiagram
         Maker->>Zebra: Fund maker BIP-199 ZEC leg
         Zebra-->>Taker: Canonical confirmation policy reached
         Note over Maker,Taker: Both locks are proven before preimage release
-        alt Canonical reveal path
-            Maker->>LezSeq: Claim LEZ and reveal preimage
-            LezIdx-->>Taker: Finalized canonical preimage evidence
-            alt Taker follows including after Maker disappears
+        alt Canonical reveal path inside the reveal margin and claim window
+            Taker->>Zebra: Claim exact ZEC output and reveal preimage
+            Zebra-->>Maker: Preimage read on first sight, mempool or block
+            alt Maker follows including after Taker disappears
                 Note over Maker,Taker: Revealer may disappear and follower uses canonical chain disclosure
-                Taker->>Zebra: Claim exact ZEC output with preimage
-                Zebra-->>Taker: Exact ZEC claim confirmed
-            else Taker disappears after reveal
-                Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
+                Maker->>LezSeq: Claim taker LEZ leg with preimage
+                LezIdx-->>Maker: Exact LEZ claim finalized
+            else Maker disappears after reveal
+                Note over Maker,Taker: Follower retains claim authority until the LEZ refund time
             end
         else No canonical reveal and both locks time out
             alt Both refund owners are available
-                Taker->>LezSeq: Refund taker LEZ leg first
-                LezIdx-->>Maker: Exact LEZ refund finalized
-                Maker->>Zebra: Refund maker ZEC leg later
+                Maker->>Zebra: Refund maker ZEC leg first at signed CLTV height
                 Zebra-->>Maker: Exact ZEC refund confirmed
+                Taker->>LezSeq: Refund taker LEZ leg later
+                LezIdx-->>Taker: Exact LEZ refund finalized
             else Maker abandons
-                Taker->>LezSeq: Refund own LEZ leg at signed earlier deadline
+                Taker->>LezSeq: Refund own LEZ leg at signed later deadline
                 LezIdx-->>Taker: Exact survivor refund finalized
                 Note over Maker,Taker: Maker ZEC remains refundable only by maker authority
             else Taker abandons
-                Maker->>LezSeq: Permissionlessly trigger taker LEZ refund at signed earlier deadline
-                LezIdx-->>Maker: Taker destination refund finalized
-                Maker->>Zebra: Refund own ZEC leg at signed later CLTV height
+                Maker->>Zebra: Refund own ZEC leg at signed earlier CLTV height
                 Zebra-->>Maker: Exact survivor refund confirmed
+                Maker->>LezSeq: Permissionlessly trigger taker LEZ refund at signed later deadline
+                LezIdx-->>Maker: Taker destination refund finalized
                 Note over Maker,Taker: Direct nonowner LEZ trigger surface pending
             end
         end
@@ -2042,14 +2049,17 @@ unimplemented or unproved.
 
 <!-- atomicity-argument: lez-zec-transparent/taker-sells-lez -->
 
-For `TakerSellsLez`, the maker can receive LEZ only by publishing the same
-agreement-bound preimage, which lets the taker claim the exact ZEC output. If no
-preimage is published, the taker-funded LEZ refund precedes the later
-maker-funded ZEC refund.
+For `TakerSellsLez`, the taker can receive ZEC only by publishing the
+agreement-bound preimage, which lets the maker claim the exact LEZ escrow. The
+maker never holds the preimage before that claim, so it cannot claim the
+taker's LEZ without having funded ZEC. If no preimage is published, the
+maker-funded ZEC refund precedes the later taker-funded LEZ refund.
 
 **Economic safety:** an honest taker either recovers its sole LEZ first lock or
-uses the published preimage to claim the exact ZEC output after the maker
-receives LEZ. A half-completed reveal path is nonterminal.
+reveals the agreement preimage only after both locks, at the maker's signed
+depth, more than the reveal margin before the ZEC refund height and a margin
+before the LEZ refund time, thereby enabling the maker's exact LEZ claim. A
+half-completed reveal path is nonterminal.
 
 **Replay/idempotency:** durable intents and canonical-only projection prevent
 duplicate sends and false completion but are not the hashlock atomicity
@@ -2075,19 +2085,23 @@ The ZEC construction is atomic under these explicit conditions:
   fresh canonical absence and unspent observations, and race-safe late-lock
   admission. The public ZEC SDK does not yet drive or prove that
   `TakerLockConfirmed` branch.
-- Both locks commit the same SHA-256 digest. The coordinator permits only the
-  LEZ recipient to reveal first and permits the ZEC recipient to follow only
-  after canonical LEZ claim evidence exposes the matching preimage.
-- Refund ordering is chain-fixed in both directions: LEZ is earlier and Zcash
-  is later. The signed profile must satisfy
-  `zec_refund_earliest >= lez_refund_latest + required_margin`, including
-  confirmation latency, reorg distance, congestion, clock drift, and reaction
-  time. Typed LEZ time and Zcash height are never directly compared.
+- Both locks commit the same SHA-256 digest, and only the taker holds the
+  preimage. The coordinator permits only the taker to reveal first, by
+  claiming the maker-funded leg, and permits the maker to follow only after
+  canonical claim evidence exposes the matching preimage.
+- The maker-funded leg refunds first in both directions: LEZ in
+  `TakerSellsForeign`, Zcash in `TakerSellsLez`. The signed profile must
+  satisfy `later_refund_earliest >= earlier_refund_latest + required_margin`,
+  including confirmation latency, reorg distance, congestion, clock drift, and
+  reaction time. Typed LEZ time and Zcash height are never directly compared.
 - Accepted terms, lock intents, protected preimage and claim bytes, exact
   refund intents, observations, and lifecycle revisions persist in role-local
   SQLite before the next dependent effect. Exact Zebra canonical evidence and
-  bounded finalized LEZ evidence, not peer messages or mempool presence, drive
-  projection.
+  bounded finalized LEZ evidence, not peer messages, drive projection; the one
+  exception is the Maker's reading of the Taker's Zcash preimage in
+  `TakerSellsLez`, which it commits on first sight, mempool included, since a
+  preimage that hashes to the digest is valid whatever happens to its
+  transaction.
 - Once both locks exist, the protocol construction lets a surviving role recover
   its own funded leg at the signed chain deadline. Permissionless LEZ execution
   still pays only the immutable depositor; ZEC refund remains restricted to its
@@ -2195,8 +2209,6 @@ sequenceDiagram
     actor Taker
     participant TakerLeg as Taker-funded chain
     participant MakerLeg as Maker-funded chain
-    actor LezRecipient as Direction-specific LEZ recipient
-    actor ForeignRecipient as Direction-specific foreign recipient
     participant LEZ as LEZ leg
     participant Foreign as Foreign leg
 
@@ -2213,9 +2225,9 @@ sequenceDiagram
     MakerLeg-->>Taker: Validated confirmations
     Note over Chat: May disappear permanently now
     alt ZEC pair
-        LezRecipient->>LEZ: Claim first and reveal preimage
-        LEZ-->>Daemon: Canonical claim evidence contains preimage
-        ForeignRecipient->>Foreign: Follow on ZEC with extracted preimage
+        Taker->>MakerLeg: Taker claims maker-funded leg and reveals preimage
+        MakerLeg-->>Daemon: Canonical claim evidence contains preimage
+        Maker->>TakerLeg: Maker claims taker-funded leg with extracted preimage
     else BTC pair
         Taker->>MakerLeg: Taker claims maker-funded leg
         MakerLeg-->>Daemon: Claim witness reveals adaptor material
@@ -2232,7 +2244,8 @@ sequenceDiagram
 
 “Taker-funded” and “maker-funded” describe funding order, not a fixed chain.
 BTC and ZEC support both product directions; XMR is LEZ-first only. Claim and
-refund order is construction-specific, as fixed in ADR 0008 and ADR 0010.
+refund order is fixed in ADR 0008 and ADR 0010; for ZEC, ADR 0216 replaces
+ADR 0008's order with the one BTC follows.
 
 ADR 0029 concretizes the BTC branch: distinct two-party aggregate claim
 authorities protect the Bitcoin and LEZ legs. The first direction-specific
@@ -2423,8 +2436,6 @@ sequenceDiagram
     participant TakerLeg as Taker-funded chain
     participant MakerLeg as Maker-funded chain
     participant Chat as Delivery / Chat
-    actor LezFunder as Direction-specific LEZ funder
-    actor ZecFunder as Direction-specific ZEC funder
 
     Note over Chat: Offline and neither recovery path calls it
     alt Maker never submits the second lock
@@ -2434,9 +2445,9 @@ sequenceDiagram
     else Both locks exist but the revealing claimant abandons
         Daemon->>Store: Reconcile canonical chain evidence
         alt ZEC
-            LezFunder->>LEZ: Submit earlier LEZ refund
-            LEZ-->>Daemon: Canonical LEZ refund evidence
-            ZecFunder->>Foreign: Submit later ZEC CLTV refund after margin
+            Daemon->>MakerLeg: Refund maker-funded leg first
+            MakerLeg-->>Daemon: Canonical refund evidence
+            Taker->>TakerLeg: Refund taker-funded leg later after margin
         else BTC
             Daemon->>MakerLeg: Recover maker-funded leg at its reviewed path
             Taker->>TakerLeg: Recover taker-funded leg at the later safe path
@@ -2451,8 +2462,9 @@ sequenceDiagram
 ```
 
 Each actor retains enough local data to recover without the counterparty.
-Deadline comparisons are typed by chain and clock domain. ZEC always refunds
-LEZ first and ZEC later by the configured margin. XMR recovery is gated by a
+Deadline comparisons are typed by chain and clock domain. ZEC, like BTC,
+refunds the maker-funded leg first and the taker-funded leg later by the
+configured margin. XMR recovery is gated by a
 canonical LEZ event rather than a fictitious Monero deadline.
 
 ## Offline actor status flow

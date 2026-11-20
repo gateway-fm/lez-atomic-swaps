@@ -1,0 +1,10 @@
+[08:56:36] regression run: 3 tests at fab36d52 (tree dirty:        0), results in <home>/tmp/lez-regress-final-fab36d52-rerun
+[08:56:36] profile refund: a Bitcoin block every 2 s; Maker cutoff 100 s, refunds at 115 and 245 s
+[08:56:36] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[08:57:02]     [lane 1] ui:zec:zec-happy:TakerSellsLez (try 1) starts: LEZ finalized 69, tip 80
+[08:57:02]     [lane 2] ui:zec:zec-survivor:TakerSellsLez (try 1) starts: LEZ finalized 69, tip 80
+[08:57:02]     [lane 3] ui:zec:zec-node-offline:TakerSellsLez (try 1) starts: LEZ finalized 69, tip 80
+[08:59:45] === ui:zec:zec-survivor:TakerSellsLez (try 1, lane 2): PASSED in 156 s; LEZ finalized 202, tip 207
+[09:00:00] === ui:zec:zec-happy:TakerSellsLez (try 1, lane 1): PASSED in 171 s; LEZ finalized 216, tip 219
+[09:01:31] === ui:zec:zec-node-offline:TakerSellsLez (try 1, lane 3): PASSED in 261 s; LEZ finalized 286, tip 293
+[09:01:31] regression run: 3 of 3 passed in 4 min, 0 new chains, 0 profile switches,        0 frozen tries

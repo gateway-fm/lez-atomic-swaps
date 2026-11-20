@@ -106,6 +106,8 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-taker-cli:TakerSellsLez"
       echo "node:btc:outage-before-take:TakerSellsForeign"; echo "node:zec:zec-outage-before-take:TakerSellsLez"
       echo "node:zec:zec-claim-collision:TakerSellsForeign"
+      # selling LEZ only: the Maker's claim on the Taker's LEZ with what it holds (TM-0030)
+      echo "node:zec:zec-maker-early-claim:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
       echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"
@@ -223,8 +225,9 @@ watched() {
 profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile the test needs, empty for either
   local kind pair scenario direction
   IFS=: read -r kind pair scenario direction <<<"$1"
-  # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile: the
-  # refund journeys' (-v6) is group zec-v6, every other ZEC test runs on -v5 in `fast`.
+  # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile (selling
+  # LEZ its Taker-reveals-first twin): the refund journeys' (-v6, -v8) is group
+  # zec-v6, every other ZEC test runs on -v5 (-v7) in `fast`.
   if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
     case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window) echo zec-v6 ;; *) echo fast ;; esac
     return 0

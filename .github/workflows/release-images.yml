@@ -7,6 +7,9 @@ name: release-images
 #
 # The builds are the same phases scripts/from-scratch.sh runs on a developer
 # host, in the same pinned containers, spread over parallel arm64 runners:
+#   ci-gate       first: a release (or a run on a tag) needs finished, green
+#                 ci.yml and public-readiness.yml runs on its commit
+#                 (scripts/check-release-ci.sh); a branch dispatch is not gated
 #   rust          Node binaries, Bitcoin actors, the LEZ sidecar and identity tool
 #   lez-services  the sequencer from the pinned logos-execution-zone
 #   lez-modules   the LEZ indexer and wallet as Logos modules (lgx, Nix, from the
@@ -54,8 +57,28 @@ env:
   LEZ_WORKSPACE: ${{ github.workspace }}/../lez-ws
 
 jobs:
+  ci-gate:
+    name: release CI gate
+    # First job: a release event or a run on a tag ref goes on only when the
+    # commit has finished, green ci.yml and public-readiness.yml runs. A manual
+    # dispatch on a branch is a test build and passes, saying so in its log.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require finished green CI on the released commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-release-ci.sh
+
   plan:
     name: image tag
+    needs: ci-gate
     runs-on: ubuntu-24.04
     outputs:
       image_tag: ${{ steps.plan.outputs.image_tag }}
@@ -79,6 +102,7 @@ jobs:
 
   rust:
     name: Node binaries, actors and sidecar
+    needs: ci-gate
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     permissions:
@@ -119,7 +143,7 @@ jobs:
           cp deploy/images/taker-node/zec-local-poc-identity _out/images/taker-node/
           # source-tree.txt: the sidecar tree it was built from, which the stage
           # phase compares with the checkout's before it stages the sidecar.
-          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-local-actor-identity,source-commit.txt,source-tree.txt} _out/sidecar/
+          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-escrow-claim-probe,lez-v02-local-actor-identity,source-commit.txt,source-tree.txt} _out/sidecar/
           du -sh _out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -130,6 +154,7 @@ jobs:
 
   lez-services:
     name: LEZ v0.2 sequencer
+    needs: ci-gate
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
     permissions:
@@ -176,6 +201,7 @@ jobs:
   # that builds the deployer around it; both check the pinned digest.
   lez-modules:
     name: LEZ indexer and wallet as Logos modules (Nix)
+    needs: ci-gate
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     permissions:
@@ -215,6 +241,7 @@ jobs:
 
   escrow-guest:
     name: escrow guest ELF (pinned amd64 builder, x86-64)
+    needs: ci-gate
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:

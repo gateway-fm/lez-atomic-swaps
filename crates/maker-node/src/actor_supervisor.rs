@@ -4,9 +4,10 @@ mod runtime;
 
 pub use runtime::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
-    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, maker_actor_last_outcome,
-    supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
-    supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
+    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, clear_maker_lez_claim_admissions,
+    maker_actor_last_outcome, supervise_one_abandoned_maker_actor,
+    supervise_one_abandoned_maker_actor_until, supervise_one_due_maker_actor,
+    supervise_one_due_maker_actor_until,
 };
 
 use btc_reference_actor::validate_maker_manifest_config_bytes as validate_btc_config;

@@ -107,6 +107,104 @@ fn monero_manifest_is_visible_but_execution_fails_closed_without_a_semantic_pars
     ));
 }
 
+/// A stored agreement wire re-labelled under `deterministic-local-v1`, a
+/// profile of the earlier reveal order: the body's profile byte follows the
+/// schema (2 bytes), the swap id (4-byte length and bytes) and the direction.
+fn legacy_profile_wire(mut wire: Vec<u8>) -> Vec<u8> {
+    let id_length = usize::try_from(u32::from_le_bytes(wire[2..6].try_into().unwrap())).unwrap();
+    wire[6 + id_length + 1] = 0;
+    wire
+}
+
+fn insert_maker_agreement(database: &Path, swap_id: &str, wire: &[u8]) {
+    rusqlite::Connection::open(database)
+        .unwrap()
+        .execute(
+            "INSERT INTO zec_sdk_agreements
+                 (local_role, swap_id, payload_version, agreement_wire, accepted_at, accepted_revision)
+             VALUES ('maker', ?1, 1, ?2, 10, 0)",
+            rusqlite::params![swap_id, wire],
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_maker_node_refuses_to_start_while_it_holds_an_open_legacy_taker_sells_lez_swap() {
+    let root = tempdir().unwrap();
+    let database = root.path().join("legacy-maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let wire_for = |swap_id: &str, direction: SwapDirection| {
+        let swap_root = root.path().join(swap_id);
+        std::fs::create_dir(&swap_root).unwrap();
+        support::actor_deployment_with_direction(&swap_root, swap_id, direction);
+        std::fs::read(swap_root.join("actor-source").join("agreement-v2.borsh")).unwrap()
+    };
+    let current = wire_for("legacy-start-current", SwapDirection::TakerSellsLez);
+    assert!(!lez_zec_swap_sdk::legacy_taker_sells_lez(&current));
+    insert_maker_agreement(&database, "legacy-start-current", &current);
+    let forward = legacy_profile_wire(wire_for(
+        "legacy-start-forward",
+        SwapDirection::TakerSellsForeign,
+    ));
+    insert_maker_agreement(&database, "legacy-start-forward", &forward);
+    lez_maker_node::refuse_start_with_legacy_zec_swaps(&store)
+        .expect("current agreements and legacy TakerSellsForeign ones resume");
+
+    // A completed legacy TakerSellsLez swap does not block.
+    let completed = legacy_profile_wire(current.clone());
+    assert!(lez_zec_swap_sdk::legacy_taker_sells_lez(&completed));
+    store.save(&swap("legacy-start-completed")).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                SwapId::new("legacy-start-completed").unwrap(),
+                MakerActorKindV1::Zcash,
+                root.path().join("completed-config.json"),
+                [1; 32],
+                root.path().join("completed-actor"),
+                [2; 32],
+                root.path().join("completed-state.sqlite3"),
+            )
+            .unwrap(),
+            1,
+        )
+        .unwrap();
+    let lease = store
+        .claim_maker_actor(
+            &SwapId::new("legacy-start-completed").unwrap(),
+            lez_swap_store::MakerActorLeaseOwner::new([0x61; 16]).unwrap(),
+            1,
+        )
+        .unwrap()
+        .unwrap();
+    store
+        .resolve_maker_actor_attempt(
+            &lease,
+            lez_swap_store::MakerActorAttemptResolution::Terminal,
+            2,
+        )
+        .unwrap();
+    insert_maker_agreement(&database, "legacy-start-completed", &completed);
+    lez_maker_node::refuse_start_with_legacy_zec_swaps(&store)
+        .expect("a completed legacy swap does not block");
+
+    // Two open ones do, by name.
+    for swap_id in ["legacy-start-open-a", "legacy-start-open-b"] {
+        insert_maker_agreement(&database, swap_id, &completed);
+    }
+    let refused = lez_maker_node::refuse_start_with_legacy_zec_swaps(&store)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("legacy-start-open-a, legacy-start-open-b")
+            && refused.contains("finish or refund them with the previous release first")
+            && !refused.contains("legacy-start-completed")
+            && !refused.contains("legacy-start-current")
+            && !refused.contains("legacy-start-forward"),
+        "{refused}"
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record(
     root: &Path,

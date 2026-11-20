@@ -16,7 +16,7 @@ use lez_swap_store::{
     DurableBridgeRequestContext, SqliteBridgeOperationJournal, StoreError,
 };
 use lez_zec_swap_sdk::{
-    CanonicalLezEscrowObservationV1, ClaimPreimage, FirstLockConfirmedEvidenceV1,
+    CanonicalLezEscrowObservationV1, ClaimPreimage, ClaimStepV1, FirstLockConfirmedEvidenceV1,
     FirstLockObservation, FirstLockPlanV1, FirstLockStepV1, FirstLockSubmitOutcome, LezClaimPort,
     LezFirstLockPort, LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
     MakerLockObservationV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
@@ -348,6 +348,98 @@ where
             .resume_after_ambiguous(key, current)
             .map(|_| ())
             .map_err(ContextOwningLezPortError::Journal)
+    }
+}
+
+impl<Factory, Contexts, Store, Funding>
+    ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
+where
+    Factory: FreshLezBridgeTransportFactory,
+    Factory::Transport: crate::LezBridgeFinalizedClockTransport,
+{
+    /// Reads the finalized LEZ clock once, as (height, consensus timestamp in
+    /// Unix milliseconds) of the last finalized block. Read-only and stateless,
+    /// so it takes a fresh request ID and no journal slot.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no fresh transport opens, randomness is unavailable, or the
+    /// sidecar refuses or answers for another context or runtime (a moving
+    /// finalized tip included: the caller reads again on its next attempt).
+    pub async fn observe_finalized_lez_clock(
+        &self,
+    ) -> Result<(u64, u64), ContextOwningLezPortError> {
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| {
+            ContextOwningLezPortError::Context("OS randomness is unavailable".into())
+        })?;
+        let request_id = lez_bridge_protocol::RequestId::new(format!(
+            "clock-{:032x}",
+            u128::from_be_bytes(random)
+        ))
+        .map_err(|error| ContextOwningLezPortError::Context(Box::new(error)))?;
+        let context = lez_bridge_protocol::MessageContext::new(
+            self.run_id.clone(),
+            request_id,
+            bridge_participant(self.local_participant),
+        );
+        let transport = self
+            .factory
+            .fresh_transport()
+            .map_err(|error| ContextOwningLezPortError::Factory(Box::new(error)))?;
+        let result = crate::LezBridgeFinalizedClockTransport::observe_finalized_clock(
+            &transport,
+            lez_bridge_protocol::ObserveFinalizedClockRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+            ),
+        )
+        .await
+        .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
+        if result.context != context || result.runtime != self.runtime {
+            return Err(ContextOwningLezPortError::Adapter(
+                "finalized LEZ clock answered for another request or runtime".into(),
+            ));
+        }
+        Ok((result.clock.height, result.clock.timestamp_ms))
+    }
+}
+
+impl<Factory, Contexts, Store, Funding>
+    ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
+where
+    Factory: FreshLezBridgeTransportFactory,
+    Factory::Transport: crate::LezBridgeFinalizedClockTransport + LezBridgeRefundTransport,
+{
+    /// For the claimant: whether the escrow is still funded in the finalized LEZ
+    /// state, and the finalized LEZ time it was read at (Unix milliseconds).
+    /// Read-only; a fresh request ID, no journal slot, a one-block window at the
+    /// finalized tip.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::observe_finalized_lez_clock`], and the adapter's refusal of a
+    /// non-claimant or of inconsistent escrow facts.
+    pub async fn observe_finalized_lez_escrow_open(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<(u64, bool), ContextOwningLezPortError> {
+        let (height, _) = self.observe_finalized_lez_clock().await?;
+        let window = DiscoveryWindow::new(height, 1)
+            .map_err(|error| ContextOwningLezPortError::Context(Box::new(error)))?;
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| {
+            ContextOwningLezPortError::Context("OS randomness is unavailable".into())
+        })?;
+        let request_id = lez_bridge_protocol::RequestId::new(format!(
+            "escrow-{:032x}",
+            u128::from_be_bytes(random)
+        ))
+        .map_err(|error| ContextOwningLezPortError::Context(Box::new(error)))?;
+        self.fresh_adapter()?
+            .observe_finalized_escrow_open(agreement, request_id, window)
+            .await
+            .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))
     }
 }
 
@@ -1017,8 +1109,12 @@ where
     Contexts: BridgeRequestContextSource,
     Store: lez_zec_swap_sdk::ClaimRecoveryStore,
 {
-    /// Re-plans the open owned revealing claim after its submission was
-    /// answered `Superseded` (FINDINGS 24): the same claim at the live nonce.
+    /// Re-plans the open owned LEZ claim after its submission was answered
+    /// `Superseded` (FINDINGS 24): the same claim at the live nonce. It is the
+    /// Taker's revealing claim in `TakerSellsForeign` and the Maker's follow-up
+    /// claim in `TakerSellsLez`, the same claimant-signed escrow claim: the
+    /// sidecar re-plans it as a claim of the claimant's account, and the
+    /// re-plan keeps the step of the claim it replaces.
     ///
     /// The re-plan index is the count of recorded claim re-plans plus one;
     /// each index owns its durable request context, so a retry of the same
@@ -1045,21 +1141,29 @@ where
             .ok_or(ContextOwningLezPortError::ReplanExhausted)?;
         let operation = BridgeOperationKind::revealing_claim_supersede(replan_index)
             .ok_or(ContextOwningLezPortError::ReplanExhausted)?;
+        let step = superseded.step();
+        let as_claim = superseded
+            .relabeled_copy(ClaimStepV1::RevealingLez)
+            .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
         let (key, context) = self.reserve_context(agreement, operation)?;
         let result = self
             .fresh_adapter()?
             .supersede_native_revealing_claim(
                 agreement,
                 context.request_id().clone(),
-                superseded,
+                &as_claim,
                 replan_index,
             )
             .await;
         if matches!(&result, Err(NativeRevealingClaimAdapterError::Transport(_))) {
             self.resume_ambiguous(&key, &context)?;
         }
-        let replanned =
+        let mut replanned =
             result.map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
+        replanned.claim = replanned
+            .claim
+            .relabeled(step)
+            .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
         let submit_key = self.key(agreement, BridgeOperationKind::RevealingClaimSubmit);
         let mut journal = self.journal()?;
         if let Some(current) = journal

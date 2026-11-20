@@ -525,7 +525,7 @@ pub(crate) struct DeterministicLocalV0_2ActorConfigInput {
     pub(crate) claim_recovery_key_id: Box<str>,
     /// Role-local recovery-key file.
     pub(crate) claim_recovery_key_file: PathBuf,
-    /// Role-local preimage file, present only for the Zcash funder.
+    /// Role-local preimage file, present only for the Taker.
     pub(crate) claim_preimage_file: Option<PathBuf>,
     /// Role-local transparent Zcash secret-key file.
     pub(crate) zcash_key_file: PathBuf,
@@ -913,9 +913,18 @@ impl ActorConfig {
         &self.zcash_funding_outpoints
     }
 
-    /// Whether this actor owns the private claim preimage and Zcash candidates.
+    /// Whether this actor funds the Zcash HTLC: it holds the agreement's
+    /// candidate funding outpoints (the Taker in `TakerSellsForeign`, the Maker
+    /// in `TakerSellsLez`).
     #[must_use]
-    pub const fn is_local_zcash_funder(&self) -> bool {
+    pub fn is_local_zcash_funder(&self) -> bool {
+        !self.zcash_funding_outpoints.is_empty()
+    }
+
+    /// Whether this actor holds the claim preimage: the Taker in both
+    /// directions (it claims the Maker-funded leg first); never the Maker.
+    #[must_use]
+    pub const fn owns_claim_preimage(&self) -> bool {
         self.claim_preimage_file.is_some()
     }
 
@@ -941,9 +950,11 @@ impl ActorConfig {
             return Err(ActorConfigError::InvalidConfiguration);
         }
 
-        let owns_preimage = self.claim_preimage_file.is_some();
-        if owns_preimage
-            != (1..=MAX_ZEC_FUNDING_INPUTS).contains(&self.zcash_funding_outpoints.len())
+        // The Taker holds the preimage in both directions and the Maker never
+        // does; either role may fund Zcash (by direction), and only the funder
+        // names candidate outpoints.
+        if self.owns_claim_preimage() != (self.role == ActorRole::Taker)
+            || self.zcash_funding_outpoints.len() > MAX_ZEC_FUNDING_INPUTS
             || self
                 .zcash_funding_outpoints
                 .iter()
@@ -1231,7 +1242,7 @@ impl ActivateMaterial {
         &self.zcash_secret_key
     }
 
-    /// Locally owned claim preimage, present only for the configured funder.
+    /// Locally owned claim preimage, present only for the Taker.
     #[must_use]
     pub const fn claim_preimage(&self) -> Option<&ClaimPreimage> {
         self.claim_preimage.as_ref()
@@ -1284,7 +1295,7 @@ impl DriveMaterial {
         &self.zcash_secret_key
     }
 
-    /// Locally owned claim preimage, present only for the configured funder.
+    /// Locally owned claim preimage, present only for the Taker.
     #[must_use]
     pub const fn claim_preimage(&self) -> Option<&ClaimPreimage> {
         self.claim_preimage.as_ref()
@@ -1433,6 +1444,7 @@ fn actor_pair_invariants_differ(left: &ActorConfig, right: &ActorConfig) -> bool
         || left.zebra.identity != right.zebra.identity
         || left.lez_discovery_window != right.lez_discovery_window
         || left.is_local_zcash_funder() == right.is_local_zcash_funder()
+        || left.owns_claim_preimage() == right.owns_claim_preimage()
         || left.source_identity.aliases(&right.source_identity)
         || left
             .bindings
@@ -1617,7 +1629,7 @@ mod tests {
                 role_state_db: PathBuf::from("/tmp/actor.sqlite3"),
                 claim_recovery_key_id: "maker-claim".into(),
                 claim_recovery_key_file: PathBuf::from("/tmp/claim.key"),
-                claim_preimage_file: Some(PathBuf::from("/tmp/preimage.key")),
+                claim_preimage_file: None,
                 zcash_key_file: PathBuf::from("/tmp/zcash.key"),
                 bridge_endpoint: Url::parse("http://127.0.0.1:19001/").unwrap(),
                 bridge_journal_db: PathBuf::from("/tmp/bridge.sqlite3"),

@@ -273,15 +273,16 @@ pub(super) async fn prepare(
     let envelope_file = layout.root().join("zec-signed-envelope.bin");
     write_private_exact(&envelope_file, offer.signed_envelope())?;
 
-    // The request, made once: in TakerSellsForeign the Taker funds Zcash, so
-    // it makes its preimage and picks its own funding output first.
+    // The request, made once: the Taker makes its preimage in both directions
+    // (it holds the swap secret, ADR 0216) and, in TakerSellsForeign, where it
+    // funds Zcash, picks its own funding output first.
     let mut record =
         if let Ok(bytes) = read_private(&layout.root().join(RESERVE_FILE), MAX_RECORD_BYTES) {
             serde_json::from_slice::<TakerReserveRecordV1>(&bytes)?
         } else {
             let _ = fs::remove_dir_all(&role_root);
             let tip_before = zec_tip_height(&dynamic.config, &rpc).await?;
-            let (taker_funding, taker_secret_digest) = match direction {
+            let taker_funding = match direction {
                 SwapDirection::TakerSellsForeign => {
                     let funding = select_zec_funding(
                         &dynamic.config,
@@ -292,17 +293,14 @@ pub(super) async fn prepare(
                     )
                     .await
                     .map_err(|error| ZecFundingUnavailable(error.to_string()))?;
-                    let digest = begin_zec_taker_role(&role_root)?;
-                    (
-                        Some(ZecOutpointV1 {
-                            transaction_id: *funding.transaction_id().as_bytes(),
-                            output_index: funding.output_index(),
-                        }),
-                        Some(digest),
-                    )
+                    Some(ZecOutpointV1 {
+                        transaction_id: *funding.transaction_id().as_bytes(),
+                        output_index: funding.output_index(),
+                    })
                 }
-                SwapDirection::TakerSellsLez => (None, None),
+                SwapDirection::TakerSellsLez => None,
             };
+            let taker_secret_digest = Some(begin_zec_taker_role(&role_root)?);
             let record = TakerReserveRecordV1 {
                 schema_version: 1,
                 request: ZecReserveRequestV1 {
@@ -353,11 +351,8 @@ pub(super) async fn prepare(
     };
     let draft_file = role_root.join(ZEC_ROLE_DRAFT_FILE);
     if !draft_file.is_file() {
-        // A check that failed after writing the Taker's secrets left them
-        // behind; when the Taker funds nothing they are made again.
-        if direction == SwapDirection::TakerSellsLez {
-            let _ = fs::remove_dir_all(&role_root);
-        }
+        // The Taker's secrets were made with the request (its digest is in
+        // it), in both directions: a check run again keeps them.
         check_zec_taker_role(
             &dynamic.config,
             &rpc,
@@ -396,6 +391,7 @@ pub(super) async fn prepare(
                 role: ActorRole::Taker,
                 run_id: sidecar.run_id().clone(),
                 swap_id: terms.swap_id.clone(),
+                direction,
                 bridge_endpoint: sidecar.endpoint(),
                 capability_file: sidecar.capability_file().to_path_buf(),
                 runtime: runtime.runtime_descriptor(),

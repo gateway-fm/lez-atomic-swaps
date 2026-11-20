@@ -156,6 +156,8 @@ impl<'a> ClaimSubmissionContext<'a> {
         encoded.push(match self.step {
             ClaimStepV1::RevealingLez => 0,
             ClaimStepV1::FollowupZcash => 1,
+            ClaimStepV1::RevealingZcash => 2,
+            ClaimStepV1::FollowupLez => 3,
         });
         encoded.extend_from_slice(&self.staged_revision.to_be_bytes());
         encoded.extend_from_slice(self.expected_submission_id);

@@ -84,7 +84,8 @@ destination.
 | BTC, taker sells BTC | `claim_witnessed`, authorized by an isolated per-swap taker claim account | The taker's accepted LEZ BIP-340 authorization signature lets the maker extract `t` and claim BTC |
 | BTC, taker sells LEZ | `claim_adaptor_secret(t)` and `xonly(tG) == adaptor_point` using the reviewed secp256k1 library | The taker's BTC key-path signature reveals `t`; maker supplies it to LEZ |
 | XMR, taker sells LEZ only | As built: dedicated tags 13–17 (`InitializeNativeXmr` … `PunishNativeXmr`). `ClaimNativeXmr` (tag 15) is signed by the per-swap claim aggregate authority and valid only after the taker's `AuthorizeNativeXmrClaim` (tag 14) has published its committed claim partial, and before the refund time | The accepted tag-15 signature reveals the maker's Monero share, bound by the DLEQ transcript commitments stored at tag 13; a tag-16 refund reveals the taker's share ([protocol design](protocol-design.md#xmrlez)) |
-| ZEC, either direction | `claim_hashlock(preimage)` and `SHA256(preimage) == digest`; the fixed LEZ recipient is the revealing claimant | The canonical LEZ claim reveals the preimage used by the ZEC recipient |
+| ZEC, taker sells ZEC | `claim_hashlock(preimage)` and `SHA256(preimage) == digest`; the taker, the LEZ recipient, is the revealing claimant | The canonical LEZ claim reveals the preimage the maker uses to claim ZEC |
+| ZEC, taker sells LEZ | `claim_hashlock(preimage)` and `SHA256(preimage) == digest`; the maker, the LEZ recipient, is the follow-up claimant ([ADR 0216](../architecture/0216-zec-taker-reveals-first-in-both-directions.md)) | The taker's canonical ZEC claim reveals the preimage; the maker presents it to LEZ. The escrow does not bind the claim to the Zcash leg, so safety rests on the taker holding the preimage until its ZEC claim |
 
 For witnessed claims, setup freezes the exact public transaction message and
 account nonce before either lock, and the authority is never reused. The guest

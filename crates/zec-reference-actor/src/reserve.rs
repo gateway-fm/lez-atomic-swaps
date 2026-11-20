@@ -9,9 +9,11 @@
 //! key or preimage crosses Chat. The existing `zec_chat_propose_v1` and
 //! `zec_chat_complete_v1` then sign it, each role with its own key.
 //!
-//! The Zcash funder makes the claim preimage (`local_poc::preimage_owner`):
-//! the Taker in `TakerSellsForeign`, the Maker in `TakerSellsLez`; the other
-//! role only ever sees its SHA-256 in the agreement.
+//! The Taker makes the claim preimage in both directions (ADR 0216: it
+//! claims the Maker-funded leg first and reveals the secret there); the
+//! Maker only ever sees its SHA-256 in the agreement. Each profile admits one
+//! direction, so a role takes each direction under its profile's twin for
+//! that direction ([`ZecRoleConfigV1::profile_for`]).
 
 use std::{
     fs,
@@ -133,10 +135,12 @@ impl ZecRoleConfigV1 {
         Ok(config)
     }
 
-    /// The profile every swap of this role is taken under.
+    /// The profile a swap of this role in `direction` is taken under: the
+    /// configured one, or its twin sized for that direction
+    /// (`LocalPocProfile::for_direction`).
     #[must_use]
-    pub const fn profile(&self) -> ZecProfileId {
-        self.profile.id()
+    pub const fn profile_for(&self, direction: SwapDirection) -> ZecProfileId {
+        self.profile.for_direction(direction).id()
     }
 
     /// A bounded client of this role's Zebra.
@@ -238,7 +242,8 @@ pub struct ZecMakerReservation {
     pub lez_anchor_unix_seconds: u64,
     /// The Maker's committed funding outpoint (`TakerSellsLez`).
     pub maker_funding: Option<CandidateOutpoint>,
-    /// SHA-256 of the Maker's claim preimage (`TakerSellsLez`).
+    /// Always `None`: the Maker holds no preimage (ADR 0216). Kept for the
+    /// v1 wire; a Maker that names a digest is refused.
     pub maker_secret_digest: Option<[u8; 32]>,
     /// The Zebra genesis the actor template pins, RPC display order.
     pub zebra_genesis: Hex32,
@@ -251,7 +256,7 @@ pub struct ZecTakerContribution {
     pub taker_lez_account: [u8; 32],
     /// The Taker's funding outpoint (`TakerSellsForeign`).
     pub taker_funding: Option<CandidateOutpoint>,
-    /// SHA-256 of the Taker's claim preimage (`TakerSellsForeign`).
+    /// SHA-256 of the Taker's claim preimage, in both directions.
     pub taker_secret_digest: Option<[u8; 32]>,
 }
 
@@ -495,7 +500,7 @@ where
 }
 
 /// Writes a swap's own secrets into a new private `role_root`: a fresh
-/// claim-recovery key and, when the role funds Zcash, its claim preimage. The
+/// claim-recovery key and, for the Taker, its claim preimage. The
 /// role's long-lived Zcash key is not copied: the actor template names its
 /// own file ([`ZecRoleTemplate::zcash_key_file`]).
 fn write_role_secrets(role_root: &Path, preimage: Option<&[u8; 32]>) -> Result<()> {
@@ -514,9 +519,9 @@ fn write_role_secrets(role_root: &Path, preimage: Option<&[u8; 32]>) -> Result<(
     Ok(())
 }
 
-/// Makes the Taker's claim preimage before it reserves (it funds Zcash in
-/// `TakerSellsForeign`): written into a new private `role_root`, with the
-/// swap's recovery key; returns its SHA-256.
+/// Makes the Taker's claim preimage before it reserves (it holds the swap
+/// secret in both directions): written into a new private `role_root`, with
+/// the swap's recovery key; returns its SHA-256.
 ///
 /// # Errors
 ///
@@ -529,8 +534,8 @@ pub fn begin_zec_taker_role(role_root: &Path) -> Result<[u8; 32]> {
 
 /// The Maker's half of a reservation: checks the Taker's contribution against
 /// its own Zebra, fixes the anchors at `now`, selects its own funding output
-/// (`TakerSellsLez`, never one in `exclude`) and makes the claim preimage
-/// there, composes the unsigned draft and writes the Maker's own material and
+/// (`TakerSellsLez`, never one in `exclude`), composes the unsigned draft
+/// around the Taker's secret digest and writes the Maker's own material and
 /// the draft into a new private `role_root`.
 ///
 /// # Errors
@@ -567,12 +572,18 @@ where
     );
     let maker_funds = zcash_funder(terms.direction) == ActorRole::Maker;
     ensure!(
-        maker_funds == taker.taker_funding.is_none()
-            && maker_funds == taker.taker_secret_digest.is_none(),
+        maker_funds == taker.taker_funding.is_none(),
         "the Taker's funding facts do not fit the direction"
     );
+    let secret_digest = taker
+        .taker_secret_digest
+        .context("the Taker named no secret digest")?;
+    ensure!(
+        secret_digest != [0; 32],
+        "the Taker's secret digest is zero"
+    );
     let (tip, genesis) = tip_height(rpc, &chain).await?;
-    let (funding_input, maker_funding, preimage, secret_digest) = if maker_funds {
+    let (funding_input, maker_funding) = if maker_funds {
         let candidate = select_zec_funding(
             config,
             rpc,
@@ -589,9 +600,7 @@ where
             terms.zcash_principal,
         )
         .await?;
-        let preimage = fresh_claim_preimage()?;
-        let digest: [u8; 32] = Sha256::digest(&preimage[..]).into();
-        (input, Some(candidate), Some(preimage), digest)
+        (input, Some(candidate))
     } else {
         let candidate = taker.taker_funding.as_ref().context("Taker funding")?;
         ensure!(
@@ -606,12 +615,10 @@ where
             terms.zcash_principal,
         )
         .await?;
-        let digest = taker.taker_secret_digest.context("Taker secret digest")?;
-        ensure!(digest != [0; 32], "the Taker's secret digest is zero");
-        (input, None, None, digest)
+        (input, None)
     };
     let facts = AgreementFacts {
-        profile: config.profile(),
+        profile: config.profile_for(terms.direction),
         direction: terms.direction,
         swap_id: terms.swap_id.clone(),
         maker_lez_account: lez.account(),
@@ -633,14 +640,14 @@ where
         .context("encode the reservation draft")?;
     ZecAgreementDraftV1::from_wire_at(&draft_wire, UnixSeconds::new(now))
         .context("the reservation draft does not validate")?;
-    write_role_secrets(role_root, preimage.as_deref())?;
+    write_role_secrets(role_root, None)?;
     write_private_new(&role_root.join(ZEC_ROLE_DRAFT_FILE), &draft_wire)?;
     Ok(ZecMakerReservation {
         draft_wire,
         zcash_anchor_height: tip.checked_add(1).context("anchor overflow")?,
         lez_anchor_unix_seconds: now,
         maker_funding,
-        maker_secret_digest: maker_funds.then_some(secret_digest),
+        maker_secret_digest: None,
         zebra_genesis: genesis,
     })
 }
@@ -659,10 +666,10 @@ pub struct ZecTakerCheck {
 /// The Taker's half: recomposes the Maker's draft from the offer terms, its
 /// own contribution and the Maker's few facts and requires byte equality,
 /// after bounding the Maker's facts by its own Zebra and clock (the anchors,
-/// and in `TakerSellsLez` the Maker's funding output and its digest). On
-/// success writes the draft into `role_root` (its secrets are already there:
-/// [`begin_zec_taker_role`] in `TakerSellsForeign`, written here otherwise);
-/// the Maker's Zebra genesis is then the one the Taker's template pins.
+/// and in `TakerSellsLez` the Maker's funding output). On success writes the
+/// draft into `role_root` (its secrets are already there, from
+/// [`begin_zec_taker_role`]); the Maker's Zebra genesis is then the one the
+/// Taker's template pins.
 ///
 /// # Errors
 ///
@@ -718,47 +725,48 @@ where
         maker.zebra_genesis == genesis,
         "the Maker's Zebra is another chain"
     );
+    ensure!(
+        maker.maker_secret_digest.is_none(),
+        "the Maker named a secret digest; the Taker holds the swap secret"
+    );
+    let secret_digest = taker
+        .taker_secret_digest
+        .context("the Taker made no secret digest")?;
     let maker_funds = zcash_funder(terms.direction) == ActorRole::Maker;
-    let (funding_input, secret_digest) = if maker_funds {
+    let funding_input = if maker_funds {
         ensure!(
-            taker.taker_funding.is_none() && taker.taker_secret_digest.is_none(),
+            taker.taker_funding.is_none(),
             "the Taker funds nothing in this direction"
         );
         let candidate = maker
             .maker_funding
             .as_ref()
             .context("the Maker named no funding output")?;
-        let digest = maker
-            .maker_secret_digest
-            .context("the Maker named no secret digest")?;
-        ensure!(digest != [0; 32], "the Maker's secret digest is zero");
-        let input = read_funding_input(
+        read_funding_input(
             rpc,
             &chain,
             candidate,
             &maker_zcash_key,
             terms.zcash_principal,
         )
-        .await?;
-        (input, digest)
+        .await?
     } else {
         ensure!(
-            maker.maker_funding.is_none() && maker.maker_secret_digest.is_none(),
+            maker.maker_funding.is_none(),
             "the Maker funds nothing in this direction"
         );
         let candidate = taker.taker_funding.as_ref().context("Taker funding")?;
-        let input = read_funding_input(
+        read_funding_input(
             rpc,
             &chain,
             candidate,
             &taker_zcash_key,
             terms.zcash_principal,
         )
-        .await?;
-        (input, taker.taker_secret_digest.context("Taker digest")?)
+        .await?
     };
     let facts = AgreementFacts {
-        profile: config.profile(),
+        profile: config.profile_for(terms.direction),
         direction: terms.direction,
         swap_id: terms.swap_id.clone(),
         maker_lez_account,
@@ -787,14 +795,10 @@ where
     );
     ZecAgreementDraftV1::from_wire_at(&maker.draft_wire, UnixSeconds::new(check.now))
         .context("the Maker's draft does not validate")?;
-    if maker_funds {
-        write_role_secrets(role_root, None)?;
-    } else {
-        ensure!(
-            role_root.join("claim-preimage.key").is_file(),
-            "the Taker's preimage was not made before it reserved"
-        );
-    }
+    ensure!(
+        role_root.join("claim-preimage.key").is_file(),
+        "the Taker's preimage was not made before it reserved"
+    );
     write_private_new(&role_root.join(ZEC_ROLE_DRAFT_FILE), &maker.draft_wire)
 }
 
@@ -804,6 +808,8 @@ pub struct ZecRoleTemplate {
     pub role: ActorRole,
     pub run_id: RunId,
     pub swap_id: SwapId,
+    /// The swap's direction, which picks the profile the template names.
+    pub direction: SwapDirection,
     /// The role's own sidecar for this swap (`http://127.0.0.1:<port>/`).
     pub bridge_endpoint: String,
     pub capability_file: PathBuf,
@@ -838,10 +844,10 @@ pub fn write_zec_role_template(
     let draft_file = role_root.join(ZEC_ROLE_DRAFT_FILE);
     let draft = fs::read(&draft_file).context("read the role's draft")?;
     let preimage_file = paths.claim_preimage.clone();
-    let funds = preimage_file.is_file();
+    let holds_preimage = preimage_file.is_file();
     ensure!(
-        funds == template.funding.is_some(),
-        "the role's preimage and funding output disagree"
+        holds_preimage == (template.role == ActorRole::Taker),
+        "only the Taker holds the swap's preimage"
     );
     if let Some(secret) = read_zebra_credential(&config.zebra_route)? {
         write_private_new(&paths.zebra_credential, secret.as_slice())?;
@@ -853,7 +859,7 @@ pub fn write_zec_role_template(
         bridge_endpoint: &bridge_endpoint,
         zebra_endpoint: &config.zebra_endpoint,
         zebra_route: &config.zebra_route,
-        profile: config.profile(),
+        profile: config.profile_for(template.direction),
     };
     let bytes = encode_deterministic_local_v0_2_actor_config(actor_config_input(
         &corridor,
@@ -862,7 +868,7 @@ pub fn write_zec_role_template(
         &draft_file,
         Hex32::from_bytes(Sha256::digest(&draft).into()),
         &paths,
-        funds.then_some(preimage_file),
+        holds_preimage.then_some(preimage_file),
         template.runtime.clone(),
         template.zebra_genesis,
         template.lez_discovery,
@@ -976,8 +982,8 @@ mod tests {
         tip: u32,
     }
 
-    /// One reserve round as the Nodes run it: the Taker's preimage first when
-    /// it funds Zcash, then the Maker's half.
+    /// One reserve round as the Nodes run it: the Taker's preimage first (in
+    /// both directions), then the Maker's half.
     async fn reserve(root: &Path, direction: SwapDirection) -> Round {
         let config = config(root);
         let zebra = zebra();
@@ -988,16 +994,15 @@ mod tests {
         let maker_root = private_dir(&root.join("maker")).join("zec");
         let taker_root = private_dir(&root.join("taker")).join("zec");
         let tip = zec_tip_height(&config, &zebra).await.unwrap();
-        let (taker_funding, taker_secret_digest) = match direction {
-            SwapDirection::TakerSellsForeign => {
-                let funding = select_zec_funding(&config, &zebra, &public(FUNDER), PRINCIPAL, &[])
+        let taker_funding = match direction {
+            SwapDirection::TakerSellsForeign => Some(
+                select_zec_funding(&config, &zebra, &public(FUNDER), PRINCIPAL, &[])
                     .await
-                    .unwrap();
-                let digest = begin_zec_taker_role(&taker_root).unwrap();
-                (Some(funding), Some(digest))
-            }
-            SwapDirection::TakerSellsLez => (None, None),
+                    .unwrap(),
+            ),
+            SwapDirection::TakerSellsLez => None,
         };
+        let taker_secret_digest = Some(begin_zec_taker_role(&taker_root).unwrap());
         let taker = ZecTakerContribution {
             taker_zcash_key: public(taker_secret).serialize(),
             taker_lez_account: [0x22; 32],
@@ -1072,16 +1077,11 @@ mod tests {
             let root = fs::canonicalize(directory.path()).unwrap();
             let round = reserve(&root, direction).await;
             check(&root, direction, &round, &round.maker).await.unwrap();
-            // Each role holds only its own material, the funder its preimage.
+            // Each role holds only its own material, the Taker the preimage
+            // in both directions (ADR 0216).
             let maker_funds = direction == SwapDirection::TakerSellsLez;
-            assert_eq!(
-                round.maker_root.join("claim-preimage.key").is_file(),
-                maker_funds
-            );
-            assert_eq!(
-                round.taker_root.join("claim-preimage.key").is_file(),
-                !maker_funds
-            );
+            assert!(!round.maker_root.join("claim-preimage.key").exists());
+            assert!(round.taker_root.join("claim-preimage.key").is_file());
             assert_eq!(
                 fs::read(round.maker_root.join(ZEC_ROLE_DRAFT_FILE)).unwrap(),
                 fs::read(round.taker_root.join(ZEC_ROLE_DRAFT_FILE)).unwrap()
@@ -1124,6 +1124,17 @@ mod tests {
                 maker_funds,
                 "the Zcash funder claims LEZ"
             );
+            assert_eq!(agreement.revealing_claimant(), Participant::Taker);
+            // Each direction under its own profile: the configured -v5 selling
+            // ZEC, its Taker-reveals-first twin -v7 selling LEZ.
+            assert_eq!(
+                agreement.binding().profile_id(),
+                if maker_funds {
+                    ZecProfileId::DeterministicLocalDevnetV7
+                } else {
+                    ZecProfileId::DeterministicLocalDevnetV5
+                }
+            );
         }
     }
 
@@ -1140,7 +1151,8 @@ mod tests {
         let mut late = round.maker.clone();
         late.lez_anchor_unix_seconds += MAX_ANCHOR_CLOCK_SKEW_SECONDS + 10;
         assert!(check(&root, direction, &round, &late).await.is_err());
-        // A different digest than the draft carries, or a changed draft byte.
+        // A Maker that names a digest (only the Taker holds the secret), or a
+        // changed draft byte.
         let mut digest = round.maker.clone();
         digest.maker_secret_digest = Some([7; 32]);
         assert!(check(&root, direction, &round, &digest).await.is_err());
@@ -1153,7 +1165,7 @@ mod tests {
         foreign.maker_funding = Some(CandidateOutpoint::new(Hex32::from_bytes([8; 32]), 0));
         assert!(check(&root, direction, &round, &foreign).await.is_err());
         // Nothing was written by the refusals; the honest answer still passes.
-        assert!(!round.taker_root.exists());
+        assert!(!round.taker_root.join(ZEC_ROLE_DRAFT_FILE).exists());
         check(&root, direction, &round, &round.maker).await.unwrap();
     }
 
@@ -1168,7 +1180,7 @@ mod tests {
             taker_zcash_key: public(OTHER).serialize(),
             taker_lez_account: [0x22; 32],
             taker_funding: None,
-            taker_secret_digest: None,
+            taker_secret_digest: Some([7; 32]),
         };
         let attempt = |taker: ZecTakerContribution,
                        direction: SwapDirection,
@@ -1207,7 +1219,8 @@ mod tests {
             .await
             .is_err()
         );
-        // The Taker's own key, or funding facts in the wrong direction.
+        // The Taker's own key, funding facts in the wrong direction, or no
+        // secret digest from the Taker (it holds the secret in both).
         let mut same = base.clone();
         same.taker_zcash_key = public(FUNDER).serialize();
         assert!(
@@ -1222,10 +1235,16 @@ mod tests {
                 .await
                 .is_err()
         );
+        let mut no_digest = base.clone();
+        no_digest.taker_secret_digest = None;
+        assert!(
+            attempt(no_digest, SwapDirection::TakerSellsLez, Vec::new(), "f")
+                .await
+                .is_err()
+        );
         // TakerSellsForeign: the Taker's outpoint must be the Taker's.
         let mut not_takers = base.clone();
         not_takers.taker_funding = Some(only.clone());
-        not_takers.taker_secret_digest = Some([7; 32]);
         assert!(
             attempt(
                 not_takers,
@@ -1236,7 +1255,7 @@ mod tests {
             .await
             .is_err()
         );
-        for name in ["a", "b", "c", "d"] {
+        for name in ["a", "b", "c", "d", "f"] {
             assert!(!root.join(name).exists(), "a refusal wrote {name}");
         }
         attempt(base, SwapDirection::TakerSellsLez, Vec::new(), "e")

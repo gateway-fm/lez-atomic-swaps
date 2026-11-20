@@ -245,14 +245,14 @@ async fn agree_at_take_time(direction: SwapDirection) {
         final_wire,
         "the Maker provisioned its actor from the same agreement"
     );
-    let maker_funds = direction == SwapDirection::TakerSellsLez;
+    // The Taker holds the swap secret in both directions (ADR 0216): the
+    // Maker's half carries the digest alone and claims only after the
+    // Taker's revealing claim.
+    assert!(!maker_swap.join("zec/claim-preimage.key").exists());
+    assert!(taker_swap.join("zec/claim-preimage.key").is_file());
     assert_eq!(
-        maker_swap.join("zec/claim-preimage.key").is_file(),
-        maker_funds
-    );
-    assert_eq!(
-        taker_swap.join("zec/claim-preimage.key").is_file(),
-        !maker_funds
+        accepted.agreement().revealing_claimant(),
+        Participant::Taker
     );
     for side in [&maker_swap, &taker_swap] {
         assert!(side.join("zec/actor-config.json").is_file());

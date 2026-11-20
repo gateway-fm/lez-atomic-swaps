@@ -14,12 +14,12 @@ use lez_zebra_node_adapter::{
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
-    NegotiationTranscriptV1, PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, ZcashFundingInputSetV1,
-    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementV1,
-    ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
-    ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1,
+    NegotiationTranscriptV1, PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS,
+    PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS, ZcashFundingInputSetV1, ZcashFundingInputV1,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementV1, ZecLezTermsV1,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -87,8 +87,8 @@ const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
 #[cfg(feature = "dealer-fixture")]
 const OTHER_ZCASH_KEY_BYTE: u8 = 2;
 /// The claim secret of one provisioned swap: 32 bytes from the OS RNG, owner-
-/// private like the keys beside it (stored only in the funder's bundle; the
-/// agreement carries its SHA-256). Never derived from public inputs such as
+/// private like the keys beside it (stored only in the Taker's bundle, in both
+/// directions; the agreement carries its SHA-256). Never derived from public inputs such as
 /// the swap id, which the agreement, the offers and the evidence all show.
 pub(crate) fn fresh_claim_preimage() -> anyhow::Result<Zeroizing<[u8; 32]>> {
     let mut preimage = Zeroizing::new([0_u8; 32]);
@@ -124,9 +124,10 @@ struct ProvisionSpec {
     run_id: RunId,
     swap_id: String,
     direction: LocalPocDirection,
-    /// Recovery profile; absent means the deterministic test-lane profile.
+    /// Recovery profile; absent means the deterministic test lane's profile
+    /// for the direction ([`LocalPocProfile::test_lane`]).
     #[serde(default)]
-    profile: LocalPocProfile,
+    profile: Option<LocalPocProfile>,
     lez_runtime: LezRuntimeSpec,
     bridge: BridgeSpec,
     zebra_endpoint: Url,
@@ -156,6 +157,11 @@ struct ProvisionSpec {
 
 #[cfg(feature = "dealer-fixture")]
 impl ProvisionSpec {
+    fn profile(&self) -> LocalPocProfile {
+        self.profile
+            .unwrap_or_else(|| LocalPocProfile::test_lane(self.direction))
+    }
+
     fn zcash_principal(&self) -> u64 {
         self.zcash_principal_zatoshis
             .unwrap_or(ZCASH_PRINCIPAL_ZATOSHIS)
@@ -684,11 +690,16 @@ struct LezSignerMaterial {
 }
 
 /// The named profiles a local corridor may be provisioned under.
-#[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+///
+/// `TakerSellsLez` is provisioned only under the Taker-reveals-first profiles
+/// (`deterministic-local-v3`, `deterministic-local-devnet-v7`/`-v8`,
+/// `public-testnet-v3`); `TakerSellsForeign` keeps the profiles it has always
+/// signed under, and `public-testnet-v3` (its window sized for
+/// `TakerSellsLez`) is refused for it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum LocalPocProfile {
     /// `deterministic-local-v1`: the isolated test lane (60 s LEZ refund delay).
-    #[default]
     DeterministicLocalV1,
     /// `deterministic-local-devnet-v1`: the same lane with a 30 min LEZ refund
     /// delay, for a chain that finalises in minutes.
@@ -714,6 +725,19 @@ pub(crate) enum LocalPocProfile {
     /// testnet, funded from an ordinary transparent output of the funder's
     /// key (scripts/public-zec-testnet.sh).
     PublicTestnetV2,
+    /// `deterministic-local-v3`: the isolated test lane's Taker-reveals-first
+    /// profile (NU7), for `TakerSellsLez`.
+    DeterministicLocalV3,
+    /// `deterministic-local-devnet-v7`: the devnet's Taker-reveals-first
+    /// profile for swaps that claim (NU7, 12 min LEZ refund delay, 16-block
+    /// Zcash refund window).
+    DeterministicLocalDevnetV7,
+    /// `deterministic-local-devnet-v8`: V7 with an 8 min LEZ refund delay, for
+    /// the devnet's refund journeys (they never claim).
+    DeterministicLocalDevnetV8,
+    /// `public-testnet-v3`: Zcash Testnet on NU7 and the official LEZ v0.2
+    /// testnet, Taker reveals first, for `TakerSellsLez`.
+    PublicTestnetV3,
 }
 
 impl LocalPocProfile {
@@ -728,11 +752,58 @@ impl LocalPocProfile {
             Self::DeterministicLocalDevnetV5 => ZecProfileId::DeterministicLocalDevnetV5,
             Self::DeterministicLocalDevnetV6 => ZecProfileId::DeterministicLocalDevnetV6,
             Self::PublicTestnetV2 => ZecProfileId::PublicTestnetV2,
+            Self::DeterministicLocalV3 => ZecProfileId::DeterministicLocalV3,
+            Self::DeterministicLocalDevnetV7 => ZecProfileId::DeterministicLocalDevnetV7,
+            Self::DeterministicLocalDevnetV8 => ZecProfileId::DeterministicLocalDevnetV8,
+            Self::PublicTestnetV3 => ZecProfileId::PublicTestnetV3,
+        }
+    }
+
+    /// This profile's twin sized for `direction`, or itself when it admits
+    /// `direction` or has no twin. Each profile admits one direction (ADR
+    /// 0216); a take-time role names one profile and takes the other
+    /// direction under its twin, the pairs the dealer fixture signs:
+    /// `deterministic-local-devnet-v5`/`-v7`, `-v6`/`-v8`,
+    /// `public-testnet-v2`/`-v3` and `deterministic-local-v2`/`-v3`.
+    pub(crate) const fn for_direction(self, direction: SwapDirection) -> Self {
+        match (direction, self) {
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalDevnetV5) => {
+                Self::DeterministicLocalDevnetV7
+            }
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalDevnetV6) => {
+                Self::DeterministicLocalDevnetV8
+            }
+            (SwapDirection::TakerSellsLez, Self::PublicTestnetV2) => Self::PublicTestnetV3,
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalV2) => {
+                Self::DeterministicLocalV3
+            }
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalDevnetV7) => {
+                Self::DeterministicLocalDevnetV5
+            }
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalDevnetV8) => {
+                Self::DeterministicLocalDevnetV6
+            }
+            (SwapDirection::TakerSellsForeign, Self::PublicTestnetV3) => Self::PublicTestnetV2,
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalV3) => {
+                Self::DeterministicLocalV2
+            }
+            (_, other) => other,
+        }
+    }
+
+    /// The isolated test lane's profile for a direction: the Taker-reveals-first
+    /// `deterministic-local-v3` for `TakerSellsLez`, `deterministic-local-v2`
+    /// (Regtest NU7) for `TakerSellsForeign`.
+    #[cfg(feature = "dealer-fixture")]
+    const fn test_lane(direction: LocalPocDirection) -> Self {
+        match direction {
+            LocalPocDirection::TakerSellsForeign => Self::DeterministicLocalV2,
+            LocalPocDirection::TakerSellsLez => Self::DeterministicLocalV3,
         }
     }
 }
 
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 #[cfg(feature = "dealer-fixture")]
 enum LocalPocDirection {
@@ -770,8 +841,13 @@ impl LocalPocDirection {
         }
     }
 
+    /// The Taker, in both directions: it locks first, holds the preimage and
+    /// claims the Maker-funded leg first (the common flow, AGENTS.md). The
+    /// Maker learns the preimage from that claim.
     const fn preimage_owner(self) -> ActorRole {
-        self.zcash_funder()
+        match self {
+            Self::TakerSellsForeign | Self::TakerSellsLez => ActorRole::Taker,
+        }
     }
 }
 
@@ -891,9 +967,9 @@ struct AgreementFixture {
 /// Provisions a shared countersigned agreement and two isolated actor inputs.
 ///
 /// The spec selects either supported ZEC direction. The taker always funds the
-/// first leg; the participant funding Zcash exclusively receives the preimage
-/// and exact mature Regtest candidate, while the opposite participant funds
-/// LEZ. Both local identities use the deterministic keys already funded by the
+/// first leg and alone receives the preimage, in both directions; the
+/// participant funding Zcash receives the exact mature Regtest candidate, while
+/// the opposite participant funds LEZ. Both local identities use the deterministic keys already funded by the
 /// retained v0.2 and Zebra fixtures.
 ///
 /// # Errors
@@ -981,7 +1057,7 @@ pub async fn provision_local_v0_2_corridor_with_material(
     funding_zcash_secret.non_secure_erase();
     let (candidate, tip_height, genesis_hash) = select_funding_candidate(
         &rpc,
-        &FundingChain::for_profile(ZecRefundProfile::for_id(spec.profile.id()))?,
+        &FundingChain::for_profile(ZecRefundProfile::for_id(spec.profile().id()))?,
         &funding_zcash_public,
         spec.zcash_funding_skip,
         &[],
@@ -1237,8 +1313,9 @@ pub fn prepare_local_v0_2_chat_draft(
 ///
 /// Existing authority files remain referenced in place and are never copied or
 /// returned. Every executable agreement field except the authenticated Chat
-/// transcript must match the validated source; both role keys and the funder's
-/// hash preimage are checked against the final countersigned record.
+/// transcript must match the validated source; both role keys, the Zcash
+/// funder role and the Taker's hash preimage are checked against the final
+/// countersigned record.
 ///
 /// # Errors
 ///
@@ -1419,20 +1496,24 @@ pub(crate) fn validate_role_authority(
         public == *agreement.zcash_key(participant),
         "actor Zcash key does not match the final agreement"
     );
+    // The Zcash funder receives the escrowed LEZ (`lez_claimant`).
     let expected_funder = agreement.lez_claimant() == participant;
     ensure!(
         configured_as_funder == expected_funder,
         "actor funder role does not match the final agreement"
     );
+    // The preimage is the Taker's alone, in both directions: it claims the
+    // Maker-funded leg first; the Maker reads the preimage from that claim.
+    let expected_preimage_owner = agreement.revealing_claimant() == participant;
     match material.claim_preimage() {
-        Some(preimage) if expected_funder => {
+        Some(preimage) if expected_preimage_owner => {
             let digest: [u8; 32] = Sha256::digest(preimage.expose_secret()).into();
             ensure!(
                 digest == *agreement.secret_digest(),
                 "actor preimage does not match the final agreement"
             );
         }
-        None if !expected_funder => {}
+        None if !expected_preimage_owner => {}
         _ => bail!("actor preimage ownership does not match the final agreement"),
     }
     Ok(())
@@ -1493,7 +1574,7 @@ impl<'a> RoleCorridor<'a> {
             },
             zebra_endpoint: &spec.zebra_endpoint,
             zebra_route: &spec.zebra_route,
-            profile: spec.profile.id(),
+            profile: spec.profile().id(),
         }
     }
 }
@@ -1722,13 +1803,40 @@ fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
         "maker, taker, and Zebra endpoints must be distinct"
     );
     ensure!(
-        ZecRefundProfile::for_id(spec.profile.id()).zcash_network() == spec.zebra_route.network(),
+        ZecRefundProfile::for_id(spec.profile().id()).zcash_network() == spec.zebra_route.network(),
         "the profile's Zcash network is not the Zebra route's"
     );
     ensure!(
         spec.zcash_principal() > 0,
         "the Zcash principal must be positive"
     );
+    validate_profile_direction(spec.profile(), spec.direction)
+}
+
+/// `TakerSellsLez` needs a Taker-reveals-first profile: under an older one the
+/// Maker would hold the preimage while the Taker locks first (the SDK refuses
+/// such an agreement, `LegacyRevealOrder`). `TakerSellsForeign` is refused
+/// under `public-testnet-v3`, whose Zcash window is sized for the Maker's
+/// earlier Zcash refund of `TakerSellsLez` and is shorter than the LEZ refund
+/// delay that direction needs it to outlast.
+#[cfg(feature = "dealer-fixture")]
+fn validate_profile_direction(
+    profile: LocalPocProfile,
+    direction: LocalPocDirection,
+) -> Result<()> {
+    let name = profile.id().as_str();
+    match direction {
+        LocalPocDirection::TakerSellsLez => ensure!(
+            ZecRefundProfile::for_id(profile.id()).admits(SwapDirection::TakerSellsLez),
+            "profile {name} is not Taker-reveals-first: a taker_sells_lez corridor needs \
+             deterministic-local-v3, deterministic-local-devnet-v7, -v8 or public-testnet-v3"
+        ),
+        LocalPocDirection::TakerSellsForeign => ensure!(
+            profile != LocalPocProfile::PublicTestnetV3,
+            "profile {name} is sized for taker_sells_lez: a taker_sells_foreign Testnet \
+             corridor is provisioned under public-testnet-v2"
+        ),
+    }
     Ok(())
 }
 
@@ -1940,7 +2048,7 @@ fn build_agreement(
     // already claimed (zec-concurrent, chain 37, 2026-10-29).
     let preimage = fresh_claim_preimage()?;
     let facts = AgreementFacts {
-        profile: spec.profile.id(),
+        profile: spec.profile().id(),
         direction: spec.direction.protocol(),
         swap_id: swap_id.clone(),
         maker_lez_account,
@@ -2021,7 +2129,8 @@ pub(crate) struct AgreementFacts {
     pub(crate) taker_lez_account: [u8; 32],
     pub(crate) maker_zcash_key: PublicKey,
     pub(crate) taker_zcash_key: PublicKey,
-    /// SHA-256 of the Zcash funder's claim preimage.
+    /// SHA-256 of the Taker's claim preimage (the Taker holds it in both
+    /// directions, ADR 0216).
     pub(crate) secret_digest: [u8; 32],
     pub(crate) lez: LezChainFacts,
     pub(crate) lez_amount: u128,
@@ -2035,7 +2144,7 @@ pub(crate) struct AgreementFacts {
     pub(crate) transcript: NegotiationTranscriptV1,
 }
 
-/// The role that funds Zcash (and owns the claim preimage) in `direction`.
+/// The role that funds Zcash in `direction`.
 pub(crate) const fn zcash_funder(direction: SwapDirection) -> ActorRole {
     match direction {
         SwapDirection::TakerSellsForeign => ActorRole::Taker,
@@ -2060,39 +2169,18 @@ pub(crate) fn compose_agreement_body(facts: &AgreementFacts) -> Result<(ZecAgree
     let lez_refund_seconds = now
         .checked_add(profile.lez_refund_delay().value())
         .context("LEZ refund time overflow")?;
-    let earlier_refund_latest_ms = lez_refund_seconds
-        .checked_mul(1_000)
-        .context("LEZ refund millisecond overflow")?;
-    let later_refund_earliest = match profile.zcash_network() {
-        // The fixture's harness mines every block: the bound is the schedule's own.
-        NetworkType::Regtest => lez_refund_seconds
-            .checked_add(profile.required_margin().value())
-            .context("calibrated later refund time overflow")?,
-        // Testnet makes its blocks: the refund height arrives no sooner than
-        // its blocks at the fastest pace the profile is sized for.
-        NetworkType::Test | NetworkType::Main => {
-            let earliest = now
-                .checked_add(
-                    u64::from(profile.zcash_refund_blocks())
-                        .saturating_mul(PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS)
-                        / 1_000,
-                )
-                .context("Testnet later refund time overflow")?;
-            ensure!(
-                earliest >= lez_refund_seconds.saturating_add(profile.required_margin().value()),
-                "the profile's Zcash refund window is shorter than its LEZ refund delay \
-                 plus margin at Testnet's fastest pace"
-            );
-            earliest
-        }
-    };
+    let (earlier_refund_latest_ms, later_refund_earliest) =
+        refund_plan(profile, facts.direction, now, lez_refund_seconds)?;
     let maker_hash = public_key_hash(&facts.maker_zcash_key);
     let taker_hash = public_key_hash(&facts.taker_zcash_key);
     let (zcash_funder_hash, zcash_claimant_hash) = match zcash_funder(facts.direction) {
         ActorRole::Maker => (maker_hash, taker_hash),
         ActorRole::Taker => (taker_hash, maker_hash),
     };
-    let contract = Bip199Contract::new(
+    // The profile decides the claim branch: the Taker-reveals-first profiles check
+    // that the preimage is 32 bytes, the length the LEZ escrow claims with.
+    let contract = Bip199Contract::for_profile(
+        facts.profile,
         zcash_refund_height,
         zcash_funder_hash,
         facts.secret_digest,
@@ -2192,6 +2280,85 @@ pub(crate) fn sign_agreement_body(
     );
     let agreement = ZecAgreementV1::validate_at(record, UnixSeconds::new(now))?;
     Ok(Zeroizing::new(agreement.encode_wire()?))
+}
+
+/// The signed refund plan's two bounds, `(earlier_refund_latest_ms,
+/// later_refund_earliest_unix_seconds)`, for an agreement anchored at `now`
+/// whose LEZ refund opens at `lez_refund_seconds`.
+///
+/// `TakerSellsForeign`: the Maker's LEZ refund is the earlier one; its latest
+/// time is the LEZ deadline, and the Taker's Zcash refund opens no sooner than
+/// that plus the margin (Regtest: as declared; Testnet: its blocks at the
+/// fastest pace).
+///
+/// `TakerSellsLez`: the Maker's Zcash refund is the earlier one and the
+/// Taker's LEZ refund the later one, which opens exactly at the LEZ deadline.
+/// The Zcash refund's latest time is declared as the LEZ deadline minus the
+/// margin on Regtest (the harness mines every block) and as the anchor plus
+/// its blocks and one at Testnet's slowest pace on Testnet, which must leave
+/// the margin before the LEZ deadline.
+fn refund_plan(
+    profile: ZecRefundProfile,
+    direction: SwapDirection,
+    now: u64,
+    lez_refund_seconds: u64,
+) -> Result<(u64, u64)> {
+    let margin = profile.required_margin().value();
+    let lez_refund_ms = lez_refund_seconds
+        .checked_mul(1_000)
+        .context("LEZ refund millisecond overflow")?;
+    match direction {
+        SwapDirection::TakerSellsForeign => {
+            let later_refund_earliest = match profile.zcash_network() {
+                // The fixture's harness mines every block: the bound is the schedule's own.
+                NetworkType::Regtest => lez_refund_seconds
+                    .checked_add(margin)
+                    .context("calibrated later refund time overflow")?,
+                // Testnet makes its blocks: the refund height arrives no sooner than
+                // its blocks at the fastest pace the profile is sized for.
+                NetworkType::Test | NetworkType::Main => {
+                    let earliest = now
+                        .checked_add(
+                            u64::from(profile.zcash_refund_blocks())
+                                .saturating_mul(PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS)
+                                / 1_000,
+                        )
+                        .context("Testnet later refund time overflow")?;
+                    ensure!(
+                        earliest >= lez_refund_seconds.saturating_add(margin),
+                        "the profile's Zcash refund window is shorter than its LEZ refund delay \
+                         plus margin at Testnet's fastest pace"
+                    );
+                    earliest
+                }
+            };
+            Ok((lez_refund_ms, later_refund_earliest))
+        }
+        SwapDirection::TakerSellsLez => {
+            let earlier_refund_latest_ms = match profile.zcash_network() {
+                NetworkType::Regtest => lez_refund_seconds
+                    .checked_sub(margin)
+                    .and_then(|seconds| seconds.checked_mul(1_000))
+                    .context("the LEZ refund time precedes its margin")?,
+                // The anchor is the tip plus one: the refund height is N blocks
+                // after it, N + 1 after the tip, each at the slowest pace.
+                NetworkType::Test | NetworkType::Main => {
+                    let latest = u64::from(profile.zcash_refund_blocks())
+                        .checked_add(1)
+                        .and_then(|blocks| blocks.checked_mul(PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS))
+                        .and_then(|window| now.checked_mul(1_000)?.checked_add(window))
+                        .context("Testnet earlier refund time overflow")?;
+                    ensure!(
+                        latest.saturating_add(margin.saturating_mul(1_000)) <= lez_refund_ms,
+                        "the profile's Zcash refund window at Testnet's slowest pace leaves \
+                         less than its margin before the LEZ refund"
+                    );
+                    latest
+                }
+            };
+            Ok((earlier_refund_latest_ms, lez_refund_seconds))
+        }
+    }
 }
 
 pub(crate) fn public_key_hash(key: &PublicKey) -> [u8; 20] {
@@ -2824,9 +2991,14 @@ pub(crate) mod testnet_provision_tests {
 
     #[cfg(feature = "dealer-fixture")]
     fn spec(profile: &str, route: &serde_json::Value) -> ProvisionSpec {
+        spec_in("taker_sells_foreign", profile, route)
+    }
+
+    #[cfg(feature = "dealer-fixture")]
+    fn spec_in(direction: &str, profile: &str, route: &serde_json::Value) -> ProvisionSpec {
         serde_json::from_value(serde_json::json!({
             "schema_version": 1, "run_id": "zec-testnet-1", "swap_id": "zec-testnet-swap-1",
-            "direction": "taker_sells_lez", "profile": profile,
+            "direction": direction, "profile": profile,
             "lez_runtime": {
                 "chain_id": "01".repeat(32), "channel_id": "01".repeat(32),
                 "genesis_block_hash": "02".repeat(32), "escrow_program_id": "03".repeat(32),
@@ -2964,6 +3136,7 @@ pub(crate) mod testnet_provision_tests {
                 role: ActorRole::Maker,
                 run_id: spec.run_id.clone(),
                 swap_id: swap_id.clone(),
+                direction: SwapDirection::TakerSellsForeign,
                 bridge_endpoint: spec.bridge.maker_endpoint.to_string(),
                 capability_file: role_root.join("sidecar-capability"),
                 runtime: runtime.clone(),
@@ -2992,6 +3165,196 @@ pub(crate) mod testnet_provision_tests {
         ))
         .unwrap();
         assert_eq!(fs::read(written).unwrap(), dealer);
+    }
+
+    #[cfg(feature = "dealer-fixture")]
+    #[test]
+    fn taker_sells_lez_needs_a_taker_reveals_first_profile() {
+        let tatum = tatum();
+        let regtest = serde_json::json!({"kind": "deterministic_local"});
+        for (direction, profile, route, admitted) in [
+            ("taker_sells_lez", "public-testnet-v3", &tatum, true),
+            ("taker_sells_lez", "public-testnet-v2", &tatum, false),
+            (
+                "taker_sells_lez",
+                "deterministic-local-devnet-v7",
+                &regtest,
+                true,
+            ),
+            (
+                "taker_sells_lez",
+                "deterministic-local-devnet-v8",
+                &regtest,
+                true,
+            ),
+            ("taker_sells_lez", "deterministic-local-v3", &regtest, true),
+            (
+                "taker_sells_lez",
+                "deterministic-local-devnet-v5",
+                &regtest,
+                false,
+            ),
+            (
+                "taker_sells_lez",
+                "deterministic-local-devnet-v6",
+                &regtest,
+                false,
+            ),
+            ("taker_sells_lez", "deterministic-local-v2", &regtest, false),
+            ("taker_sells_foreign", "public-testnet-v2", &tatum, true),
+            ("taker_sells_foreign", "public-testnet-v3", &tatum, false),
+            (
+                "taker_sells_foreign",
+                "deterministic-local-devnet-v5",
+                &regtest,
+                true,
+            ),
+            (
+                "taker_sells_foreign",
+                "deterministic-local-devnet-v6",
+                &regtest,
+                true,
+            ),
+        ] {
+            assert_eq!(
+                validate_spec(&spec_in(direction, profile, route)).is_ok(),
+                admitted,
+                "{direction} under {profile}"
+            );
+        }
+        let refused = validate_spec(&spec_in("taker_sells_lez", "public-testnet-v2", &tatum))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("not Taker-reveals-first"), "{refused}");
+        let refused = validate_spec(&spec_in("taker_sells_foreign", "public-testnet-v3", &tatum))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("sized for taker_sells_lez"), "{refused}");
+    }
+
+    #[cfg(feature = "dealer-fixture")]
+    #[test]
+    fn the_preimage_is_the_takers_in_both_directions() {
+        for direction in [
+            LocalPocDirection::TakerSellsForeign,
+            LocalPocDirection::TakerSellsLez,
+        ] {
+            assert_eq!(direction.preimage_owner(), ActorRole::Taker);
+        }
+        assert_eq!(
+            LocalPocDirection::TakerSellsLez.zcash_funder(),
+            ActorRole::Maker
+        );
+        assert_eq!(
+            LocalPocDirection::TakerSellsForeign.zcash_funder(),
+            ActorRole::Taker
+        );
+    }
+
+    #[cfg(feature = "dealer-fixture")]
+    #[test]
+    fn the_test_lane_profile_follows_the_direction() {
+        let mut lane = spec_in(
+            "taker_sells_lez",
+            "deterministic-local-v3",
+            &serde_json::json!({"kind": "deterministic_local"}),
+        );
+        lane.profile = None;
+        assert_eq!(lane.profile(), LocalPocProfile::DeterministicLocalV3);
+        validate_spec(&lane).unwrap();
+        lane.direction = LocalPocDirection::TakerSellsForeign;
+        assert_eq!(lane.profile(), LocalPocProfile::DeterministicLocalV2);
+        validate_spec(&lane).unwrap();
+        for spelling in [
+            "deterministic-local-v3",
+            "deterministic-local-devnet-v7",
+            "deterministic-local-devnet-v8",
+            "public-testnet-v3",
+        ] {
+            let profile: LocalPocProfile =
+                serde_json::from_value(serde_json::json!(spelling)).unwrap();
+            assert_eq!(profile.id().as_str(), spelling);
+        }
+    }
+
+    #[test]
+    fn the_taker_sells_lez_refund_plan_puts_the_makers_zcash_refund_first() {
+        let now = 1_800_000_000;
+        // devnet-v7: 12 min LEZ refund delay, 120 s margin. The Zcash refund
+        // is declared at the LEZ refund time minus the margin; the Taker's LEZ
+        // refund opens at the LEZ refund time.
+        let v7 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV7);
+        assert_eq!(
+            refund_plan(v7, SwapDirection::TakerSellsLez, now, now + 720).unwrap(),
+            ((now + 600) * 1_000, now + 720)
+        );
+        // public-testnet-v3: 95 blocks + 1 at 75 s = 7 200 s after the anchor,
+        // which leaves the 7 200 s margin before the 14 400 s LEZ refund.
+        let v3 = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV3);
+        assert_eq!(
+            refund_plan(v3, SwapDirection::TakerSellsLez, now, now + 14_400).unwrap(),
+            (now * 1_000 + 7_200_000, now + 14_400)
+        );
+        // TakerSellsForeign keeps its plan: the Maker's LEZ refund first at
+        // the LEZ refund time, the Taker's Zcash refund after it.
+        let v5 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV5);
+        assert_eq!(
+            refund_plan(v5, SwapDirection::TakerSellsForeign, now, now + 720).unwrap(),
+            (
+                (now + 720) * 1_000,
+                now + 720 + v5.required_margin().value()
+            )
+        );
+        let v2 = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV2);
+        assert_eq!(
+            refund_plan(v2, SwapDirection::TakerSellsForeign, now, now + 1_800).unwrap(),
+            (
+                (now + 1_800) * 1_000,
+                now + u64::from(v2.zcash_refund_blocks()) * PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS
+                    / 1_000
+            )
+        );
+        // A Zcash window that does not leave the margin before the LEZ refund
+        // is refused rather than signed.
+        assert!(refund_plan(v3, SwapDirection::TakerSellsLez, now, now + 14_399).is_err());
+    }
+
+    #[cfg(feature = "dealer-fixture")]
+    #[test]
+    fn a_taker_sells_lez_testnet_corridor_validates_under_v3() {
+        let spec = spec_in("taker_sells_lez", "public-testnet-v3", &tatum());
+        let keys = ZcashKeyMaterial::deterministic(spec.direction);
+        let swap_id = SwapId::new(spec.swap_id.clone()).unwrap();
+        let zebra = FakeTestnet::new();
+        let candidate = SelectedCandidate {
+            outpoint: OutPoint::new(*zebra.txid().as_ref(), 2),
+            output: TxOut::new(
+                Zatoshis::from_u64(712_420_000).unwrap(),
+                lez_zec_swap_sdk::p2pkh_address(&spender()).script().into(),
+            ),
+            rpc_transaction_id: txid_display_hex(zebra.txid()),
+            height: NU7_TX_HEIGHT,
+        };
+        let tip = 4_607_100;
+        let fixture = build_agreement(
+            &spec, &keys, &swap_id, [7; 32], [8; 32], [9; 32], &candidate, tip,
+        )
+        .unwrap();
+        assert_eq!(fixture.zcash_refund_height, tip + 1 + 95);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let agreement = ZecAgreementV1::from_wire_at(&fixture.wire, UnixSeconds::new(now)).unwrap();
+        assert_eq!(
+            agreement.binding().profile_id(),
+            ZecProfileId::PublicTestnetV3
+        );
+        assert_eq!(agreement.direction(), SwapDirection::TakerSellsLez);
+        assert_eq!(agreement.lez_claimant(), Participant::Maker);
+        assert_eq!(agreement.revealing_claimant(), Participant::Taker);
+        let digest: [u8; 32] = Sha256::digest(&fixture.preimage[..]).into();
+        assert_eq!(&digest, agreement.secret_digest());
     }
 
     #[cfg(feature = "dealer-fixture")]

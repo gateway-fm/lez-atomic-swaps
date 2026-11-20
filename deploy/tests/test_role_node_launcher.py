@@ -49,6 +49,10 @@ def bashes():
 @unittest.skipUnless(shutil.which('jq'), 'the launcher renders its configuration with jq')
 class Launcher(unittest.TestCase):
     def setUp(self):
+        # The fixtures are made as an installer under umask 022 makes them;
+        # under a developer's 002 they would be group-writable and the
+        # launcher refuses them (the two umask-002 tests set theirs).
+        self.addCleanup(os.umask, os.umask(0o022))
         # A short root: macOS gives TMPDIR under /var/folders/…, and a Unix
         # socket path below it is longer than the launcher (and the kernel) allows.
         # Resolved: macOS's /tmp is a symlink, and the launcher (as the

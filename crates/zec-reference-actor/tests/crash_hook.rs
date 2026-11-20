@@ -44,6 +44,43 @@ fn hook_arms_only_for_the_exact_submitted_operation_and_writes_private_marker() 
 }
 
 #[test]
+fn hook_arms_for_each_zcash_claim_operation_of_both_directions() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    for (operation, role) in [
+        ("lez_revealing_claim", "taker"),
+        ("zcash_followup_claim", "maker"),
+        ("zcash_revealing_claim", "taker"),
+        ("lez_followup_claim", "maker"),
+    ] {
+        let marker = root.path().join(format!("{operation}-paused.json"));
+        let output = format!(
+            r#"{{"schema_version":1,"role":"{role}","command":"drive","outcome":"submitted","operation":"{operation}","phase":"both_legs_locked","revision":4,"next_action":"wait"}}"#
+        );
+        assert!(
+            arm_test_crash_hook(operation, &marker, "swap-claim", role, &output)
+                .expect("exact submitted claim arms"),
+            "{operation}"
+        );
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&marker).unwrap()).unwrap();
+        assert_eq!(value["operation"], operation);
+        // Another claim's output does not arm this one.
+        let other = root.path().join(format!("{operation}-other.json"));
+        assert!(
+            !arm_test_crash_hook(
+                operation,
+                &other,
+                "swap-claim",
+                role,
+                &output.replace(operation, "zcash_fund")
+            )
+            .unwrap()
+        );
+        assert!(!other.exists());
+    }
+}
+
+#[test]
 fn hook_rejects_unknown_malformed_or_unsafe_requests() {
     let root = tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();

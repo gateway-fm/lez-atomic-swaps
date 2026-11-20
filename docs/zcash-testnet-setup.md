@@ -4,7 +4,8 @@ Status (2026-11-11): the acceptance lane exists — runner, evidence bundle and
 a manual/weekly workflow — and its preflight runs against public Zcash
 Testnet. Zcash Testnet moved to NU7 (consensus branch `77190ad9`) at height
 4,465,026 on 2026-10-04; the swap engine now signs for it (librustzcash 0.31,
-agreement profile `public-testnet-v2`) and a Testnet corridor can be
+agreement profiles `public-testnet-v2` for `TakerSellsForeign` and
+`public-testnet-v3` for `TakerSellsLez`) and a Testnet corridor can be
 provisioned from a funded transparent key. On 2026-11-11 the self-hosted route
 below was walked from empty volumes: Zebra 7.0.0 synced to the Testnet tip, a
 project-owned transparent key was funded with 0.1 TAZ from a faucet, and the
@@ -341,14 +342,24 @@ and a refund corridor and a complete corridor on each route.
 Timing: a happy corridor waits for two LEZ-final effects (the LEZ testnet
 finalizes ~50 blocks, about 50 minutes, behind its tip) plus the Zcash
 confirmations; a refund corridor waits for the agreement's LEZ refund time
-and Zcash refund height. `public-testnet-v2` sizes the Zcash refund for
-safety at the fastest pace Testnet has run, not the average (below), so the
-Zcash refund opens ~23 hours after funding at today's 22.7 s blocks. Our
-estimate, not a measurement: about 2 hours for a happy corridor, about a day
-for a refund corridor; a full scheduled run is a day or more on a
-self-hosted runner.
+and Zcash refund height. In `TakerSellsForeign`, `public-testnet-v2` sizes
+the later Zcash refund for safety at the fastest pace Testnet has run, not
+the average (below), so the Zcash refund opens ~23 hours after funding at
+today's 22.7 s blocks. In `TakerSellsLez`, `public-testnet-v3` puts the
+Maker's Zcash refund first, 95 blocks after the anchor (~37 minutes at
+22.7 s blocks), and the Taker's LEZ refund 4 hours after it. Our estimate,
+not a measurement: about 2 hours for a happy corridor, about a day for a
+`TakerSellsForeign` refund corridor and about 4 hours for a `TakerSellsLez`
+one; a full scheduled run is a day or more on a self-hosted runner.
 
-### The agreement profile: `public-testnet-v2`
+### The agreement profiles: `public-testnet-v2` and `public-testnet-v3`
+
+The order of claims and refunds per direction is
+[ADR 0216](architecture/0216-zec-taker-reveals-first-in-both-directions.md)'s:
+the Taker holds the preimage and claims the Maker-funded leg first, and the
+Maker-funded leg refunds first. `public-testnet-v2` is a legacy profile and
+admits `TakerSellsForeign` only; `TakerSellsLez` corridors are signed under
+`public-testnet-v3`.
 
 Profiles are immutable per id. `public-testnet-v1` (NU6.2, 192 Zcash refund
 blocks) keeps its meaning; `public-testnet-v2` (wire tag 6) is the Testnet
@@ -371,11 +382,35 @@ blocks through: 1,000 blocks took 3,922 s just before NU7. 3,700 × 3.9 s =
 provisioner states the Zcash refund's earliest time with the same 3.9 s
 (`PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS`).
 
+`public-testnet-v3` (wire tag 13) is sized the other way round, because in
+`TakerSellsLez` the Zcash refund is the earlier one: it must open no later
+than the LEZ refund time minus the margin at the slowest pace the profile
+assumes, 75 s a block (three times NU7's 25 s target,
+`PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS`).
+
+| Parameter | v3 |
+|---|---|
+| Branch | NU7 `77190ad9` |
+| LEZ refund delay / margin | 4 h / 2 h |
+| Confirmations LEZ / Zcash | 2 / 10 |
+| Zcash refund blocks | 95 |
+| Taker reveal margin | 10 blocks |
+| Expiry delta | 120 |
+
+The rule: `(95 + 1) × 75 s = 7,200 s`, plus the 2 h margin, is the 4 h LEZ
+refund delay. The Taker claims ZEC only after ten confirmations of the
+Maker's funding and while more than ten blocks remain before the Zcash
+refund height and more than 2 h before the LEZ refund time; at 22.7 s blocks
+that is within about 33 minutes of the anchor. If Testnet stalls below
+75 s a block the Zcash refund can open later than the profile assumes; that
+residual risk is in the threat model (TM-0030).
+
 ### Provisioning a Testnet corridor
 
 `tests/fixtures/zec-catalog-fixture.sh --zcash-network test` (node-e2e.py
-calls it in public mode) builds one corridor under `public-testnet-v2`. It is
-the devnet's dealer test fixture (it holds both parties' keys); this lane is
+calls it in public mode) builds one corridor under `public-testnet-v2`
+(`TakerSellsForeign`) or `public-testnet-v3` (`TakerSellsLez`). It is the
+devnet's dealer test fixture (it holds both parties' keys); this lane is
 pending conversion to the take-time agreement, the way swaps are set up now:
 
 - the route from `LEZ_ZEBRA_URL` and exactly one of `LEZ_ZEBRA_COOKIE_FILE`
@@ -397,7 +432,7 @@ pending conversion to the take-time agreement, the way swaps are set up now:
   profile) against the template's 50,000 LEZ units; fees are 10,000 zatoshis
   per Zcash transaction;
 - each actor gets its own copy of the route's credential beside its keys,
-  and scans the whole 3,701-block refund window for the counterparty's lock.
+  and scans the whole Zcash refund window for the counterparty's lock.
 
 Nothing is mined and nothing is broadcast before the actors run, except the
 Taker-funding payment. Zebra has no dry-run (`testmempoolaccept` answers
@@ -423,8 +458,8 @@ it holds no swap. Since then the swap engine:
    in the NU7 activation block and `d759e629035fc77989d8b3253d16660e5cd3beef33bd8a011ba335d0f44d7bb8`
    in the last NU6.3 block — reproduce their txids and their signatures verify
    under our ZIP-244 hash (`crates/zec-swap-sdk/tests/zcash_testnet_vectors.rs`);
-2. has the immutable profile `public-testnet-v2` (above), which the lane
-   profile `public-zec-testnet-v2` names;
+2. has the immutable profiles `public-testnet-v2` and `public-testnet-v3`
+   (above), which the lane profile names per direction;
 3. lets the actor's `ConsensusBranchConfig` name `37a5165b` and `77190ad9`;
 4. provisions Testnet corridors (above).
 

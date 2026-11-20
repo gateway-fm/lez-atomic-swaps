@@ -151,6 +151,12 @@ if (( skip_tests == 0 )); then
 
   CARGO_BUILD_JOBS=2 cargo test --locked \
     -p lez-zec-swap-sdk --test zebra_regtest -- --ignored --nocapture
+
+  # TakerSellsLez: the Taker's Zcash claim reveals first and the Maker reads the
+  # preimage from it; a refund of the HTLC is the refund branch. Both cases mine
+  # on the one node, so they run one at a time.
+  CARGO_BUILD_JOBS=2 cargo test --locked \
+    -p lez-zebra-node-adapter --test zebra_regtest_reveal -- --ignored --nocapture --test-threads=1
 else
   echo "Zebra isolated service-readiness passed: primary=${ZEBRA_RPC_URL}"
 fi
