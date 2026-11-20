@@ -1,5 +1,9 @@
 # Full regression of `9a15d94b`, 2026-11-19
 
+A later full run, 160 of 160 at `86bdb8a4` (`main` at `c87497a9` merged, take-time ZEC in
+ADR 0216's order and the fixes for #180, #181, #130 and #151), is in
+[regression-m4-2026-11-20](../regression-m4-2026-11-20/).
+
 One run of every test of `deploy/scripts/regress.sh full` (159: `regress.sh list full`) on the
 Docker devnet with the Monero regtest chain up (`LEZ_MONERO=1`), three lanes at a time
 (`LEZ_LANES=3`), without desk recordings: run `runtime/regress/20261119T042557Z`, 2026-11-19
