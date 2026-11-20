@@ -80,7 +80,11 @@ class ImageContexts(unittest.TestCase):
                     # directory by its kind (assets/${kind}-user).
                     per_kind = (fnmatch.fnmatch(literal, 'assets/*-user')
                                 and 'assets/${kind}-user' in staging)
-                    self.assertTrue(per_kind or literal in staging or Path(literal).name in staging,
+                    # A copied glob (zec-local-poc-*) is staged when the
+                    # scripts name a file it matches.
+                    globbed = any(fnmatch.fnmatch(word, '*' + Path(literal).name)
+                                  for word in staging.split()) if '*' in literal else False
+                    self.assertTrue(per_kind or globbed or literal in staging or Path(literal).name in staging,
                                     f'{context.name}: {source} is neither tracked nor staged')
         self.assertGreater(checked, 0)
 

@@ -70,7 +70,7 @@ class ProfilePerDirection(unittest.TestCase):
         self.assertIn("TakerSellsForeign corridor's --profile must be deterministic-local-devnet-v5 or -v6", result.stderr)
 
     def test_the_help_names_the_default_profile_of_each_direction(self):
-        text = (SCRIPTS / 'zec-provision.sh').read_text()
+        text = FIXTURE.read_text()
         for line in ('Taker-reveals-first deterministic-local-devnet-v7', 'TakerSellsForeign: deterministic-local-devnet-v5',
                      'public-testnet-v3 (TakerSellsLez)', "Taker's half only"):
             self.assertIn(line, text)

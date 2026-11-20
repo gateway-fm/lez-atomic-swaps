@@ -309,7 +309,7 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 98)
+        self.assertEqual(len(full), 160)
 
     def test_smoke_is_unchanged(self):
         self.assertEqual(self.tier('smoke'), [
