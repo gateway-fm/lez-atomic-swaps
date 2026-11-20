@@ -50,12 +50,9 @@ fn coordinator(pair: Pair, direction: SwapDirection) -> SwapCoordinator {
         SwapDirection::TakerSellsForeign => (Chain::Lez, Chain::from(pair)),
         SwapDirection::TakerSellsLez => (Chain::from(pair), Chain::Lez),
     };
-    // Zcash's safety interval is always measured LEZ to Zcash, Bitcoin's maker to taker.
-    let safety = if pair == Pair::Zcash {
-        TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100)
-    } else {
-        TimelockSafety::between(maker_chain, taker_chain, 1_000, 1_200, 100)
-    };
+    // The safety interval runs from the Maker-funded leg's refund to the
+    // Taker-funded leg's, for Zcash as for Bitcoin (ADR 0216).
+    let safety = TimelockSafety::between(maker_chain, taker_chain, 1_000, 1_200, 100);
     SwapCoordinator::new_with_direction(
         SwapId::new("property-swap").unwrap(),
         pair,
