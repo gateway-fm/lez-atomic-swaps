@@ -1,0 +1,7 @@
+[23:48:25] regression run: 1 tests at 86bdb8a4 (tree dirty: 0), results in runtime/regress/20261120T234825Z
+[23:48:25] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[23:48:25] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[23:48:59] group fast
+[23:48:59]     [lane 1] ui:zec:zec-happy:TakerSellsLez (try 1) starts: LEZ finalized 1682, tip 1688
+[23:51:54] === ui:zec:zec-happy:TakerSellsLez (try 1, lane 1): PASSED in 167 s; LEZ finalized 1803, tip 1805
+[23:51:55] regression run: 1 of 1 passed in 3 min, 0 new chains, 0 profile switches, 0 frozen tries

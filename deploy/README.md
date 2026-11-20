@@ -699,7 +699,7 @@ Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`), refund
 one the Maker funded and the Taker never claimed (`ui:xmr:xmr-taker-refund`: the
 refund window open, then closing, the Refund button, the Maker's refund sweep) and
 run two at once (`ui:xmr:xmr-concurrent`), recorded in
-`docs/evidence/regression-m4-desks-2026-11-16/videos/`; the punish rows have not
+`docs/evidence/regression-m4-desks-2026-11-20/videos/`; the punish rows have not
 been seen on a desk. Not on the devnet yet: there is no macOS
 package for it. The Maker's systemd unit takes a Monero role from an optional
 drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with

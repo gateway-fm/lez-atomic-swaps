@@ -1,0 +1,96 @@
+
+[23:49:07] === zec-happy (TakerSellsLez)
+
+[23:49:07] a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book
+
+[23:49:14] publishing Zcash offer(s) on the running Maker Node (take-time agreement: no corridor, no Node recreated)
+   [23:49:15]   Maker CLI published offer-e2e-zectt-1795218554 on its running Node (no corridor)
+
+[23:49:15] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Available orders: the Maker's offers arrived over Delivery and are listed for this Taker
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  » Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor
+  » Swap zec-80319d6e is in "My orders"; its first lock (the LEZ escrow) is driven by the Taker Node's supervisor, not a desk button
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   zec-80319d6e855ca666328f097aea5da29b7f8f4126264850fdc23901f564531aca awaiting_first_lock 0 -
+
+[23:49:28] The Taker Node drives the LEZ lock on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Zcash
+
+[23:49:29] Maker desk shows zec-80319d6e at awaiting_taker_claim
+
+[23:50:09] driving the Taker's ZEC actor on the Node until zec-80319d6e shows claim_available
+   [23:50:09]   take-time agreement: Maker funds 6d4542969dd3b353…:0, Zcash anchor 1397, refund height 1413
+   [23:50:09]   receipt: swap zec-80319d6e855ca666328f097aea5da29b7f8f4126264850fdc23901f564531aca, actor config /var/lib/lez/taker/btc/swaps/14b605be30e3b799bb12dab6392fc12207bae4fd97a6abb9a6decd61f401586e/zec-actor/taker/actor-config.json
+   [23:50:10]   [0 s] waiting for the Taker's zec-80319d6e to reach claim_available (zec-drive to claim_available): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 1396 | LEZ finalized 1722, tip 1728 (6 unfinalized) [heartbeat]
+   [23:50:10]   zebra: mined 1 block(s) → height 1397 (mempool had ['60cef8a40798'])
+   [23:50:13]   [3 s] waiting for the Taker's zec-80319d6e to reach claim_available (zec-drive to claim_available): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1397 | LEZ finalized 1722, tip 1728 (6 unfinalized) [heartbeat]
+   [23:50:13]   zebra: mined 1 block(s) → height 1398 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+   [23:50:13]   taker zec-80319d6e is claim_available
+  » The Taker Node drives the LEZ lock on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Zcash · Maker desk shows zec-80319d6e at awaiting_taker_claim
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk
+  ✓ maker: Node-indexed BTC offer inventory
+  » Nothing to click here: the Maker Node locks Zcash on its own once the Taker's LEZ lock is final; the desk waits for "awaiting the Taker's claim"
+  label: Waiting for the Taker's Zcash claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  » Maker desk now shows the swap as: awaiting taker claim
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[23:50:32] Taker desk: claim_zec on zec-80319d6e
+  » Taker desk: claim_zec on zec-80319d6e
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Claim 1.00000000 ZEC: the revealing claim spends the Maker's Zcash HTLC on the transparent pool and discloses the hashlock secret
+  » Zcash claim broadcast; once it is in a block the Maker Node uses the revealed secret to claim the LEZ escrow, which completes the swap. The claim is transparent: move the funds to a shielded address afterwards
+  ✓ taker: perform claim_zec
+2 passed, 0 failed
+
+[23:50:42] The Taker's Zcash claim revealed the secret; once it is in a zebra block the Maker Node claims LEZ with it, and both desks watch the swap complete
+
+[23:50:42] Maker desk shows zec-80319d6e at completed
+
+[23:50:42] Taker desk shows zec-80319d6e at completed
+  » The Taker's Zcash claim revealed the secret; once it is in a zebra block the Maker Node claims LEZ with it, and both desks watch the swap complete · Maker desk shows zec-80319d6e at completed
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk
+  ✓ maker: Node-indexed BTC offer inventory
+  » The Maker Node claims LEZ with the secret the Taker revealed; the desk waits for "completed"
+  Node-owned swap: Maker reached completed (completed)
+  » Maker desk now shows the swap as: completed
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[23:51:22] driving the Taker's ZEC actor on the Node until zec-80319d6e shows completed
+   [23:51:23]   take-time agreement: Maker funds 6d4542969dd3b353…:0, Zcash anchor 1397, refund height 1413
+   [23:51:23]   receipt: swap zec-80319d6e855ca666328f097aea5da29b7f8f4126264850fdc23901f564531aca, actor config /var/lib/lez/taker/btc/swaps/14b605be30e3b799bb12dab6392fc12207bae4fd97a6abb9a6decd61f401586e/zec-actor/taker/actor-config.json
+   [23:51:24]   [0 s] waiting for the Taker's zec-80319d6e to reach completed (zec-drive to completed): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker completed | zebra 1398 | LEZ finalized 1769, tip 1771 (2 unfinalized) [heartbeat]
+   [23:51:24]   zebra: mined 1 block(s) → height 1399 (mempool had ['8d349d375d65'])
+   [23:51:27]   [3 s] waiting for the Taker's zec-80319d6e to reach completed (zec-drive to completed): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 1399 | LEZ finalized 1778, tip 1786 (8 unfinalized) [heartbeat]
+   [23:51:34]   [10 s] waiting for the Taker's zec-80319d6e to reach completed (zec-drive to completed): taker completed (gen 4) | actor at completed | maker completed | zebra 1399 | LEZ finalized 1778, tip 1786 (8 unfinalized) [heartbeat]
+   [23:51:34]   taker zec-80319d6e is completed
+  » Taker desk shows zec-80319d6e at completed
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » The Taker desk waits for the swap to show "completed"
+  » Taker desk now shows the swap as: completed
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+[23:51:44]   take-time agreement: Maker funds 6d4542969dd3b353…:0, Zcash anchor 1397, refund height 1413
+[23:51:44]   receipt: swap zec-80319d6e855ca666328f097aea5da29b7f8f4126264850fdc23901f564531aca, actor config /var/lib/lez/taker/btc/swaps/14b605be30e3b799bb12dab6392fc12207bae4fd97a6abb9a6decd61f401586e/zec-actor/taker/actor-config.json
+[23:51:45]   ZEC evidence written to <checkout>/deploy/runtime/evidence/zec/zec-80319d6e855ca666328f097aea5da29b7f8f4126264850fdc23901f564531aca.json (taker completed, maker completed, funding 1397, spend 1399)
+
+[23:51:54] video: runtime/evidence/videos/TakerSellsLez-zec-happy.mp4
+
+[23:51:54] === zec-happy (TakerSellsLez): passed in 167s
