@@ -64,7 +64,7 @@ this release. Testnet readiness must be established before an LP relies on it.
    and execute exact authenticated offers. Neither needs to rebuild the swap
    protocol, daemon, or signing machinery.
 
-## What this PR delivers
+## What is delivered
 
 - A [public API reference](README.md) for maker configuration, publication,
   withdrawal, history and recovery, and taker discovery, initiation, lock,
@@ -80,7 +80,8 @@ this release. Testnet readiness must be established before an LP relies on it.
   runnable JSON request examples, and regression tests. This is an integration
   example rather than an arbitrage bot or operator starter kit.
 - No new taker execution engine: the existing node-owned lifecycle already
-  supplies the necessary calls. This PR documents how third parties use them.
+  supplies the necessary calls. The [API reference](README.md) documents how
+  third parties use them.
 
 ## LP options
 
@@ -102,7 +103,7 @@ replay a lost response without duplicating an offer, discover an authenticated
 offer, initiate its exact amounts, and request only the actor-admissible actions
 using opaque swap IDs. Integration tests cover guarded publication, persisted
 replay, legacy separation, validation and migration. Existing lifecycle tests
-remain the settlement evidence; this PR does not add public-network evidence.
+remain the settlement evidence; no public-network evidence is added.
 
 Inventory/balance snapshots, atomic quote replacement, batch cancel, durable
 event cursors, scoped remote credentials, per-strategy quotas, and hard capital

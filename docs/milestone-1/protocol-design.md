@@ -66,9 +66,9 @@ Taproot commitment is terminal invalid evidence—not a retryable observation.
 
 ## XMR–LEZ
 
-This section describes the Monero swap as the tree implements it (branch
-`feat/m4-monero`, commit `7b3c24dd`) and as it runs on the Docker devnet: an
-offline Monero regtest chain beside the LEZ v0.2.4 devnet chain
+This section describes the Monero swap as the tree implements it and as it
+runs on the Docker devnet: an offline Monero regtest chain beside the LEZ
+v0.2.4 devnet chain
 ([`deploy/README.md`](../../deploy/README.md#monero-lez_monero1)). The runs that
 pass, and every limit, are listed in the
 [traceability matrix](../requirements-traceability.md) (F3).

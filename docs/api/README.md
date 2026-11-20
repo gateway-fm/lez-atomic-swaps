@@ -5,7 +5,7 @@ operator tools. The nodes own negotiation, signing, settlement, persistence,
 and recovery. Your application supplies decisions and observes their results.
 Start with the [scope proposal and answers for ecosystem #176](proposal.md).
 
-This reference describes the API implemented by this PR. Pin an integrating
+This reference describes the API as implemented on `main`. Pin an integrating
 application to a release containing `maker_offer_publish_v1`; v0.2.0 has the
 other methods described here but not that new method. The current product
 target is BTC↔LEZ on private local chains. For executable setup, see the
