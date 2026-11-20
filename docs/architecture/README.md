@@ -57,6 +57,7 @@ here.
 | [0214](0214-third-party-owner-api.md) | Third-party maker/taker API boundary and revision-guarded publication |
 | [0215](0215-publish-prebuilt-images-and-basecamp-packages.md) | Prebuilt arm64 stack images, the release bundle with `start.sh`, and the Basecamp apps as Logos catalog modules |
 | [0216](0216-zec-taker-reveals-first-in-both-directions.md) | ZEC follows the common flow: the Taker holds the preimage and claims the Maker-funded leg first in both directions; supersedes ADR 0008's ZEC order |
+| [0217](0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md) | XMR `TakerSellsLez` keeps the COMIT order (the Taker authorises, the Maker claims LEZ first) as the one exception to the common flow; XMR offers no `TakerSellsForeign` |
 
 The [system architecture](system-architecture.md) and
 [deployment/RPC map](deployment-components-and-rpcs.md) are the detailed M3

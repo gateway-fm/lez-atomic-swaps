@@ -17,6 +17,8 @@ only: the Taker sells LEZ and locks first. Regtest only: the agreement knows a
 exists. The crate's own documentation says it "does not claim production
 cryptographic acceptance"; the construction has had no third-party review.
 
+Its order departs from the common flow of BTC and ZEC (the Taker authorises, the Maker claims LEZ first); [ADR 0217](architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md) records that exception.
+
 ## What it gives
 
 Paths are under `crates/xmr-swap-sdk/src/`. The named tests are unit tests in

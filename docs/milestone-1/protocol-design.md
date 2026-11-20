@@ -124,6 +124,8 @@ in any other direction. XMR first would have the Maker's Monero locked before
 any LEZ the Maker could claim, and this construction gives that direction no
 recovery path.
 
+This order (the Maker holds the completing secret and claims LEZ first; the Taker's LEZ refund is the only refund) departs from the common flow of BTC and ZEC; [ADR 0217](../architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md) states why, and why it is safe.
+
 ### Keys
 
 Fresh for every swap, in each role's per-swap role root: both session keys
