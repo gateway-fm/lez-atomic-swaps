@@ -225,8 +225,9 @@ watched() {
 profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile the test needs, empty for either
   local kind pair scenario direction
   IFS=: read -r kind pair scenario direction <<<"$1"
-  # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile: the
-  # refund journeys' (-v6) is group zec-v6, every other ZEC test runs on -v5 in `fast`.
+  # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile (selling
+  # LEZ its Taker-reveals-first twin): the refund journeys' (-v6, -v8) is group
+  # zec-v6, every other ZEC test runs on -v5 (-v7) in `fast`.
   if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
     case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window) echo zec-v6 ;; *) echo fast ;; esac
     return 0

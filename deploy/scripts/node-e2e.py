@@ -3281,6 +3281,10 @@ ZEC_NU7_PROFILES = {"deterministic-local-devnet-v5", "deterministic-local-devnet
 # regress.sh's ZEC profile group).
 ZEC_AGREEMENT = os.environ.get("LEZ_ZEC_AGREEMENT", "take-time")
 ZEC_CATALOG_SCENARIOS = {"zec-regenerated-catalog", "zec-tampered-catalog"}
+# zec-maker-early-claim reads the dealer's corridor layout (the Taker's half,
+# the Maker's corridor signer and agreement); the take-time product path's
+# Maker holding no preimage is covered by zec_reserve_process.rs.
+ZEC_DEALER_LAYOUT_SCENARIOS = {"zec-maker-early-claim"}
 SCENARIO = ""  # the scenario run() is running
 
 
@@ -3314,7 +3318,8 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
     if not reuse and ZEC_AGREEMENT == "take-time":
         why = ("the public lane" if ZEC_PUBLIC else
                f"{SCENARIO} tests the static catalog" if SCENARIO in ZEC_CATALOG_SCENARIOS else
-               f"the Nodes take under {ZEC_DYNAMIC_PROFILE}, not {profile}" if profile and profile != ZEC_DYNAMIC_PROFILE
+               f"{SCENARIO} reads the dealer's corridor layout" if SCENARIO in ZEC_DEALER_LAYOUT_SCENARIOS else
+               f"the Nodes take under {zec_dynamic_profile()}, not {profile}" if profile and profile != zec_dynamic_profile()
                else None)
         if why is None:
             return zec_take_time_offers(swaps, add)
@@ -3865,7 +3870,28 @@ def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict) -
 # The profile the Nodes take under: node-entrypoint.sh's zec-role.json, from
 # LEZ_ZEC_PROFILE (compose.yaml; regress.sh's zec-v6 group switches it).
 ZEC_DYNAMIC_PROFILE = os.environ.get("LEZ_ZEC_PROFILE", "deterministic-local-devnet-v5")
-ZEC_PROFILE_REFUND_BLOCKS = {"deterministic-local-devnet-v5": 8, "deterministic-local-devnet-v6": 8}
+ZEC_PROFILE_REFUND_BLOCKS = {"deterministic-local-devnet-v5": 8, "deterministic-local-devnet-v6": 8,
+                             "deterministic-local-devnet-v7": 16, "deterministic-local-devnet-v8": 16}
+# Each ZEC profile admits one direction (ADR 0216): selling LEZ the Nodes take
+# under the Taker-reveals-first twin of the profile they run with
+# (local_poc.rs LocalPocProfile::for_direction).
+ZEC_SELLING_LEZ_TWIN = {"deterministic-local-devnet-v5": "deterministic-local-devnet-v7",
+                        "deterministic-local-devnet-v6": "deterministic-local-devnet-v8"}
+
+
+def zec_dynamic_profile() -> str:
+    """The profile a take-time swap in this run's direction is agreed under."""
+    if zec_taker_sells_lez():
+        return ZEC_SELLING_LEZ_TWIN.get(ZEC_DYNAMIC_PROFILE, ZEC_DYNAMIC_PROFILE)
+    return ZEC_DYNAMIC_PROFILE
+
+
+def zec_dynamic_profile_facts() -> dict:
+    """The profile facts a take-time corridor carries, as zec_provision's do."""
+    profile = zec_dynamic_profile()
+    return {"profile": profile, "lez_refund_delay_seconds": zec_profile_refund_delay(profile),
+            "required_margin_seconds": zec_profile_margin(profile),
+            "zcash_reveal_margin_blocks": zec_profile_reveal_margin_blocks(profile)}
 
 
 def zec_dynamic_fund_taker() -> None:
@@ -3932,11 +3958,10 @@ def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
     anchor = int(response["zcash_anchor_height"])
     corridor = {"run_id": f"take-time-{response['lez_anchor_unix_seconds']}", "entry": 0,
                 "offer_id": offer_id or facts["offer_id"], "catalog_swap_id": swap_id,
-                "profile": ZEC_DYNAMIC_PROFILE,
-                "lez_refund_delay_seconds": zec_profile_refund_delay(ZEC_DYNAMIC_PROFILE),
+                **zec_dynamic_profile_facts(),
                 "receipt_output": facts["receipt_output"],
                 "zebra_tip_at_provisioning": anchor - 1,
-                "zcash_refund_height": anchor + ZEC_PROFILE_REFUND_BLOCKS[ZEC_DYNAMIC_PROFILE],
+                "zcash_refund_height": anchor + ZEC_PROFILE_REFUND_BLOCKS[zec_dynamic_profile()],
                 "funding_outpoints": [{"transaction_id": bytes(funding["transaction_id"]).hex(),
                                        "output_index": int(funding["output_index"])}]}
     log(f"  take-time agreement: {zec_zcash_funder()} funds {corridor['funding_outpoints'][0]['transaction_id'][:16]}…"
@@ -4024,8 +4049,7 @@ def zec_take_time_offers(swaps: int, add: bool) -> dict:
                f"offer-e2e-zectt-{stamp}{'-' + str(index) if index else ''}") for index in range(swaps)]
     zec_dynamic_publish(stamp, offers)
     corridors = [{"run_id": f"take-time-{stamp}", "entry": index, "offer_id": offer_id, "catalog_swap_id": None,
-                  "profile": ZEC_DYNAMIC_PROFILE,
-                  "lez_refund_delay_seconds": zec_profile_refund_delay(ZEC_DYNAMIC_PROFILE),
+                  **zec_dynamic_profile_facts(),
                   "receipt_output": f"take-time:{offer_id}", "funding_outpoints": []}
                  for index, (_, offer_id) in enumerate(offers)]
     if not add:

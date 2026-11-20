@@ -759,6 +759,38 @@ impl LocalPocProfile {
         }
     }
 
+    /// This profile's twin sized for `direction`, or itself when it admits
+    /// `direction` or has no twin. Each profile admits one direction (ADR
+    /// 0216); a take-time role names one profile and takes the other
+    /// direction under its twin, the pairs the dealer fixture signs:
+    /// `deterministic-local-devnet-v5`/`-v7`, `-v6`/`-v8`,
+    /// `public-testnet-v2`/`-v3` and `deterministic-local-v2`/`-v3`.
+    pub(crate) const fn for_direction(self, direction: SwapDirection) -> Self {
+        match (direction, self) {
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalDevnetV5) => {
+                Self::DeterministicLocalDevnetV7
+            }
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalDevnetV6) => {
+                Self::DeterministicLocalDevnetV8
+            }
+            (SwapDirection::TakerSellsLez, Self::PublicTestnetV2) => Self::PublicTestnetV3,
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalV2) => {
+                Self::DeterministicLocalV3
+            }
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalDevnetV7) => {
+                Self::DeterministicLocalDevnetV5
+            }
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalDevnetV8) => {
+                Self::DeterministicLocalDevnetV6
+            }
+            (SwapDirection::TakerSellsForeign, Self::PublicTestnetV3) => Self::PublicTestnetV2,
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalV3) => {
+                Self::DeterministicLocalV2
+            }
+            (_, other) => other,
+        }
+    }
+
     /// The isolated test lane's profile for a direction: the Taker-reveals-first
     /// `deterministic-local-v3` for `TakerSellsLez`, `deterministic-local-v2`
     /// (Regtest NU7) for `TakerSellsForeign`.
@@ -3104,6 +3136,7 @@ pub(crate) mod testnet_provision_tests {
                 role: ActorRole::Maker,
                 run_id: spec.run_id.clone(),
                 swap_id: swap_id.clone(),
+                direction: SwapDirection::TakerSellsForeign,
                 bridge_endpoint: spec.bridge.maker_endpoint.to_string(),
                 capability_file: role_root.join("sidecar-capability"),
                 runtime: runtime.clone(),
