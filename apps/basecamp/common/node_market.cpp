@@ -202,6 +202,7 @@ constexpr qint64 kOutcomeFreshSeconds = 5 * 60;
 struct SwapWait {
     QString text;         // plain words with the bound, empty when none
     bool holds = false;   // a known bound the chain has not reached yet
+    QString kind;         // the Node's wait kind, for a row that names it
 };
 
 QString chainDisplay(const QString& chain)
@@ -278,6 +279,12 @@ SwapWait swapWait(const QJsonObject& lastOutcome, const QString& role)
                 timeHolds};
     if (kind == QStringLiteral("zcash_refund_after_lost_lez_claim"))
         return {"The LEZ claim can no longer land; refunding the Zcash", true};
+    // Issue #130: the Taker's admitted claim is held, nothing sent, until the
+    // Zcash funding it reveals against is deep enough; the Node retries it.
+    if (kind == QStringLiteral("zcash_funding_confirmations") && required > 0)
+        return {"Waiting for " + QString::number(required) + " Zcash confirmations of the funding ("
+                    + QString::number(qMax<qint64>(confirmations, 0)) + " so far); your Node sends the claim then",
+                confirmations < required, kind};
     // A kind this desk does not know yet, by its bound.
     if (until > 0) return {"Waiting for " + chain + " until " + clockDisplay(until) + nowTime, timeHolds};
     if (untilHeight > 0)
@@ -482,6 +489,11 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         // it in flight and re-drives it until final, so the row has nothing to
         // offer (it read "Retry claim" under NEEDS YOU while the claim was
         // landing). Once it is final the Maker's follow-up claim is awaited.
+        // Admitted but held by the actor until the Zcash funding is deep
+        // enough (issue #130): nothing was sent yet.
+        if (nodeState == "claim_in_progress" && wait.holds
+            && wait.kind == QStringLiteral("zcash_funding_confirmations"))
+            return {sellsBitcoin ? "claiming_lez" : "claiming_zec", "Claim queued", 80, wait.text, "", ""};
         if (nodeState == "claim_in_progress" && sellsBitcoin)
             return {"claiming_lez", "LEZ claim submitted", 85,
                     "Your Node follows the claim to finality; the Maker's follow-up Zcash claim completes the swap", "", ""};

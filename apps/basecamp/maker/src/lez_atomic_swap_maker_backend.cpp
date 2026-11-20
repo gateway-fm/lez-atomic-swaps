@@ -77,7 +77,8 @@ void LezAtomicSwapMakerBackend::onContextReady()
 
 QString LezAtomicSwapMakerBackend::health()
 {
-    return rpc_.call("maker_health", "{}");
+    return lez_role_node::withLauncherRefusal(modules().lez_swap_node, QStringLiteral("maker"),
+                                              rpc_.call("maker_health", "{}"));
 }
 
 QString LezAtomicSwapMakerBackend::chatStatus()
@@ -93,7 +94,8 @@ QString LezAtomicSwapMakerBackend::resetChat()
 QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)
 {
     if (!makerWallet(walletId)) return invalidMarket(QStringLiteral("This desk settles as the Node's own identity"));
-    return node_market::makerSnapshot(snapshotRpc_, kMakerWallet);
+    return lez_role_node::withLauncherRefusal(modules().lez_swap_node, QStringLiteral("maker"),
+                                              node_market::makerSnapshot(snapshotRpc_, kMakerWallet));
 }
 
 QString LezAtomicSwapMakerBackend::btcPublishOffer(

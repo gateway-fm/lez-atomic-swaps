@@ -315,6 +315,31 @@ class Launcher(unittest.TestCase):
         result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(shared / 'state'))
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_every_directory_above_the_take_time_and_monero_state_is_checked(self):
+        # Take-time ZEC and Monero per-swap state (sidecar state included) is
+        # under btc/swaps/<swap>; the Maker's xmr-actors and both roles'
+        # monero-rpc are beside btc/ in the state directory, which the
+        # launcher makes 0700 itself. The walk from btc/swaps up to / covers
+        # each of their ancestors.
+        root = self.tmp / 'linux'
+        state = root / 'state'
+        (state / 'btc' / 'swaps').mkdir(parents=True)
+        state.chmod(0o775)
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(state))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
+        self.record.unlink()
+        for directory in (state / 'btc' / 'swaps', state / 'btc', root):
+            directory.chmod(0o775)
+            result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(state))
+            self.assertEqual(result.returncode, 78, result.stderr)
+            self.assertIn(f"{directory} is writable by its group or by others (mode 775). "
+                          f"Fix: chmod go-w '{directory}'", result.stderr)
+            self.assertFalse(self.record.exists(), 'the Node must not start')
+            directory.chmod(0o755)
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(state))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_a_state_directory_below_a_symlink_is_refused_by_name(self):
         root = self.tmp / 'linux'
         (root / 'real').mkdir(parents=True)

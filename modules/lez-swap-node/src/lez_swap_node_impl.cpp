@@ -79,6 +79,29 @@ namespace {
         return "status " + std::to_string(status);
     }
 
+    // Exit 78 (EX_CONFIG): the role's launcher refused to start the Node and
+    // said why, with the fix, in a line of its output that starts with the
+    // role (a directory the Node's state is under is writable by others,
+    // issue 151). The helpers it had started may log after it.
+    constexpr int LAUNCHER_REFUSED = 78;
+
+    // The last line of `path` (its last 16 KiB) that starts with `prefix`, at
+    // most 1 KiB; empty when there is none or `path` is not a regular file.
+    std::string last_line_starting(const std::string& path, const std::string& prefix) {
+        struct stat st {};
+        if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) return {};
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return {};
+        const std::streamoff from = st.st_size > 16384 ? st.st_size - 16384 : 0;
+        in.seekg(from);
+        std::string line, found;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.compare(0, prefix.size(), prefix) == 0) found = line;
+        }
+        return found.size() > 1024 ? found.substr(0, 1024) : found;
+    }
+
 #if defined(__APPLE__)
     // macOS has no /proc: the same two questions are asked of libproc and
     // sysctl, which answer them for the caller's own processes.
@@ -516,9 +539,11 @@ namespace {
                     // so the next start finds its ports and sockets free.
                     end_group(child);
                     if (!group_file.empty()) ::unlink(group_file.c_str());
+                    const std::string refusal = WIFEXITED(status) && WEXITSTATUS(status) == LAUNCHER_REFUSED
+                        ? last_line_starting(log_file, name + ": ") : std::string();
                     lock.lock();
                     pid = 0;
-                    last_exit = describe(status);
+                    last_exit = describe(status) + (refusal.empty() ? std::string() : ": " + refusal);
                     info(name, "Node ended (" + last_exit + ")");
                 }
                 if (stopping) break;

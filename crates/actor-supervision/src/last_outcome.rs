@@ -60,7 +60,10 @@ pub const MAX_LAST_OUTCOMES: usize = 1024;
 /// - `lez_claim_nonce_contention`: an owned LEZ claim was re-planned more
 ///   than five times because other transactions of the account took its
 ///   nonce; it goes on being re-planned until the LEZ refund time
-///   (`until_unix_seconds`).
+///   (`until_unix_seconds`);
+/// - `zcash_funding_confirmations`: the Taker's admitted revealing claim is
+///   queued, nothing sent, until the Zcash funding it reveals against has
+///   `required_confirmations` (`confirmations` so far; outcome `queued`).
 ///
 /// New kinds may be added; a reader shows an unknown kind by its bounds.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

@@ -1135,6 +1135,13 @@ TAKER_FUNCTIONS = r'''
                 root.statusTitle = "Action submitted"
                 root.statusDetail = root.lezChainLine() !== "" ? root.lezChainLine()
                     : "Waiting for finalized chain evidence before the next actor turn"
+                // A claim the actor holds until its Zcash funding is deep
+                // enough was not sent yet: the status says queued (issue #130).
+                var row = (result.swaps ?? []).find(function(item) { return String(item.ui_swap_id) === String(swap.ui_swap_id) })
+                if (row !== undefined && String(row.state_label) === "Claim queued") {
+                    root.statusTitle = "Claim queued"
+                    root.statusDetail = String(row.progress_detail)
+                }
             })
     }
     function connectChat() {

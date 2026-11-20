@@ -73,7 +73,8 @@ void LezAtomicSwapTakerBackend::onContextReady()
 
 QString LezAtomicSwapTakerBackend::health()
 {
-    return rpc_.call("taker_health", "{\"schema_version\":1}");
+    return lez_role_node::withLauncherRefusal(modules().lez_swap_node, QStringLiteral("taker"),
+                                              rpc_.call("taker_health", "{\"schema_version\":1}"));
 }
 
 QString LezAtomicSwapTakerBackend::chatStatus()
@@ -134,7 +135,8 @@ QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("This desk settles as the Node's own identity"));
     }
-    return node_market::takerSnapshot(snapshotRpc_, kTakerWallet, lockedSwaps_, logosOffers());
+    return lez_role_node::withLauncherRefusal(modules().lez_swap_node, QStringLiteral("taker"),
+        node_market::takerSnapshot(snapshotRpc_, kTakerWallet, lockedSwaps_, logosOffers()));
 }
 
 QString LezAtomicSwapTakerBackend::btcTakeOffer(
