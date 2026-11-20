@@ -98,7 +98,6 @@ async fn existing_store_status_uses_offline_claim_capable_replay() {
         "maker-zcash-key",
         "maker-capability",
         "maker-cookie",
-        "maker-preimage",
     ] {
         fs::remove_file(fixture.path(name)).unwrap();
     }
@@ -243,7 +242,6 @@ fn generic_load_is_offline_and_status_requires_only_role_store_and_claim_key() {
         "maker-zcash-key",
         "maker-capability",
         "maker-cookie",
-        "maker-preimage",
     ] {
         fs::remove_file(fixture.path(name)).unwrap();
     }
@@ -263,7 +261,6 @@ fn offline_status_allows_effect_paths_below_absent_parent_directories() {
     for (pointer, suffix) in [
         ("/signed_agreement_file", "agreement/wire"),
         ("/zcash_key_file", "zcash/key"),
-        ("/claim_preimage_file", "preimage/value"),
         ("/bridge/capability_file", "sidecar/capability"),
         ("/zebra/route/cookie_file", "zebra/cookie"),
     ] {
@@ -278,6 +275,18 @@ fn offline_status_allows_effect_paths_below_absent_parent_directories() {
     maker
         .load_status_material()
         .expect("offline status ignores unavailable effect-only parents");
+
+    // The Taker's preimage is effect material too.
+    regular_file(&fixture.path("taker-state"), b"existing role store");
+    set(
+        &fixture.taker_config,
+        "/claim_preimage_file",
+        path_value(&fixture.root.path().join("absent").join("preimage/value")),
+    );
+    fixture
+        .load("taker")
+        .load_status_material()
+        .expect("offline status ignores an unavailable preimage parent");
 }
 
 #[test]
@@ -505,10 +514,9 @@ fn runtime_and_zebra_identity_are_role_correct_nonzero_and_immutable() {
 }
 
 #[test]
-fn candidate_outpoints_are_exact_bounded_unique_and_owned_with_the_preimage() {
+fn candidate_outpoints_are_exact_bounded_unique_and_the_preimage_is_the_takers() {
     let valid = json!({"transaction_id": "aa".repeat(32), "output_index": 0});
     for candidates in [
-        json!([]),
         json!([valid.clone(), valid.clone()]),
         json!([{"transaction_id": "00".repeat(32), "output_index": 0}]),
         json!([{"transaction_id": "AA".repeat(32), "output_index": 0}]),
@@ -523,16 +531,31 @@ fn candidate_outpoints_are_exact_bounded_unique_and_owned_with_the_preimage() {
         assert!(ActorConfig::load_private(&fixture.maker_config).is_err());
     }
 
+    // Either role may fund Zcash (by direction): a Maker without candidates
+    // (TakerSellsForeign) and a Taker with them (TakerSellsForeign) load.
     let fixture = PairFixture::new();
-    set(&fixture.maker_config, "/claim_preimage_file", Value::Null);
-    assert!(ActorConfig::load_private(&fixture.maker_config).is_err());
-
+    set(&fixture.maker_config, "/zcash_funding_outpoints", json!([]));
+    ActorConfig::load_private(&fixture.maker_config).expect("non-funding Maker");
     let fixture = PairFixture::new();
     set(
         &fixture.taker_config,
         "/zcash_funding_outpoints",
         json!([valid]),
     );
+    ActorConfig::load_private(&fixture.taker_config).expect("Zcash-funding Taker");
+
+    // The preimage is the Taker's alone, in both directions: a Maker naming
+    // one, or a Taker without one, is refused.
+    let fixture = PairFixture::new();
+    private_bytes(&fixture.path("maker-preimage"), &[9; 32]);
+    set(
+        &fixture.maker_config,
+        "/claim_preimage_file",
+        path_value(&fixture.path("maker-preimage")),
+    );
+    assert!(ActorConfig::load_private(&fixture.maker_config).is_err());
+    let fixture = PairFixture::new();
+    set(&fixture.taker_config, "/claim_preimage_file", Value::Null);
     assert!(ActorConfig::load_private(&fixture.taker_config).is_err());
 }
 
@@ -605,23 +628,25 @@ fn existing_mutable_paths_reject_symlinks_dangling_links_and_nonregular_files() 
 
 #[test]
 fn config_rejects_internal_or_protected_path_aliases() {
-    for pointer in path_pointers("maker") {
-        let internal = if pointer == "/role_state_db" {
-            "maker-journal"
-        } else {
-            "maker-state"
-        };
-        for target in [internal, "maker-config", "agreement"] {
-            let fixture = PairFixture::new();
-            set(
-                &fixture.maker_config,
-                pointer,
-                path_value(&fixture.path(target)),
-            );
-            assert!(
-                ActorConfig::load_private(&fixture.maker_config).is_err(),
-                "alias at {pointer} to {target} must fail"
-            );
+    for role in ["maker", "taker"] {
+        for pointer in path_pointers(role) {
+            let internal = if pointer == "/role_state_db" {
+                format!("{role}-journal")
+            } else {
+                format!("{role}-state")
+            };
+            for target in [internal, format!("{role}-config"), "agreement".to_owned()] {
+                let fixture = PairFixture::new();
+                set(
+                    fixture.config(role),
+                    pointer,
+                    path_value(&fixture.path(&target)),
+                );
+                assert!(
+                    ActorConfig::load_private(fixture.config(role)).is_err(),
+                    "alias at {role} {pointer} to {target} must fail"
+                );
+            }
         }
     }
 }
@@ -728,26 +753,26 @@ fn config_and_command_material_reject_permissions_and_symlinks_at_use_time() {
     symlink(&fixture.maker_config, &link).unwrap();
     assert!(ActorConfig::load_private(&link).is_err());
 
-    for (pointer, material) in [
-        ("/claim_recovery/key_file", Material::Status),
-        ("/claim_recovery/key_file", Material::Activate),
-        ("/zcash_key_file", Material::Activate),
-        ("/claim_preimage_file", Material::Activate),
-        ("/bridge/capability_file", Material::Activate),
-        ("/zcash_key_file", Material::Drive),
-        ("/claim_preimage_file", Material::Drive),
-        ("/bridge/capability_file", Material::Drive),
-        ("/zebra/route/cookie_file", Material::Drive),
+    for (role, pointer, material) in [
+        ("maker", "/claim_recovery/key_file", Material::Status),
+        ("maker", "/claim_recovery/key_file", Material::Activate),
+        ("maker", "/zcash_key_file", Material::Activate),
+        ("taker", "/claim_preimage_file", Material::Activate),
+        ("maker", "/bridge/capability_file", Material::Activate),
+        ("maker", "/zcash_key_file", Material::Drive),
+        ("taker", "/claim_preimage_file", Material::Drive),
+        ("maker", "/bridge/capability_file", Material::Drive),
+        ("maker", "/zebra/route/cookie_file", Material::Drive),
     ] {
         let fixture = PairFixture::new();
-        let config = fixture.load("maker");
-        let path = config_path(&fixture.maker_config, pointer);
+        let config = fixture.load(role);
+        let path = config_path(fixture.config(role), pointer);
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
         assert!(material.load(&config).is_err());
 
         let fixture = PairFixture::new();
-        let config = fixture.load("maker");
-        let path = config_path(&fixture.maker_config, pointer);
+        let config = fixture.load(role);
+        let path = config_path(fixture.config(role), pointer);
         let target = fixture.root.path().join("symlink-target");
         private_bytes(&target, &[1; 64]);
         fs::remove_file(&path).unwrap();
@@ -770,7 +795,7 @@ fn command_material_enforces_bounds_and_existing_library_grammars() {
     for (name, contents, material) in [
         ("maker-claim-key", vec![7; 31], Material::Status),
         ("maker-zcash-key", vec![0; 32], Material::Activate),
-        ("maker-preimage", vec![8; 31], Material::Activate),
+        ("taker-preimage", vec![8; 31], Material::Activate),
         (
             "maker-capability",
             b"too-short".to_vec(),
@@ -780,7 +805,8 @@ fn command_material_enforces_bounds_and_existing_library_grammars() {
     ] {
         let fixture = PairFixture::new();
         private_bytes(&fixture.path(name), &contents);
-        assert!(material.load(&fixture.load("maker")).is_err());
+        let role = name.split('-').next().expect("role-prefixed name");
+        assert!(material.load(&fixture.load(role)).is_err());
     }
 
     let fixture = PairFixture::new();
@@ -1145,7 +1171,8 @@ impl PairFixture {
             private_bytes(&root.path().join(format!("{role}-capability")), CAPABILITY);
             private_bytes(&root.path().join(format!("{role}-cookie")), COOKIE);
         }
-        private_bytes(&root.path().join("maker-preimage"), &[9; 32]);
+        // The Taker holds the preimage (in both directions); here the Maker
+        // funds Zcash, as in TakerSellsLez.
         private_bytes(&root.path().join("taker-preimage"), &[10; 32]);
 
         let maker_config = root.path().join("maker-config");
@@ -1187,7 +1214,7 @@ fn config_json(root: &Path, role: &str, funder: bool) -> Value {
     } else {
         "66".repeat(32)
     };
-    let preimage = funder.then(|| root.join(format!("{role}-preimage")));
+    let preimage = (role == "taker").then(|| root.join("taker-preimage"));
     let candidates = if funder {
         json!([{"transaction_id": "aa".repeat(32), "output_index": 0}])
     } else {
@@ -1244,18 +1271,12 @@ fn config_json(root: &Path, role: &str, funder: bool) -> Value {
 fn make_funder(fixture: &PairFixture, role: &str) {
     set(
         fixture.config(role),
-        "/claim_preimage_file",
-        path_value(&fixture.path(&format!("{role}-preimage"))),
-    );
-    set(
-        fixture.config(role),
         "/zcash_funding_outpoints",
         json!([{"transaction_id": "bb".repeat(32), "output_index": 1}]),
     );
 }
 
 fn make_nonfunder(fixture: &PairFixture, role: &str) {
-    set(fixture.config(role), "/claim_preimage_file", Value::Null);
     set(fixture.config(role), "/zcash_funding_outpoints", json!([]));
 }
 
@@ -1268,7 +1289,7 @@ fn path_pointers(role: &str) -> Vec<&'static str> {
         "/bridge/capability_file",
         "/zebra/route/cookie_file",
     ];
-    if role == "maker" {
+    if role == "taker" {
         pointers.push("/claim_preimage_file");
     }
     pointers

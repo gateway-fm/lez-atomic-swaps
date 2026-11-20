@@ -1,0 +1,32 @@
+[09:10:12] === zec-restart-taker (stamp 179507581203)
+[09:10:12] preflight: indexer historical reads
+[09:10:13]   indexer serves historical reads at the tip (2793)
+[09:10:13] preflight: LEZ finality check waived by request
+[09:10:13]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[09:10:33]       taker: taker ZEC corridor zec-devnet-179507581303: sidecar listening on 127.0.0.1:19902
+[09:10:33]       taker: taker: 1 prepared ZEC entries configured
+[09:10:33]     [zec-provision 08:10:33]   maker sidecar answers on 127.0.0.1:19901
+[09:10:33]     [zec-provision 08:10:33]   taker sidecar answers on 127.0.0.1:19902
+[09:10:33]       maker_health: ready=True degraded=False
+[09:10:33]     [zec-provision 08:10:33]   Taker lists zec-devnet-offer-179507581303 ; corridor zec-devnet-179507581303 is live
+[09:10:33]   corridor zec-devnet-179507581303 entry 0 (deterministic-local-devnet-v7): offer zec-devnet-offer-179507581303, zebra tip 276, Zcash refund height 293
+[09:10:33]   Taker took zec-devnet-offer-179507581303: swap zec-devnet-s (not_activated)
+[09:10:33]   receipt: swap zec-devnet-swap-179507581303, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179507581303/actor/taker/actor-config.json
+[09:10:34]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 276 | LEZ finalized 2798, tip 2807 (9 unfinalized) [heartbeat]
+[09:10:37]   [3 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 276 | LEZ finalized 2817, tip 2822 (5 unfinalized) [heartbeat]
+[09:10:53]   [19 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 276 | LEZ finalized 2817, tip 2822 (5 unfinalized) [heartbeat]
+[09:10:59]   zebra at 276: not mining, the Maker's Zcash funding is not out yet
+[09:11:02]   zebra: mined 1 block(s) → height 277 (mempool had ['58af556de230'])
+[09:11:09]   [35 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 277 | LEZ finalized 2831, tip 2838 (7 unfinalized) [heartbeat]
+[09:11:09]   zebra: mined 1 block(s) → height 278 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[09:11:09]   Taker claimed Zcash
+[09:11:09]   the Taker's Zcash claim 3a59d360cdd9 is broadcast, unmined
+[09:11:09]   restarting lez-l3-taker-node
+[09:11:36]   after the restart the Taker's schedule reports no failure class; the supervisor resumes
+[09:11:36]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (after the taker restart): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker completed | zebra 278 | LEZ finalized 2848, tip 2854 (6 unfinalized) [heartbeat]
+[09:11:36]   zebra: mined 1 block(s) → height 279 (mempool had ['3a59d360cdd9'])
+[09:11:39]   [3 s] waiting for the Taker's zec-devnet-s to reach completed (after the taker restart): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 279 | LEZ finalized 2863, tip 2871 (8 unfinalized) [heartbeat]
+[09:11:43]   [6 s] waiting for the Taker's zec-devnet-s to reach completed (after the taker restart): taker completed (gen 4) | actor at completed | maker completed | zebra 279 | LEZ finalized 2863, tip 2871 (8 unfinalized) [heartbeat]
+[09:11:43]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2863, tip 2871 (8 unfinalized) [heartbeat]
+[09:11:43]   both Nodes report zec-devnet-s completed
+[09:11:43] === zec-restart-taker: passed in 91s

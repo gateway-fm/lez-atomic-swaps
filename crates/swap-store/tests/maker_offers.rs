@@ -59,7 +59,8 @@ fn zec_swap(id: &str) -> SwapCoordinator {
             direction,
             ChainPosition::block_height(Chain::Zcash, 100),
             ChainPosition::block_height(Chain::Lez, 120),
-            TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100).unwrap(),
+            // Selling LEZ the Maker-funded Zcash leg refunds first.
+            TimelockSafety::between(Chain::Zcash, Chain::Lez, 1_000, 1_200, 100).unwrap(),
         )
         .unwrap(),
     )

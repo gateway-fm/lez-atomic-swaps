@@ -1,0 +1,62 @@
+== 7 /opt/basecamp/bin/.LogosBasecamp.elf --user-dir /var/lez/basecamp-taker-user 
+31 QXcbEventQueue poll_schedule_timeout.constprop.0 S
+32 .LogosBasecamp. anon_pipe_read S
+33 .LogosBasecamp. do_epoll_wait S
+66 QQmlThread poll_schedule_timeout.constprop.0 S
+67 QDBusConnection poll_schedule_timeout.constprop.0 S
+68 QQmlThread poll_schedule_timeout.constprop.0 S
+69 QQmlThread poll_schedule_timeout.constprop.0 S
+7 .LogosBasecamp. poll_schedule_timeout.constprop.0 S
+70 QQmlThread poll_schedule_timeout.constprop.0 S
+73 llvmpipe-0 futex_do_wait S
+74 llvmpipe-1 futex_do_wait S
+75 llvmpipe-2 futex_do_wait S
+76 llvmpipe-3 futex_do_wait S
+77 llvmpipe-4 futex_do_wait S
+78 llvmpipe-5 futex_do_wait S
+79 llvmpipe-6 futex_do_wait S
+80 llvmpipe-7 futex_do_wait S
+81 llvmpipe-8 futex_do_wait S
+82 llvmpipe-9 futex_do_wait S
+83 .LogosBasecamp. futex_do_wait S
+84 .LogosBasecamp. futex_do_wait S
+85 .LogosBasecamp. futex_do_wait S
+86 .LogosBasecamp. futex_do_wait S
+87 .LogosBasecamp. futex_do_wait S
+88 .LogosBasecamp. futex_do_wait S
+89 .LogosBasecamp. futex_do_wait S
+90 .LogosBasecamp. futex_do_wait S
+91 .LogosBasecamp. futex_do_wait S
+92 .LogosBasecamp. futex_do_wait S
+93 .LogosB:disk$0 futex_do_wait S
+== 34 /opt/basecamp/bin/.logos_host.elf --name capability_module --path /opt/basecamp/
+34 .logos_host.elf poll_schedule_timeout.constprop.0 S
+47 .logos_host.elf hrtimer_nanosleep S
+== 52 /opt/basecamp/bin/.logos_host.elf --name package_manager --path /opt/basecamp/mo
+52 .logos_host.elf poll_schedule_timeout.constprop.0 S
+60 .logos_host.elf hrtimer_nanosleep S
+== 56 /opt/basecamp/bin/.logos_host.elf --name package_downloader --path /opt/basecamp
+56 .logos_host.elf poll_schedule_timeout.constprop.0 S
+61 .logos_host.elf hrtimer_nanosleep S
+/run/lez/taker:
+total 8
+drwx------ 2 lez lez 4096 Nov 19 07:07 .
+drwxr-xr-x 1 lez lez 4096 Nov 19 07:44 ..
+
+/tmp:
+total 56
+drwxrwxrwt 1 root root 4096 Nov 19 07:51 .
+drwxr-xr-x 1 root root 4096 Nov 19 07:44 ..
+-r--r--r-- 1 lez  lez    11 Nov 19 07:44 .X0-lock
+drwxrwxrwt 2 lez  lez  4096 Nov 19 07:44 .X11-unix
+drwxr-xr-x 7 lez  lez  4096 Nov 19 07:44 .cache
+drwxr-xr-x 3 lez  lez  4096 Nov 19 07:44 .config
+drwx------ 2 lez  lez  4096 Nov 19 07:44 .fluxbox
+-rw-r--r-- 1 lez  lez  8493 Nov 19 07:44 fluxbox.log
+srwxr-xr-x 1 lez  lez     0 Nov 19 07:44 logos_capability_module_8a2c080e3fad
+srwxr-xr-x 1 lez  lez     0 Nov 19 07:44 logos_package_downloader_8a2c080e3fad
+srwxr-xr-x 1 lez  lez     0 Nov 19 07:44 logos_package_manager_8a2c080e3fad
+-rw-r--r-- 1 lez  lez   102 Nov 19 07:44 open-desks.log
+-rw------- 1 lez  lez     8 Nov 19 07:44 vnc.pass
+-rw-r--r-- 1 lez  lez   100 Nov 19 07:44 x11vnc.log
+-rw-r--r-- 1 lez  lez    64 Nov 19 07:44 xvfb.log

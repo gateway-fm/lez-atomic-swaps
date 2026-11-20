@@ -45,6 +45,8 @@ pub fn arm_test_crash_hook(
             | "zcash_fund"
             | "lez_revealing_claim"
             | "zcash_followup_claim"
+            | "zcash_revealing_claim"
+            | "lez_followup_claim"
             | "claim_lez_tag15"
             | "sweep_monero_refund"
     ) || !matches!(role, "maker" | "taker")

@@ -152,7 +152,13 @@ fn create_agreement(arguments: &Arguments, basis_time: u64, keys: &FixtureKeys) 
             NetworkType::Regtest,
             BranchId::Nu6_2,
             Zatoshis::from_u64(10_000)?,
-            Bip199Contract::new(120, keys.maker_hash, secret_digest, keys.taker_hash),
+            Bip199Contract::for_profile(
+                ZecProfileId::DeterministicLocalV1,
+                120,
+                keys.maker_hash,
+                secret_digest,
+                keys.taker_hash,
+            ),
         ),
     )?;
     let body = ZecAgreementBodyV1::new(

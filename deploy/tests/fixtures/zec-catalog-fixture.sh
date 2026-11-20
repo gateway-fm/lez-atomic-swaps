@@ -49,12 +49,22 @@
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
 #                         chain); the caller vouches for finality
 #     --profile ID        the agreement's ZEC refund profile (zec-swap-sdk
-#                         profile.rs): deterministic-local-devnet-v5 (NU7,
-#                         12 min LEZ refund delay) by default, -v6 (NU7,
-#                         4 min) for the refund journeys, which never claim
+#                         profile.rs), per direction. TakerSellsLez: the
+#                         Taker-reveals-first deterministic-local-devnet-v7
+#                         (NU7, 12 min LEZ refund delay, 16-block Zcash
+#                         refund window) by default, -v8 (NU7, 8 min) for the
+#                         refund journeys, which never claim.
+#                         TakerSellsForeign: deterministic-local-devnet-v5
+#                         (NU7, 12 min) by default, -v6 (NU7, 4 min) for the
+#                         refund journeys. In both directions the ceremony
+#                         (local_poc.rs) gives the claim preimage to the
+#                         Taker's half only; the Maker's half carries the
+#                         digest alone
 #     --zcash-network NET regtest (the default) or test: public Zcash Testnet
 #                         on NU7 (scripts/public-zec-testnet.sh), profile
-#                         public-testnet-v2. Nothing is mined: the Zcash funder
+#                         public-testnet-v3 (TakerSellsLez) or
+#                         public-testnet-v2 (TakerSellsForeign). Nothing is
+#                         mined: the Zcash funder
 #                         spends an ordinary output of its key that the owner
 #                         paid (TAZ), 10 blocks deep. Reads LEZ_ZEBRA_URL and
 #                         exactly one of LEZ_ZEBRA_COOKIE_FILE (self-hosted
@@ -114,7 +124,7 @@ while [[ $# -gt 0 ]]; do
     --profile) PROFILE="$2"; shift 2 ;;
     --zcash-network) ZCASH_NETWORK="$2"; shift 2 ;;
     --native-home) NATIVE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,82p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,92p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -122,13 +132,23 @@ done
 blocked() { echo "zec-catalog-fixture.sh: blocked: $*" >&2; exit 3; }
 fail() { echo "zec-catalog-fixture failed: $*" >&2; exit 1; }
 [[ -z "$NATIVE" || "$ZCASH_NETWORK" == regtest ]] || fail "--native-home provisions a Regtest corridor only"
+# The default profile per network and direction: TakerSellsLez needs a
+# Taker-reveals-first profile (the SDK refuses it under an older one);
+# TakerSellsForeign keeps the profiles it has always signed under.
+case "$ZCASH_NETWORK:$DIRECTION" in
+  regtest:TakerSellsLez) DEFAULT_PROFILE=deterministic-local-devnet-v7 ;;
+  test:TakerSellsLez) DEFAULT_PROFILE=public-testnet-v3 ;;
+  regtest:*) DEFAULT_PROFILE=deterministic-local-devnet-v5 ;;
+  test:*) DEFAULT_PROFILE=public-testnet-v2 ;;
+  *) DEFAULT_PROFILE="" ;;
+esac
 case "$ZCASH_NETWORK" in
-  regtest) PROFILE="${PROFILE:-deterministic-local-devnet-v5}" ;;
+  regtest) PROFILE="${PROFILE:-$DEFAULT_PROFILE}" ;;
   test)
-    # A public Zcash Testnet corridor (local_poc.rs, profile public-testnet-v2):
-    # the route, its credential and the owner's keys come from outside the
-    # repository; without them there is nothing to try.
-    PROFILE="${PROFILE:-public-testnet-v2}"
+    # A public Zcash Testnet corridor (local_poc.rs, profile public-testnet-v3
+    # or -v2 by direction): the route, its credential and the owner's keys come
+    # from outside the repository; without them there is nothing to try.
+    PROFILE="${PROFILE:-$DEFAULT_PROFILE}"
     CHAIN_CHECK=0   # ensure-chain.sh recreates the local devnet chain; the LEZ side here is the public testnet
     [[ -n "${LEZ_ZEBRA_URL:-}" ]] || blocked "LEZ_ZEBRA_URL names no Zcash Testnet route"
     if [[ -n "${LEZ_ZEBRA_COOKIE_FILE:-}" && -z "${LEZ_ZEBRA_API_KEY_FILE:-}" ]]; then
@@ -197,11 +217,17 @@ esac
 # test lane's 60 s LEZ refund delay cannot be met on a chain that finalizes.
 # The devnet's Zebra runs NU7: -v5 and -v6 are -v3 and -v4 on NU7; the NU6.2
 # ones (-v3, -v4) keep their meaning but no longer match its chain.
-case "$ZCASH_NETWORK:$PROFILE" in
-  regtest:deterministic-local-devnet-v5|regtest:deterministic-local-devnet-v6) ;;
-  test:public-testnet-v2) ;;
-  regtest:*) echo "zec-catalog-fixture failed: --profile must be deterministic-local-devnet-v5 or -v6 (NU7)" >&2; exit 64 ;;
-  test:*) echo "zec-catalog-fixture failed: a Testnet corridor's --profile is public-testnet-v2" >&2; exit 64 ;;
+# TakerSellsLez is signed only under the Taker-reveals-first profiles (-v7,
+# -v8, public-testnet-v3); TakerSellsForeign stays on -v5, -v6 and
+# public-testnet-v2, so its agreements are those Nodes from before sign.
+case "$ZCASH_NETWORK:$DIRECTION:$PROFILE" in
+  regtest:TakerSellsLez:deterministic-local-devnet-v7|regtest:TakerSellsLez:deterministic-local-devnet-v8) ;;
+  regtest:TakerSellsForeign:deterministic-local-devnet-v5|regtest:TakerSellsForeign:deterministic-local-devnet-v6) ;;
+  test:TakerSellsLez:public-testnet-v3|test:TakerSellsForeign:public-testnet-v2) ;;
+  regtest:TakerSellsLez:*) echo "zec-catalog-fixture failed: a TakerSellsLez corridor's --profile must be deterministic-local-devnet-v7 or -v8 (NU7)" >&2; exit 64 ;;
+  regtest:*) echo "zec-catalog-fixture failed: a TakerSellsForeign corridor's --profile must be deterministic-local-devnet-v5 or -v6 (NU7)" >&2; exit 64 ;;
+  test:TakerSellsLez:*) echo "zec-catalog-fixture failed: a Testnet TakerSellsLez corridor's --profile is public-testnet-v3" >&2; exit 64 ;;
+  test:*) echo "zec-catalog-fixture failed: a Testnet TakerSellsForeign corridor's --profile is public-testnet-v2" >&2; exit 64 ;;
 esac
 # Each role's Zcash key is minted beside its LEZ identity (gen-config.sh); the
 # Maker's is also its Delivery signing key and zebra's miner address.
@@ -477,7 +503,7 @@ print(info["blocks"])')" || blocked "the Zebra at $LEZ_ZEBRA_URL is not Zcash Te
   if [[ "$DIRECTION" == TakerSellsForeign ]]; then pay_taker=1; scan_from="$testnet_tip"; fi
 else
 # The devnet's Zebra is Zebra 7 on Regtest with NU7 from height 1, the branch
-# the -v5/-v6 profiles sign for. One from before (the 5.2.0 image, or a config
+# the -v5 to -v8 profiles sign for. One from before (the 5.2.0 image, or a config
 # rendered from the NU6.2 template) says NU6.2 (5437f330) for its next block;
 # its chain cannot carry an NU7 corridor and Zebra 7 cannot read its state
 # (it starts an empty chain beside it). Such a Zebra is recreated here with a
@@ -678,7 +704,7 @@ fi
 if [[ "$ZCASH_NETWORK" == test && "$pay_taker" == 1 ]]; then
   # The Taker funds Zcash on Testnet: the Maker's owner-funded key pays the
   # Taker's once per swap, and the provisioner waits for Testnet to bury the
-  # payment ten blocks deep (public-testnet-v2's Zcash confirmations).
+  # payment ten blocks deep (the Testnet profiles' Zcash confirmations).
   taker_value=$(( FOREIGN_UNITS + 20000 ))   # principal + funding fee + change margin
   for (( p = 0; p < payments; p++ )); do
     docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \

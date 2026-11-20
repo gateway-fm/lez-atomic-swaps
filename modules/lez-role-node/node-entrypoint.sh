@@ -652,9 +652,9 @@ case "$role" in
       # (take-time agreements, zec_reserve_v1) in any case.
       if [[ "$zec_ready" == 1 || -s "$zec_role_config" ]]; then
         # The authority group of crates/maker-node/src/bin/lez-maker-node.rs:
-        # the Node's claim-recovery key, the Zcash funder's preimage (the
-        # Maker in TakerSellsLez), the provisioned Maker config as the one
-        # actor template. The claim-recovery key is the Node's own and lives
+        # the Node's claim-recovery key and the provisioned Maker configs as
+        # actor templates. The Maker holds no claim preimage in either
+        # direction (the Taker holds the swap secret). The claim-recovery key is the Node's own and lives
         # as long as its state volume: the ZEC recovery store re-validates
         # every stored claim journal with the daemon's key on each start
         # (swap-store zec_recovery.rs validate_existing_claim_envelopes; a
@@ -678,8 +678,8 @@ case "$role" in
         for zec_template in "${zec_configs[@]}"; do
           args+=(--zec-source-maker-config "$zec_template")
         done
-        # No Node-wide claim preimage: a completion takes the secret from the
-        # agreement's own pinned template (each corridor entry carries one).
+        # No claim preimage: the Maker reads the secret from the Taker's
+        # revealing claim; a template that carries one is refused.
         echo "maker ZEC authority configured (corridor ${zec_run_id:-none}, ${#zec_configs[@]} template(s))"
       fi
       # The Monero role (xmr_reserve_v1) and its actor. A Monero attempt runs

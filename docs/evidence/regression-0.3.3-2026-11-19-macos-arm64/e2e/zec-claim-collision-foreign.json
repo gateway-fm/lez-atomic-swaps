@@ -1,0 +1,39 @@
+{
+  "scenario": "zec-claim-collision",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "1795076975",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_a": "zec-devnet-swap-1795076975",
+  "swap_c": "zec-devnet-swap-1795077022-b",
+  "corridor": "zec-devnet-1795077022",
+  "claim_supersessions": [
+    "actor claim: revealing LEZ claim superseded (planned nonce 28, live 29); re-plan 1 at nonce 29: 5286c59796f91a540007110de3228403f4c6426e81632fbe0e8319de6eb42eaa -> a94eee98b30579cd6077cf2ad7d7955ac663e8be0649258a33cb8ad9eee11c1e; 635 s left before the LEZ refund time"
+  ],
+  "c_first_lock_replans": [
+    "taker actor zec-devnet-swap-1795077022-b: drive \u2192 submitted lez_fund (phase offered, revision 0, next create_and_fund_lez) re-planned [1 lez_fund nonce 29\u219230 tx dede0313463bf1aa6ff5f81230f68eb8f56693ba5fe60974896fa886dd0e3878\u21927401386f78135bef9b5a7192e0abc5d4b6cd164940f3986aecaadaf92afe1044]"
+  ],
+  "claim_press_delay_seconds": 0.5,
+  "result": "passed",
+  "seconds": 104
+}

@@ -638,7 +638,8 @@ fn seed_maker_actor(run: &Path, database: &Path, swap_id: &str) {
             direction,
             ChainPosition::block_height(Chain::Zcash, 120),
             ChainPosition::block_height(Chain::Lez, 100),
-            TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100).unwrap(),
+            // The Maker-funded (Zcash) leg refunds first.
+            TimelockSafety::between(Chain::Zcash, Chain::Lez, 1_000, 1_200, 100).unwrap(),
         )
         .unwrap(),
     );

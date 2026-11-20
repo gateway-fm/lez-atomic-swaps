@@ -1,0 +1,177 @@
+[15:28:30] === zec-maker-early-claim (stamp 1795098510)
+[15:28:30] preflight: indexer historical reads
+[15:28:31]   indexer serves historical reads at the tip (230)
+[15:28:31] preflight: LEZ finality check waived by request
+[15:28:31]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[15:28:57]       taker: taker ZEC corridor zec-devnet-1795098511: sidecar listening on 127.0.0.1:19902
+[15:28:57]       taker: taker: 1 prepared ZEC entries configured
+[15:28:57]     [zec-provision 14:28:57]   maker sidecar answers on 127.0.0.1:19901
+[15:28:57]     [zec-provision 14:28:57]   taker sidecar answers on 127.0.0.1:19902
+[15:28:57]       maker_health: ready=True degraded=False
+[15:28:57]     [zec-provision 14:28:57]   Taker lists zec-devnet-offer-1795098511 ; corridor zec-devnet-1795098511 is live
+[15:28:57]   corridor zec-devnet-1795098511 entry 0 (deterministic-local-devnet-v8): offer zec-devnet-offer-1795098511, zebra tip 110, Zcash refund height 127
+[15:28:57]   LEZ accounts before the take: {'maker': 2000000, 'taker': 2000000}
+[15:28:58]   Taker took zec-devnet-offer-1795098511: swap zec-devnet-s (not_activated)
+[15:28:58]   receipt: swap zec-devnet-swap-1795098511, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1795098511/actor/taker/actor-config.json
+[15:28:58]   cutting the Maker Node's zebra route: it will observe the Taker's lock but cannot fund Zcash
+[15:28:58]   [0 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker not_activated | actor at - | maker leased | zebra 110 | LEZ finalized 248, tip 254 (6 unfinalized) [heartbeat]
+[15:29:01]   [3 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker awaiting_first_lock | actor at offered | maker leased | zebra 110 | LEZ finalized 248, tip 254 (6 unfinalized) [heartbeat]
+[15:29:18]   [19 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker refund_available | actor at taker_lock_confirmed | maker offered | zebra 110 | LEZ finalized 266, tip 270 (4 unfinalized) [heartbeat]
+[15:29:18]   [0 s] waiting for the Maker's zec-devnet-s to reach awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Maker observing the Taker's LEZ lock without zebra): maker offered (schedule leased) | LEZ finalized 266, tip 270 (4 unfinalized) [heartbeat]
+[15:29:25]   [7 s] waiting for the Maker's zec-devnet-s to reach awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Maker observing the Taker's LEZ lock without zebra): maker taker_lock_confirmed (schedule leased) | LEZ finalized 266, tip 270 (4 unfinalized) [heartbeat]
+[15:29:26]   the Taker's view lists no LEZ lock effect; its actor past taker_lock_confirmed and the Maker at taker_lock_confirmed (the Maker reads the lock from LEZ finality) are what say it is final
+[15:29:26]   the Maker is at taker_lock_confirmed and has not funded Zcash: outpoint ff70d2d9e368:0 unspent, zebra's mempool empty
+[15:29:26]   the swap's preimage is read from the Taker's half (/var/lib/lez/zec/corridor/taker/claim-preimage.key, 32 bytes, kept in the harness and never logged); its SHA-256 is dd83c9a560aebe2054ec22ca986d78d893225fb5006ecaa055348106effa0237
+[15:29:26]   searching the Maker's files for the preimage (raw, hex, HEX, base64) and the digest (raw, hex, HEX)
+[15:29:27]     searched /var/lib/lez/maker/btc-chat-signing.key (64 bytes)
+[15:29:27]     searched /var/lib/lez/maker/delivery-signing.key (65 bytes)
+[15:29:27]     searched /var/lib/lez/maker/maker.sqlite3 (450560 bytes)
+[15:29:27]     searched /var/lib/lez/maker/maker.sqlite3-shm (32768 bytes)
+[15:29:27]     searched /var/lib/lez/maker/maker.sqlite3-wal (317272 bytes)
+[15:29:27]     searched /var/lib/lez/maker/maker.sqlite3.lock (0 bytes)
+[15:29:27]     searched /var/lib/lez/maker/zec-claim-recovery.key (32 bytes)
+[15:29:27]     searched /var/lib/lez/maker/btc/btc-role.json (2126 bytes)
+[15:29:27]     searched /var/lib/lez/maker/btc/btc-rpc-cookie (40 bytes)
+[15:29:27]     searched /var/lib/lez/maker/btc/claim-destination (65 bytes)
+[15:29:27]     searched /var/lib/lez/maker/btc/identity.json (442 bytes)
+[15:29:27]     searched /var/lib/lez/maker/btc/runtime.json (503 bytes)
+[15:29:27]     searched /var/lib/lez/zec/sidecar.log (828 bytes)
+[15:29:27]     searched /var/lib/lez/zec/actors/f8451510825db24dd034c589a680d08ef403f045950b4127de93fae33d19497b/maker/actor-config.json (2249 bytes)
+[15:29:27]     searched /var/lib/lez/zec/actors/f8451510825db24dd034c589a680d08ef403f045950b4127de93fae33d19497b/maker/state/actor.sqlite3 (430080 bytes)
+[15:29:27]     searched /var/lib/lez/zec/actors/f8451510825db24dd034c589a680d08ef403f045950b4127de93fae33d19497b/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[15:29:27]     searched /var/lib/lez/zec/actors/f8451510825db24dd034c589a680d08ef403f045950b4127de93fae33d19497b/maker/state/bridge.sqlite3 (446464 bytes)
+[15:29:27]     searched /var/lib/lez/zec/actors/f8451510825db24dd034c589a680d08ef403f045950b4127de93fae33d19497b/shared/agreement-v2.borsh (1009 bytes)
+[15:29:27]     searched /var/lib/lez/zec/corridor/maker/actor-config.json (2060 bytes)
+[15:29:27]     searched /var/lib/lez/zec/corridor/maker/claim-recovery.key (32 bytes)
+[15:29:27]     searched /var/lib/lez/zec/corridor/maker/lez-runtime.json (502 bytes)
+[15:29:27]     searched /var/lib/lez/zec/corridor/maker/lez-signer.key (65 bytes)
+[15:29:27]     searched /var/lib/lez/zec/corridor/maker/sidecar.capability (64 bytes)
+[15:29:27]     searched /var/lib/lez/zec/corridor/maker/zcash.key (32 bytes)
+[15:29:27]     searched /var/lib/lez/zec/corridor/shared/agreement-v2.borsh (1009 bytes)
+[15:29:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795098511/bridge-requests.v1.json (1337 bytes)
+[15:29:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795098511/bridge-state-lease.v1.lock (0 bytes)
+[15:29:27]     searched /run/lez/maker/node.log (3925 bytes)
+[15:29:27]     searched /run/lez/maker/ready (25 bytes)
+[15:29:27]   searched 29 files, 1693618 bytes, under /var/lib/lez/maker, /var/lib/lez/zec, /run/lez/maker
+[15:29:27]     digest_hex: 0 file(s)
+[15:29:27]     digest_hex_upper: 0 file(s)
+[15:29:27]     digest_raw: 4 file(s): /var/lib/lez/maker/maker.sqlite3-wal, /var/lib/lez/zec/actors/f8451510825db24dd034c589a680d08ef403f045950b4127de93fae33d19497b/maker/state/actor.sqlite3, /var/lib/lez/zec/actors/f8451510825db24dd034c589a680d08ef403f045950b4127de93fae33d19497b/shared/agreement-v2.borsh, /var/lib/lez/zec/corridor/shared/agreement-v2.borsh
+[15:29:27]     preimage_base64: 0 file(s)
+[15:29:27]     preimage_hex: 0 file(s)
+[15:29:27]     preimage_hex_upper: 0 file(s)
+[15:29:27]     preimage_raw: 0 file(s)
+[15:29:27]   the Maker's files hold the digest (4 file(s)) and never the preimage
+[15:29:27]   control: the same search over the Taker's /var/lib/lez/zec (24 files, 927557 bytes) finds the preimage in ['/var/lib/lez/zec/corridor/taker/claim-preimage.key']
+[15:29:27]   the escrow of swap zec-devnet-swap-1795098511: on-chain swap id 00077fcec3fafce27883e817303e3607ff734d752bba938fcecb61d82c805dbf (derive_lez_swap_id_v1), program c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b
+[15:29:27]   claim_native as the Maker with a zero preimage: /usr/local/bin/lez-v02-escrow-claim-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b --swap-id 00077fcec3fafce27883e817303e3607ff734d752bba938fcecb61d82c805dbf --private-key-file /var/lib/lez/zec/corridor/maker/lez-signer.key --preimage-hex 0000000000000000000000000000000000000000000000000000000000000000 --observe-seconds 30
+[15:29:58]     {
+[15:29:58]       "after": {
+[15:29:58]         "claimant_balance": 2000000,
+[15:29:58]         "claimant_nonce": 3,
+[15:29:58]         "custody_balance": 50000,
+[15:29:58]         "sequencer_tip": 291,
+[15:29:58]         "status": "Funded",
+[15:29:58]         "tip_timestamp_ms": 1795098597912
+[15:29:58]       },
+[15:29:58]       "amount": 50000,
+[15:29:58]       "before": {
+[15:29:58]         "claimant_balance": 2000000,
+[15:29:58]         "claimant_nonce": 3,
+[15:29:58]         "custody_balance": 50000,
+[15:29:58]         "sequencer_tip": 275,
+[15:29:58]         "status": "Funded",
+[15:29:58]         "tip_timestamp_ms": 1795098567016
+[15:29:58]       },
+[15:29:58]       "claimant_account": "3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5",
+[15:29:58]       "custody_account": "2e0698450e49b03b7e1996338b184135a19ad5659e5b842b6ed2887ef3c69c86",
+[15:29:58]       "escrow_kept_custody": true,
+[15:29:58]       "escrow_program_id": "c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b",
+[15:29:58]       "included": false,
+[15:29:58]       "included_in_block": null,
+[15:29:58]       "metadata_account": "065477008e7b00c0923cd3d0b8afba402c91aca411a0065e1e5fd98b6aec8059",
+[15:29:58]       "observed_seconds": 30,
+[15:29:58]       "presented_preimage": "0000000000000000000000000000000000000000000000000000000000000000",
+[15:29:58]       "presented_preimage_matches_digest": false,
+[15:29:58]       "presented_preimage_sha256": "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925",
+[15:29:58]       "refund_at_ms": 1795098993000,
+[15:29:58]       "schema": "lez_v02_escrow_claim_probe_v1",
+[15:29:58]       "signer_is_claimant": true,
+[15:29:58]       "stored_secret_digest": "dd83c9a560aebe2054ec22ca986d78d893225fb5006ecaa055348106effa0237",
+[15:29:58]       "submission": {
+[15:29:58]         "decision": "accepted",
+[15:29:58]         "error_code": null,
+[15:29:58]         "error_message": null
+[15:29:58]       },
+[15:29:58]       "submitted_before_refund_at": true,
+[15:29:58]       "swap_id": "00077fcec3fafce27883e817303e3607ff734d752bba938fcecb61d82c805dbf",
+[15:29:58]       "test_only": true,
+[15:29:58]       "transaction_id": "35c4c9fe400c48a9d5e32dd8e8710485031d62f12f84ee4994271d7dd15e8f4b"
+[15:29:58]     }
+[15:29:58]   a zero preimage: sequencer accepted, not included after 30 s; escrow Funded → Funded, custody 50000 → 50000, Maker's LEZ 2000000 → 2000000
+[15:29:58]   claim_native as the Maker with the digest as the preimage: /usr/local/bin/lez-v02-escrow-claim-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b --swap-id 00077fcec3fafce27883e817303e3607ff734d752bba938fcecb61d82c805dbf --private-key-file /var/lib/lez/zec/corridor/maker/lez-signer.key --preimage-hex dd83c9a560aebe2054ec22ca986d78d893225fb5006ecaa055348106effa0237 --observe-seconds 30
+[15:30:29]     {
+[15:30:29]       "after": {
+[15:30:29]         "claimant_balance": 2000000,
+[15:30:29]         "claimant_nonce": 3,
+[15:30:29]         "custody_balance": 50000,
+[15:30:29]         "sequencer_tip": 314,
+[15:30:29]         "status": "Funded",
+[15:30:29]         "tip_timestamp_ms": 1795098629042
+[15:30:29]       },
+[15:30:29]       "amount": 50000,
+[15:30:29]       "before": {
+[15:30:29]         "claimant_balance": 2000000,
+[15:30:29]         "claimant_nonce": 3,
+[15:30:29]         "custody_balance": 50000,
+[15:30:29]         "sequencer_tip": 291,
+[15:30:29]         "status": "Funded",
+[15:30:29]         "tip_timestamp_ms": 1795098597912
+[15:30:29]       },
+[15:30:29]       "claimant_account": "3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5",
+[15:30:29]       "custody_account": "2e0698450e49b03b7e1996338b184135a19ad5659e5b842b6ed2887ef3c69c86",
+[15:30:29]       "escrow_kept_custody": true,
+[15:30:29]       "escrow_program_id": "c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b",
+[15:30:29]       "included": false,
+[15:30:29]       "included_in_block": null,
+[15:30:29]       "metadata_account": "065477008e7b00c0923cd3d0b8afba402c91aca411a0065e1e5fd98b6aec8059",
+[15:30:29]       "observed_seconds": 30,
+[15:30:29]       "presented_preimage": "dd83c9a560aebe2054ec22ca986d78d893225fb5006ecaa055348106effa0237",
+[15:30:29]       "presented_preimage_matches_digest": false,
+[15:30:29]       "presented_preimage_sha256": "94c2027611b4a1b1bc6ecd8f83036cf4c0c36b4675c6cf4979dddcd97da5fe09",
+[15:30:29]       "refund_at_ms": 1795098993000,
+[15:30:29]       "schema": "lez_v02_escrow_claim_probe_v1",
+[15:30:29]       "signer_is_claimant": true,
+[15:30:29]       "stored_secret_digest": "dd83c9a560aebe2054ec22ca986d78d893225fb5006ecaa055348106effa0237",
+[15:30:29]       "submission": {
+[15:30:29]         "decision": "accepted",
+[15:30:29]         "error_code": null,
+[15:30:29]         "error_message": null
+[15:30:29]       },
+[15:30:29]       "submitted_before_refund_at": true,
+[15:30:29]       "swap_id": "00077fcec3fafce27883e817303e3607ff734d752bba938fcecb61d82c805dbf",
+[15:30:29]       "test_only": true,
+[15:30:29]       "transaction_id": "3e1650e5db6684b70451095eed3ad1be1aaec7cfffd16e4ae7856272abae8542"
+[15:30:29]     }
+[15:30:29]   the digest as the preimage: sequencer accepted, not included after 30 s; escrow Funded → Funded, custody 50000 → 50000, Maker's LEZ 2000000 → 2000000
+[15:30:29]   compared: SHA-256 of the Taker's preimage = the digest the escrow stores = the digest found in the Maker's files; the escrow refused both claims and holds the Taker's LEZ
+[15:30:29]   stopping the Maker Node so it never funds Zcash
+[15:30:29]   waiting 376s for the agreement's LEZ refund time (the profile's delay after provisioning)
+[15:30:29]   [0 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 304, tip 310 (6 unfinalized) [heartbeat]
+[15:31:29]   [60 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 336, tip 343 (7 unfinalized) [heartbeat]
+[15:32:29]   [120 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 381, tip 388 (7 unfinalized) [heartbeat]
+[15:33:29]   [180 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 432, tip 437 (5 unfinalized) [heartbeat]
+[15:34:29]   [240 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 477, tip 482 (5 unfinalized) [heartbeat]
+[15:35:29]   [300 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 522, tip 526 (4 unfinalized) [heartbeat]
+[15:36:29]   [360 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 562, tip 565 (3 unfinalized) [heartbeat]
+[15:36:46]   [0 s] waiting for the Taker's refund of zec-devnet-s to reach refunded: taker refund_available (generation 1) | maker unreachable | LEZ finalized 562, tip 565 (3 unfinalized) [heartbeat]
+[15:36:47]   refund request admitted (attempt 1, taker refund_available | maker: unreachable)
+[15:36:52]   [6 s] waiting for the Taker's refund of zec-devnet-s to reach refunded: taker refund_in_progress (generation 1) | maker unreachable | LEZ finalized 573, tip 581 (8 unfinalized) [heartbeat]
+[15:37:12]   refund request replayed (attempt 5, taker refund_in_progress | maker: unreachable)
+[15:37:17]   [31 s] waiting for the Taker's refund of zec-devnet-s to reach refunded: taker refunded (generation 2) | maker unreachable | LEZ finalized 592, tip 596 (4 unfinalized) [heartbeat]
+[15:37:17]   Taker refunded its LEZ escrow; Taker ended refunded
+[15:37:27]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-devnet-swap-1795098511", "action": "refund", "requested_after_generation": 13, "was_replay": false}
+[15:37:27]   [0 s] waiting for the Maker's zec-devnet-s to reach a terminal state (reconciling the refunded LEZ leg): maker taker_lock_confirmed (schedule leased) | LEZ finalized 592, tip 596 (4 unfinalized) [heartbeat]
+[15:37:37]   [9 s] waiting for the Maker's zec-devnet-s to reach a terminal state (reconciling the refunded LEZ leg): maker refunded (schedule terminal) | LEZ finalized 603, tip 610 (7 unfinalized) [heartbeat]
+[15:37:37]   zebra: the provisioned coinbase outpoint ff70d2d9e368:0 is still unspent; Maker ended refunded
+[15:37:37]   LEZ accounts {'maker': 2000000, 'taker': 2000000} → {'maker': 2000000, 'taker': 2000000}
+[15:37:37] === zec-maker-early-claim: passed in 547s

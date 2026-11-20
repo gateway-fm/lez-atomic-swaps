@@ -321,6 +321,13 @@ impl MakerActorProcessRecordV1 {
     pub const fn child_identity(&self) -> Option<(u32, u64)> {
         self.child_identity
     }
+
+    /// When the row last changed state (the scheduler's trusted Unix seconds);
+    /// for a failed row, when it failed.
+    #[must_use]
+    pub const fn updated_at(&self) -> u64 {
+        self.updated_at
+    }
 }
 
 /// Claimed scheduler row, fenced by owner and monotonically increasing generation.

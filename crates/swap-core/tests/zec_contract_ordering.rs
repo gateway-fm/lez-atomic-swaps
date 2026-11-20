@@ -4,29 +4,29 @@ use lez_swap_core::{
 };
 
 #[test]
-fn zec_refund_always_outlives_lez_and_lez_claim_always_reveals_first() {
-    for (direction, expected_first_claimant) in [
-        (SwapDirection::TakerSellsForeign, Participant::Taker),
-        (SwapDirection::TakerSellsLez, Participant::Maker),
+fn zec_taker_always_reveals_first_on_the_maker_funded_leg_which_refunds_first() {
+    // The common flow (AGENTS.md): in both directions the Taker holds the preimage and
+    // claims the Maker-funded leg first; that leg's refund opens first.
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
     ] {
-        let (maker_refund, taker_refund) = match direction {
+        let expected_first_claimant = Participant::Taker;
+        let (maker_refund, taker_refund, safety) = match direction {
             SwapDirection::TakerSellsForeign => (
                 ChainPosition::timestamp(Chain::Lez, 100),
                 ChainPosition::block_height(Chain::Zcash, 120),
+                TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_400, 300).unwrap(),
             ),
             SwapDirection::TakerSellsLez => (
                 ChainPosition::block_height(Chain::Zcash, 120),
-                ChainPosition::timestamp(Chain::Lez, 100),
+                ChainPosition::timestamp(Chain::Lez, 1_400),
+                TimelockSafety::between(Chain::Zcash, Chain::Lez, 1_000, 1_400, 300).unwrap(),
             ),
         };
-        let schedule = RecoverySchedule::new(
-            Pair::Zcash,
-            direction,
-            maker_refund,
-            taker_refund,
-            TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_400, 300).unwrap(),
-        )
-        .unwrap();
+        let schedule =
+            RecoverySchedule::new(Pair::Zcash, direction, maker_refund, taker_refund, safety)
+                .unwrap();
         let mut swap = SwapCoordinator::new_with_direction(
             SwapId::new(format!("zec-{direction:?}")).unwrap(),
             Pair::Zcash,
@@ -53,7 +53,7 @@ fn zec_refund_always_outlives_lez_and_lez_claim_always_reveals_first() {
         );
         swap.observe_revealing_claim(
             expected_first_claimant,
-            ChainProof::new("lez-claim", 1).unwrap(),
+            ChainProof::new("maker-funded-leg-claim", 1).unwrap(),
             ClaimEvidence::new([42; 32]),
         )
         .unwrap();
@@ -71,7 +71,7 @@ fn zec_refund_always_outlives_lez_and_lez_claim_always_reveals_first() {
         );
         swap.observe_followup_claim(
             wrong_first_claimant,
-            ChainProof::new("zec-claim", 1).unwrap(),
+            ChainProof::new("taker-funded-leg-claim", 1).unwrap(),
         )
         .unwrap();
         assert_eq!(swap.phase(), Phase::Completed);
@@ -79,17 +79,33 @@ fn zec_refund_always_outlives_lez_and_lez_claim_always_reveals_first() {
 }
 
 #[test]
-fn zec_schedule_rejects_role_valid_but_contract_reversed_chain_order() {
-    let result = RecoverySchedule::new(
+fn zec_schedule_rejects_a_taker_funded_leg_that_refunds_first() {
+    // TakerSellsLez: main's order (LEZ refund first, Zcash later) let the preimage-holding
+    // Maker take the LEZ without funding Zcash. It is refused now.
+    let reverse = RecoverySchedule::new(
         Pair::Zcash,
         SwapDirection::TakerSellsLez,
-        ChainPosition::block_height(Chain::Zcash, 100),
-        ChainPosition::timestamp(Chain::Lez, 120),
+        ChainPosition::block_height(Chain::Zcash, 120),
+        ChainPosition::timestamp(Chain::Lez, 100),
+        TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_400, 300).unwrap(),
+    );
+    assert_eq!(
+        reverse,
+        Err(Error::WrongTimelockOrder {
+            pair: Pair::Zcash,
+            earlier: Chain::Zcash,
+            later: Chain::Lez,
+        })
+    );
+    let forward = RecoverySchedule::new(
+        Pair::Zcash,
+        SwapDirection::TakerSellsForeign,
+        ChainPosition::timestamp(Chain::Lez, 100),
+        ChainPosition::block_height(Chain::Zcash, 120),
         TimelockSafety::between(Chain::Zcash, Chain::Lez, 1_000, 1_400, 300).unwrap(),
     );
-
     assert_eq!(
-        result,
+        forward,
         Err(Error::WrongTimelockOrder {
             pair: Pair::Zcash,
             earlier: Chain::Lez,

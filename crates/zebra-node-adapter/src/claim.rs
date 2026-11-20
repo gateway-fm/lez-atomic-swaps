@@ -1,17 +1,18 @@
 use std::io::Cursor;
 
 use async_trait::async_trait;
-use lez_swap_core::{Chain, ChainPosition, Participant};
+use lez_swap_core::{Chain, ChainPosition, Participant, SwapDirection};
 use lez_zec_swap_sdk::{
-    Bip199Contract, Bip199SpendKind, CanonicalZcashOutputObservation,
+    Bip199Contract, Bip199SpendBranch, Bip199SpendKind, CanonicalZcashOutputObservation,
     CanonicalZcashSpendObservation, ClaimError, ClaimPreimage, ClaimStepV1, ExpectedBip199Spend,
     FollowupClaimEvidenceV1, FollowupClaimObservationV1, ObservationError,
     PreparedClaimSubmissionV1, PreparedRefundSubmissionV1, RefundEligibilityObservationV1,
     RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1, RefundObservationV1, RefundStepV1,
-    RefundSubmitOutcomeV1, SpendObservationError, TransparentSpendRequest, ZcashClaimContextV1,
-    ZcashClaimPort, ZcashFundingContextV1, ZcashFundingObservationV1, ZcashNodeSnapshot,
-    ZcashRefundPort, ZcashSpendNodeSnapshot, ZcashStableTip, ZcashUnspentOutputSnapshotV1,
-    ZecAgreementExecutionError, ZecAgreementV1,
+    RefundSubmitOutcomeV1, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
+    SpendObservationError, TransparentSpendRequest, ZcashClaimContextV1, ZcashClaimPort,
+    ZcashFundingContextV1, ZcashFundingObservationV1, ZcashNodeSnapshot, ZcashRefundPort,
+    ZcashSpendNodeSnapshot, ZcashStableTip, ZcashUnspentOutputSnapshotV1,
+    ZecAgreementExecutionError, ZecAgreementV1, read_bip199_spend_branch,
 };
 use zcash_primitives::{
     block::BlockHash,
@@ -93,6 +94,34 @@ enum DiscoveredSpend {
         raw_transaction: Vec<u8>,
         block_hash: BlockHash,
         block_height: BlockHeight,
+    },
+}
+
+/// What a bounded scan found for the exact HTLC outpoint, before step-specific evidence.
+#[derive(Debug)]
+enum CounterpartySpend {
+    /// `gettxout` proved the exact outpoint unspent in one stable view.
+    Unspent,
+    /// A spender is in the mempool, the tip moved, or the scan did not identify the spender.
+    Unstable,
+    /// A canonical, policy-compliant claim spend (branch already checked).
+    Confirmed(Box<CanonicalZcashSpendObservation>),
+}
+
+/// The spender of the exact HTLC outpoint found in one stable view, before any branch or policy
+/// check.
+#[derive(Debug)]
+enum SpendDiscovery {
+    /// `gettxout` proved the exact outpoint unspent in one stable view.
+    Unspent,
+    /// The tip moved, the funding is not canonical, or the scan did not identify the spender.
+    Unstable,
+    /// The one transaction in the mempool or a scanned block that spends the outpoint.
+    Found {
+        /// The stable tip of the view.
+        before: ZebraChainInfo,
+        /// The spender as Zebra returned it.
+        candidate: DiscoveredSpend,
     },
 }
 
@@ -311,6 +340,12 @@ where
     /// The exact transaction validly executes the refund branch, not the required claim branch.
     #[error("Zebra transaction executes the refund branch instead of the claim branch")]
     WrongSpendBranch,
+    /// A canonical claim spend pushed a preimage that is not exactly 32 bytes.
+    #[error("Zcash claim spend reveals a {length}-byte preimage instead of 32 bytes")]
+    MalformedRevealedPreimage {
+        /// Length of the pushed preimage; the bytes themselves are never retained.
+        length: usize,
+    },
     /// Claim preparation was attempted without stable canonical unspent funding.
     #[error("Zcash funding is not currently stable, canonical, and unspent")]
     FundingNotReady,
@@ -512,7 +547,7 @@ where
                     confirmations,
                     in_active_chain,
                 )?;
-                Self::refund_evidence(agreement, &canonical).map(RefundObservationV1::Confirmed)
+                Self::refund_observation(agreement, &canonical)
             }
         }
     }
@@ -695,6 +730,13 @@ where
                     confirmations,
                     in_active_chain,
                 )?;
+                // `TakerSellsLez`: this is the Taker's revealing claim, which the SDK commits
+                // at the Zcash leg's depth; below it the claim is not yet stable.
+                if agreement.direction() == SwapDirection::TakerSellsLez
+                    && canonical.confirmations().get() < zcash_claim_depth(agreement, context)
+                {
+                    return Ok(FollowupClaimObservationV1::Unstable);
+                }
                 let evidence = FollowupClaimEvidenceV1::new(
                     agreement,
                     *prepared.expected_submission_id(),
@@ -713,6 +755,15 @@ where
         context: &ZcashClaimContextV1,
     ) -> Result<FollowupClaimObservationV1, Self::Error> {
         self.discover_counterparty_claim(agreement, context).await
+    }
+
+    async fn observe_counterparty_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.discover_counterparty_revealing_claim(agreement, context)
+            .await
     }
 
     async fn submit_followup_claim(
@@ -1014,6 +1065,16 @@ where
         Ok(canonical)
     }
 
+    // A refund in a block below the leg's required depth is not evidence yet: it is
+    // reported as `Unstable` (wait), never as an error, so a caller observing it mid-burial
+    // (the Taker reading the Maker's refund, or the owner its own) waits instead of failing.
+    fn refund_observation(
+        agreement: &ZecAgreementV1,
+        canonical: &CanonicalZcashSpendObservation,
+    ) -> Result<RefundObservationV1, ZebraRefundError<R::Error, S::Error>> {
+        refund_evidence_or_wait(Self::refund_evidence(agreement, canonical))
+    }
+
     fn refund_evidence(
         agreement: &ZecAgreementV1,
         canonical: &CanonicalZcashSpendObservation,
@@ -1103,7 +1164,7 @@ where
                     confirmations,
                     true,
                 )?;
-                Self::refund_evidence(agreement, &canonical).map(RefundObservationV1::Confirmed)
+                Self::refund_observation(agreement, &canonical)
             }
         }
     }
@@ -1348,8 +1409,144 @@ where
         agreement: &ZecAgreementV1,
         context: &ZcashClaimContextV1,
     ) -> Result<FollowupClaimObservationV1, ZebraClaimError<R::Error, S::Error>> {
+        match self.discover_counterparty_spend(agreement, context).await? {
+            CounterpartySpend::Unspent => Ok(FollowupClaimObservationV1::Absent),
+            CounterpartySpend::Unstable => Ok(FollowupClaimObservationV1::Unstable),
+            CounterpartySpend::Confirmed(canonical) => {
+                let evidence = FollowupClaimEvidenceV1::new(
+                    agreement,
+                    *canonical.transaction_id().as_ref(),
+                    canonical.transaction_id().to_string(),
+                    canonical.confirmations().get(),
+                )
+                .map_err(ZebraClaimError::Claim)?;
+                Ok(FollowupClaimObservationV1::Confirmed(evidence))
+            }
+        }
+    }
+
+    /// `TakerSellsLez`: the Maker reads the Taker's revealing claim of the exact HTLC outpoint.
+    ///
+    /// The claim is accepted on consensus facts only: Zebra holds only consensus-valid
+    /// transactions in its mempool and blocks, so the signature, signature-hash type, outputs,
+    /// fee and expiry were checked by consensus and do not decide whether the preimage is
+    /// usable. What is checked here is that the transaction spends the exact HTLC outpoint, that
+    /// the input takes the claim branch of the agreement's contract and that the pushed preimage
+    /// is 32 bytes whose SHA-256 is the agreement digest. The SDK's transaction template is not
+    /// required: a Taker that claims with other software still reveals the preimage. A refund
+    /// spend is `WrongSpendBranch` and a wrong preimage fails; neither yields a preimage.
+    ///
+    /// The preimage is returned as soon as the claim is seen, in the mempool (0 confirmations)
+    /// or in any block: it stays valid whatever happens to the Zcash transaction, and the
+    /// Maker's LEZ claim should not wait for the Zcash leg's depth.
+    async fn discover_counterparty_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<RevealingClaimObservationV1, ZebraClaimError<R::Error, S::Error>> {
+        let (before, candidate) = match self.discover_spend_candidate(agreement, context).await? {
+            SpendDiscovery::Unspent => return Ok(RevealingClaimObservationV1::Absent),
+            SpendDiscovery::Unstable => return Ok(RevealingClaimObservationV1::Unstable),
+            SpendDiscovery::Found { before, candidate } => (before, candidate),
+        };
+        let (transaction_id, raw_transaction, confirmations) = match candidate {
+            DiscoveredSpend::Mempool {
+                transaction_id,
+                raw_transaction,
+            } => (transaction_id, raw_transaction, 0),
+            DiscoveredSpend::Confirmed {
+                transaction_id,
+                raw_transaction,
+                block_height,
+                ..
+            } => {
+                let confirmations = u32::from(before.tip_height())
+                    .checked_sub(u32::from(block_height))
+                    .and_then(|distance| distance.checked_add(1))
+                    .ok_or(ZebraClaimError::BlockInventoryMismatch)?;
+                (transaction_id, raw_transaction, confirmations)
+            }
+        };
+        let preimage =
+            self.revealed_preimage(agreement, context, transaction_id, &raw_transaction)?;
+        let evidence = RevealingClaimEvidenceV1::from_observed_zcash_claim(
+            agreement,
+            *transaction_id.as_ref(),
+            transaction_id.to_string(),
+            confirmations,
+            ClaimPreimage::new(preimage),
+        )
+        .map_err(ZebraClaimError::Claim)?;
+        Ok(RevealingClaimObservationV1::Confirmed(evidence))
+    }
+
+    /// The preimage a consensus-accepted spend of the exact HTLC outpoint reveals.
+    fn revealed_preimage(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        transaction_id: TxId,
+        raw_transaction: &[u8],
+    ) -> Result<[u8; 32], ZebraClaimError<R::Error, S::Error>> {
+        let transaction = decode_canonical_transaction::<R::Error, S::Error>(
+            raw_transaction,
+            self.identity.consensus_branch_id(),
+        )?;
+        if transaction.txid() != transaction_id {
+            return Err(ZebraClaimError::DiscoveredTransactionIdMismatch);
+        }
+        let inputs = transaction
+            .transparent_bundle()
+            .map(|bundle| {
+                bundle
+                    .vin
+                    .iter()
+                    .filter(|input| input.prevout() == context.funding_outpoint())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let [input] = inputs.as_slice() else {
+            return Err(ZebraClaimError::FundingOutpointMismatch);
+        };
+        let branch = read_bip199_spend_branch(
+            agreement.binding().expected_output().contract(),
+            &input.script_sig().0.0,
+        )
+        .map_err(ZebraClaimError::SpendObservation)?;
+        let Bip199SpendBranch::Claim { preimage } = branch else {
+            return Err(ZebraClaimError::WrongSpendBranch);
+        };
+        preimage
+            .as_ref()
+            .try_into()
+            .map_err(|_| ZebraClaimError::MalformedRevealedPreimage {
+                length: preimage.len(),
+            })
+    }
+
+    async fn discover_counterparty_spend(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<CounterpartySpend, ZebraClaimError<R::Error, S::Error>> {
+        match self.discover_spend_candidate(agreement, context).await? {
+            SpendDiscovery::Unspent => Ok(CounterpartySpend::Unspent),
+            SpendDiscovery::Unstable => Ok(CounterpartySpend::Unstable),
+            SpendDiscovery::Found { before, candidate } => {
+                self.resolve_discovered_spend(agreement, context, before, before, candidate)
+            }
+        }
+    }
+
+    /// The one transaction, in the mempool or the scanned blocks, that spends the exact HTLC
+    /// outpoint, observed under one stable tip.
+    async fn discover_spend_candidate(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<SpendDiscovery, ZebraClaimError<R::Error, S::Error>> {
         let Some(anchor) = self.validated_discovery_anchor(agreement, context).await? else {
-            return Ok(FollowupClaimObservationV1::Unstable);
+            return Ok(SpendDiscovery::Unstable);
         };
         if let Some(unspent) = self
             .rpc
@@ -1359,14 +1556,14 @@ where
         {
             let after = self.sample_validated_tip().await?;
             if !same_tip(anchor.before, after) {
-                return Ok(FollowupClaimObservationV1::Unstable);
+                return Ok(SpendDiscovery::Unstable);
             }
             validate_unspent_binding::<R::Error, S::Error>(
                 &unspent,
                 &anchor.canonical_funding,
                 anchor.before,
             )?;
-            return Ok(FollowupClaimObservationV1::Absent);
+            return Ok(SpendDiscovery::Unspent);
         }
 
         let candidates = self
@@ -1374,9 +1571,17 @@ where
             .await?;
         let after = self.sample_validated_tip().await?;
         if !same_tip(anchor.before, after) {
-            return Ok(FollowupClaimObservationV1::Unstable);
+            return Ok(SpendDiscovery::Unstable);
         }
-        self.resolve_discovered_spend(agreement, context, anchor.before, after, candidates)
+        // `gettxout` proved the output missing, but a bounded scan may not identify its
+        // spender: a mempool race or an exhausted historical horizon.
+        Ok(match candidates.into_iter().next() {
+            Some(candidate) => SpendDiscovery::Found {
+                before: anchor.before,
+                candidate,
+            },
+            None => SpendDiscovery::Unstable,
+        })
     }
 
     async fn validated_discovery_anchor(
@@ -1525,13 +1730,8 @@ where
         context: &ZcashClaimContextV1,
         before: ZebraChainInfo,
         after: ZebraChainInfo,
-        candidates: Vec<DiscoveredSpend>,
-    ) -> Result<FollowupClaimObservationV1, ZebraClaimError<R::Error, S::Error>> {
-        let Some(candidate) = candidates.into_iter().next() else {
-            // `gettxout` proved the output missing, but a bounded scan did not identify
-            // its spender. This can be a mempool race or an exhausted historical horizon.
-            return Ok(FollowupClaimObservationV1::Unstable);
-        };
+        candidate: DiscoveredSpend,
+    ) -> Result<CounterpartySpend, ZebraClaimError<R::Error, S::Error>> {
         match candidate {
             DiscoveredSpend::Mempool {
                 transaction_id,
@@ -1543,7 +1743,7 @@ where
                     transaction_id,
                     raw_transaction,
                 )?;
-                Ok(FollowupClaimObservationV1::Unstable)
+                Ok(CounterpartySpend::Unstable)
             }
             DiscoveredSpend::Confirmed {
                 transaction_id,
@@ -1555,7 +1755,7 @@ where
                     .checked_sub(u32::from(block_height))
                     .and_then(|distance| distance.checked_add(1))
                     .ok_or(ZebraClaimError::BlockInventoryMismatch)?;
-                let canonical = self.validate_claim_snapshot(
+                self.validate_claim_snapshot(
                     agreement,
                     context.funding_outpoint(),
                     transaction_id,
@@ -1567,15 +1767,8 @@ where
                     after,
                     confirmations,
                     true,
-                )?;
-                let evidence = FollowupClaimEvidenceV1::new(
-                    agreement,
-                    *canonical.transaction_id().as_ref(),
-                    canonical.transaction_id().to_string(),
-                    canonical.confirmations().get(),
                 )
-                .map_err(ZebraClaimError::Claim)?;
-                Ok(FollowupClaimObservationV1::Confirmed(evidence))
+                .map(|canonical| CounterpartySpend::Confirmed(Box::new(canonical)))
             }
         }
     }
@@ -1748,10 +1941,7 @@ where
             prepared.exact_submission(),
             self.identity.consensus_branch_id(),
         )?;
-        let prepared_height = u32::from(transaction.expiry_height())
-            .checked_sub(agreement.transaction_policy().expiry_delta_blocks())
-            .map(BlockHeight::from_u32)
-            .ok_or(ZebraClaimError::ClaimExpiryPolicyMismatch)?;
+        let prepared_height = claim_prepared_height::<R::Error, S::Error>(agreement, &transaction)?;
         let expected_output = agreement.binding().expected_output();
         let funding_output = TxOut::new(
             expected_output.value(),
@@ -1914,6 +2104,31 @@ where
     Ok(())
 }
 
+/// The height a claim was prepared at, read back from its expiry (prepared
+/// height + the profile's delta). A `TakerSellsLez` claim has no expiry (the
+/// Taker's revealing claim must stay broadcastable), so its template does not
+/// depend on the height and any height rebuilds it.
+fn claim_prepared_height<RE, SE>(
+    agreement: &ZecAgreementV1,
+    transaction: &Transaction,
+) -> Result<BlockHeight, ZebraClaimError<RE, SE>>
+where
+    RE: std::error::Error + Send + Sync + 'static,
+    SE: std::error::Error + Send + Sync + 'static,
+{
+    if agreement.direction() == SwapDirection::TakerSellsLez {
+        return if u32::from(transaction.expiry_height()) == 0 {
+            Ok(BlockHeight::from_u32(0))
+        } else {
+            Err(ZebraClaimError::ClaimExpiryPolicyMismatch)
+        };
+    }
+    u32::from(transaction.expiry_height())
+        .checked_sub(agreement.transaction_policy().expiry_delta_blocks())
+        .map(BlockHeight::from_u32)
+        .ok_or(ZebraClaimError::ClaimExpiryPolicyMismatch)
+}
+
 fn expected_spend<RE, SE>(
     agreement: &ZecAgreementV1,
     outpoint: OutPoint,
@@ -1929,10 +2144,7 @@ where
         Script(Code(output.contract().p2sh_script_pubkey().to_vec())),
     );
     let transaction = decode_transaction::<RE, SE>(raw_transaction, output.consensus_branch_id())?;
-    let prepared_height = u32::from(transaction.expiry_height())
-        .checked_sub(agreement.transaction_policy().expiry_delta_blocks())
-        .map(BlockHeight::from_u32)
-        .ok_or(ZebraClaimError::ClaimExpiryPolicyMismatch)?;
+    let prepared_height = claim_prepared_height::<RE, SE>(agreement, &transaction)?;
     let request = agreement
         .claim_spend_request(outpoint, funding, prepared_height)
         .map_err(ZebraClaimError::Agreement)?;
@@ -2067,6 +2279,13 @@ where
     }
 }
 
+/// Confirmation depth the agreement requires of the Zcash leg, whose funder the context names.
+fn zcash_claim_depth(agreement: &ZecAgreementV1, context: &ZcashClaimContextV1) -> u32 {
+    agreement
+        .coordinator()
+        .required_confirmations(context.zcash_funder())
+}
+
 fn stable_tip(before: ZebraChainInfo, after: ZebraChainInfo) -> ZcashStableTip {
     ZcashStableTip::new(
         before.tip_hash(),
@@ -2080,6 +2299,23 @@ fn same_tip(before: ZebraChainInfo, after: ZebraChainInfo) -> bool {
     before.tip_hash() == after.tip_hash() && before.tip_height() == after.tip_height()
 }
 
+/// Maps a refund's evidence to an observation: below its required depth it waits.
+fn refund_evidence_or_wait<RE, SE>(
+    evidence: Result<RefundEvidenceV1, ZebraRefundError<RE, SE>>,
+) -> Result<RefundObservationV1, ZebraRefundError<RE, SE>>
+where
+    RE: std::error::Error + Send + Sync + 'static,
+    SE: std::error::Error + Send + Sync + 'static,
+{
+    match evidence {
+        Ok(evidence) => Ok(RefundObservationV1::Confirmed(evidence)),
+        Err(ZebraClaimError::Refund(RefundError::InsufficientConfirmations { .. })) => {
+            Ok(RefundObservationV1::Unstable)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -2091,9 +2327,9 @@ mod tests {
     use lez_swap_core::{Participant, SwapDirection, UnixSeconds};
     use lez_swap_store::SqliteZecRecoveryStore;
     use lez_zec_swap_sdk::{
-        FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockStepV1, LezAssetV1,
-        LezChainIdentityV1, LezClaimInstructionV1, LezClaimNodeSnapshotV1, LezClaimPort,
-        LezClaimTransactionSnapshotV1, LezCustodySnapshotV1, LezEnvironmentV1,
+        Bip199PreimageRule, FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockStepV1,
+        LezAssetV1, LezChainIdentityV1, LezClaimInstructionV1, LezClaimNodeSnapshotV1,
+        LezClaimPort, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1, LezEnvironmentV1,
         LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezInclusionStatusV1,
         LezMakerLockObservationPort, LezStableTipV1, MakerLockObservationV1, NegotiationChannel,
         NegotiationTranscriptV1, OfferDiscovery, PreparedFirstLockSubmissionV1, ProtectedClaimKey,
@@ -2101,9 +2337,9 @@ mod tests {
         TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashMakerLockObservationPort,
         ZcashRefundPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1,
         ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-        ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
-        ZecTransactionPolicyV1, build_claim_transaction, build_funding_transaction,
-        build_refund_transaction, derive_lez_metadata_account_v1,
+        ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding,
+        ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_claim_transaction,
+        build_funding_transaction, build_refund_transaction, derive_lez_metadata_account_v1,
         derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
     };
     use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -2255,16 +2491,11 @@ mod tests {
 
     impl FakeRpc {
         fn confirmed(
-            _agreement: &ZecAgreementV1,
+            agreement: &ZecAgreementV1,
             transaction: &Transaction,
         ) -> (Self, FundingTarget) {
-            let identity = ZebraChainIdentity::deterministic_regtest_nu6_2();
-            let tip = ZebraChainInfo::new(
-                ZebraRpcChain::Test,
-                BlockHeight::from_u32(TIP_HEIGHT),
-                BlockHash([0x33; 32]),
-                BranchId::Nu6_2,
-            );
+            let identity = identity_of(agreement);
+            let tip = tip_on(identity.consensus_branch_id());
             let canonical_block = BlockHash([0x22; 32]);
             let mut raw = Vec::new();
             transaction
@@ -2362,7 +2593,11 @@ mod tests {
             if let Some(override_result) = state.chain_info_overrides.pop_front() {
                 return override_result;
             }
-            Ok(state.chain_infos.pop_front().unwrap_or_else(canonical_tip))
+            let branch = state.identity.consensus_branch_id();
+            Ok(state
+                .chain_infos
+                .pop_front()
+                .unwrap_or_else(|| tip_on(branch)))
         }
 
         async fn block_hash(&self, height: BlockHeight) -> Result<BlockHash, Self::Error> {
@@ -2692,6 +2927,14 @@ mod tests {
             panic!("claim-context fixture stops before follow-up observation")
         }
 
+        async fn observe_counterparty_revealing_claim(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashClaimContextV1,
+        ) -> Result<RevealingClaimObservationV1, Self::Error> {
+            panic!("forward fixture reveals on LEZ")
+        }
+
         async fn submit_followup_claim(
             &self,
             _agreement: &ZecAgreementV1,
@@ -2699,6 +2942,55 @@ mod tests {
             _prepared: &PreparedClaimSubmissionV1,
         ) -> Result<(), Self::Error> {
             panic!("claim-context fixture stops before follow-up submission")
+        }
+    }
+
+    // The SDK's claim drive also reads the Maker's Zcash refund (TakerSellsLez); this forward
+    // fixture never reaches it.
+    #[async_trait]
+    impl ZcashRefundPort for NeverZcash {
+        type Error = FakeError;
+
+        async fn observe_refund_eligibility(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+        ) -> Result<RefundEligibilityObservationV1, Self::Error> {
+            panic!("forward claim fixture never refunds")
+        }
+
+        async fn prepare_refund(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+        ) -> Result<PreparedRefundSubmissionV1, Self::Error> {
+            panic!("forward claim fixture never refunds")
+        }
+
+        async fn observe_prepared_refund(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+            _prepared: &PreparedRefundSubmissionV1,
+        ) -> Result<RefundObservationV1, Self::Error> {
+            panic!("forward claim fixture never refunds")
+        }
+
+        async fn observe_counterparty_refund(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+        ) -> Result<RefundObservationV1, Self::Error> {
+            panic!("forward claim fixture never observes a refund")
+        }
+
+        async fn submit_refund(
+            &self,
+            _agreement: &ZecAgreementV1,
+            _context: &ZcashFundingContextV1,
+            _prepared: &PreparedRefundSubmissionV1,
+        ) -> Result<RefundSubmitOutcomeV1, Self::Error> {
+            panic!("forward claim fixture never refunds")
         }
     }
 
@@ -3870,7 +4162,7 @@ mod tests {
                 ZebraRpcChain::Test,
                 BlockHeight::from_u32(REFUND_TIP_HEIGHT),
                 BlockHash([REFUND_TIP_HASH_BYTE; 32]),
-                BranchId::Nu6_2,
+                state.identity.consensus_branch_id(),
             );
             state.chain_infos = VecDeque::from(vec![tip; 512]);
             let confirmations = REFUND_TIP_HEIGHT - INCLUSION_HEIGHT + 1;
@@ -3916,7 +4208,7 @@ mod tests {
                 participant: fixture.owner,
                 key: refund_key(direction),
             },
-            ZebraChainIdentity::deterministic_regtest_nu6_2(),
+            identity_of(&fixture.agreement),
         );
         assert_eq!(
             port.observe_refund_eligibility(&fixture.agreement, &fixture.context)
@@ -4192,12 +4484,32 @@ mod tests {
     }
 
     fn canonical_tip() -> ZebraChainInfo {
+        tip_on(BranchId::Nu6_2)
+    }
+
+    fn tip_on(branch: BranchId) -> ZebraChainInfo {
         ZebraChainInfo::new(
             ZebraRpcChain::Test,
             BlockHeight::from_u32(TIP_HEIGHT),
             BlockHash([0x33; 32]),
-            BranchId::Nu6_2,
+            branch,
         )
+    }
+
+    /// The fixed node identity whose network and branch the agreement signs for.
+    fn identity_of(agreement: &ZecAgreementV1) -> ZebraChainIdentity {
+        let expected = agreement.binding().expected_output();
+        match (expected.network(), expected.consensus_branch_id()) {
+            (NetworkType::Test, branch) => ZebraChainIdentity::new(
+                NetworkType::Test,
+                ZebraRpcChain::Test,
+                branch,
+                BlockHash([0x5a; 32]),
+            )
+            .expect("fixed Testnet-shaped identity"),
+            (_, BranchId::Nu7) => ZebraChainIdentity::deterministic_regtest_nu7(),
+            _ => ZebraChainIdentity::deterministic_regtest_nu6_2(),
+        }
     }
 
     fn claimant_key() -> SecretKey {
@@ -4252,6 +4564,17 @@ mod tests {
         direction: SwapDirection,
         secret: [u8; 32],
     ) -> ZecAgreementV1 {
+        agreement_for(direction, Sha256::digest(secret).into(), false)
+    }
+
+    /// A signed agreement for `direction`; `public` selects public-testnet-v3, the only
+    /// Taker-reveals-first profile that asks for more than one Zcash confirmation.
+    #[allow(clippy::too_many_lines)]
+    fn agreement_for(
+        direction: SwapDirection,
+        secret_digest: [u8; 32],
+        public: bool,
+    ) -> ZecAgreementV1 {
         let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
         let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
         let secp = Secp256k1::new();
@@ -4263,35 +4586,74 @@ mod tests {
         };
         let refund_hash = pubkey_hash(&refund_key);
         let claimant_hash = pubkey_hash(&claimant_key);
-        let secret_digest = Sha256::digest(secret).into();
-        let contract = Bip199Contract::new(120, refund_hash, secret_digest, claimant_hash);
-        let binding = ZecSwapBinding::new(
-            ZecProfileId::DeterministicLocalV1,
-            lez_zec_swap_sdk::ExpectedBip199Output::new(
-                NetworkType::Regtest,
+        // `TakerSellsLez` needs a Taker-reveals-first profile (deterministic-local-v3, Regtest
+        // NU7): Zcash anchor 116 + 8 blocks; LEZ anchor 100 s + 120 s; the earlier Zcash
+        // refund's latest time is declared 30 s (the margin) before the LEZ deadline.
+        // public-testnet-v3: Zcash anchor 100 + 95 blocks; LEZ anchor 100 s + 14 400 s; the
+        // earlier Zcash refund's latest time is the anchor plus 96 blocks of 75 s.
+        let (profile, branch, refund_lock, refund_plan) = match (direction, public) {
+            (SwapDirection::TakerSellsForeign, _) => (
+                ZecProfileId::DeterministicLocalV1,
                 BranchId::Nu6_2,
+                120,
+                ZecRefundPlanV1::new(100, 116, 160_000, 200),
+            ),
+            (SwapDirection::TakerSellsLez, false) => (
+                ZecProfileId::DeterministicLocalV3,
+                BranchId::Nu7,
+                124,
+                ZecRefundPlanV1::new(100, 116, 190_000, 220),
+            ),
+            (SwapDirection::TakerSellsLez, true) => (
+                ZecProfileId::PublicTestnetV3,
+                BranchId::Nu7,
+                195,
+                ZecRefundPlanV1::new(100, 100, 7_300_000, 14_500),
+            ),
+        };
+        let (network, environment) = if public {
+            (NetworkType::Test, LezEnvironmentV1::PublicTestnetV0_2)
+        } else {
+            (
+                NetworkType::Regtest,
+                LezEnvironmentV1::DeterministicLocalV0_2,
+            )
+        };
+        let contract = Bip199Contract::for_profile(
+            profile,
+            refund_lock,
+            refund_hash,
+            secret_digest,
+            claimant_hash,
+        );
+        let binding = ZecSwapBinding::new(
+            profile,
+            lez_zec_swap_sdk::ExpectedBip199Output::new(
+                network,
+                branch,
                 Zatoshis::from_u64(100_000_000).expect("principal"),
                 contract,
             ),
         )
         .expect("profile binding");
-        let id = match direction {
-            SwapDirection::TakerSellsForeign => "zebra-claim-funding-test",
-            SwapDirection::TakerSellsLez => "zebra-refund-reverse-test",
+        let id = match (direction, public) {
+            (SwapDirection::TakerSellsForeign, _) => "zebra-claim-funding-test",
+            (SwapDirection::TakerSellsLez, false) => "zebra-refund-reverse-test",
+            (SwapDirection::TakerSellsLez, true) => "zebra-reveal-public-test",
         };
         let escrow_program = [1; 8];
         let onchain_id = derive_lez_swap_id_v1(id.as_bytes());
         let body = ZecAgreementBodyV1::new(
             id,
             direction,
-            ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+            ZecProfileRecordV1::from(profile),
             ZecParticipantsV1::new(
                 ZecParticipantIdentityV1::new([3; 32], maker_key),
                 ZecParticipantIdentityV1::new([4; 32], taker_key),
             ),
             secret_digest,
             ZecLezTermsV1::new(
-                LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
+                LezChainIdentityV1::new(environment, [8; 32], [7; 32]),
                 escrow_program,
                 LezAssetV1::Native {
                     authenticated_transfer_program_id: [2; 8],
@@ -4310,9 +4672,9 @@ mod tests {
                 10_000,
                 ZcashTransparentDestinationV1::p2pkh(refund_hash),
                 10_000,
-                40,
+                ZecRefundProfile::for_id(profile).expiry_delta_blocks(),
             ),
-            ZecRefundPlanV1::new(100, 116, 160_000, 200),
+            refund_plan,
             NegotiationTranscriptV1::new([5; 32], [6; 32], 1_000),
         );
         let commitment = body.commitment();
@@ -4358,7 +4720,7 @@ mod tests {
                     participant: fixture.owner.other(),
                     key: refund_key(direction),
                 },
-                ZebraChainIdentity::deterministic_regtest_nu6_2(),
+                identity_of(&fixture.agreement),
             );
             assert!(matches!(
                 wrong_role
@@ -4377,7 +4739,7 @@ mod tests {
                     participant: fixture.owner,
                     key: SecretKey::from_slice(&wrong_key_bytes).expect("wrong branch key"),
                 },
-                ZebraChainIdentity::deterministic_regtest_nu6_2(),
+                identity_of(&fixture.agreement),
             );
             assert!(matches!(
                 wrong_key
@@ -4726,7 +5088,7 @@ mod tests {
         let observer = ZebraRpcRefundPort::new(
             rpc.clone(),
             NeverRefundSigner,
-            ZebraChainIdentity::deterministic_regtest_nu6_2(),
+            identity_of(&fixture.agreement),
         );
         assert_eq!(
             observer
@@ -4766,7 +5128,7 @@ mod tests {
         let bounded = ZebraRpcRefundPort::new(
             rpc.clone(),
             NeverRefundSigner,
-            ZebraChainIdentity::deterministic_regtest_nu6_2(),
+            identity_of(&fixture.agreement),
         )
         .with_counterparty_scan_blocks(1);
         assert_eq!(
@@ -4795,6 +5157,879 @@ mod tests {
                 .await,
             Err(ZebraClaimError::Rpc(FakeError::Transport))
         ));
+    }
+
+    #[test]
+    fn a_refund_below_its_required_depth_waits_instead_of_failing() {
+        // Review 3, item 5: RefundEvidenceV1::new refuses a refund below the leg's depth
+        // (InsufficientConfirmations); the adapter returned that as an error, so the Taker
+        // reading the Maker's Zcash refund mid-burial failed its drive instead of waiting.
+        let under = refund_evidence_or_wait::<FakeError, FakeError>(Err(ZebraClaimError::Refund(
+            RefundError::InsufficientConfirmations {
+                step: RefundStepV1::Zcash,
+                required: 10,
+                actual: 1,
+            },
+        )));
+        assert_eq!(
+            under.expect("a wait, not an error"),
+            RefundObservationV1::Unstable
+        );
+        let other = refund_evidence_or_wait::<FakeError, FakeError>(Err(
+            ZebraClaimError::WrongRefundSpendBranch,
+        ));
+        assert!(matches!(
+            other,
+            Err(ZebraClaimError::WrongRefundSpendBranch)
+        ));
+    }
+
+    // `TakerSellsLez`: the Taker claims the Maker-funded Zcash HTLC first and the Maker reads
+    // the preimage from that spend.
+
+    const REVEAL_SECRET: [u8; 32] = [0x91; 32];
+
+    fn taker_claimant_key() -> SecretKey {
+        SecretKey::from_slice(&[2; 32]).expect("taker claimant key")
+    }
+
+    fn maker_refund_key() -> SecretKey {
+        SecretKey::from_slice(&[1; 32]).expect("maker refund key")
+    }
+
+    /// The Taker's `TakerSellsLez` swap at `BothLegsLocked`: its LEZ lock and the Maker's Zcash
+    /// funding are projected, so the SDK hands out the Zcash claim context of the revealing
+    /// claim. The context is the same data for both roles (agreement, swap id, Zcash funder,
+    /// funding outpoint); the adapter's claim routes carry no role.
+    async fn reveal_fixture(public: bool, preimage: &[u8]) -> ClaimFixture {
+        let agreement = agreement_for(
+            SwapDirection::TakerSellsLez,
+            Sha256::digest(preimage).into(),
+            public,
+        );
+        let funding = funding_transaction(&agreement);
+        let funding_id = funding.txid();
+        let wire = agreement.encode_wire().expect("bounded agreement wire");
+        let data = TempDir::new().expect("isolated Zebra reveal fixture");
+        let store = SqliteZecRecoveryStore::open_claim_capable(
+            data.path().join("taker.sqlite3"),
+            Participant::Taker,
+            ProtectedClaimKey::new("zebra-reveal-port-test-v1", [0x7c; 32])
+                .expect("valid test recovery key"),
+        )
+        .expect("claim-capable SQLite store");
+        let sdk = ZecPairSdk::new(
+            Participant::Taker,
+            FixedDiscovery,
+            FixedNegotiation(wire),
+            ClaimLifecycleLez {
+                secret: REVEAL_SECRET,
+            },
+            RefundLifecycleZcash { funding_id },
+            store,
+        );
+        let accepted = sdk
+            .negotiate_at(&(), (), UnixSeconds::new(10))
+            .await
+            .expect("authentic accepted agreement");
+        let mut active = match <[u8; 32]>::try_from(preimage) {
+            Ok(secret) => sdk
+                .activate_with_claim_preimage(accepted, ClaimPreimage::new(secret))
+                .await
+                .expect("the Taker holds the preimage"),
+            Err(_) => sdk.activate(accepted).await.expect("durable activation"),
+        };
+        active
+            .stage_first_lock(
+                FirstLockPlanV1::lez(
+                    PreparedFirstLockSubmissionV1::new(
+                        FirstLockStepV1::LezInitialize,
+                        [0x41; 32],
+                        b"initialize".to_vec(),
+                    )
+                    .expect("valid initialize submission"),
+                    PreparedFirstLockSubmissionV1::new(
+                        FirstLockStepV1::LezFund,
+                        [0x42; 32],
+                        b"fund".to_vec(),
+                    )
+                    .expect("valid fund submission"),
+                )
+                .expect("direction-correct first-lock plan"),
+            )
+            .await
+            .expect("durable first-lock intent");
+        active
+            .project_first_lock(
+                FirstLockConfirmedEvidenceV1::new(
+                    FirstLockStepV1::LezFund,
+                    [0x42; 32],
+                    hex::encode([0x42; 32]),
+                    100,
+                )
+                .expect("canonical LEZ first-lock evidence"),
+            )
+            .await
+            .expect("durable first-lock projection");
+        active
+            .observe_maker_lock()
+            .await
+            .expect("canonical Maker Zcash lock projection");
+        let context = active
+            .zcash_claim_context()
+            .expect("the revealing Zcash claim context exists at BothLegsLocked");
+        assert_eq!(context.zcash_funder(), Participant::Maker);
+        ClaimFixture {
+            agreement: active.agreement().clone(),
+            context,
+            funding,
+            secret: REVEAL_SECRET,
+        }
+    }
+
+    fn reveal_ports(
+        fixture: &ClaimFixture,
+    ) -> (
+        FakeRpc,
+        ZebraRpcClaimPort<FakeRpc, CanonicalSigner>,
+        ZebraRpcClaimPort<FakeRpc, NeverSigner>,
+    ) {
+        let (rpc, target) = FakeRpc::confirmed(&fixture.agreement, &fixture.funding);
+        assert_eq!(target.outpoint, *fixture.context.funding_outpoint());
+        let identity = identity_of(&fixture.agreement);
+        let taker =
+            ZebraRpcClaimPort::new(rpc.clone(), CanonicalSigner(taker_claimant_key()), identity);
+        let maker = ZebraRpcClaimPort::new(rpc.clone(), NeverSigner, identity);
+        (rpc, taker, maker)
+    }
+
+    fn spend_bytes(fixture: &ClaimFixture, claim_preimage: Option<&[u8]>) -> Vec<u8> {
+        let expected = fixture.agreement.binding().expected_output();
+        let output = fixture.funding.transparent_bundle().expect("funding").vout[0].clone();
+        let outpoint = fixture.context.funding_outpoint().clone();
+        let transaction = if let Some(preimage) = claim_preimage {
+            let request = fixture
+                .agreement
+                .claim_spend_request(outpoint, output, BlockHeight::from_u32(TIP_HEIGHT))
+                .expect("canonical claim request");
+            build_claim_transaction(
+                expected.contract(),
+                &request,
+                &taker_claimant_key(),
+                preimage,
+            )
+            .expect("signed claim")
+        } else {
+            let request = fixture
+                .agreement
+                .refund_spend_request(
+                    outpoint,
+                    output,
+                    BlockHeight::from_u32(expected.contract().refund_lock_time()),
+                )
+                .expect("canonical refund request");
+            build_refund_transaction(expected.contract(), &request, &maker_refund_key())
+                .expect("signed refund")
+        };
+        let mut exact = Vec::new();
+        transaction
+            .write(&mut exact)
+            .expect("canonical spend bytes");
+        exact
+    }
+
+    fn set_confirmed_spend(rpc: &FakeRpc, raw_transaction: Vec<u8>) {
+        rpc.edit(|state| {
+            state.calls.clear();
+            state.chain_infos.clear();
+            state.canonical_block = BlockHash([0x22; 32]);
+            state.discovery_enabled = true;
+            state.unspent = None;
+            state.transaction = Some(ZebraTransactionState::Confirmed {
+                raw_transaction,
+                block_hash: state.canonical_block,
+                block_height: BlockHeight::from_u32(INCLUSION_HEIGHT),
+                confirmations: TIP_HEIGHT - INCLUSION_HEIGHT + 1,
+                in_active_chain: true,
+            });
+        });
+    }
+
+    fn set_mempool_spend(rpc: &FakeRpc, raw_transaction: Vec<u8>) {
+        rpc.edit(|state| {
+            state.discovery_enabled = true;
+            state.unspent = None;
+            state.transaction = Some(ZebraTransactionState::Mempool { raw_transaction });
+        });
+    }
+
+    /// Moves the stable tip to `height`; the funding and the spend stay at the inclusion block.
+    fn set_spend_tip(rpc: &FakeRpc, height: u32) {
+        rpc.edit(|state| {
+            let hash = if height == TIP_HEIGHT {
+                canonical_tip().tip_hash()
+            } else {
+                BlockHash([u8::try_from(height).expect("fixture height fits a byte"); 32])
+            };
+            let tip = ZebraChainInfo::new(
+                ZebraRpcChain::Test,
+                BlockHeight::from_u32(height),
+                hash,
+                state.identity.consensus_branch_id(),
+            );
+            state.chain_infos = VecDeque::from(vec![tip; 64]);
+            let depth = height - INCLUSION_HEIGHT + 1;
+            if let ZebraTransactionState::Confirmed { confirmations, .. } =
+                &mut state.funding_transaction
+            {
+                *confirmations = depth;
+            }
+            if let Some(ZebraTransactionState::Confirmed { confirmations, .. }) =
+                &mut state.transaction
+            {
+                *confirmations = depth;
+            }
+        });
+    }
+
+    fn revealed_preimage(observation: RevealingClaimObservationV1) -> RevealingClaimEvidenceV1 {
+        match observation {
+            RevealingClaimObservationV1::Confirmed(evidence) => evidence,
+            other => panic!("expected confirmed revealing evidence, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn revealing_claim_is_absent_while_the_exact_outpoint_is_unspent() {
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let (rpc, _, maker) = reveal_ports(&fixture);
+        assert!(matches!(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("stable unspent outpoint"),
+            RevealingClaimObservationV1::Absent
+        ));
+        assert!(rpc.calls().contains(&"unspent_output".to_owned()));
+        assert!(rpc.submitted().is_empty());
+    }
+
+    #[tokio::test]
+    async fn revealing_claim_in_the_mempool_reveals_the_preimage_and_a_moving_tip_is_unstable() {
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let (rpc, _, maker) = reveal_ports(&fixture);
+        let claim = spend_bytes(&fixture, Some(&REVEAL_SECRET));
+        let claim_id = Transaction::read(claim.as_slice(), BranchId::Nu7)
+            .expect("claim decodes")
+            .txid();
+        set_mempool_spend(&rpc, claim);
+        let evidence = revealed_preimage(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("a mempool claim reveals the preimage"),
+        );
+        assert_eq!(evidence.preimage().expose_secret(), &REVEAL_SECRET);
+        assert_eq!(evidence.confirmations(), 0);
+        assert_eq!(evidence.transaction_id(), claim_id.to_string());
+
+        set_confirmed_spend(&rpc, spend_bytes(&fixture, Some(&REVEAL_SECRET)));
+        rpc.edit(|state| {
+            let moving = ZebraChainInfo::new(
+                ZebraRpcChain::Test,
+                BlockHeight::from_u32(TIP_HEIGHT + 1),
+                BlockHash([0x44; 32]),
+                BranchId::Nu7,
+            );
+            state.chain_infos = VecDeque::from([tip_on(BranchId::Nu7), moving]);
+        });
+        assert!(matches!(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("a moving tip is an unstable observation"),
+            RevealingClaimObservationV1::Unstable
+        ));
+    }
+
+    #[tokio::test]
+    async fn revealing_claim_at_depth_returns_the_digest_preimage() {
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let (rpc, _, maker) = reveal_ports(&fixture);
+        let claim = spend_bytes(&fixture, Some(&REVEAL_SECRET));
+        let claim_id = Transaction::read(claim.as_slice(), BranchId::Nu7)
+            .expect("claim decodes")
+            .txid();
+        set_confirmed_spend(&rpc, claim);
+        let evidence = revealed_preimage(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("canonical claim at depth"),
+        );
+        assert_eq!(evidence.preimage().expose_secret(), &REVEAL_SECRET);
+        assert_eq!(
+            <[u8; 32]>::from(Sha256::digest(evidence.preimage().expose_secret())),
+            *fixture.agreement.secret_digest()
+        );
+        assert_eq!(evidence.observed_submission_id(), claim_id.as_ref());
+        assert_eq!(evidence.transaction_id(), claim_id.to_string());
+        assert_eq!(evidence.confirmations(), TIP_HEIGHT - INCLUSION_HEIGHT + 1);
+        let debug = format!("{evidence:?}");
+        assert!(!debug.contains(&hex::encode(REVEAL_SECRET)));
+        assert!(rpc.submitted().is_empty());
+    }
+
+    #[tokio::test]
+    async fn revealing_claim_below_the_zcash_depth_reveals_the_preimage() {
+        // public-testnet-v3 asks for ten Zcash confirmations of the Taker's own claim; the
+        // Maker reading the preimage does not wait for them.
+        let fixture = reveal_fixture(true, &REVEAL_SECRET).await;
+        let required = fixture
+            .agreement
+            .coordinator()
+            .required_confirmations(Participant::Maker);
+        assert_eq!(required, 10);
+        let (rpc, _, maker) = reveal_ports(&fixture);
+        set_confirmed_spend(&rpc, spend_bytes(&fixture, Some(&REVEAL_SECRET)));
+        set_spend_tip(&rpc, INCLUSION_HEIGHT);
+        let evidence = revealed_preimage(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("a claim in the tip block"),
+        );
+        assert_eq!(evidence.confirmations(), 1);
+        assert_eq!(evidence.preimage().expose_secret(), &REVEAL_SECRET);
+
+        set_spend_tip(&rpc, INCLUSION_HEIGHT + required - 1);
+        let evidence = revealed_preimage(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("claim at exactly the required depth"),
+        );
+        assert_eq!(evidence.confirmations(), required);
+        assert_eq!(evidence.preimage().expose_secret(), &REVEAL_SECRET);
+    }
+
+    #[tokio::test]
+    async fn revealing_claim_that_leaves_the_chain_is_read_from_the_mempool_then_absent() {
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let (rpc, _, maker) = reveal_ports(&fixture);
+        let unspent = rpc.state.lock().expect("fake state").unspent.clone();
+        let claim = spend_bytes(&fixture, Some(&REVEAL_SECRET));
+        set_confirmed_spend(&rpc, claim.clone());
+        revealed_preimage(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("claim before the reorg"),
+        );
+
+        // The claim's block is replaced and the claim returns to the mempool: its preimage
+        // is still the one the digest commits to.
+        set_mempool_spend(&rpc, claim);
+        let evidence = revealed_preimage(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("reorged claim in the mempool"),
+        );
+        assert_eq!(evidence.confirmations(), 0);
+        assert_eq!(evidence.preimage().expose_secret(), &REVEAL_SECRET);
+
+        // The claim is dropped: the exact outpoint is unspent again.
+        rpc.edit(|state| {
+            state.transaction = None;
+            state.unspent = unspent;
+        });
+        assert!(matches!(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("reorged-out claim"),
+            RevealingClaimObservationV1::Absent
+        ));
+    }
+
+    #[tokio::test]
+    async fn refund_spend_of_the_htlc_is_the_wrong_branch_and_never_a_preimage() {
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let (rpc, _, maker) = reveal_ports(&fixture);
+        let refund = spend_bytes(&fixture, None);
+        set_confirmed_spend(&rpc, refund.clone());
+        assert!(matches!(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await,
+            Err(ZebraClaimError::WrongSpendBranch)
+        ));
+        set_mempool_spend(&rpc, refund);
+        assert!(matches!(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await,
+            Err(ZebraClaimError::WrongSpendBranch)
+        ));
+    }
+
+    /// The Maker refuses a claim whose preimage is not the agreed one: another 32-byte value,
+    /// or a digest-matching preimage of another length. The Taker-reveals-first contract
+    /// makes the second invalid on Zcash (its claim branch checks the size), so such a claim
+    /// never pays the Taker; the Maker's reader refuses it by length all the same.
+    #[tokio::test]
+    async fn maker_refuses_a_claim_with_a_wrong_or_wrong_length_preimage() {
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let (rpc, _, maker) = reveal_ports(&fixture);
+        // Same claim with another 32-byte value in the preimage push.
+        let mut wrong = spend_bytes(&fixture, Some(&REVEAL_SECRET));
+        let at = wrong
+            .windows(32)
+            .position(|window| window == REVEAL_SECRET)
+            .expect("the claim pushes its preimage");
+        wrong[at..at + 32].copy_from_slice(&[0x13; 32]);
+        set_confirmed_spend(&rpc, wrong.clone());
+        assert!(matches!(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await,
+            Err(ZebraClaimError::SpendObservation(
+                SpendObservationError::WrongPreimage
+            ))
+        ));
+        set_mempool_spend(&rpc, wrong);
+        assert!(matches!(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await,
+            Err(ZebraClaimError::SpendObservation(
+                SpendObservationError::WrongPreimage
+            ))
+        ));
+
+        // A digest-matching preimage of 33 or 31 bytes: the contract's claim branch refuses
+        // it (`OP_SIZE <32> OP_EQUALVERIFY`, shown on Zebra in zebra_regtest_reveal.rs), and
+        // the Maker's reader refuses it by length before it could become claim evidence.
+        for length in [33_usize, 31] {
+            let wrong_length = vec![0x91; length];
+            let fixture = reveal_fixture(false, &wrong_length).await;
+            assert_eq!(
+                fixture
+                    .agreement
+                    .binding()
+                    .expected_output()
+                    .contract()
+                    .preimage_rule(),
+                Bip199PreimageRule::Exactly32Bytes
+            );
+            let (rpc, _, maker) = reveal_ports(&fixture);
+            set_confirmed_spend(&rpc, spend_bytes(&fixture, Some(&wrong_length)));
+            assert!(matches!(
+                maker
+                    .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                    .await,
+                Err(ZebraClaimError::SpendObservation(
+                    SpendObservationError::PreimageLengthRefused { length: refused }
+                )) if refused == length
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn taker_prepares_observes_and_submits_its_revealing_zcash_claim() {
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let (rpc, taker, maker) = reveal_ports(&fixture);
+        let prepared = taker
+            .prepare_revealing_claim(
+                &fixture.agreement,
+                &fixture.context,
+                &ClaimPreimage::new(REVEAL_SECRET),
+            )
+            .await
+            .expect("the Taker prepares its revealing claim at BothLegsLocked");
+        assert_eq!(prepared.step(), ClaimStepV1::RevealingZcash);
+        assert_eq!(
+            prepared.exact_submission(),
+            spend_bytes(&fixture, Some(&REVEAL_SECRET))
+        );
+        set_spend_tip(&rpc, TIP_HEIGHT);
+        rpc.edit(|state| {
+            state.transaction = None;
+            state.calls.clear();
+        });
+        assert_eq!(
+            taker
+                .observe_prepared_revealing_claim(&fixture.agreement, &fixture.context, &prepared)
+                .await
+                .expect("relabeled copy passes the step check"),
+            FollowupClaimObservationV1::Absent
+        );
+
+        rpc.edit(|state| {
+            state
+                .submissions
+                .push_back(Ok(TxId::from_bytes(*prepared.expected_submission_id())));
+        });
+        taker
+            .submit_revealing_claim(&fixture.agreement, &fixture.context, &prepared)
+            .await
+            .expect("exact revealing claim is sent once");
+        assert_exactly_one_send(&rpc, &prepared);
+
+        set_confirmed_spend(&rpc, prepared.exact_submission().to_vec());
+        assert!(matches!(
+            taker
+                .observe_prepared_revealing_claim(&fixture.agreement, &fixture.context, &prepared)
+                .await
+                .expect("own claim at depth"),
+            FollowupClaimObservationV1::Confirmed(_)
+        ));
+        let evidence = revealed_preimage(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("the Maker reads the same claim"),
+        );
+        assert_eq!(evidence.preimage().expose_secret(), &REVEAL_SECRET);
+    }
+
+    #[tokio::test]
+    async fn taker_own_revealing_claim_below_the_zcash_depth_is_unstable() {
+        let fixture = reveal_fixture(true, &REVEAL_SECRET).await;
+        let (rpc, taker, _) = reveal_ports(&fixture);
+        let prepared = taker
+            .prepare_revealing_claim(
+                &fixture.agreement,
+                &fixture.context,
+                &ClaimPreimage::new(REVEAL_SECRET),
+            )
+            .await
+            .expect("the Taker prepares its revealing claim");
+        set_confirmed_spend(&rpc, prepared.exact_submission().to_vec());
+        // Two confirmations satisfy the LEZ depth (2) but not the Zcash depth (10).
+        set_spend_tip(&rpc, INCLUSION_HEIGHT + 1);
+        assert_eq!(
+            taker
+                .observe_prepared_revealing_claim(&fixture.agreement, &fixture.context, &prepared)
+                .await
+                .expect("shallow own claim"),
+            FollowupClaimObservationV1::Unstable
+        );
+        set_spend_tip(&rpc, INCLUSION_HEIGHT + 9);
+        let FollowupClaimObservationV1::Confirmed(evidence) = taker
+            .observe_prepared_revealing_claim(&fixture.agreement, &fixture.context, &prepared)
+            .await
+            .expect("own claim at the Zcash depth")
+        else {
+            panic!("own claim at depth is confirmed")
+        };
+        assert_eq!(evidence.confirmations(), 10);
+    }
+
+    // A Taker running other software claims the HTLC with a transaction Zcash accepts but the
+    // SDK would not build: the Maker reads the preimage from it all the same.
+
+    #[derive(Debug)]
+    struct ForeignSigningTransparent {
+        funding_output: TxOut,
+    }
+
+    impl zcash_transparent::bundle::Authorization for ForeignSigningTransparent {
+        type ScriptSig = ();
+    }
+
+    impl zcash_transparent::sighash::TransparentAuthorizingContext for ForeignSigningTransparent {
+        fn input_amounts(&self) -> Vec<Zatoshis> {
+            vec![self.funding_output.value()]
+        }
+
+        fn input_scriptpubkeys(&self) -> Vec<Script> {
+            vec![self.funding_output.script_pubkey().clone()]
+        }
+    }
+
+    #[derive(Debug)]
+    struct ForeignSigning;
+
+    impl zcash_primitives::transaction::Authorization for ForeignSigning {
+        type TransparentAuth = ForeignSigningTransparent;
+        type SaplingAuth =
+            <zcash_primitives::transaction::Authorized as zcash_primitives::transaction::Authorization>::SaplingAuth;
+        type OrchardAuth =
+            <zcash_primitives::transaction::Authorized as zcash_primitives::transaction::Authorization>::OrchardAuth;
+    }
+
+    /// How a foreign claim departs from the SDK's template.
+    struct ForeignClaim {
+        prevout: OutPoint,
+        outputs: Vec<TxOut>,
+        expiry_height: u32,
+        sighash: zcash_transparent::sighash::SighashType,
+        high_s: bool,
+        preimage: [u8; 32],
+    }
+
+    impl ForeignClaim {
+        /// The template's own terms: the HTLC outpoint, one output to the agreement's claim
+        /// destination less the signed fee, the SDK expiry, `SIGHASH_ALL`, low-S.
+        fn template(fixture: &ClaimFixture) -> Self {
+            let funding = fixture.funding.transparent_bundle().expect("funding").vout[0].clone();
+            let request = fixture
+                .agreement
+                .claim_spend_request(
+                    fixture.context.funding_outpoint().clone(),
+                    funding.clone(),
+                    BlockHeight::from_u32(TIP_HEIGHT),
+                )
+                .expect("canonical claim request");
+            Self {
+                prevout: fixture.context.funding_outpoint().clone(),
+                outputs: vec![TxOut::new(
+                    (funding.value() - request.fee()).expect("fee below the principal"),
+                    request.destination().script().into(),
+                )],
+                expiry_height: u32::from(request.expiry_height()),
+                sighash: zcash_transparent::sighash::SighashType::ALL,
+                high_s: false,
+                preimage: fixture.secret,
+            }
+        }
+
+        fn bytes(&self, fixture: &ClaimFixture) -> Vec<u8> {
+            use zcash_primitives::transaction::{
+                TransactionData,
+                sighash::{PrecomputedSighashData, SignableInput},
+            };
+            use zcash_transparent::bundle::{Authorized as TransparentAuthorized, Bundle, TxIn};
+
+            let contract = fixture.agreement.binding().expected_output().contract();
+            let funding = fixture.funding.transparent_bundle().expect("funding").vout[0].clone();
+            let branch = fixture
+                .agreement
+                .binding()
+                .expected_output()
+                .consensus_branch_id();
+            let expiry = BlockHeight::from_u32(self.expiry_height);
+            let unsigned = TransactionData::<ForeignSigning>::from_parts(
+                TxVersion::V5,
+                branch,
+                0,
+                expiry,
+                Some(Bundle {
+                    vin: vec![TxIn::from_parts(self.prevout.clone(), (), u32::MAX)],
+                    vout: self.outputs.clone(),
+                    authorization: ForeignSigningTransparent {
+                        funding_output: funding.clone(),
+                    },
+                }),
+                None,
+                None,
+                None,
+            );
+            let precomputed = PrecomputedSighashData::new_zip244(unsigned).expect("ZIP-244 data");
+            let bundle = precomputed.tx().transparent_bundle().expect("transparent");
+            let redeem_script = Script(Code(contract.redeem_script().to_vec()));
+            let signable = zcash_transparent::sighash::SignableInput::from_parts(
+                bundle,
+                self.sighash,
+                0,
+                &redeem_script,
+                funding.script_pubkey(),
+                funding.value(),
+            )
+            .expect("signable HTLC input");
+            let digest = precomputed.signature_hash(&SignableInput::Transparent(signable));
+            let secp = Secp256k1::new();
+            let mut signature = secp.sign_ecdsa(
+                &Message::from_digest(*digest.as_ref()),
+                &taker_claimant_key(),
+            );
+            if self.high_s {
+                signature = high_s(&signature);
+            }
+            let mut signature = signature.serialize_der().to_vec();
+            signature.push(self.sighash.encode());
+            let public_key = PublicKey::from_secret_key(&secp, &taker_claimant_key()).serialize();
+            let script_sig = contract
+                .claim_script_sig(&signature, &public_key, &self.preimage)
+                .expect("claim scriptSig");
+            let transaction =
+                TransactionData::<zcash_primitives::transaction::Authorized>::from_parts(
+                    TxVersion::V5,
+                    branch,
+                    0,
+                    expiry,
+                    Some(Bundle {
+                        vin: vec![TxIn::from_parts(
+                            self.prevout.clone(),
+                            Script(Code(script_sig)),
+                            u32::MAX,
+                        )],
+                        vout: self.outputs.clone(),
+                        authorization: TransparentAuthorized,
+                    }),
+                    None,
+                    None,
+                    None,
+                )
+                .freeze()
+                .expect("foreign claim");
+            let mut exact = Vec::new();
+            transaction.write(&mut exact).expect("foreign claim bytes");
+            exact
+        }
+    }
+
+    /// The same signature with `s` replaced by `n - s`: valid under Zebra's consensus flags,
+    /// which do not include `LOW_S`.
+    fn high_s(signature: &secp256k1::ecdsa::Signature) -> secp256k1::ecdsa::Signature {
+        const ORDER: [u8; 32] = [
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c,
+            0xd0, 0x36, 0x41, 0x41,
+        ];
+        let mut compact = signature.serialize_compact();
+        let mut borrow = 0_i16;
+        for index in (0..32).rev() {
+            let mut difference = i16::from(ORDER[index]) - i16::from(compact[32 + index]) - borrow;
+            borrow = i16::from(difference < 0);
+            if difference < 0 {
+                difference += 256;
+            }
+            compact[32 + index] = u8::try_from(difference).expect("one byte");
+        }
+        secp256k1::ecdsa::Signature::from_compact(&compact).expect("high-S signature")
+    }
+
+    fn other_destination() -> Script {
+        TransparentAddress::PublicKeyHash([0x77; 20])
+            .script()
+            .into()
+    }
+
+    #[tokio::test]
+    async fn a_consensus_valid_non_template_claim_reveals_the_preimage() {
+        use zcash_transparent::sighash::SighashType;
+
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let principal = fixture.funding.transparent_bundle().expect("funding").vout[0].value();
+        let zats = |value: u64| Zatoshis::from_u64(value).expect("amount");
+        let cases: Vec<(&str, ForeignClaim)> = vec![
+            ("another destination and fee", {
+                let mut claim = ForeignClaim::template(&fixture);
+                claim.outputs = vec![TxOut::new(
+                    (principal - zats(1_234)).expect("fee"),
+                    other_destination(),
+                )];
+                claim
+            }),
+            ("an extra output", {
+                let mut claim = ForeignClaim::template(&fixture);
+                let paid = claim.outputs[0].value();
+                claim.outputs = vec![
+                    TxOut::new((paid - zats(50_000)).expect("split"), other_destination()),
+                    TxOut::new(zats(50_000), claim.outputs[0].script_pubkey().clone()),
+                ];
+                claim
+            }),
+            // The template's expiry is 0 (no expiry) since review 3; a Taker may
+            // still claim with one.
+            ("an expiry height", {
+                let mut claim = ForeignClaim::template(&fixture);
+                claim.expiry_height = 5_000;
+                claim
+            }),
+            ("SIGHASH_SINGLE|ANYONECANPAY", {
+                let mut claim = ForeignClaim::template(&fixture);
+                claim.sighash = SighashType::SINGLE_ANYONECANPAY;
+                claim
+            }),
+            ("a high-S signature", {
+                let mut claim = ForeignClaim::template(&fixture);
+                claim.high_s = true;
+                claim
+            }),
+        ];
+        let template = ForeignClaim::template(&fixture).bytes(&fixture);
+        assert_eq!(
+            template,
+            spend_bytes(&fixture, Some(&REVEAL_SECRET)),
+            "the helper builds the SDK template when nothing departs from it"
+        );
+        let mut refused = Vec::new();
+        for (label, claim) in cases {
+            let (rpc, _, maker) = reveal_ports(&fixture);
+            let exact = claim.bytes(&fixture);
+            assert_ne!(exact, template, "{label}: departs from the template");
+            let claim_id = Transaction::read(exact.as_slice(), BranchId::Nu7)
+                .expect("foreign claim decodes")
+                .txid();
+            set_confirmed_spend(&rpc, exact);
+            let observation = maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await;
+            let evidence = match observation {
+                Ok(RevealingClaimObservationV1::Confirmed(evidence)) => evidence,
+                other => {
+                    refused.push(format!("{label}: {other:?}"));
+                    continue;
+                }
+            };
+            assert_eq!(
+                evidence.preimage().expose_secret(),
+                &REVEAL_SECRET,
+                "{label}"
+            );
+            assert_eq!(evidence.transaction_id(), claim_id.to_string(), "{label}");
+            assert!(rpc.submitted().is_empty(), "{label}");
+        }
+        assert!(refused.is_empty(), "no preimage from: {refused:#?}");
+    }
+
+    #[tokio::test]
+    async fn a_spend_of_another_outpoint_is_not_the_reveal() {
+        let fixture = reveal_fixture(false, &REVEAL_SECRET).await;
+        let (rpc, _, maker) = reveal_ports(&fixture);
+        let mut claim = ForeignClaim::template(&fixture);
+        claim.prevout = OutPoint::new([0x99; 32], 0);
+        let elsewhere = claim.bytes(&fixture);
+        // The HTLC output is unspent: the other spend is not looked at.
+        set_mempool_spend(&rpc, elsewhere.clone());
+        rpc.edit(|state| {
+            state.unspent = FakeRpc::confirmed(&fixture.agreement, &fixture.funding)
+                .0
+                .state
+                .lock()
+                .expect("fake state")
+                .unspent
+                .clone();
+        });
+        assert!(matches!(
+            maker
+                .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("unspent HTLC"),
+            RevealingClaimObservationV1::Absent
+        ));
+        // The HTLC output is gone but the only visible spender spends something else.
+        for confirmed in [false, true] {
+            if confirmed {
+                set_confirmed_spend(&rpc, elsewhere.clone());
+            } else {
+                set_mempool_spend(&rpc, elsewhere.clone());
+            }
+            assert!(
+                matches!(
+                    maker
+                        .observe_counterparty_revealing_claim(&fixture.agreement, &fixture.context)
+                        .await
+                        .expect("another outpoint's spend is ignored"),
+                    RevealingClaimObservationV1::Unstable
+                ),
+                "confirmed: {confirmed}"
+            );
+        }
     }
 
     #[test]

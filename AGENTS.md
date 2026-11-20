@@ -17,6 +17,18 @@ as well (sign-off, tests with every behavioural change).
   describe `main`. "This branch", "this PR", "not merged yet" belong in the
   pull request description.
 
+## Protocol design
+
+- **Swap flows are the same for every pair.** For a given direction (Taker
+  sells LEZ, or Taker sells the foreign asset), who locks first, who holds the
+  secret, who claims first and which refund matures first are identical for
+  BTC, ZEC, XMR and any later pair. A pair may differ only in the
+  cryptographic mechanism that carries the secret (adaptor signature, hash
+  preimage, key share). A pair that cannot follow the common flow in a
+  direction does not offer that direction. XMR does not follow this rule
+  yet; aligning it, or withdrawing the direction, is part of the XMR work
+  (issue #161).
+
 ## Evidence
 
 - Evidence of a commit is committed on top of it, in a docs-only commit that
@@ -39,6 +51,29 @@ as well (sign-off, tests with every behavioural change).
   bump to the next version; there is no separate version pull request.
 - Upstream components keep their own versions. Protocol, schema and profile
   identifiers are not release versions.
+
+## Checks, merges and tags
+
+- Run `scripts/check-all.sh` before every push. It runs the format, Clippy
+  and rustdoc checks of every Cargo workspace with CI's flags; `--fast`
+  covers formatting everywhere and the root workspace's lints.
+- Before a push that changes code, also run what CI runs beyond the lints:
+  the root workspace tests with the four XMR excludes of `ci.yml`, the Node
+  suites with `--features pair-zec` and with `--all-features`,
+  `python3 -m unittest discover -s deploy/tests`,
+  `scripts/test-check-all-workspaces.sh`, `scripts/test-ci-hardening-policy.sh`
+  and `scripts/check-runtime-profiles.py`, and, when the Zcash adapter,
+  SDK or contract changed, `scripts/run-zebra-e2e.sh` in its own project.
+  When docs changed, run `scripts/check-requirements-traceability.sh`,
+  `scripts/check-architecture-diagrams.sh` and `scripts/check-threat-model.py`.
+  A check that cannot run on the machine (a Linux-only target, a job that
+  needs a container the run may not start) is named in the pull request, not
+  skipped in silence.
+- A pull request is merged only when all its checks have finished green. A
+  check that is still running is not green.
+- A tag is cut only on a commit whose CI run has finished green; the release
+  workflows refuse any other. A published tag is never moved: a further
+  change gets a new version.
 
 ## Pull requests and issues
 

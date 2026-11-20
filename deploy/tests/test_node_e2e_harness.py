@@ -6,9 +6,12 @@ its pure helpers are driven with fakes.
 """
 import datetime
 import importlib.util
+import inspect
 import json
 import os
 import pathlib
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -560,6 +563,143 @@ class FailedTestNodeLogs(unittest.TestCase):
         # nothing but logs is read: no state directory, database, cookie or runtime/ file
         for argv in ran:
             self.assertFalse(any('/var/lib/lez' in part or 'runtime/' in part or 'cookie' in part for part in argv), argv)
+
+
+REPO = SCRIPTS.parents[1]
+PROBE = 'lez-v02-escrow-claim-probe'
+
+
+def probe_evidence(**changes):
+    snapshot = {'sequencer_tip': 10, 'tip_timestamp_ms': 1_000, 'status': 'Funded', 'custody_balance': 50_000,
+                'claimant_balance': 7, 'claimant_nonce': 1}
+    evidence = {'schema': 'lez_v02_escrow_claim_probe_v1', 'test_only': True, 'stored_secret_digest': 'dd' * 32,
+                'presented_preimage_matches_digest': False, 'submitted_before_refund_at': True,
+                'transaction_id': 'ee' * 32, 'included': False, 'included_in_block': None, 'observed_seconds': 30,
+                'submission': {'decision': 'accepted', 'error_code': None, 'error_message': None},
+                'before': dict(snapshot), 'after': dict(snapshot), 'escrow_kept_custody': True}
+    evidence.update(changes)
+    return evidence
+
+
+class MakerEarlyClaim(unittest.TestCase):
+    """zec-maker-early-claim (TM-0030): what can be checked without a stack."""
+
+    def test_it_is_a_zec_scenario_that_needs_the_containers(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-maker-early-claim'], e2e.scenario_zec_maker_early_claim)
+        self.assertIn('zec-maker-early-claim', e2e.NATIVE_REFUSED)
+
+    def test_it_runs_under_the_v8_refund_profile(self):
+        source = inspect.getsource(e2e.scenario_zec_maker_early_claim)
+        self.assertIn('zec_provision(profile=zec_refund_profile())', source)
+        self.assertIn('deterministic-local-devnet-v8', source)
+        with patch.dict(e2e.ROUTE, {'direction': 'TakerSellsLez'}), patch.object(e2e, 'ZEC_PUBLIC', False):
+            self.assertEqual(e2e.zec_refund_profile(), 'deterministic-local-devnet-v8')
+
+    def test_it_reuses_the_neighbours_mechanisms(self):
+        source = inspect.getsource(e2e.scenario_zec_maker_early_claim)
+        for helper in ('zec_cut_maker_zebra_route()', 'zec_wait_until_phase(', 'wait_maker_phase(',
+                       'wait_lez_final_through(', 'node_stop("maker")', 'zec_refund_until_terminal(',
+                       'maker_action_with_fresh_generation("maker_actor_refund_v1"', 'wait_maker_terminal('):
+            self.assertIn(helper, source)
+
+    def test_selling_zec_it_refuses_before_it_provisions(self):
+        with patch.dict(e2e.ROUTE, {'direction': 'TakerSellsForeign'}), \
+                patch.object(e2e, 'zec_provision', lambda **_: self.fail('nothing may be provisioned')):
+            with self.assertRaisesRegex(e2e.Failure, 'selling-LEZ scenario'):
+                e2e.scenario_zec_maker_early_claim('1700000000')
+
+    def test_the_escrow_swap_id_domain_is_the_sdks(self):
+        sdk = (REPO / 'crates/zec-swap-sdk/src/lez_derivation.rs').read_text()
+        self.assertIn('const LEZ_SWAP_ID_V1_DOMAIN: &[u8] = b"logos.gateway.lez-swap-id.v1\\0";', sdk)
+        self.assertEqual(e2e.LEZ_SWAP_ID_V1_DOMAIN, b'logos.gateway.lez-swap-id.v1\0')
+
+    def test_the_search_finds_every_form_and_skips_links(self):
+        preimage, digest = bytes(range(32)), bytes(range(32, 64))
+        with tempfile.TemporaryDirectory() as root:
+            base = pathlib.Path(root)
+            (base / 'actors').mkdir()
+            (base / 'agreement.borsh').write_bytes(b'head' + digest + b'tail')
+            (base / 'config.json').write_text(json.dumps({'secret_digest': digest.hex()}))
+            # across a read boundary of the script (1 MiB)
+            (base / 'actors' / 'store.sqlite3').write_bytes(b'\0' * ((1 << 20) - 10) + preimage.hex().upper().encode())
+            (base / 'link').symlink_to(base / 'agreement.borsh')
+            result = subprocess.run([sys.executable, '-c', e2e.ZEC_SECRET_SEARCH, root, str(base / 'absent')],
+                                    input=f'{preimage.hex()}\n{digest.hex()}\n', capture_output=True, text=True,
+                                    check=True)
+            found = json.loads(result.stdout)
+        names = {pathlib.Path(path).name: size for path, size in found['files']}
+        self.assertEqual(names, {'agreement.borsh': 40, 'config.json': 85, 'store.sqlite3': (1 << 20) + 54})
+        hits = {key: sorted(pathlib.Path(path).name for path in paths) for key, paths in found['hits'].items()}
+        self.assertEqual(hits['preimage_hex_upper'], ['store.sqlite3'])
+        self.assertEqual(hits['preimage_raw'] + hits['preimage_hex'] + hits['preimage_base64'], [])
+        self.assertEqual(hits['digest_raw'], ['agreement.borsh'])
+        self.assertEqual(hits['digest_hex'], ['config.json'])
+        self.assertEqual(found['unreadable'], [[str(base / 'absent'), 'not a directory']])
+
+    def test_the_secret_goes_to_the_search_on_stdin_only(self):
+        seen = {}
+
+        def fake_run(command, **kwargs):
+            seen.update(command=command, input=kwargs.get('input'))
+            return unittest.mock.Mock(returncode=0, stdout='{"files": []}', stderr='')
+
+        preimage, digest = b'\x11' * 32, b'\x22' * 32
+        with patch.object(e2e.subprocess, 'run', fake_run):
+            e2e.zec_secret_search('maker', e2e.ZEC_MAKER_SEARCH_ROOTS, preimage, digest)
+        self.assertEqual(seen['command'][:4], ['docker', 'exec', '-i', 'lez-maker-node'])
+        self.assertNotIn(preimage.hex(), ' '.join(seen['command']))
+        self.assertEqual(seen['input'], f'{preimage.hex()}\n{digest.hex()}\n')
+        self.assertEqual(seen['command'][-3:], list(e2e.ZEC_MAKER_SEARCH_ROOTS))
+
+    def probe(self, evidence, returncode=0):
+        ran = []
+
+        def fake_run(command, **_):
+            ran.append(command)
+            return unittest.mock.Mock(returncode=returncode, stdout=json.dumps(evidence) + '\n', stderr='')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'log', lambda *_: None):
+            return e2e.zec_escrow_claim_probe('a zero preimage', 'aa' * 32, 'bb' * 32, '00' * 32), ran
+
+    def test_the_claim_is_the_makers_through_its_own_sequencer_route(self):
+        evidence, ran = self.probe(probe_evidence())
+        self.assertTrue(evidence['escrow_kept_custody'])
+        command = ran[0]
+        self.assertEqual(command[:4], ['docker', 'exec', 'lez-maker-node', f'/usr/local/bin/{PROBE}'])
+        self.assertEqual(command[command.index('--private-key-file') + 1],
+                         '/var/lib/lez/zec/corridor/maker/lez-signer.key')
+        self.assertEqual(command[command.index('--sequencer-url') + 1], 'http://127.0.0.1:3040/')
+
+    def test_a_claim_the_escrow_paid_fails_the_scenario(self):
+        paid = probe_evidence(escrow_kept_custody=False, included=True, included_in_block=11,
+                              after={'status': 'Claimed', 'custody_balance': 0, 'claimant_balance': 50_007,
+                                     'sequencer_tip': 11, 'tip_timestamp_ms': 2_000, 'claimant_nonce': 2})
+        with self.assertRaisesRegex(e2e.Failure, 'TM-0030'):
+            self.probe(paid, returncode=3)
+
+    def test_a_claim_after_the_refund_time_proves_nothing(self):
+        with self.assertRaisesRegex(e2e.Failure, 'refund time'):
+            self.probe(probe_evidence(submitted_before_refund_at=False))
+
+    def test_the_probe_is_a_registered_test_only_tool_outside_the_role_packages(self):
+        catalog = json.loads((REPO / 'deploy/executables.json').read_text())['executables']
+        entry = next(item for item in catalog if item['target'] == PROBE)
+        self.assertEqual((entry['manifest'], entry['package'], entry['class'], entry['role'], entry['profiles']),
+                         ('compat/lez-v0_2-sidecar/Cargo.toml', 'lez-v0-2-sidecar', 'reference', 'maker', []))
+        self.assertTrue((REPO / f'compat/lez-v0_2-sidecar/src/bin/{PROBE}.rs').is_file())
+        self.assertIn('TEST-ONLY', (REPO / f'compat/lez-v0_2-sidecar/src/bin/{PROBE}.rs').read_text())
+        from_scratch = (SCRIPTS / 'from-scratch.sh').read_text()
+        self.assertIn(f'--bin {PROBE}', from_scratch)
+        self.assertIn(f'install -m 0755 "$PROVISION/sidecar/{PROBE}" "$DEPLOY_ROOT/images/maker-node/"', from_scratch)
+        self.assertIn(f'images/maker-node/{PROBE}', (SCRIPTS / 'stage-assets.sh').read_text())
+        dockerfile = (REPO / 'deploy/images/maker-node/Dockerfile').read_text()
+        self.assertIn(f'COPY {PROBE} /payload/', dockerfile)
+        self.assertIn('COPY --from=strip --chmod=0555 /payload/ /usr/local/bin/', dockerfile)
+        self.assertNotIn(PROBE, (REPO / 'deploy/images/taker-node/Dockerfile').read_text())
+        self.assertIn(PROBE, (REPO / '.github/workflows/release-images.yml').read_text())
+        for packager in ('package-role-node.sh', 'package-role-node-darwin.sh'):
+            self.assertNotIn(PROBE, (SCRIPTS / packager).read_text())
 
 
 if __name__ == '__main__':

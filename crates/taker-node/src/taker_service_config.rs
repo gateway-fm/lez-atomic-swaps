@@ -112,6 +112,22 @@ pub struct ConfiguredTakerServiceContext {
 }
 
 impl ConfiguredTakerServiceContext {
+    /// Refuses to start while an open ZEC `TakerSellsLez` swap of the earlier
+    /// reveal order is held
+    /// (`ConfiguredTakerInitiationContext::refuse_start_with_legacy_zec_swaps`,
+    /// compiled with `pair-zec` only).
+    ///
+    /// # Errors
+    ///
+    /// Names every blocking swap.
+    pub fn refuse_start_with_legacy_zec_swaps(&self) -> anyhow::Result<()> {
+        #[cfg(feature = "pair-zec")]
+        if let Some(initiation) = self.initiation.as_ref() {
+            initiation.refuse_start_with_legacy_zec_swaps()?;
+        }
+        Ok(())
+    }
+
     /// Borrows the optional mutation context.
     #[must_use]
     pub const fn initiation(&self) -> Option<&ConfiguredTakerInitiationContext> {

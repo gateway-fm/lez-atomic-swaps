@@ -1,0 +1,915 @@
+
+[07:03:25 host] docker 29.9.2 ready; workspace <workspace>
+
+[07:03:25 sources] sources pinned
+
+[07:03:25 nix] building the maker package (lgx-portable)
+logos-lez_atomic_swap_maker-module-lgx> Bundled icon: maker-console.svg
+logos-lez_atomic_swap_maker-module-lgx> Adding variant linux-arm64 to logos-lez_atomic_swap_maker-module.lgx (main: lez_atomic_swap_maker_plugin.so)...
+logos-lez_atomic_swap_maker-module-lgx> Added variant 'linux-arm64' to logos-lez_atomic_swap_maker-module.lgx
+logos-lez_atomic_swap_maker-module-lgx> Done: logos-lez_atomic_swap_maker-module.lgx
+logos-lez_atomic_swap_maker-module-lgx> Running phase: installPhase
+
+[07:03:56 nix] building the taker package (lgx-portable)
+logos-lez_atomic_swap_taker-module-lgx> Bundled icon: taker-route.svg
+logos-lez_atomic_swap_taker-module-lgx> Adding variant linux-arm64 to logos-lez_atomic_swap_taker-module.lgx (main: lez_atomic_swap_taker_plugin.so)...
+logos-lez_atomic_swap_taker-module-lgx> Added variant 'linux-arm64' to logos-lez_atomic_swap_taker-module.lgx
+logos-lez_atomic_swap_taker-module-lgx> Done: logos-lez_atomic_swap_taker-module.lgx
+logos-lez_atomic_swap_taker-module-lgx> Running phase: installPhase
+
+[07:04:20 nix] building the network package (lgx-portable)
+logos-lez_network-module-lgx> Bundled icon: network.svg
+logos-lez_network-module-lgx> Adding variant linux-arm64 to logos-lez_network-module.lgx (main: lez_network_plugin.so)...
+logos-lez_network-module-lgx> Added variant 'linux-arm64' to logos-lez_network-module.lgx
+logos-lez_network-module-lgx> Done: logos-lez_network-module.lgx
+logos-lez_network-module-lgx> Running phase: installPhase
+
+[07:04:40 nix] Basecamp bundle and release packages built
+
+[07:04:40 rust] building the role Node binaries and Bitcoin actors in rust:1.96.0-bookworm
+   Compiling lez-taker-node v0.1.0 (/workspace/crates/taker-node)
+   Compiling lez-maker-node v0.1.0 (/workspace/crates/maker-node)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.75s
+
+[07:05:17 rust] Node binaries staged
+
+[07:05:18 build] building the LEZ sidecar and the identity tool
+   Compiling lez-v0-2-sidecar v0.3.3 (/workspace/compat/lez-v0_2-sidecar)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.58s
+
+[07:06:07 build] artifacts built into <workspace>/provision/data
+debconf: delaying package configuration, since apt-utils is not installed
+packaged lez_maker_node 0.3.3 (linux-arm64) -> <checkout>/deploy/images/maker-node/lez_maker_node.lgx ( 43M)
+debconf: delaying package configuration, since apt-utils is not installed
+packaged lez_taker_node 0.3.3 (linux-arm64) -> <checkout>/deploy/images/taker-node/lez_taker_node.lgx ( 57M)
+lez_atomic_swap_maker 0.3.3 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_atomic_swap_maker.lgx
+lez_atomic_swap_taker 0.3.3 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_atomic_swap_taker.lgx
+lez_network 0.3.3 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_network.lgx
+chat_module 0.2.2 -> <checkout>/deploy/images/basecamp-ui/assets/packages/chat_module.lgx
+delivery_module 0.2.0 -> <checkout>/deploy/images/basecamp-ui/assets/packages/delivery_module.lgx
+lez_core 0.4.1-sign.4 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_core.lgx
+lez_swap_node 0.3.3 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_swap_node.lgx
+lez_indexer_module 1.1.1-rpc.4 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_indexer_module.lgx
+blockchain_module 0.2.4 -> <checkout>/deploy/images/basecamp-ui/assets/packages/blockchain_module.lgx
+lez_maker_node 0.3.3 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_maker_node.lgx
+lez_taker_node 0.3.3 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_taker_node.lgx
+staged lez_core 0.4.1-sign.4 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/lez_core
+staged lez_swap_node 0.3.3 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/lez_swap_node
+staged blockchain_module 0.2.4 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/blockchain_module
+staged lez_indexer_module 1.1.1-rpc.4 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/lez_indexer_module
+staged chat_module 0.2.2 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/chat_module
+staged delivery_module 0.2.0 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/delivery_module
+staged lez_atomic_swap_maker 0.3.3 (linux-arm64) -> images/basecamp-ui/assets/maker-user/plugins/lez_atomic_swap_maker
+staged lez_atomic_swap_taker 0.3.3 (linux-arm64) -> images/basecamp-ui/assets/taker-user/plugins/lez_atomic_swap_taker
+staged lez_network 0.3.3 (linux-arm64) -> images/basecamp-ui/assets/network-user/plugins/lez_network
+[stage 07:07:11] all payloads staged
+
+[07:07:12 stack] gen-config, image builds, and stack start
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795072032 (2026-11-19T07:07:12Z), root 6d681f24d643c365dd5828afcf0a6f2f47f253227e14042c393b295fe1901854
+minted the maker Zcash key: runtime/lez/maker/zcash.key
+minted the taker Zcash key: runtime/lez/taker/zcash.key
+zebra mines to the Maker's Zcash key (tmGwp8dkTgtDADzKVazpct5VfyAmTNkGTt1): runtime/zebra/zebrad.toml
+runtime generated at runtime
+  [time 07:07:13] runtime config: 1 s (1 s since up.sh started)
+[2/6] images…
+ Image lez-network-module:local Building 
+ Image lez-maker-node:local Building 
+ Image lez-services:local Building 
+ Image lez-btc-miner:local Building 
+ Image lez-bitcoin-core:local Building 
+ Image lez-basecamp-ui:local Building 
+ Image lez-zebra:local Building 
+ Image lez-taker-node:local Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 4.53kB done
+#1 DONE 0.0s
+
+#2 [btc-miner internal] load build definition from Dockerfile
+#2 transferring dockerfile: 279B done
+#2 DONE 0.0s
+
+#3 [sequencer internal] load build definition from Dockerfile
+#3 transferring dockerfile: 978B done
+#3 DONE 0.0s
+
+#4 [basecamp-ui internal] load build definition from Dockerfile
+#4 transferring dockerfile: 2.40kB done
+#4 DONE 0.0s
+
+#5 [bitcoin-core internal] load build definition from Dockerfile
+#5 transferring dockerfile: 1.47kB done
+#5 DONE 0.0s
+
+#6 [basecamp-ui internal] load metadata for docker.io/library/debian:trixie-slim
+#6 DONE 0.0s
+
+#7 [bitcoin-core internal] load metadata for cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
+#7 DONE 0.0s
+
+#8 [zebra internal] load build definition from Dockerfile
+#8 transferring dockerfile: 1.52kB done
+#8 DONE 0.0s
+
+#9 [zebra internal] load metadata for gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512
+#9 DONE 0.0s
+
+#10 [zebra internal] load metadata for docker.io/library/debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+#10 DONE 0.0s
+
+#11 [zebra internal] load metadata for docker.io/zfnd/zebra:7.0.0@sha256:a70d2be8ffef3a4b6e37355724e36a0e6c1838e46baa28bfb216739f00cf2d34
+#11 DONE 0.0s
+
+#12 [btc-miner internal] load metadata for docker.io/library/debian:bookworm-slim
+#12 DONE 0.0s
+
+#13 [sequencer internal] load .dockerignore
+#13 transferring context: 2B done
+#13 DONE 0.0s
+
+#14 [basecamp-ui internal] load .dockerignore
+#14 transferring context: 2B done
+#14 DONE 0.0s
+
+#15 [bitcoin-core internal] load .dockerignore
+#15 transferring context: 2B done
+#15 DONE 0.0s
+
+#16 [bitcoin-core 1/4] FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
+#16 DONE 0.0s
+
+#17 [zebra internal] load .dockerignore
+#17 transferring context: 2B done
+#17 DONE 0.0s
+
+#18 [btc-miner internal] load .dockerignore
+#18 transferring context: 2B done
+#18 DONE 0.0s
+
+#19 [zebra datadir 1/2] FROM docker.io/library/debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+#19 DONE 0.0s
+
+#20 [zebra stage-2 1/4] FROM gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512
+#20 DONE 0.0s
+
+#21 [zebra zebra 1/1] FROM docker.io/zfnd/zebra:7.0.0@sha256:a70d2be8ffef3a4b6e37355724e36a0e6c1838e46baa28bfb216739f00cf2d34
+#21 DONE 0.0s
+
+#22 [btc-miner 1/2] FROM docker.io/library/debian:bookworm-slim
+#22 DONE 0.0s
+
+#23 [btc-miner 2/2] RUN apt-get update && apt-get install -y --no-install-recommends         curl jq     && rm -rf /var/lib/apt/lists/*
+#23 CACHED
+
+#24 [bitcoin-core internal] load build context
+#24 transferring context: 96B done
+#24 DONE 0.0s
+
+#25 [btc-miner] exporting to image
+#25 exporting layers done
+#25 writing image sha256:c00b0cecc587f01984d7f27527644c10619cec42c9674b7f40d201fba0e5d379 done
+#25 naming to docker.io/library/lez-btc-miner:local done
+#25 DONE 0.0s
+
+#26 [network internal] load build definition from Dockerfile
+#26 transferring dockerfile: 1.93kB done
+#26 DONE 0.0s
+
+#27 [maker-node internal] load build definition from Dockerfile
+#27 transferring dockerfile: 3.99kB done
+#27 DONE 0.0s
+
+#28 [taker-node internal] load build definition from Dockerfile
+#28 transferring dockerfile: 4.70kB done
+#28 DONE 0.0s
+
+#12 [taker-node internal] load metadata for docker.io/library/debian:bookworm-slim
+#12 DONE 0.0s
+
+#29 [maker-node internal] load .dockerignore
+#29 transferring context: 389B done
+#29 DONE 0.0s
+
+#30 [bitcoin-core stage-1 2/6] COPY --chmod=0555 bin/bitcoind /usr/local/bin/bitcoind
+#30 CACHED
+
+#31 [bitcoin-core stage-1 4/6] COPY --chmod=0555 bin/bitcoind /usr/local/bin/bitcoind
+#31 CACHED
+
+#32 [bitcoin-core stage-1 5/6] COPY --chmod=0555 bin/bitcoin-cli /usr/local/bin/bitcoin-cli
+#32 CACHED
+
+#33 [bitcoin-core datadir 2/2] RUN mkdir /datadir
+#33 CACHED
+
+#34 [bitcoin-core stage-1 3/6] COPY --chmod=0555 bin/bitcoin-cli /usr/local/bin/bitcoin-cli
+#34 CACHED
+
+#35 [bitcoin-core stage-1 6/6] COPY --from=datadir --chown=65532:65532 /datadir /var/lib/bitcoin
+#35 CACHED
+
+#36 [network internal] load .dockerignore
+#36 transferring context: 2B done
+#36 DONE 0.0s
+
+#37 [taker-node internal] load .dockerignore
+#37 transferring context: 406B done
+#37 DONE 0.0s
+
+#38 [basecamp-ui  1/11] FROM docker.io/library/debian:trixie-slim
+#38 DONE 0.0s
+
+#39 [zebra internal] load build context
+#39 transferring context: 7.11MB 0.1s done
+#39 DONE 0.2s
+
+#40 [bitcoin-core] exporting to image
+#40 exporting layers done
+#40 writing image sha256:39e939eabe1cc7024b140b36464587f72e8b97d528162cf3849cb1479d653691 done
+#40 naming to docker.io/library/lez-bitcoin-core:local done
+#40 DONE 0.4s
+
+#41 [zebra stage-2 2/4] COPY --from=zebra /usr/local/bin/zebrad /usr/local/bin/zebrad
+#41 CACHED
+
+#42 [zebra stage-2 3/4] COPY --chmod=0555 lez-runtime-healthcheck /usr/local/bin/lez-runtime-healthcheck
+#42 CACHED
+
+#33 [zebra datadir 2/2] RUN mkdir /datadir
+#33 CACHED
+
+#43 [zebra stage-2 4/4] COPY --from=datadir --chown=65532:65532 /datadir /var/lib/zebra
+#43 CACHED
+
+#44 [zebra] exporting to image
+#44 exporting layers done
+#44 writing image sha256:de894d2d6a2ae38d9b6c0d98fe8360127240aa23597fd97fefcac48d39fe5736 done
+#44 naming to docker.io/library/lez-zebra:local done
+#44 DONE 0.1s
+
+#45 [bitcoin-core] resolving provenance for metadata file
+#45 DONE 0.0s
+
+#46 [btc-miner] resolving provenance for metadata file
+#46 DONE 0.0s
+
+#47 [zebra] resolving provenance for metadata file
+#47 DONE 0.0s
+
+#48 [basecamp-ui internal] load build context
+#48 ...
+
+#49 [sequencer internal] load build context
+#49 transferring context: 143.73MB 2.2s done
+#49 DONE 2.3s
+
+#50 [sequencer 3/4] COPY --chmod=0555 r0vm /usr/local/bin/r0vm
+#50 CACHED
+
+#51 [sequencer 2/4] COPY --chmod=0555 sequencer_service /usr/local/bin/sequencer_service
+#51 CACHED
+
+#52 [sequencer 4/4] COPY --chmod=0555 lez-runtime-healthcheck /usr/local/bin/lez-runtime-healthcheck
+#52 CACHED
+
+#53 [sequencer] exporting to image
+#53 exporting layers done
+#53 writing image sha256:f12005f4ce46374689d5a247e75a178db961be1fd460eeaf2958238b8056c0ee done
+#53 naming to docker.io/library/lez-services:local done
+#53 DONE 0.0s
+
+#54 [sequencer] resolving provenance for metadata file
+#54 DONE 0.0s
+
+#48 [basecamp-ui internal] load build context
+#48 transferring context: 399.06MB 4.9s done
+#48 DONE 4.9s
+
+#55 [basecamp-ui  2/11] RUN apt-get update && apt-get install -y --no-install-recommends         xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core ffmpeg         ca-certificates nodejs         libopengl0 libgl1 libegl1 libxkbcommon-x11-0 libvulkan1         libgles2 libgl1-mesa-dri     && rm -rf /var/lib/apt/lists/*
+#55 CACHED
+
+#56 [basecamp-ui  3/11] COPY assets/bundle /opt/basecamp
+#56 CACHED
+
+#57 [basecamp-ui  4/11] COPY assets/maker-user /var/lez-assets/maker-user
+#57 DONE 0.4s
+
+#58 [basecamp-ui  5/11] COPY assets/taker-user /var/lez-assets/taker-user
+#58 DONE 0.1s
+
+#59 [basecamp-ui  6/11] COPY assets/network-user /var/lez-assets/network-user
+#59 DONE 0.0s
+
+#60 [basecamp-ui  7/11] COPY assets/qt-mcp /opt/qt-mcp
+#60 DONE 0.8s
+
+#61 [basecamp-ui  8/11] COPY entrypoint.sh /entrypoint.sh
+#61 DONE 0.0s
+
+#62 [basecamp-ui  9/11] COPY open-desks.mjs /opt/lez-open-desks.mjs
+#62 DONE 0.0s
+
+#63 [basecamp-ui 10/11] COPY signer-health.sh /usr/local/bin/lez-signer-health
+#63 DONE 0.0s
+
+#64 [basecamp-ui 11/11] RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/lez-taker-ui     && chmod 0755 /usr/local/bin/lez-maker-ui /usr/local/bin/lez-taker-ui     && mkdir -p /var/lez     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user     && chown -R 4713:4713 /var/lez /var/lez-assets     && chmod -R u+rwX /var/lez /var/lez-assets
+#64 DONE 0.3s
+
+#38 [taker-node  1/11] FROM docker.io/library/debian:trixie-slim
+#38 DONE 0.0s
+
+#48 [taker-node internal] load build context
+#48 transferring context: 399.06MB 4.9s done
+#48 DONE 5.0s
+
+#55 [taker-node  2/11] RUN apt-get update && apt-get install -y --no-install-recommends         xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core ffmpeg         ca-certificates nodejs         libopengl0 libgl1 libegl1 libxkbcommon-x11-0 libvulkan1         libgles2 libgl1-mesa-dri     && rm -rf /var/lib/apt/lists/*
+#55 CACHED
+
+#56 [taker-node  3/11] COPY assets/bundle /opt/basecamp
+#56 CACHED
+
+#57 [taker-node  4/11] COPY assets/maker-user /var/lez-assets/maker-user
+#57 DONE 0.5s
+
+#58 [taker-node  5/11] COPY assets/taker-user /var/lez-assets/taker-user
+#58 DONE 0.1s
+
+#59 [taker-node  6/11] COPY assets/network-user /var/lez-assets/network-user
+#59 DONE 0.1s
+
+#60 [taker-node  7/11] COPY assets/qt-mcp /opt/qt-mcp
+#60 DONE 0.9s
+
+#61 [taker-node  8/11] COPY entrypoint.sh /entrypoint.sh
+#61 DONE 0.0s
+
+#62 [taker-node  9/11] COPY open-desks.mjs /opt/lez-open-desks.mjs
+#62 DONE 0.0s
+
+#63 [taker-node 10/11] COPY signer-health.sh /usr/local/bin/lez-signer-health
+#63 DONE 0.0s
+
+#22 [taker-node strip 1/4] FROM docker.io/library/debian:bookworm-slim
+#22 DONE 0.0s
+
+#64 [taker-node 11/11] RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/lez-taker-ui     && chmod 0755 /usr/local/bin/lez-maker-ui /usr/local/bin/lez-taker-ui     && mkdir -p /var/lez     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user     && chown -R 4713:4713 /var/lez /var/lez-assets     && chmod -R u+rwX /var/lez /var/lez-assets
+#64 DONE 0.4s
+
+#65 [network internal] load build context
+#65 ...
+
+#66 [maker-node internal] load build context
+#66 transferring context: 45.15MB 1.0s done
+#66 DONE 1.0s
+
+#65 [network internal] load build context
+#65 transferring context: 104.81MB 1.9s done
+#65 DONE 1.9s
+
+#67 [network 1/5] COPY --chmod=0555 r0vm regenesi[s] /usr/local/bin/
+#67 DONE 0.4s
+
+#68 [taker-node internal] load build context
+#68 ...
+
+#69 [network 2/5] COPY --chmod=0555 health.sh /usr/local/bin/lez-network-health
+#69 DONE 0.0s
+
+#70 [network 3/5] COPY --chmod=0444 reindex.mjs /opt/lez-network-reindex.mjs
+#70 DONE 0.0s
+
+#71 [network 4/5] WORKDIR /work
+#71 DONE 0.0s
+
+#68 [taker-node internal] load build context
+#68 ...
+
+#72 [network] exporting to image
+#72 exporting layers 0.5s done
+#72 writing image sha256:aa7d29de82d54b555e4fbd14c91592dff28020f0b9b7689b9ebf3c9966c58754 done
+#72 naming to docker.io/library/lez-network-module:local done
+#72 DONE 0.6s
+
+#73 [network] resolving provenance for metadata file
+#73 DONE 0.0s
+
+#68 [taker-node internal] load build context
+#68 transferring context: 614.20MB 7.0s
+#68 transferring context: 858.69MB 9.5s done
+#68 DONE 9.5s
+
+#74 [taker-node strip 2/4] RUN apt-get update && apt-get install -y --no-install-recommends binutils     && rm -rf /var/lib/apt/lists/*
+#74 CACHED
+
+#75 [maker-node 1/8] RUN apt-get update && apt-get install -y --no-install-recommends         ca-certificates curl jq libpcsclite1 procps socat python3 util-linux     && rm -rf /var/lib/apt/lists/*
+#75 0.435 Get:1 http://deb.debian.org/debian trixie InRelease [140 kB]
+#75 0.545 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+#75 0.705 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+#75 1.079 Get:4 http://deb.debian.org/debian trixie/main arm64 Packages [9614 kB]
+#75 1.284 Get:5 http://deb.debian.org/debian trixie-updates/main arm64 Packages [1108 B]
+#75 1.434 Get:6 http://deb.debian.org/debian-security trixie-security/main arm64 Packages [326 kB]
+#75 2.164 Fetched 10.2 MB in 2s (5535 kB/s)
+#75 2.164 Reading package lists...
+#75 2.781 Reading package lists...
+#75 3.379 Building dependency tree...
+#75 3.536 Reading state information...
+#75 3.826 ca-certificates is already the newest version (20250419+deb13u1).
+#75 3.826 procps is already the newest version (2:4.0.4-9).
+#75 3.826 util-linux is already the newest version (2.41.5-0+deb13u1).
+#75 3.826 util-linux set to manually installed.
+#75 3.826 The following additional packages will be installed:
+#75 3.826   libcurl4t64 libjq1 libldap2 libnghttp3-9 libonig5 libpsl5t64
+#75 3.826   libpython3-stdlib libpython3.13-minimal libpython3.13-stdlib libreadline8t64
+#75 3.827   librtmp1 libssh2-1t64 libwrap0 media-types netbase python3-minimal
+#75 3.827   python3.13 python3.13-minimal readline-common
+#75 3.827 Suggested packages:
+#75 3.827   pcscd python3-doc python3-tk python3-venv python3.13-venv python3.13-doc
+#75 3.827   binutils binfmt-support readline-doc
+#75 3.827 Recommended packages:
+#75 3.827   bash-completion libldap-common publicsuffix
+#75 4.038 The following NEW packages will be installed:
+#75 4.039   curl jq libcurl4t64 libjq1 libldap2 libnghttp3-9 libonig5 libpcsclite1
+#75 4.039   libpsl5t64 libpython3-stdlib libpython3.13-minimal libpython3.13-stdlib
+#75 4.039   libreadline8t64 librtmp1 libssh2-1t64 libwrap0 media-types netbase python3
+#75 4.039   python3-minimal python3.13 python3.13-minimal readline-common socat
+#75 4.371 0 upgraded, 24 newly installed, 0 to remove and 1 not upgraded.
+#75 4.371 Need to get 8001 kB of archives.
+#75 4.371 After this operation, 31.8 MB of additional disk space will be used.
+#75 4.371 Get:1 http://deb.debian.org/debian trixie/main arm64 libpython3.13-minimal arm64 3.13.5-2+deb13u5 [856 kB]
+#75 4.530 Get:2 http://deb.debian.org/debian trixie/main arm64 python3.13-minimal arm64 3.13.5-2+deb13u5 [2008 kB]
+#75 4.650 Get:3 http://deb.debian.org/debian trixie/main arm64 python3-minimal arm64 3.13.5-1 [27.2 kB]
+#75 4.769 Get:4 http://deb.debian.org/debian trixie/main arm64 media-types all 13.0.0 [29.3 kB]
+#75 4.957 Get:5 http://deb.debian.org/debian trixie/main arm64 netbase all 6.5 [12.4 kB]
+#75 5.072 Get:6 http://deb.debian.org/debian trixie/main arm64 readline-common all 8.2-6 [69.4 kB]
+#75 5.201 Get:7 http://deb.debian.org/debian trixie/main arm64 libreadline8t64 arm64 8.2-6 [159 kB]
+#75 5.432 Get:8 http://deb.debian.org/debian trixie/main arm64 libpython3.13-stdlib arm64 3.13.5-2+deb13u5 [1895 kB]
+#75 5.573 Get:9 http://deb.debian.org/debian trixie/main arm64 python3.13 arm64 3.13.5-2+deb13u5 [757 kB]
+#75 5.697 Get:10 http://deb.debian.org/debian trixie/main arm64 libpython3-stdlib arm64 3.13.5-1 [10.2 kB]
+#75 5.799 Get:11 http://deb.debian.org/debian trixie/main arm64 python3 arm64 3.13.5-1 [28.2 kB]
+#75 6.026 Get:12 http://deb.debian.org/debian trixie/main arm64 libldap2 arm64 2.6.10+dfsg-1 [179 kB]
+#75 6.137 Get:13 http://deb.debian.org/debian trixie/main arm64 libnghttp3-9 arm64 1.8.0-1 [63.2 kB]
+#75 6.252 Get:14 http://deb.debian.org/debian trixie/main arm64 libpsl5t64 arm64 0.21.2-1.1+b1 [57.1 kB]
+#75 6.368 Get:15 http://deb.debian.org/debian trixie/main arm64 librtmp1 arm64 2.4+20151223.gitfa8646d.1-2+b5 [56.8 kB]
+#75 6.591 Get:16 http://deb.debian.org/debian trixie/main arm64 libssh2-1t64 arm64 1.11.1-1+deb13u2 [236 kB]
+#75 6.702 Get:17 http://deb.debian.org/debian-security trixie-security/main arm64 libcurl4t64 arm64 8.14.1-2+deb13u7 [361 kB]
+#75 6.846 Get:18 http://deb.debian.org/debian-security trixie-security/main arm64 curl arm64 8.14.1-2+deb13u7 [263 kB]
+#75 7.080 Get:19 http://deb.debian.org/debian trixie/main arm64 libonig5 arm64 6.9.9-1+b1 [181 kB]
+#75 7.198 Get:20 http://deb.debian.org/debian-security trixie-security/main arm64 libjq1 arm64 1.7.1-6+deb13u4 [152 kB]
+#75 7.311 Get:21 http://deb.debian.org/debian-security trixie-security/main arm64 jq arm64 1.7.1-6+deb13u4 [78.4 kB]
+#75 7.512 Get:22 http://deb.debian.org/debian trixie/main arm64 libpcsclite1 arm64 2.3.3-1 [55.0 kB]
+#75 7.630 Get:23 http://deb.debian.org/debian trixie/main arm64 libwrap0 arm64 7.6.q-36 [55.0 kB]
+#75 7.781 Get:24 http://deb.debian.org/debian trixie/main arm64 socat arm64 1.8.0.3-1+deb13u1 [411 kB]
+#75 7.943 debconf: unable to initialize frontend: Dialog
+#75 7.943 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#75 7.943 debconf: falling back to frontend: Readline
+#75 7.944 debconf: unable to initialize frontend: Readline
+#75 7.944 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/aarch64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/aarch64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/aarch64-linux-gnu/perl-base /usr/lib/aarch64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 24.)
+#75 7.944 debconf: falling back to frontend: Teletype
+#75 7.952 debconf: unable to initialize frontend: Teletype
+#75 7.952 debconf: (This frontend requires a controlling tty.)
+#75 7.952 debconf: falling back to frontend: Noninteractive
+#75 8.569 Fetched 8001 kB in 4s (2144 kB/s)
+#75 8.599 Selecting previously unselected package libpython3.13-minimal:arm64.
+#75 8.599 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 13569 files and directories currently installed.)
+#75 8.621 Preparing to unpack .../libpython3.13-minimal_3.13.5-2+deb13u5_arm64.deb ...
+#75 8.626 Unpacking libpython3.13-minimal:arm64 (3.13.5-2+deb13u5) ...
+#75 8.765 Selecting previously unselected package python3.13-minimal.
+#75 8.765 Preparing to unpack .../python3.13-minimal_3.13.5-2+deb13u5_arm64.deb ...
+#75 8.773 Unpacking python3.13-minimal (3.13.5-2+deb13u5) ...
+#75 8.941 Setting up libpython3.13-minimal:arm64 (3.13.5-2+deb13u5) ...
+#75 8.960 Setting up python3.13-minimal (3.13.5-2+deb13u5) ...
+#75 10.28 Selecting previously unselected package python3-minimal.
+#75 10.28 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 13894 files and directories currently installed.)
+#75 10.29 Preparing to unpack .../0-python3-minimal_3.13.5-1_arm64.deb ...
+#75 10.30 Unpacking python3-minimal (3.13.5-1) ...
+#75 10.32 Selecting previously unselected package media-types.
+#75 10.32 Preparing to unpack .../1-media-types_13.0.0_all.deb ...
+#75 10.32 Unpacking media-types (13.0.0) ...
+#75 10.35 Selecting previously unselected package netbase.
+#75 10.35 Preparing to unpack .../2-netbase_6.5_all.deb ...
+#75 10.35 Unpacking netbase (6.5) ...
+#75 10.37 Selecting previously unselected package readline-common.
+#75 10.37 Preparing to unpack .../3-readline-common_8.2-6_all.deb ...
+#75 10.37 Unpacking readline-common (8.2-6) ...
+#75 10.53 Selecting previously unselected package libreadline8t64:arm64.
+#75 10.53 Preparing to unpack .../4-libreadline8t64_8.2-6_arm64.deb ...
+#75 10.53 Adding 'diversion of /lib/aarch64-linux-gnu/libhistory.so.8 to /lib/aarch64-linux-gnu/libhistory.so.8.usr-is-merged by libreadline8t64'
+#75 10.54 Adding 'diversion of /lib/aarch64-linux-gnu/libhistory.so.8.2 to /lib/aarch64-linux-gnu/libhistory.so.8.2.usr-is-merged by libreadline8t64'
+#75 10.55 Adding 'diversion of /lib/aarch64-linux-gnu/libreadline.so.8 to /lib/aarch64-linux-gnu/libreadline.so.8.usr-is-merged by libreadline8t64'
+#75 10.55 Adding 'diversion of /lib/aarch64-linux-gnu/libreadline.so.8.2 to /lib/aarch64-linux-gnu/libreadline.so.8.2.usr-is-merged by libreadline8t64'
+#75 10.55 Unpacking libreadline8t64:arm64 (8.2-6) ...
+#75 10.58 Selecting previously unselected package libpython3.13-stdlib:arm64.
+#75 10.58 Preparing to unpack .../5-libpython3.13-stdlib_3.13.5-2+deb13u5_arm64.deb ...
+#75 10.59 Unpacking libpython3.13-stdlib:arm64 (3.13.5-2+deb13u5) ...
+#75 10.74 Selecting previously unselected package python3.13.
+#75 10.75 Preparing to unpack .../6-python3.13_3.13.5-2+deb13u5_arm64.deb ...
+#75 10.75 Unpacking python3.13 (3.13.5-2+deb13u5) ...
+#75 10.78 Selecting previously unselected package libpython3-stdlib:arm64.
+#75 10.79 Preparing to unpack .../7-libpython3-stdlib_3.13.5-1_arm64.deb ...
+#75 10.79 Unpacking libpython3-stdlib:arm64 (3.13.5-1) ...
+#75 10.82 Setting up python3-minimal (3.13.5-1) ...
+#75 11.01 Selecting previously unselected package python3.
+#75 11.01 (Reading database ... #75 ...
+
+#76 [taker-node strip 3/4] COPY zec-local-poc-provision zec-local-poc-identity zec-local-poc-transfer      zec-local-poc-chat-draft zec-local-poc-chat-finalize /payload/
+#76 DONE 1.7s
+
+#75 [maker-node 1/8] RUN apt-get update && apt-get install -y --no-install-recommends         ca-certificates curl jq libpcsclite1 procps socat python3 util-linux     && rm -rf /var/lib/apt/lists/*
+#75 11.01 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 14386 files and directories currently installed.)
+#75 11.02 Preparing to unpack .../00-python3_3.13.5-1_arm64.deb ...
+#75 11.03 Unpacking python3 (3.13.5-1) ...
+#75 11.05 Selecting previously unselected package libldap2:arm64.
+#75 11.05 Preparing to unpack .../01-libldap2_2.6.10+dfsg-1_arm64.deb ...
+#75 11.05 Unpacking libldap2:arm64 (2.6.10+dfsg-1) ...
+#75 11.08 Selecting previously unselected package libnghttp3-9:arm64.
+#75 11.08 Preparing to unpack .../02-libnghttp3-9_1.8.0-1_arm64.deb ...
+#75 11.09 Unpacking libnghttp3-9:arm64 (1.8.0-1) ...
+#75 11.21 Selecting previously unselected package libpsl5t64:arm64.
+#75 11.21 Preparing to unpack .../03-libpsl5t64_0.21.2-1.1+b1_arm64.deb ...
+#75 11.21 Unpacking libpsl5t64:arm64 (0.21.2-1.1+b1) ...
+#75 11.24 Selecting previously unselected package librtmp1:arm64.
+#75 11.24 Preparing to unpack .../04-librtmp1_2.4+20151223.gitfa8646d.1-2+b5_arm64.deb ...
+#75 11.24 Unpacking librtmp1:arm64 (2.4+20151223.gitfa8646d.1-2+b5) ...
+#75 11.26 Selecting previously unselected package libssh2-1t64:arm64.
+#75 11.26 Preparing to unpack .../05-libssh2-1t64_1.11.1-1+deb13u2_arm64.deb ...
+#75 11.27 Unpacking libssh2-1t64:arm64 (1.11.1-1+deb13u2) ...
+#75 11.30 Selecting previously unselected package libcurl4t64:arm64.
+#75 11.30 Preparing to unpack .../06-libcurl4t64_8.14.1-2+deb13u7_arm64.deb ...
+#75 11.30 Unpacking libcurl4t64:arm64 (8.14.1-2+deb13u7) ...
+#75 11.34 Selecting previously unselected package curl.
+#75 11.34 Preparing to unpack .../07-curl_8.14.1-2+deb13u7_arm64.deb ...
+#75 11.34 Unpacking curl (8.14.1-2+deb13u7) ...
+#75 11.37 Selecting previously unselected package libonig5:arm64.
+#75 11.37 Preparing to unpack .../08-libonig5_6.9.9-1+b1_arm64.deb ...
+#75 11.38 Unpacking libonig5:arm64 (6.9.9-1+b1) ...
+#75 11.41 Selecting previously unselected package libjq1:arm64.
+#75 ...
+
+#77 [taker-node strip 4/4] RUN strip /payload/*
+#77 DONE 0.3s
+
+#75 [maker-node 1/8] RUN apt-get update && apt-get install -y --no-install-recommends         ca-certificates curl jq libpcsclite1 procps socat python3 util-linux     && rm -rf /var/lib/apt/lists/*
+#75 11.41 Preparing to unpack .../09-libjq1_1.7.1-6+deb13u4_arm64.deb ...
+#75 11.41 Unpacking libjq1:arm64 (1.7.1-6+deb13u4) ...
+#75 11.51 Selecting previously unselected package jq.
+#75 11.51 Preparing to unpack .../10-jq_1.7.1-6+deb13u4_arm64.deb ...
+#75 11.52 Unpacking jq (1.7.1-6+deb13u4) ...
+#75 11.54 Selecting previously unselected package libpcsclite1:arm64.
+#75 11.55 Preparing to unpack .../11-libpcsclite1_2.3.3-1_arm64.deb ...
+#75 11.55 Unpacking libpcsclite1:arm64 (2.3.3-1) ...
+#75 11.58 Selecting previously unselected package libwrap0:arm64.
+#75 11.58 Preparing to unpack .../12-libwrap0_7.6.q-36_arm64.deb ...
+#75 11.58 Unpacking libwrap0:arm64 (7.6.q-36) ...
+#75 11.61 Selecting previously unselected package socat.
+#75 11.61 Preparing to unpack .../13-socat_1.8.0.3-1+deb13u1_arm64.deb ...
+#75 11.61 Unpacking socat (1.8.0.3-1+deb13u1) ...
+#75 11.67 Setting up media-types (13.0.0) ...
+#75 11.70 Setting up libpsl5t64:arm64 (0.21.2-1.1+b1) ...
+#75 11.70 Setting up libwrap0:arm64 (7.6.q-36) ...
+#75 11.71 Setting up librtmp1:arm64 (2.4+20151223.gitfa8646d.1-2+b5) ...
+#75 11.72 Setting up socat (1.8.0.3-1+deb13u1) ...
+#75 11.72 Setting up libpcsclite1:arm64 (2.3.3-1) ...
+#75 11.73 Setting up libnghttp3-9:arm64 (1.8.0-1) ...
+#75 11.73 Setting up netbase (6.5) ...
+#75 11.75 Setting up libssh2-1t64:arm64 (1.11.1-1+deb13u2) ...
+#75 11.76 Setting up readline-common (8.2-6) ...
+#75 11.76 Setting up libldap2:arm64 (2.6.10+dfsg-1) ...
+#75 11.77 Setting up libonig5:arm64 (6.9.9-1+b1) ...
+#75 11.78 Setting up libcurl4t64:arm64 (8.14.1-2+deb13u7) ...
+#75 11.78 Setting up libjq1:arm64 (1.7.1-6+deb13u4) ...
+#75 11.79 Setting up libreadline8t64:arm64 (8.2-6) ...
+#75 11.79 Setting up jq (1.7.1-6+deb13u4) ...
+#75 11.80 Setting up curl (8.14.1-2+deb13u7) ...
+#75 11.80 Setting up libpython3.13-stdlib:arm64 (3.13.5-2+deb13u5) ...
+#75 11.81 Setting up libpython3-stdlib:arm64 (3.13.5-1) ...
+#75 11.81 Setting up python3.13 (3.13.5-2+deb13u5) ...
+#75 12.43 Setting up python3 (3.13.5-1) ...
+#75 12.44 running python rtupdate hooks for python3.13...
+#75 12.44 running python post-rtupdate hooks for python3.13...
+#75 12.50 Processing triggers for libc-bin (2.41-12+deb13u4) ...
+#75 12.54 Processing triggers for man-db (2.13.1-1) ...
+#75 DONE 12.7s
+
+#78 [maker-node 2/8] RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez     && mkdir -p /var/lib/lez/maker /var/lib/lez/zec /run/lez/maker /run/lez-wallet/maker /delivery     && chown -R lez:lez /var/lib/lez /run/lez /run/lez-wallet /delivery     && chmod 0700 /var/lib/lez/maker /var/lib/lez/zec /run/lez/maker /run/lez-wallet/maker /delivery
+#78 0.160 useradd warning: lez's uid 4713 is greater than SYS_UID_MAX 999
+#78 DONE 0.2s
+
+#79 [taker-node stage-1 2/9] RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez     && mkdir -p /var/lib/lez/taker /var/lib/lez/zec /run/lez/taker /run/lez-wallet/taker /delivery     && chown -R lez:lez /var/lib/lez /run/lez /run/lez-wallet /delivery     && chmod 0700 /var/lib/lez/taker /var/lib/lez/zec /run/lez/taker /run/lez-wallet/taker /delivery
+#79 0.160 useradd warning: lez's uid 4713 is greater than SYS_UID_MAX 999
+#79 DONE 0.2s
+
+#80 [taker-node stage-1 3/9] COPY --chmod=0444 lez_taker_node.lgx /tmp/lez_taker_node.lgx
+#80 DONE 0.1s
+
+#81 [maker-node 3/8] COPY --chmod=0444 lez_maker_node.lgx /tmp/lez_maker_node.lgx
+#81 DONE 0.1s
+
+#82 [taker-node stage-1 4/9] RUN set -eu; module=/var/lez/basecamp-taker-user/modules/lez_taker_node; unpacked="$(mktemp -d)";     tar -xzf /tmp/lez_taker_node.lgx -C "$unpacked";     case "$(uname -m)" in aarch64|arm64) variant=linux-arm64 ;; x86_64|amd64) variant=linux-amd64 ;;       *) echo "no package variant for $(uname -m)" >&2; exit 1 ;; esac;     jq -e --arg v "$variant" '.main[$v] | strings' "$unpacked/manifest.json" >/dev/null       || { echo "lez_taker_node.lgx has no $variant variant" >&2; exit 1; };     mkdir -p "$module"; cp -R "$unpacked/variants/$variant/." "$module/";     jq 'if .dependencies then .dependencies |= map(if type == "object" then .name else . end) else . end'       "$unpacked/manifest.json" > "$module/manifest.json"; printf '%s\n' "$variant" > "$module/variant";     rm -rf "$unpacked" /tmp/lez_taker_node.lgx;     test -x "$module/bin/node-entrypoint.sh"; test -x "$module/bin/lez-taker-node";     for tool in "$module"/bin/*; do       case "${tool##*/}" in payload.json|node-entrypoint.sh) ;; *) ln -s "$tool" "/usr/local/bin/${tool##*/}" ;; esac;     done;     chown -R 4713:4713 /var/lez/basecamp-taker-user/modules
+#82 DONE 1.5s
+
+#83 [maker-node 4/8] RUN set -eu; module=/var/lez/basecamp-maker-user/modules/lez_maker_node; unpacked="$(mktemp -d)";     tar -xzf /tmp/lez_maker_node.lgx -C "$unpacked";     case "$(uname -m)" in aarch64|arm64) variant=linux-arm64 ;; x86_64|amd64) variant=linux-amd64 ;;       *) echo "no package variant for $(uname -m)" >&2; exit 1 ;; esac;     jq -e --arg v "$variant" '.main[$v] | strings' "$unpacked/manifest.json" >/dev/null       || { echo "lez_maker_node.lgx has no $variant variant" >&2; exit 1; };     mkdir -p "$module"; cp -R "$unpacked/variants/$variant/." "$module/";     jq 'if .dependencies then .dependencies |= map(if type == "object" then .name else . end) else . end'       "$unpacked/manifest.json" > "$module/manifest.json"; printf '%s\n' "$variant" > "$module/variant";     rm -rf "$unpacked" /tmp/lez_maker_node.lgx;     test -x "$module/bin/node-entrypoint.sh"; test -x "$module/bin/lez-maker-node";     for tool in "$module"/bin/*; do       case "${tool##*/}" in payload.json|node-entrypoint.sh) ;; *) ln -s "$tool" "/usr/local/bin/${tool##*/}" ;; esac;     done;     chown -R 4713:4713 /var/lez/basecamp-maker-user/modules
+#83 DONE 1.5s
+
+#84 [taker-node stage-1 5/9] COPY --from=strip --chmod=0555 /payload/ /usr/local/bin/
+#84 DONE 0.1s
+
+#85 [maker-node 5/8] COPY --chmod=0444 build-source.txt sidecar-source.txt /usr/local/share/lez/
+#85 DONE 0.1s
+
+#86 [taker-node stage-1 6/9] COPY --chmod=0444 build-source.txt sidecar-source.txt /usr/local/share/lez/
+#86 DONE 0.0s
+
+#87 [maker-node 6/8] RUN chmod 0755 /usr/local/share/lez
+#87 DONE 0.1s
+
+#88 [taker-node stage-1 7/9] RUN chmod 0755 /usr/local/share/lez
+#88 DONE 0.1s
+
+#89 [maker-node 7/8] WORKDIR /var/lib/lez
+#89 DONE 0.0s
+
+#90 [taker-node stage-1 8/9] WORKDIR /var/lib/lez
+#90 DONE 0.0s
+
+#91 [basecamp-ui] exporting to image
+#91 exporting layers done
+#91 writing image sha256:1df1279b092d927f41b921ec729d16ae2996b2cdce0d85c091e350ffbd8f2acc done
+#91 naming to docker.io/library/lez-basecamp-ui:local done
+#91 DONE 0.0s
+
+#92 [taker-node] exporting to image
+#92 ...
+
+#93 [basecamp-ui] resolving provenance for metadata file
+#93 DONE 0.0s
+
+#94 [maker-node] exporting to image
+#94 exporting layers 0.3s done
+#94 writing image sha256:361365e1d8df8eb28a1c8427847569907b45a4e0094204481ab9f1bdf6078a67 done
+#94 naming to docker.io/library/lez-maker-node:local done
+#94 DONE 0.3s
+
+#95 [maker-node] resolving provenance for metadata file
+#95 DONE 0.0s
+
+#92 [taker-node] exporting to image
+#92 exporting layers 0.3s done
+#92 writing image sha256:b2bc1e427fddd13a4e99e80ef48ae11aafddada43caad0c87d716c070b3d54ea done
+#92 naming to docker.io/library/lez-taker-node:local done
+#92 DONE 0.3s
+
+#96 [taker-node] resolving provenance for metadata file
+#96 DONE 0.0s
+ Image lez-services:local Built 
+ Image lez-basecamp-ui:local Built 
+ Image lez-bitcoin-core:local Built 
+ Image lez-btc-miner:local Built 
+ Image lez-maker-node:local Built 
+ Image lez-network-module:local Built 
+ Image lez-taker-node:local Built 
+ Image lez-zebra:local Built 
+  [time 07:07:38] images: 25 s (26 s since up.sh started)
+[3/6] starting chains…
+ Network lez-swap-chains Creating 
+ Volume lez-zebra-data Creating 
+ Volume lez-bitcoin-core-data Creating 
+ Volume lez-bitcoin-core-data Creating 
+ Volume lez-zebra-data Creating 
+ Network lez-swap-chains Creating 
+ Volume lez-zebra-data Created 
+ Volume lez-zebra-data Created 
+ Volume lez-bitcoin-core-data Created 
+ Volume lez-bitcoin-core-data Created 
+ Network lez-swap-chains Created 
+ Network lez-swap-chains Created 
+ Container lez-zebra Creating 
+ Container lez-bitcoin-core Creating 
+ Container lez-network Creating 
+ Container lez-bitcoin-core Created 
+ Container lez-btc-miner Creating 
+ Container lez-network Created 
+ Container lez-sequencer Creating 
+ Container lez-zebra Created 
+ Container lez-btc-miner Created 
+ Container lez-sequencer Created 
+ Container lez-network Starting 
+ Container lez-zebra Starting 
+ Container lez-bitcoin-core Starting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-zebra Started 
+ Container lez-bitcoin-core Started 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+ Container lez-bitcoin-core Healthy 
+ Container lez-btc-miner Starting 
+ Container lez-btc-miner Started 
+  [time 07:07:45] start the chains (compose up): 7 s (33 s since up.sh started)
+  [time 07:07:51] chains healthy: 6 s (39 s since up.sh started)
+  [time 07:08:03] indexer check (repair-indexer.sh): 12 s (51 s since up.sh started)
+Regtest wallets ready; Maker 250.0 BTC, Taker 5250.0 BTC spendable.
+  [time 07:08:15] Bitcoin Core wallets (seed-btc-wallets.py): 12 s (63 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+taker-lane03: claimed 2000000 into 4ZS52TjyLddB47WBwj29duP8zeKU5GHc5MnoLgXrFVmj (eec25c0afd3f6e1fc784956728d6560f91da2983105a01d27f2be53dca2dd369)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+  [time 07:08:43] market bootstrap: 28 s (91 s since up.sh started)
+[5/6] Nodes…
+ Container lez-network Running 
+ Container lez-sequencer Running 
+ Container lez-bitcoin-core Running 
+ Volume lez-maker-state Creating 
+ Volume lez-zec-taker Creating 
+ Volume lez-zec-maker Creating 
+ Volume lez-zec-maker Creating 
+ Volume lez-taker-wallet Creating 
+ Volume lez-taker-wallet Creating 
+ Volume lez-taker-state Creating 
+ Volume lez-taker-state Creating 
+ Volume lez-delivery-dir Creating 
+ Volume lez-delivery-dir Creating 
+ Volume lez-maker-socket Creating 
+ Volume lez-maker-wallet Creating 
+ Volume lez-maker-wallet Creating 
+ Volume lez-maker-state Creating 
+ Volume lez-maker-socket Creating 
+ Volume lez-zec-taker Creating 
+ Volume lez-taker-wallet Created 
+ Volume lez-taker-wallet Created 
+ Volume lez-maker-state Created 
+ Volume lez-maker-state Created 
+ Volume lez-zec-maker Created 
+ Volume lez-zec-maker Created 
+ Volume lez-maker-socket Created 
+ Volume lez-maker-socket Created 
+ Volume lez-delivery-dir Created 
+ Volume lez-delivery-dir Created 
+ Volume lez-zec-taker Created 
+ Volume lez-zec-taker Created 
+ Volume lez-maker-wallet Created 
+ Volume lez-maker-wallet Created 
+ Container lez-maker-node Creating 
+ Volume lez-taker-state Created 
+ Volume lez-taker-state Created 
+ Container lez-maker-node Created 
+ Container lez-taker-node Creating 
+ Container lez-taker-node Created 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+ Container lez-bitcoin-core Healthy 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-sequencer Waiting 
+ Container lez-maker-node Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+  [time 07:08:50] start the Nodes (compose up): 7 s (98 s since up.sh started)
+  [time 07:08:56] Nodes healthy: 6 s (104 s since up.sh started)
+  [time 07:08:56] Nodes answer owner health: 0 s (104 s since up.sh started)
+15/15 market checks passed
+  [time 07:08:58] market check (verify-market.py): 2 s (106 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez-sequencer Running 
+ Container lez-network Running 
+ Container lez-heartbeat Creating 
+ Container lez-heartbeat Created 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+ Container lez-heartbeat Starting 
+ Container lez-heartbeat Started 
+  [time 07:08:59] finality heartbeat: 1 s (107 s since up.sh started)
+[6/6] the parties' desks…
+
+──────────────────────────────────────────────────────────────────
+ LEZ swap stack is up (volumes: lez-*)
+
+   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / 2 s)
+   LEZ indexer RPC       http://127.0.0.1:8779
+   explorers             off (LEZ_EXPLORERS=1 ./scripts/up.sh starts them)
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: lezswap; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: lezswap; the Taker desk)
+   Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health
+
+ logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
+ a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen
+──────────────────────────────────────────────────────────────────
+  [time 07:08:59] desk suites: 0 s (107 s since up.sh started)
+indexer serves historical reads at the tip (45)
+
+[07:09:00 stack] market bootstrap (escrow program, vault claims, bootstrap manifest)
+maker-lane03: vault already claimed (owner holds 2000000)
+taker-lane03: vault already claimed (owner holds 2000000)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+ Image lez-basecamp-ui:local Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.78kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2.40kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:trixie-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/11] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 599.69kB 0.7s done
+#6 DONE 0.7s
+
+#7 [ 3/11] COPY assets/bundle /opt/basecamp
+#7 CACHED
+
+#8 [ 5/11] COPY assets/taker-user /var/lez-assets/taker-user
+#8 CACHED
+
+#9 [ 9/11] COPY open-desks.mjs /opt/lez-open-desks.mjs
+#9 CACHED
+
+#10 [10/11] COPY signer-health.sh /usr/local/bin/lez-signer-health
+#10 CACHED
+
+#11 [ 2/11] RUN apt-get update && apt-get install -y --no-install-recommends         xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core ffmpeg         ca-certificates nodejs         libopengl0 libgl1 libegl1 libxkbcommon-x11-0 libvulkan1         libgles2 libgl1-mesa-dri     && rm -rf /var/lib/apt/lists/*
+#11 CACHED
+
+#12 [ 7/11] COPY assets/qt-mcp /opt/qt-mcp
+#12 CACHED
+
+#13 [ 8/11] COPY entrypoint.sh /entrypoint.sh
+#13 CACHED
+
+#14 [ 4/11] COPY assets/maker-user /var/lez-assets/maker-user
+#14 CACHED
+
+#15 [ 6/11] COPY assets/network-user /var/lez-assets/network-user
+#15 CACHED
+
+#16 [11/11] RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/lez-taker-ui     && chmod 0755 /usr/local/bin/lez-maker-ui /usr/local/bin/lez-taker-ui     && mkdir -p /var/lez     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user     && chown -R 4713:4713 /var/lez /var/lez-assets     && chmod -R u+rwX /var/lez /var/lez-assets
+#16 CACHED
+
+#17 exporting to image
+#17 exporting layers done
+#17 writing image sha256:1df1279b092d927f41b921ec729d16ae2996b2cdce0d85c091e350ffbd8f2acc done
+#17 naming to docker.io/library/lez-basecamp-ui:local done
+#17 DONE 0.0s
+
+#18 resolving provenance for metadata file
+#18 DONE 0.0s
+ Image lez-basecamp-ui:local Built 
+ Container lez-maker-node Recreate 
+ Container lez-maker-node Recreated 
+ Container lez-taker-node Recreate 
+ Container lez-taker-node Recreated 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-maker-node Waiting 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+ Container lez-taker-node Waiting 
+ Container lez-maker-node Waiting 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Healthy 
+
+[07:09:14 stack] desk suites in each party's Basecamp (the Maker suite also seeds the order book)
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+1 passed, 0 failed
+  [32mOK[0m   all services up
+  [32mOK[0m   Bitcoin chain at height 252
+  [32mOK[0m   Bitcoin spender index present (actor lock observation)
+  [32mOK[0m   LEZ chain finalized at block 60
+15/15 checks passed
+  [32mOK[0m   explorer transaction display
+15/15 market checks passed
+  [32mOK[0m   Node market behaviour
+3 passed, 0 failed
+  [32mOK[0m   desk suite: maker
+1 passed, 0 failed
+  [32mOK[0m   desk suite: taker
+
+[07:09:31 stack] done

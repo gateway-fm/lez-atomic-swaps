@@ -1,0 +1,10 @@
+
+[07:51:04] === zec-survivor (TakerSellsLez)
+
+[07:51:04] provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh: offer, draft, catalog, Nodes recreated)
+                  ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+     File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+       raise JSONDecodeError("Expecting value", s, err.value) from None
+   json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+[07:51:05] FAILED: zec-provision.sh

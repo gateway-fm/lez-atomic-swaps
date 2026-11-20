@@ -11,10 +11,10 @@ fn taker_selling_lez_preserves_taker_first_claim_and_refund_safety() {
         assert_eq!(happy.direction(), SwapDirection::TakerSellsLez);
         assert_eq!(
             happy.first_claimant(),
-            if pair == Pair::Bitcoin {
-                Participant::Taker
-            } else {
+            if pair == Pair::Monero {
                 Participant::Maker
+            } else {
+                Participant::Taker
             }
         );
         assert_eq!(
@@ -61,14 +61,6 @@ fn taker_selling_lez_preserves_taker_first_claim_and_refund_safety() {
             refund
                 .observe_maker_recovery(ChainProof::new("xmr-recovery", 10).unwrap())
                 .unwrap();
-        } else if pair == Pair::Zcash {
-            refund
-                .refund_taker_leg(ChainPosition::block_height(Chain::Lez, 120))
-                .unwrap();
-            assert_eq!(refund.phase(), Phase::TakerLegRefunded);
-            refund
-                .refund_maker_leg(ChainPosition::block_height(Chain::Zcash, 100))
-                .unwrap();
         } else {
             refund
                 .refund_maker_leg(ChainPosition::block_height(Chain::from(pair), 100))
@@ -86,11 +78,8 @@ fn coordinator(pair: Pair, id: &str) -> SwapCoordinator {
     let schedule = if pair == Pair::Monero {
         RecoverySchedule::xmr_lez_first(ChainPosition::block_height(Chain::Lez, 120), 2).unwrap()
     } else {
-        let safety_chains = if pair == Pair::Zcash {
-            [Chain::Lez, Chain::Zcash]
-        } else {
-            [Chain::from(pair), Chain::Lez]
-        };
+        // The Maker-funded foreign leg refunds first for BTC and ZEC alike.
+        let safety_chains = [Chain::from(pair), Chain::Lez];
         RecoverySchedule::new(
             pair,
             SwapDirection::TakerSellsLez,

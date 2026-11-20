@@ -402,6 +402,18 @@ pub enum StoreError {
     /// The consuming negotiation does not own the durable reservation.
     #[error("maker offer reservation conflicts with the winning negotiation")]
     MakerOfferReservationConflict,
+    /// The Maker already holds as many open ZEC `TakerSellsLez` swaps as its
+    /// follow-up LEZ claims, one at a time, can settle inside the profile's
+    /// required margin; a new one is refused until one completes or refunds.
+    #[error(
+        "zec_taker_sells_lez_capacity_reached: the Maker holds {open} open ZEC TakerSellsLez swaps, its capacity is {capacity}"
+    )]
+    MakerZecTakerSellsLezCapacityReached {
+        /// Open swaps counted at the refusal.
+        open: usize,
+        /// The capacity the new agreement's profile allows.
+        capacity: usize,
+    },
     /// The offer compare-and-swap revision did not match durable state.
     #[error("stale maker offer revision: expected {expected}, actual {actual}")]
     StaleMakerOffer {

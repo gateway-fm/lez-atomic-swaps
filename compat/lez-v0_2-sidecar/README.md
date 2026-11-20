@@ -126,6 +126,18 @@ and integrated journal-to-finality transitions remain post-PoC hardening.
 Forty-two existing integration tests and the full wrapper gate stayed GREEN; no
 new PoC feature test is represented as a RED-GREEN-REFACTOR phase transition.
 
+`lez-v02-escrow-claim-probe` is a test-only tool. It submits one checked-escrow
+`claim_native` with a preimage the caller chooses, signed with the claimant's
+key, and reports the sequencer's answer, whether the transaction was included,
+and the escrow state, custody and claimant balances before and after. The
+planner never signs such a claim (`prepare_revealing_claim` refuses a preimage
+that does not hash to the signed digest), so the probe builds the message
+itself. The devnet scenario `zec-maker-early-claim`
+(`deploy/scripts/node-e2e.py`) runs it in the Maker's container with the
+Maker's claimant key to show the escrow refuses a claim made with what the
+Maker holds in ZEC `TakerSellsLez` (ADR 0216, threat TM-0030). The devnet
+Maker image carries it beside the Node package; no role package contains it.
+
 The crate now also contains the exact source-complete PoC bridge process,
 `lez-v02-bridge-poc`. It accepts only an explicitly provisioned nonzero
 literal-loopback listener, official sequencer and indexer loopback URLs, and

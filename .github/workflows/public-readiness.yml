@@ -9,9 +9,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request supersedes its older run. A commit on main
+# and a tag always get a complete run: outside pull requests the group also
+# names the commit, because GitHub keeps one pending run per group and drops
+# the older pending one even when cancel-in-progress is false.
 concurrency:
-  group: public-readiness-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: public-readiness-${{ github.workflow }}-${{ github.ref }}${{ github.event_name != 'pull_request' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   repository-contract:

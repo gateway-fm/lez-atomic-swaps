@@ -9,6 +9,9 @@ name: release-packages
 # 0.2.2 release with its Delivery dependency pinned to 0.2.x
 # (package-chat-module.sh, issue #147).
 #
+#   ci-gate   first: a run on a tag ref needs finished, green ci.yml and
+#             public-readiness.yml runs on its commit
+#             (scripts/check-release-ci.sh); a branch dispatch is not gated
 #   variant   builds every package natively on that architecture's runner
 #             (linux-arm64 on ubuntu-24.04-arm, linux-amd64 on ubuntu-24.04),
 #             the same from-scratch.sh steps release-images.yml runs, and
@@ -53,8 +56,28 @@ env:
   NIX_IMAGE: nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21
 
 jobs:
+  ci-gate:
+    name: release CI gate
+    # First job: a release event or a run on a tag ref goes on only when the
+    # commit has finished, green ci.yml and public-readiness.yml runs. A manual
+    # dispatch on a branch is a test build and passes, saying so in its log.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require finished green CI on the released commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-release-ci.sh
+
   variant:
     name: packages (${{ matrix.variant }})
+    needs: ci-gate
     strategy:
       fail-fast: false
       matrix:
@@ -151,6 +174,7 @@ jobs:
 
   darwin:
     name: packages (darwin-arm64)
+    needs: ci-gate
     runs-on: macos-14
     timeout-minutes: 240
     permissions:
@@ -160,7 +184,7 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
-      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       # risc0 (in lez_core) compiles Metal kernels. Xcode 26 ships the Metal
       # compiler as a separate component; the flake patch
       # (builder/patches/logos-execution-zone-module/0001-lez-darwin-metal-*)

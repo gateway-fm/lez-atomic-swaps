@@ -106,6 +106,8 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-taker-cli:TakerSellsLez"
       echo "node:btc:outage-before-take:TakerSellsForeign"; echo "node:zec:zec-outage-before-take:TakerSellsLez"
       echo "node:zec:zec-claim-collision:TakerSellsForeign"
+      # selling LEZ only: the Maker's claim on the Taker's LEZ with what it holds (TM-0030)
+      echo "node:zec:zec-maker-early-claim:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
       echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"

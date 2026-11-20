@@ -117,8 +117,8 @@ sequenceDiagram
         Taker->>Chains: claim maker-funded leg and reveal witness
         Maker->>Chains: claim taker-funded leg
     else ZEC
-        SDK->>Chains: LEZ recipient claims and reveals preimage
-        SDK->>Chains: ZEC recipient claims transparent HTLC
+        Taker->>Chains: claim maker-funded leg and reveal preimage
+        Maker->>Chains: claim taker-funded leg with the preimage
     else XMR LEZ-first
         Maker->>Chains: claim LEZ and reveal recovery share
         Taker->>Chains: spend Monero output
@@ -133,11 +133,12 @@ sequenceDiagram
 |---|---|---|---|
 | BTC–LEZ | exact P2TR outpoint/value/internal key/tapleaf/control block or LEZ escrow PDA/terms hash | adaptor pre-signature plus canonical completed BIP-340 signature, or scalar checked against adaptor point | Taproot CSV script-path refund on a BTC-funded leg; LEZ timestamp refund on a LEZ-funded leg |
 | XMR–LEZ | LEZ-first escrow, DLEQ transcript, Monero address/amount/tx proof and 10-confirmation observation | canonical LEZ witnessed signature and typed Monero spend-key share | taker refunds LEZ; maker recovery of XMR is key-share/event-gated, not a Monero timelock |
-| transparent ZEC–LEZ | exact transparent outpoint/value/BIP-199 redeem script/branch ID/expiry plus LEZ escrow | 32-byte SHA-256 preimage from the canonical LEZ claim, followed by the ZEC claim | LEZ timestamp refund first; ZEC CLTV refund later by the RFP-required margin |
+| transparent ZEC–LEZ | exact transparent outpoint/value/BIP-199 redeem script/branch ID/expiry plus LEZ escrow | 32-byte SHA-256 preimage held by the taker, published by its canonical claim of the maker-funded leg (LEZ or ZEC), followed by the maker's claim | maker-funded leg refunds first (LEZ timestamp or ZEC CLTV), taker-funded leg later by the profile margin ([ADR 0216](../architecture/0216-zec-taker-reveals-first-in-both-directions.md)) |
 
 XMR rejects `TakerSellsForeign` at term validation. BTC and ZEC support both
-directions. Direction never changes taker-first funding. It can change which
-participant is the LEZ recipient and therefore the first ZEC claimant; the
+directions. Direction never changes taker-first funding, and for BTC and ZEC
+it never changes the claimant order either: the taker claims the
+maker-funded leg first. It changes which chain that leg is on; the
 pair-specific `ClaimOrder` remains explicit rather than inferred from
 maker/taker names.
 

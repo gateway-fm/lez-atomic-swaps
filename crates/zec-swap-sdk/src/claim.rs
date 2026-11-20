@@ -11,12 +11,21 @@ use crate::{CanonicalLezClaimSnapshotRecordV1, ClaimPreimage, ZecAgreementV1};
 pub const MAX_CLAIM_SUBMISSION_BYTES: usize = 2_000_000;
 
 /// One chain-ordered claim action.
+///
+/// The Taker holds the preimage and claims the Maker-funded leg first in both directions
+/// (the common flow, AGENTS.md): `RevealingLez` then `FollowupZcash` in `TakerSellsForeign`,
+/// `RevealingZcash` then `FollowupLez` in `TakerSellsLez`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ClaimStepV1 {
-    /// The LEZ recipient claims first and reveals the agreement preimage.
+    /// `TakerSellsForeign`: the Taker claims the Maker's LEZ and reveals the preimage.
     RevealingLez,
-    /// The other participant consumes the revealed preimage on Zcash.
+    /// `TakerSellsForeign`: the Maker consumes the revealed preimage on Zcash.
     FollowupZcash,
+    /// `TakerSellsLez`: the Taker claims the Maker's Zcash HTLC and reveals the preimage.
+    RevealingZcash,
+    /// `TakerSellsLez`: the Maker claims the Taker's LEZ with the preimage it read from the
+    /// Taker's Zcash claim.
+    FollowupLez,
 }
 
 /// Fail-closed reason the revealing claimant is waiting for safe Zcash funding.
@@ -58,10 +67,17 @@ pub enum ClaimDriveOutcome {
     },
 }
 
-/// Upper bound on re-plans of one owned revealing claim; past it the actor
-/// stops the swap by name (attention required, never a refund). Equal to the
-/// sidecar's `MAX_REVEALING_CLAIM_REPLANS`.
-pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 5;
+/// Upper bound on re-plans of one owned revealing claim, equal to the bridge
+/// protocol's `MAX_REVEALING_CLAIM_REPLANS`: one per attempt, attempts at least
+/// a second apart, so no claim reaches it inside the longest LEZ refund delay
+/// of any profile (14,400 s). A claim that can still land keeps being
+/// re-planned (issue #172).
+pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 16_384;
+
+/// Re-plans of one claim past which its actor reports it as needing
+/// attention (the account's nonce keeps being taken), while it goes on
+/// re-planning: the bound the protocol had before issue #172.
+pub const REVEALING_CLAIM_REPLAN_ATTENTION: u32 = 5;
 
 /// One re-plan of the owned revealing LEZ claim, durable beside the claim
 /// intent it replaced: both nonces, both transaction identities and the
@@ -182,8 +198,8 @@ impl ClaimSupersessionV1 {
     ) -> bool {
         superseded.expected_submission_id() == &self.superseded_id
             && replanned.expected_submission_id() == &self.replanned_id
-            && superseded.step() == ClaimStepV1::RevealingLez
-            && replanned.step() == ClaimStepV1::RevealingLez
+            && superseded.step() == replanned.step()
+            && superseded.step().chain() == lez_swap_core::Chain::Lez
     }
 }
 
@@ -210,34 +226,69 @@ pub enum FollowupClaimObservationV1 {
 }
 
 impl ClaimStepV1 {
-    /// Derives the only claim step owned by a fixed agreement role.
+    /// The revealing (first) claim step of the agreement's direction.
     #[must_use]
-    pub fn for_local(agreement: &ZecAgreementV1, local: Participant) -> Self {
-        if local == agreement.lez_claimant() {
-            Self::RevealingLez
-        } else {
-            Self::FollowupZcash
+    pub const fn revealing(agreement: &ZecAgreementV1) -> Self {
+        match agreement.direction() {
+            lez_swap_core::SwapDirection::TakerSellsForeign => Self::RevealingLez,
+            lez_swap_core::SwapDirection::TakerSellsLez => Self::RevealingZcash,
         }
     }
 
-    const fn claimant(self, agreement: &ZecAgreementV1) -> Participant {
+    /// The follow-up (second) claim step of the agreement's direction.
+    #[must_use]
+    pub const fn followup(agreement: &ZecAgreementV1) -> Self {
+        match agreement.direction() {
+            lez_swap_core::SwapDirection::TakerSellsForeign => Self::FollowupZcash,
+            lez_swap_core::SwapDirection::TakerSellsLez => Self::FollowupLez,
+        }
+    }
+
+    /// Derives the only claim step owned by a fixed agreement role.
+    #[must_use]
+    pub const fn for_local(agreement: &ZecAgreementV1, local: Participant) -> Self {
+        match local {
+            Participant::Taker => Self::revealing(agreement),
+            Participant::Maker => Self::followup(agreement),
+        }
+    }
+
+    /// Chain the claim is executed on.
+    #[must_use]
+    pub const fn chain(self) -> lez_swap_core::Chain {
         match self {
-            Self::RevealingLez => agreement.lez_claimant(),
-            Self::FollowupZcash => agreement.lez_claimant().other(),
+            Self::RevealingLez | Self::FollowupLez => lez_swap_core::Chain::Lez,
+            Self::RevealingZcash | Self::FollowupZcash => lez_swap_core::Chain::Zcash,
+        }
+    }
+
+    /// Whether this claim publishes the preimage first.
+    #[must_use]
+    pub const fn is_revealing(self) -> bool {
+        matches!(self, Self::RevealingLez | Self::RevealingZcash)
+    }
+
+    const fn claimant(self, agreement: &ZecAgreementV1) -> Participant {
+        if self.is_revealing() {
+            agreement.revealing_claimant()
+        } else {
+            agreement.revealing_claimant().other()
         }
     }
 
     const fn expected_phase(self) -> Phase {
-        match self {
-            Self::RevealingLez => Phase::BothLegsLocked,
-            Self::FollowupZcash => Phase::ClaimEvidenceAvailable,
+        if self.is_revealing() {
+            Phase::BothLegsLocked
+        } else {
+            Phase::ClaimEvidenceAvailable
         }
     }
 
+    // The leg the claim spends: its funder's confirmation policy governs the evidence.
     const fn observed_leg_funder(self, agreement: &ZecAgreementV1) -> Participant {
-        match self {
-            Self::RevealingLez => agreement.lez_depositor(),
-            Self::FollowupZcash => agreement.lez_claimant(),
+        match self.chain() {
+            lez_swap_core::Chain::Lez => agreement.lez_depositor(),
+            _ => agreement.lez_claimant(),
         }
     }
 }
@@ -285,6 +336,38 @@ impl PreparedClaimSubmissionV1 {
             expected_submission_id,
             exact_submission,
         })
+    }
+
+    /// The same exact bytes under another step of the same chain. A chain adapter prepares
+    /// and observes one claim transaction per chain whatever its order; the SDK labels it
+    /// revealing or follow-up by the agreement's direction.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a step on another chain.
+    pub fn relabeled(mut self, step: ClaimStepV1) -> Result<Self, ClaimError> {
+        if step.chain() != self.step.chain() {
+            return Err(ClaimError::ContextMismatch);
+        }
+        Ok(Self {
+            step,
+            expected_submission_id: self.expected_submission_id,
+            exact_submission: std::mem::take(&mut self.exact_submission),
+        })
+    }
+
+    /// A copy of the exact bytes under another step of the same chain.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a step on another chain.
+    pub fn relabeled_copy(&self, step: ClaimStepV1) -> Result<Self, ClaimError> {
+        Self::new(
+            self.step,
+            self.expected_submission_id,
+            self.exact_submission.clone(),
+        )?
+        .relabeled(step)
     }
 
     /// Chain-ordered claim step represented by these bytes.
@@ -494,12 +577,81 @@ impl RevealingClaimEvidenceV1 {
         preimage: ClaimPreimage,
     ) -> Result<Self, ClaimError> {
         if observed_submission_id == [0; 32] {
-            return Err(ClaimError::EmptyExpectedIdentity(ClaimStepV1::RevealingLez));
+            return Err(ClaimError::EmptyExpectedIdentity(ClaimStepV1::revealing(
+                agreement,
+            )));
         }
         let transaction_id = transaction_id.into();
         ChainProof::new(transaction_id.clone(), confirmations).map_err(ClaimError::Core)?;
         validate_preimage(agreement, &preimage)?;
-        require_confirmations(agreement, ClaimStepV1::RevealingLez, confirmations)?;
+        require_confirmations(agreement, ClaimStepV1::revealing(agreement), confirmations)?;
+        Ok(Self {
+            observed_submission_id,
+            transaction_id,
+            confirmations,
+            preimage,
+            canonical_lez_snapshot: None,
+        })
+    }
+
+    /// Builds revealing evidence from a canonical Zcash claim of the agreement's HTLC
+    /// (`TakerSellsLez`): the preimage read from the claim input must hash to the agreement
+    /// digest and the claim must be at the Maker-funded Zcash leg's confirmation depth.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a direction whose revealing claim is not on Zcash, an empty identity, a
+    /// wrong preimage, or insufficient depth.
+    pub fn from_canonical_zcash_claim(
+        agreement: &ZecAgreementV1,
+        observed_submission_id: [u8; 32],
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+        preimage: ClaimPreimage,
+    ) -> Result<Self, ClaimError> {
+        if ClaimStepV1::revealing(agreement) != ClaimStepV1::RevealingZcash {
+            return Err(ClaimError::ContextMismatch);
+        }
+        Self::from_legacy_recovery_parts(
+            agreement,
+            observed_submission_id,
+            transaction_id,
+            confirmations,
+            preimage,
+        )
+    }
+
+    /// Builds the Maker's evidence of the Taker's revealing Zcash claim (`TakerSellsLez`) as
+    /// soon as the claim is seen, in the mempool (`confirmations` 0) or in any block.
+    ///
+    /// The preimage is what the Maker needs, and a preimage that hashes to the agreement digest
+    /// stays valid whatever happens to the Zcash transaction that carried it, so no depth is
+    /// required: waiting for one would only spend the Maker's margin before the LEZ refund. The
+    /// Taker's own revealing evidence keeps its depth rule
+    /// ([`Self::from_canonical_zcash_claim`]).
+    ///
+    /// # Errors
+    ///
+    /// Rejects a direction whose revealing claim is not on Zcash, an empty identity, or a
+    /// wrong preimage.
+    pub fn from_observed_zcash_claim(
+        agreement: &ZecAgreementV1,
+        observed_submission_id: [u8; 32],
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+        preimage: ClaimPreimage,
+    ) -> Result<Self, ClaimError> {
+        if ClaimStepV1::revealing(agreement) != ClaimStepV1::RevealingZcash {
+            return Err(ClaimError::ContextMismatch);
+        }
+        if observed_submission_id == [0; 32] {
+            return Err(ClaimError::EmptyExpectedIdentity(
+                ClaimStepV1::RevealingZcash,
+            ));
+        }
+        let transaction_id = transaction_id.into();
+        ChainProof::new(transaction_id.clone(), confirmations).map_err(ClaimError::Core)?;
+        validate_preimage(agreement, &preimage)?;
         Ok(Self {
             observed_submission_id,
             transaction_id,
@@ -517,15 +669,27 @@ impl RevealingClaimEvidenceV1 {
         preimage: ClaimPreimage,
         canonical_lez_snapshot: CanonicalLezClaimSnapshotRecordV1,
     ) -> Result<Self, ClaimError> {
-        let mut evidence = Self::from_legacy_recovery_parts(
-            agreement,
+        // A LEZ claim spends the LEZ leg, so its depth is the LEZ leg's in either order:
+        // the Taker's revealing claim selling ZEC, the Maker's follow-up selling LEZ (whose
+        // revealing claim is on Zcash, with the Zcash leg's depth).
+        let lez_step = match ClaimStepV1::revealing(agreement).chain() {
+            lez_swap_core::Chain::Lez => ClaimStepV1::revealing(agreement),
+            _ => ClaimStepV1::followup(agreement),
+        };
+        if observed_submission_id == [0; 32] {
+            return Err(ClaimError::EmptyExpectedIdentity(lez_step));
+        }
+        let transaction_id = transaction_id.into();
+        ChainProof::new(transaction_id.clone(), confirmations).map_err(ClaimError::Core)?;
+        validate_preimage(agreement, &preimage)?;
+        require_confirmations(agreement, lez_step, confirmations)?;
+        Ok(Self {
             observed_submission_id,
             transaction_id,
             confirmations,
             preimage,
-        )?;
-        evidence.canonical_lez_snapshot = Some(Box::new(canonical_lez_snapshot));
-        Ok(evidence)
+            canonical_lez_snapshot: Some(Box::new(canonical_lez_snapshot)),
+        })
     }
 
     /// Canonical adapter-derived identity of the observed transaction.
@@ -594,13 +758,13 @@ impl FollowupClaimEvidenceV1 {
         confirmations: u32,
     ) -> Result<Self, ClaimError> {
         if observed_submission_id == [0; 32] {
-            return Err(ClaimError::EmptyExpectedIdentity(
-                ClaimStepV1::FollowupZcash,
-            ));
+            return Err(ClaimError::EmptyExpectedIdentity(ClaimStepV1::followup(
+                agreement,
+            )));
         }
         let transaction_id = transaction_id.into();
         ChainProof::new(transaction_id.clone(), confirmations).map_err(ClaimError::Core)?;
-        require_confirmations(agreement, ClaimStepV1::FollowupZcash, confirmations)?;
+        require_confirmations(agreement, ClaimStepV1::followup(agreement), confirmations)?;
         Ok(Self {
             observed_submission_id,
             transaction_id,
@@ -630,6 +794,7 @@ impl FollowupClaimEvidenceV1 {
 /// Revealing LEZ claim committed at an exact aggregate revision.
 pub struct RevealingClaimTransitionV1 {
     schema_version: u16,
+    step: ClaimStepV1,
     swap_id: SwapId,
     agreement_commitment: [u8; 32],
     local_participant: Participant,
@@ -651,14 +816,15 @@ impl RevealingClaimTransitionV1 {
             coordinator,
             intent,
             predecessor_revision,
-            ClaimStepV1::RevealingLez,
+            ClaimStepV1::revealing(agreement),
             evidence.observed_submission_id(),
         )?;
         Ok(Self {
             schema_version: 1,
+            step: ClaimStepV1::revealing(agreement),
             swap_id: agreement.coordinator().id().clone(),
             agreement_commitment: *agreement.agreement_commitment(),
-            local_participant: agreement.lez_claimant(),
+            local_participant: agreement.revealing_claimant(),
             predecessor_revision,
             intent_staged_revision: intent.staged_revision(),
             evidence,
@@ -669,6 +835,12 @@ impl RevealingClaimTransitionV1 {
     #[must_use]
     pub const fn schema_version(&self) -> u16 {
         self.schema_version
+    }
+
+    /// Chain-ordered claim step this transition records.
+    #[must_use]
+    pub const fn step(&self) -> ClaimStepV1 {
+        self.step
     }
 
     /// Agreement-derived swap identity.
@@ -726,17 +898,17 @@ impl RevealingClaimTransitionV1 {
             agreement,
             coordinator,
             revision,
-            ClaimStepV1::RevealingLez,
+            ClaimStepV1::revealing(agreement),
         )?;
         validate_preimage(agreement, self.evidence.preimage())?;
         require_confirmations(
             agreement,
-            ClaimStepV1::RevealingLez,
+            ClaimStepV1::revealing(agreement),
             self.evidence.confirmations(),
         )?;
         let mut next = coordinator.clone();
         next.observe_revealing_claim(
-            agreement.lez_claimant(),
+            agreement.revealing_claimant(),
             ChainProof::new(
                 self.evidence.transaction_id().to_owned(),
                 self.evidence.confirmations(),
@@ -754,6 +926,7 @@ impl std::fmt::Debug for RevealingClaimTransitionV1 {
         formatter
             .debug_struct("RevealingClaimTransitionV1")
             .field("schema_version", &self.schema_version)
+            .field("step", &self.step)
             .field("swap_id", &self.swap_id)
             .field("agreement_commitment", &"[REDACTED]")
             .field("local_participant", &self.local_participant)
@@ -771,6 +944,7 @@ impl std::fmt::Debug for RevealingClaimTransitionV1 {
 /// no exact local transaction plan against which it can independently compare that identity.
 pub struct ObservedRevealingClaimTransitionV1 {
     schema_version: u16,
+    step: ClaimStepV1,
     swap_id: SwapId,
     agreement_commitment: [u8; 32],
     local_participant: Participant,
@@ -790,10 +964,11 @@ impl ObservedRevealingClaimTransitionV1 {
             agreement,
             coordinator,
             local_participant,
-            ClaimStepV1::RevealingLez,
+            ClaimStepV1::revealing(agreement),
         )?;
         Ok(Self {
             schema_version: 1,
+            step: ClaimStepV1::revealing(agreement),
             swap_id: agreement.coordinator().id().clone(),
             agreement_commitment: *agreement.agreement_commitment(),
             local_participant,
@@ -806,6 +981,12 @@ impl ObservedRevealingClaimTransitionV1 {
     #[must_use]
     pub const fn schema_version(&self) -> u16 {
         self.schema_version
+    }
+
+    /// Chain-ordered claim step this transition records.
+    #[must_use]
+    pub const fn step(&self) -> ClaimStepV1 {
+        self.step
     }
 
     /// Agreement-derived swap identity.
@@ -856,14 +1037,19 @@ impl ObservedRevealingClaimTransitionV1 {
             agreement,
             coordinator,
             revision,
-            ClaimStepV1::RevealingLez,
+            ClaimStepV1::revealing(agreement),
         )?;
         validate_preimage(agreement, self.evidence.preimage())?;
-        require_confirmations(
-            agreement,
-            ClaimStepV1::RevealingLez,
-            self.evidence.confirmations(),
-        )?;
+        // The observed Zcash reveal is committed when first seen (see
+        // `RevealingClaimEvidenceV1::from_observed_zcash_claim`); an observed LEZ reveal keeps
+        // the LEZ leg's depth.
+        if self.step != ClaimStepV1::RevealingZcash {
+            require_confirmations(
+                agreement,
+                ClaimStepV1::revealing(agreement),
+                self.evidence.confirmations(),
+            )?;
+        }
         apply_revealing_claim(agreement, coordinator, &self.evidence)
     }
 }
@@ -873,6 +1059,7 @@ impl std::fmt::Debug for ObservedRevealingClaimTransitionV1 {
         formatter
             .debug_struct("ObservedRevealingClaimTransitionV1")
             .field("schema_version", &self.schema_version)
+            .field("step", &self.step)
             .field("swap_id", &self.swap_id)
             .field("agreement_commitment", &"[REDACTED]")
             .field("local_participant", &self.local_participant)
@@ -886,6 +1073,7 @@ impl std::fmt::Debug for ObservedRevealingClaimTransitionV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FollowupClaimTransitionV1 {
     schema_version: u16,
+    step: ClaimStepV1,
     swap_id: SwapId,
     agreement_commitment: [u8; 32],
     local_participant: Participant,
@@ -907,14 +1095,15 @@ impl FollowupClaimTransitionV1 {
             coordinator,
             intent,
             predecessor_revision,
-            ClaimStepV1::FollowupZcash,
+            ClaimStepV1::followup(agreement),
             evidence.observed_submission_id(),
         )?;
         Ok(Self {
             schema_version: 1,
+            step: ClaimStepV1::followup(agreement),
             swap_id: agreement.coordinator().id().clone(),
             agreement_commitment: *agreement.agreement_commitment(),
-            local_participant: agreement.lez_claimant().other(),
+            local_participant: agreement.revealing_claimant().other(),
             predecessor_revision,
             intent_staged_revision: intent.staged_revision(),
             evidence,
@@ -925,6 +1114,12 @@ impl FollowupClaimTransitionV1 {
     #[must_use]
     pub const fn schema_version(&self) -> u16 {
         self.schema_version
+    }
+
+    /// Chain-ordered claim step this transition records.
+    #[must_use]
+    pub const fn step(&self) -> ClaimStepV1 {
+        self.step
     }
 
     /// Agreement-derived swap identity.
@@ -982,16 +1177,16 @@ impl FollowupClaimTransitionV1 {
             agreement,
             coordinator,
             revision,
-            ClaimStepV1::FollowupZcash,
+            ClaimStepV1::followup(agreement),
         )?;
         require_confirmations(
             agreement,
-            ClaimStepV1::FollowupZcash,
+            ClaimStepV1::followup(agreement),
             self.evidence.confirmations(),
         )?;
         let mut next = coordinator.clone();
         next.observe_followup_claim(
-            agreement.lez_claimant().other(),
+            agreement.revealing_claimant().other(),
             ChainProof::new(
                 self.evidence.transaction_id().to_owned(),
                 self.evidence.confirmations(),
@@ -1007,6 +1202,7 @@ impl FollowupClaimTransitionV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObservedFollowupClaimTransitionV1 {
     schema_version: u16,
+    step: ClaimStepV1,
     swap_id: SwapId,
     agreement_commitment: [u8; 32],
     local_participant: Participant,
@@ -1026,10 +1222,11 @@ impl ObservedFollowupClaimTransitionV1 {
             agreement,
             coordinator,
             local_participant,
-            ClaimStepV1::FollowupZcash,
+            ClaimStepV1::followup(agreement),
         )?;
         Ok(Self {
             schema_version: 1,
+            step: ClaimStepV1::followup(agreement),
             swap_id: agreement.coordinator().id().clone(),
             agreement_commitment: *agreement.agreement_commitment(),
             local_participant,
@@ -1042,6 +1239,12 @@ impl ObservedFollowupClaimTransitionV1 {
     #[must_use]
     pub const fn schema_version(&self) -> u16 {
         self.schema_version
+    }
+
+    /// Chain-ordered claim step this transition records.
+    #[must_use]
+    pub const fn step(&self) -> ClaimStepV1 {
+        self.step
     }
 
     /// Agreement-derived swap identity.
@@ -1092,11 +1295,11 @@ impl ObservedFollowupClaimTransitionV1 {
             agreement,
             coordinator,
             revision,
-            ClaimStepV1::FollowupZcash,
+            ClaimStepV1::followup(agreement),
         )?;
         require_confirmations(
             agreement,
-            ClaimStepV1::FollowupZcash,
+            ClaimStepV1::followup(agreement),
             self.evidence.confirmations(),
         )?;
         apply_followup_claim(agreement, coordinator, &self.evidence)
@@ -1322,7 +1525,7 @@ fn apply_revealing_claim(
 ) -> Result<SwapCoordinator, ClaimError> {
     let mut next = coordinator.clone();
     next.observe_revealing_claim(
-        agreement.lez_claimant(),
+        agreement.revealing_claimant(),
         ChainProof::new(
             evidence.transaction_id().to_owned(),
             evidence.confirmations(),
@@ -1341,7 +1544,7 @@ fn apply_followup_claim(
 ) -> Result<SwapCoordinator, ClaimError> {
     let mut next = coordinator.clone();
     next.observe_followup_claim(
-        agreement.lez_claimant().other(),
+        agreement.revealing_claimant().other(),
         ChainProof::new(
             evidence.transaction_id().to_owned(),
             evidence.confirmations(),

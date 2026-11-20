@@ -177,7 +177,10 @@ fn accounts() -> Accounts {
 }
 
 fn now_millis() -> u64 {
-    u64::try_from(chrono::Utc::now().timestamp_millis()).expect("timestamp is positive")
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after the Unix epoch");
+    u64::try_from(since_epoch.as_millis()).expect("timestamp fits in u64")
 }
 
 fn block_window(range: std::ops::Range<u64>) -> BlockValidityWindow {

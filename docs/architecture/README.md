@@ -33,7 +33,7 @@ flowchart TB
 | [0005](0005-docker-isolation.md) | Per-run Compose project, networks, volumes, and ephemeral ports | Accepted |
 | [0006](0006-lez-upstream-semantics.md) | Pin LEZ behavior and verify source assumptions executablely | Accepted |
 | [0007](0007-maker-local-rpc.md) | Authenticated local JSON-RPC with a transport-hardening gate | Accepted, production transport pending |
-| [0008](0008-bidirectional-role-ordering.md) | Separate product direction from reviewed pair funding capability | Accepted; XMR is LEZ-first only |
+| [0008](0008-bidirectional-role-ordering.md) | Separate product direction from reviewed pair funding capability | Accepted; XMR is LEZ-first only; ZEC claim/refund order superseded by [0216](0216-zec-taker-reveals-first-in-both-directions.md) |
 | [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted, M3 validation pending |
 | [0010](0010-typed-cross-chain-deadlines.md) | Typed consensus clocks plus conservative cross-chain safety bounds | Accepted for deadline legs; XMR superseded by 0011 |
 | [0011](0011-event-gated-recovery.md) | Recovery uses typed deadlines or canonical events; XMR has no native timelock | Accepted and represented in core/RPC/CLI |
@@ -56,6 +56,7 @@ here.
 | [0213](0213-nodes-own-the-btc-lifecycle.md) | The Maker and Taker Nodes own the whole BTC↔LEZ lifecycle; no runner on the user path |
 | [0214](0214-third-party-owner-api.md) | Third-party maker/taker API boundary and revision-guarded publication |
 | [0215](0215-publish-prebuilt-images-and-basecamp-packages.md) | Prebuilt arm64 stack images, the release bundle with `start.sh`, and the Basecamp apps as Logos catalog modules |
+| [0216](0216-zec-taker-reveals-first-in-both-directions.md) | ZEC follows the common flow: the Taker holds the preimage and claims the Maker-funded leg first in both directions; supersedes ADR 0008's ZEC order |
 
 The [system architecture](system-architecture.md) and
 [deployment/RPC map](deployment-components-and-rpcs.md) are the detailed M3

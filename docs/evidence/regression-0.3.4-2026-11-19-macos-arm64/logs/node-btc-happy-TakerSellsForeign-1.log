@@ -1,0 +1,16 @@
+[17:01:01] === happy (stamp 179510406102)
+[17:01:01] preflight: indexer historical reads
+[17:01:01]   indexer serves historical reads at the tip (4131)
+[17:01:01] preflight: LEZ finality check waived by request
+[17:01:02]   Maker published offer-e2e-179510406102
+[17:01:03]   Taker took offer-e2e-179510406102: swap 88318ea6d307 (not_activated)
+[17:01:03]   Taker locked bitcoin: fd8c31b4b479 (replay=False)
+[17:01:03]   [0 s] waiting for the Taker's 88318ea6d307 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 4127, tip 4132 (5 unfinalized) [heartbeat]
+[17:01:10]   [6 s] waiting for the Taker's 88318ea6d307 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 4127, tip 4132 (5 unfinalized) [heartbeat]
+[17:01:52]   [49 s] waiting for the Taker's 88318ea6d307 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 4150, tip 4162 (12 unfinalized) [heartbeat]
+[17:01:53]   Taker claimed LEZ (replay=False)
+[17:01:54]   [0 s] waiting for the Taker's 88318ea6d307 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 4173, tip 4177 (4 unfinalized) [heartbeat]
+[17:02:23]   [29 s] waiting for the Taker's 88318ea6d307 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 4184, tip 4194 (10 unfinalized) [heartbeat]
+[17:02:23]   both Nodes report 88318ea6d307 completed
+[17:02:23]   the Bitcoin claim a60fc8ab1b8d is a Taproot key-path spend: one 64-byte signature, no script
+[17:02:23] === happy: passed in 83s
