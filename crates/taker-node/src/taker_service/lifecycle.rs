@@ -678,7 +678,7 @@ pub(super) fn register(
             let request: TakerSwapMonitorRequestV1 = params
                 .one()
                 .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
-            monitor_swap(state, request)
+            Box::pin(monitor_swap(state, request))
                 .await
                 .map_err(|error| map_monitoring_error(&error))
         }
@@ -1727,12 +1727,18 @@ async fn list_swaps(
 
     let mut rows = Vec::with_capacity(swap_ids.len());
     for facts in swap_ids {
-        let projected = project_swap(&initiation, facts.swap_id())
-            .await
-            .map(|mut view| {
-                overlay_last_outcome(&mut view, state.last_outcomes.get(facts.swap_id().as_str()));
-                view
-            });
+        let projected = project_swap(&initiation, facts.swap_id()).await;
+        #[cfg(feature = "pair-zec")]
+        let projected = match projected {
+            Err(error @ (MonitoringError::NotFound | MonitoringError::DependencyUnavailable)) => {
+                stored_terminal_view(&initiation, &facts).await.ok_or(error)
+            }
+            other => other,
+        };
+        let projected = projected.map(|mut view| {
+            overlay_last_outcome(&mut view, state.last_outcomes.get(facts.swap_id().as_str()));
+            view
+        });
         rows.push((
             commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap,
             projected,
@@ -1780,9 +1786,72 @@ async fn monitor_swap(
         .initiation
         .clone()
         .ok_or(MonitoringError::RegistryUnavailable)?;
-    let mut view = project_swap(&initiation, &request.swap_id).await?;
+    let mut view = match project_swap(&initiation, &request.swap_id).await {
+        #[cfg(feature = "pair-zec")]
+        Err(error @ (MonitoringError::NotFound | MonitoringError::DependencyUnavailable)) => {
+            let facts = registered_facts(&initiation, &request.swap_id).await;
+            match facts {
+                Some(facts) => stored_terminal_view(&initiation, &facts)
+                    .await
+                    .ok_or(error)?,
+                None => return Err(error),
+            }
+        }
+        other => other?,
+    };
     overlay_last_outcome(&mut view, state.last_outcomes.get(request.swap_id.as_str()));
     Ok(view)
+}
+
+/// A Zcash swap whose files the monitor can no longer read (a corridor that a
+/// later provisioning archived, with its catalog entry) is read from the
+/// supervisor's schedule store, which the Node keeps: a swap it saw reach
+/// `completed` or `refunded` keeps that state. Anything else is not answered
+/// from the store, so the caller's error (an attention row in the list)
+/// stands.
+#[cfg(feature = "pair-zec")]
+async fn stored_terminal_view(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    facts: &TakerInitiationFactsV1,
+) -> Option<TakerSwapViewV1> {
+    let record = super::zec_supervisor::schedule_record(initiation, facts.swap_id()).await;
+    terminal_view(facts, record.as_ref())
+}
+
+/// The row of a Zcash swap's stored terminal snapshot: only `completed` or
+/// `refunded`.
+#[cfg(feature = "pair-zec")]
+fn terminal_view(
+    facts: &TakerInitiationFactsV1,
+    record: Option<&lez_swap_store::TakerActorScheduleRecordV1>,
+) -> Option<TakerSwapViewV1> {
+    if facts.route().pair() != Pair::Zcash {
+        return None;
+    }
+    let view = super::zec_supervisor::view_from_snapshot(facts, record?.progress()?);
+    matches!(
+        view.state,
+        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
+    )
+    .then_some(view)
+}
+
+/// The registered facts of one swap, for a monitor read without its bundle.
+#[cfg(feature = "pair-zec")]
+async fn registered_facts(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    swap_id: &SwapId,
+) -> Option<TakerInitiationFactsV1> {
+    let lookup = Arc::clone(initiation);
+    let swap_id = swap_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = lookup.lock().ok()?;
+        let facts = context.registry_mut().list_initiations().ok()?;
+        facts.into_iter().find(|facts| facts.swap_id() == &swap_id)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn project_swap(
@@ -3502,6 +3571,115 @@ mod tests {
             )]),
             Err(MonitoringError::DependencyUnavailable)
         ));
+    }
+
+    /// Issue #181: a Zcash swap whose files a later provisioning archived
+    /// (its projection `NotFound`) keeps the terminal state the supervisor
+    /// stored; one without a stored terminal state still needs attention.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn an_archived_zcash_swap_keeps_its_stored_terminal_state() {
+        use lez_actor_supervision::AttemptResolution;
+        use lez_swap_store::{
+            MakerOfferId, SqliteTakerActorSchedule, TakerActorProgressSnapshotV1,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let mut schedule =
+            SqliteTakerActorSchedule::open(root.path().join("taker-actor-schedule.sqlite3"))
+                .unwrap();
+        let identity = [
+            0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce,
+            0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81,
+            0x5b, 0x16, 0xf8, 0x17, 0x98,
+        ];
+        let facts = |id: &str| {
+            TakerInitiationFactsV1::new(
+                SwapId::new(id).unwrap(),
+                MakerOfferId::new(format!("{id}-offer")).unwrap(),
+                MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsForeign).unwrap(),
+                identity,
+                [7; 32],
+                200_000_000,
+                1_820,
+            )
+            .unwrap()
+        };
+        let snapshot = |phase: &str, next_action: &str| TakerActorProgressSnapshotV1 {
+            phase: phase.to_owned(),
+            revision: 9,
+            next_action: next_action.to_owned(),
+            state: String::new(),
+            available_action: None,
+            observed_at: 1,
+        };
+        let mut resolve = |id: &str, resolution, snapshot: Option<TakerActorProgressSnapshotV1>| {
+            schedule.register(id, 1).unwrap();
+            let lease = schedule.claim(id, 2).unwrap().unwrap();
+            schedule
+                .resolve(&lease, &resolution, snapshot.as_ref(), 3)
+                .unwrap();
+        };
+        resolve(
+            "zec-completed",
+            AttemptResolution::Terminal,
+            Some(snapshot("completed", "complete")),
+        );
+        resolve(
+            "zec-refunded",
+            AttemptResolution::ManualActionCompleted,
+            Some(snapshot("refunded", "complete")),
+        );
+        resolve(
+            "zec-open",
+            AttemptResolution::Requeue { not_before: 4 },
+            Some(snapshot("both_legs_locked", "claim_lez")),
+        );
+        resolve("zec-unobserved", AttemptResolution::Terminal, None);
+        let ids = [
+            "zec-completed",
+            "zec-refunded",
+            "zec-open",
+            "zec-unobserved",
+            "zec-unknown",
+        ];
+        let rows = ids
+            .iter()
+            .map(|id| {
+                let facts = facts(id);
+                let record = schedule.record(id).unwrap();
+                (
+                    commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap,
+                    terminal_view(&facts, record.as_ref()).ok_or(MonitoringError::NotFound),
+                )
+            })
+            .collect();
+        let listed = list_rows(rows).expect("the list reads");
+        let states: Vec<_> = listed.iter().map(|row| row.state).collect();
+        assert_eq!(
+            states,
+            [
+                TakerSwapStateV1::Completed,
+                TakerSwapStateV1::Refunded,
+                TakerSwapStateV1::AttentionRequired,
+                TakerSwapStateV1::AttentionRequired,
+                TakerSwapStateV1::AttentionRequired,
+            ]
+        );
+        assert_eq!(listed[0].progress_generation, 9);
+        assert!(listed.iter().all(|row| row.available_action.is_none()));
+        // A Bitcoin swap is never answered from the Zcash schedule.
+        let btc = TakerInitiationFactsV1::new(
+            SwapId::new("zec-completed").unwrap(),
+            MakerOfferId::new("btc-offer").unwrap(),
+            MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsForeign).unwrap(),
+            identity,
+            [7; 32],
+            200_000_000,
+            1_820,
+        )
+        .unwrap();
+        let completed = schedule.record("zec-completed").unwrap();
+        assert_eq!(terminal_view(&btc, completed.as_ref()), None);
     }
 
     /// A Taker with nothing to fund Zcash from is told why (the address to
