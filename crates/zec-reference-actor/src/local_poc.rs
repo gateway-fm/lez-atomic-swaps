@@ -14,12 +14,12 @@ use lez_zebra_node_adapter::{
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
-    NegotiationTranscriptV1, PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS, ZcashFundingInputSetV1,
-    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementV1,
-    ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
-    ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1,
+    NegotiationTranscriptV1, PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS,
+    PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS, ZcashFundingInputSetV1, ZcashFundingInputV1,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementV1, ZecLezTermsV1,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -1787,6 +1787,7 @@ fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
 /// under `public-testnet-v3`, whose Zcash window is sized for the Maker's
 /// earlier Zcash refund of `TakerSellsLez` and is shorter than the LEZ refund
 /// delay that direction needs it to outlast.
+#[cfg(feature = "dealer-fixture")]
 fn validate_profile_direction(
     profile: LocalPocProfile,
     direction: LocalPocDirection,
@@ -2961,6 +2962,7 @@ pub(crate) mod testnet_provision_tests {
         spec_in("taker_sells_foreign", profile, route)
     }
 
+    #[cfg(feature = "dealer-fixture")]
     fn spec_in(direction: &str, profile: &str, route: &serde_json::Value) -> ProvisionSpec {
         serde_json::from_value(serde_json::json!({
             "schema_version": 1, "run_id": "zec-testnet-1", "swap_id": "zec-testnet-swap-1",
@@ -3197,6 +3199,7 @@ pub(crate) mod testnet_provision_tests {
         assert!(refused.contains("sized for taker_sells_lez"), "{refused}");
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn the_preimage_is_the_takers_in_both_directions() {
         for direction in [
@@ -3215,6 +3218,7 @@ pub(crate) mod testnet_provision_tests {
         );
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn the_test_lane_profile_follows_the_direction() {
         let mut lane = spec_in(
@@ -3282,6 +3286,7 @@ pub(crate) mod testnet_provision_tests {
         assert!(refund_plan(v3, SwapDirection::TakerSellsLez, now, now + 14_399).is_err());
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_taker_sells_lez_testnet_corridor_validates_under_v3() {
         let spec = spec_in("taker_sells_lez", "public-testnet-v3", &tatum());
@@ -3319,6 +3324,7 @@ pub(crate) mod testnet_provision_tests {
         assert_eq!(&digest, agreement.secret_digest());
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_testnet_actor_config_names_the_route_nu7_and_the_whole_refund_window() {
         let spec = spec("public-testnet-v2", &tatum());
