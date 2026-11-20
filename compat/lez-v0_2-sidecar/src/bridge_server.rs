@@ -476,7 +476,9 @@ impl DurableStore {
         let earlier_outcomes =
             if let Some(previous) = self.persisted.entries.get(context.request_id.as_str()) {
                 let mut earlier = previous.earlier_outcomes.clone();
-                earlier.push(previous.outcome.clone());
+                if !matches!(previous.outcome, PersistedOutcome::Repeatable) {
+                    earlier.push(previous.outcome.clone());
+                }
                 earlier
             } else {
                 self.ensure_capacity()?;
@@ -2124,7 +2126,8 @@ impl ServerState {
 
     /// As [`Self::execute`]; `decide_success_again` re-runs the operation for
     /// a journaled success instead of replaying it (errors and in-flight
-    /// markers stay single-attempt either way).
+    /// markers stay single-attempt either way, except a submission refused as
+    /// `unavailable` before its send, which is tried again).
     async fn execute_with_policy<Request, Operation, Fut>(
         &self,
         method: &'static str,
@@ -2162,10 +2165,18 @@ impl ServerState {
                     .map_err(|failure| protocol_error(context, failure))?;
             }
         }
+        let mut refused_before_send = false;
         let outcome = match operation().await {
             Ok(value) => PersistedOutcome::Success(value),
             Err(failure) => {
                 report_request_error(method, self.runtime.descriptor().sidecar_role, failure.code);
+                // A submission answers `unavailable` only from the node
+                // lookups before its one send (a send that fails or times
+                // out is `unknown_submission_outcome`): nothing was sent, so
+                // the same request id is tried again instead of replaying
+                // this answer forever.
+                refused_before_send =
+                    is_submission_method(method) && failure.code == ErrorCode::Unavailable;
                 PersistedOutcome::Error(protocol_reply(context, failure))
             }
         };
@@ -2200,8 +2211,9 @@ impl ServerState {
                 | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
                 | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
         );
-        let repeatable = !is_submission_method(method)
-            && (!prepare || matches!(&outcome, PersistedOutcome::Error(_)));
+        let repeatable = refused_before_send
+            || (!is_submission_method(method)
+                && (!prepare || matches!(&outcome, PersistedOutcome::Error(_))));
         self.store
             .lock()
             .await

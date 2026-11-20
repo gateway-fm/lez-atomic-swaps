@@ -1,0 +1,92 @@
+
+[13:08:53] === zec-taker-refund (TakerSellsForeign)
+
+[13:08:53] publishing Zcash offer(s) on the running Maker Node (take-time agreement: no corridor, no Node recreated)
+   [13:08:53]   the Maker's key paid the Taker's: b392eaa8ae01be0c…
+   [13:08:53]   zebra: mined 1 block(s) → height 554 (the payment to the Taker's key)
+   [13:08:54]   zebra: mined 100 block(s) → height 654 (the Taker's payment matures into a funder output)
+   [13:08:55]   Maker CLI published offer-e2e-zectt-179500733303 on its running Node (no corridor)
+
+[13:08:55] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   zec-60893343cf5e3060f00bb27d75f952e740dfc3339e1fd3a0ed152a4dbad787b3 awaiting_first_lock 0 -
+
+[13:09:05] The Maker Node observes the Taker's first lock and is stopped before it can lock its own leg; the Taker must recover its funds
+   [13:09:05]   take-time agreement: Taker funds b392eaa8ae01be0c…:0, Zcash anchor 655, refund height 663
+   [13:09:06]   receipt: swap zec-60893343cf5e3060f00bb27d75f952e740dfc3339e1fd3a0ed152a4dbad787b3, actor config /var/lib/lez/taker/btc/swaps/4fad45fd9e76945e2d16ec4d84172cf954c6b4cf95769aaeb09ae497e9e284bb/zec-actor/taker/actor-config.json
+   [13:09:06]   cutting the Maker Node's sequencer route: it observes the Taker's first lock but cannot lock its own leg
+   [13:09:07]   [0 s] waiting for the Taker actor of zec-60893343 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's first lock confirmed): taker awaiting_first_lock | actor at offered | maker offered | zebra 654 | LEZ finalized 5989, tip 5991 (2 unfinalized) [heartbeat]
+   [13:09:10]   zebra: mined 1 block(s) → height 655 (mempool had ['c8b2305598fb'])
+   [13:09:17]   [10 s] waiting for the Taker actor of zec-60893343 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's first lock confirmed): taker refund_available | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 655 | LEZ finalized 6002, tip 6005 (3 unfinalized) [heartbeat]
+   [13:09:17]   [0 s] waiting for the Maker's zec-60893343 to reach awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Maker observing the Taker's first lock): maker taker_lock_confirmed (schedule backoff) | LEZ finalized 6002, tip 6005 (3 unfinalized) [heartbeat]
+   [13:09:17]   the Maker observed the Taker's first lock; stopping the Maker Node
+   [13:09:18]   take-time agreement: Taker funds b392eaa8ae01be0c…:0, Zcash anchor 655, refund height 663
+   [13:09:18]   zebra: mined 8 block(s) → height 663 (the agreement's Zcash refund height)
+   [13:09:18]   the Taker's refund is due
+
+[13:09:18] driving the Taker's ZEC actor on the Node until zec-60893343 shows refund_available
+   [13:09:19]   take-time agreement: Taker funds b392eaa8ae01be0c…:0, Zcash anchor 655, refund height 663
+   [13:09:19]   receipt: swap zec-60893343cf5e3060f00bb27d75f952e740dfc3339e1fd3a0ed152a4dbad787b3, actor config /var/lib/lez/taker/btc/swaps/4fad45fd9e76945e2d16ec4d84172cf954c6b4cf95769aaeb09ae497e9e284bb/zec-actor/taker/actor-config.json
+   [13:09:20]   [1 s] waiting for the Taker's zec-60893343 to reach refund_available (zec-drive to refund_available): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker unreachable | zebra 663 | LEZ finalized 6002, tip 6005 (3 unfinalized) [heartbeat]
+   [13:09:20]   taker zec-60893343 is refund_available
+
+[13:09:20] The Taker's refund is due with no Maker lock; the Taker desk offers Refund
+
+[13:09:20] Taker desk: refund_zec on zec-60893343
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  » The desk offers Refund for the Zcash HTLC; pressing it admits the refund, which the Node drives on the transparent pool once the HTLC's refund height is reached
+  [32m✓[0m taker: perform refund_zec
+2 passed, 0 failed
+
+[13:09:22] driving the Taker's ZEC actor on the Node until zec-60893343 shows refunded
+   [13:09:22]   take-time agreement: Taker funds b392eaa8ae01be0c…:0, Zcash anchor 655, refund height 663
+   [13:09:23]   receipt: swap zec-60893343cf5e3060f00bb27d75f952e740dfc3339e1fd3a0ed152a4dbad787b3, actor config /var/lib/lez/taker/btc/swaps/4fad45fd9e76945e2d16ec4d84172cf954c6b4cf95769aaeb09ae497e9e284bb/zec-actor/taker/actor-config.json
+   [13:09:23]   [0 s] waiting for the Taker's zec-60893343 to reach refunded (zec-drive to refunded): taker refund_in_progress (gen 1) | actor at taker_lock_confirmed | maker unreachable | zebra 663 | LEZ finalized 6002, tip 6005 (3 unfinalized) [heartbeat]
+   [13:09:23]   zebra: mined 1 block(s) → height 664 (mempool had ['545d841a08b6'])
+   [13:09:26]   [3 s] waiting for the Taker's zec-60893343 to reach refunded (zec-drive to refunded): taker refunded (gen 2) | actor at refunded | maker unreachable | zebra 664 | LEZ finalized 6002, tip 6005 (3 unfinalized) [heartbeat]
+   [13:09:26]   taker zec-60893343 is refunded
+
+[13:09:26] Taker desk shows zec-60893343 at refunded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches refunded
+2 passed, 0 failed
+
+[13:09:27] The Maker Node is started again and reconciles the refunded swap
+   [13:09:37]   take-time agreement: Taker funds b392eaa8ae01be0c…:0, Zcash anchor 655, refund height 663
+   [13:09:38]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-60893343cf5e3060f00bb27d75f952e740dfc3339e1fd3a0ed152a4dbad787b3", "action": "refund", "requested_after_generation": 7, "w
+   [13:09:38]   [0 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker taker_lock_confirmed (schedule leased) | LEZ finalized 6015, tip 6018 (3 unfinalized) [heartbeat]
+   [13:09:58]   [20 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule backoff) | LEZ finalized 6024, tip 6031 (7 unfinalized) [heartbeat]
+   [13:11:00]   [82 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6053, tip 6057 (4 unfinalized) [heartbeat]
+   [13:12:03]   [145 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6094, tip 6098 (4 unfinalized) [heartbeat]
+   [13:13:05]   [207 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6130, tip 6138 (8 unfinalized) [heartbeat]
+   [13:14:07]   [269 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6168, tip 6171 (3 unfinalized) [heartbeat]
+   [13:15:10]   [332 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6208, tip 6211 (3 unfinalized) [heartbeat]
+   [13:16:11]   [393 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6248, tip 6255 (7 unfinalized) [heartbeat]
+   [13:17:13]   [455 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6293, tip 6297 (4 unfinalized) [heartbeat]
+   [13:18:16]   [518 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6335, tip 6338 (3 unfinalized) [heartbeat]
+   [13:19:18]   [580 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6362, tip 6366 (4 unfinalized) [heartbeat]
+   [13:20:19]   [641 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6404, tip 6408 (4 unfinalized) [heartbeat]
+   [13:21:21]   [703 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6446, tip 6453 (7 unfinalized) [heartbeat]
+   [13:22:22]   [764 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6496, tip 6499 (3 unfinalized) [heartbeat]
+   [13:23:23]   [825 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6539, tip 6545 (6 unfinalized) [heartbeat]
+   [13:24:25]   [887 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6582, tip 6589 (7 unfinalized) [heartbeat]
+   [13:25:27]   [949 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6629, tip 6632 (3 unfinalized) [heartbeat]
+   [13:26:29]   [1011 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6659, tip 6662 (3 unfinalized) [heartbeat]
+   [13:27:30]   [1072 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6700, tip 6708 (8 unfinalized) [heartbeat]
+   [13:28:32]   [1134 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6747, tip 6753 (6 unfinalized) [heartbeat]
+   [13:29:33]   [1195 s] waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg): maker both_legs_locked (schedule leased) | LEZ finalized 6792, tip 6797 (5 unfinalized) [heartbeat]
+   [13:29:39] FAILED: timed out after 1200 s waiting for the Maker's zec-60893343 to reach a terminal state (reconciling the refunded leg); last seen: maker both_legs_locked (schedule leased); LEZ finalized 6792, tip 6797 (5 unfinalized) [heartbeat]
+
+[13:29:39] FAILED: zec-step maker-up-reconcile
+[13:29:48]   kept maker-container.log: 16806 lines, 1612 Delivery dumps dropped, 2 redacted
+[13:29:48]   kept maker-node.log: 20000 lines, 0 Delivery dumps dropped, 0 redacted
+[13:29:48]   kept maker-basecamp.log: 3816 lines, 334 Delivery dumps dropped, 2 redacted
+[13:29:48]   kept maker-health.json: 57 lines, 0 Delivery dumps dropped, 0 redacted
+[13:29:48]   kept taker-container.log: 17874 lines, 1063 Delivery dumps dropped, 0 redacted
+[13:29:48]   kept taker-node.log: 27 lines, 0 Delivery dumps dropped, 0 redacted
+[13:29:48]   kept taker-basecamp.log: 3498 lines, 165 Delivery dumps dropped, 0 redacted
+[13:29:48]   kept taker-health.json: 114 lines, 0 Delivery dumps dropped, 0 redacted

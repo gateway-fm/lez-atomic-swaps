@@ -63,10 +63,13 @@ services:
     build: ./images/bitcoin-core
     image: ${LEZ_IMAGE_PREFIX:-lez}-bitcoin-core:${LEZ_IMAGE_TAG:-local}
     container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-bitcoin-core
+    # regtest checks the whole block index after every block by default (half
+    # a second a block on a 230,000-block devnet chain); the chain is the same
     command:
       - "-conf=/run-config/bitcoin.conf"
       - "-datadir=/var/lib/bitcoin"
       - "-printtoconsole"
+      - "-checkblockindex=0"
     environment:
       HOME: /tmp
     labels:
