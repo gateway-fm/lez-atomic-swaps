@@ -25,8 +25,10 @@ def executable(path, text):
 
 # A scenario (node-e2e.py and ui-e2e.sh alike): logs start and end with its lane
 # and container prefix, then behaves as FAKE_PLAN says for its scenario name:
-# {"sleep": s, "rc": n, "freeze_once": true}. freeze_once freezes the chain on
-# its first run and then waits to be stopped.
+# {"sleep": s, "rc": n, "freeze_once": true, "meet": true}. freeze_once freezes
+# the chain on its first run and then waits to be stopped. meet is a barrier:
+# a lane's k-th meeting test waits until another lane has reached its own k-th
+# and fails after 30 s alone, so only lanes running at once pass it.
 FAKE_SCENARIO = '''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -42,6 +44,16 @@ def note(what):
                 f"runtime={os.environ.get('LEZ_LANE_RUNTIME', '-')} defer={os.environ.get('LEZ_BOOTSTRAP_DEFER_CLAIM', '-')} "
                 f"at={time.time():.2f}\\n")
 note("start")
+if plan.get("meet"):
+    mine = state / f"meet-{lane}"
+    with open(mine, "a") as f:
+        f.write("x\\n")
+    k = len(mine.read_text().splitlines())
+    deadline = time.time() + 30
+    while not any(len(p.read_text().splitlines()) >= k for p in state.glob("meet-*") if p != mine):
+        if time.time() > deadline:
+            note("alone"); sys.exit(1)
+        time.sleep(0.05)
 marker = state / f"froze-{scenario}-{direction}"
 if plan.get("freeze_once") and not marker.exists():
     marker.touch(); (state / "frozen").touch()
@@ -131,11 +143,13 @@ class Lanes(Runner):
         self.assertTrue(all(len(row) == 5 for row in self.results()))
 
     def test_two_lanes_run_side_by_side_each_on_its_own_pair(self):
-        plan = {s: {'sleep': 2} for s in ('happy', 'replay', 'survivor', 'concurrent')}
+        # each test meets a test on the other lane: run one after the other they
+        # fail; regress()'s subprocess timeout is the guard against a hang
+        plan = {s: {'meet': True} for s in ('happy', 'replay', 'survivor', 'concurrent')}
         tests = [f'node:btc:{s}:TakerSellsLez' for s in plan]
-        run, elapsed = self.regress(*tests, plan=plan, LEZ_LANES='2')
+        run, _ = self.regress(*tests, plan=plan, LEZ_LANES='2')
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-        self.assertLess(elapsed, 4 * 2, 'four 2 s tests on two lanes take about 4 s, not 8')
+        self.assertEqual(self.calls_of('alone'), [])
         self.assertEqual(len(self.calls_of('lanes')), 1)
         self.assertIn('lanes LEZ_LANE= LEZ_LANES=2', self.calls_of('lanes')[0])
         self.assertTrue(self.calls_of('lanes')[0].endswith('up 2'))
