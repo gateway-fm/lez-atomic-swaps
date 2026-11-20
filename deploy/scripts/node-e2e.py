@@ -3280,6 +3280,11 @@ ZEC_NU7_PROFILES = {"deterministic-local-devnet-v5", "deterministic-local-devnet
 # refund-profile corridor needs the Nodes on that profile (LEZ_ZEC_PROFILE,
 # regress.sh's ZEC profile group).
 ZEC_AGREEMENT = os.environ.get("LEZ_ZEC_AGREEMENT", "take-time")
+# LEZ_ZEC_CLAIM_AT_ONE_CONFIRMATION=1 (issue #130): zec-happy presses the Claim
+# while the Zcash funding is one deep, below the actor's pre-reveal gate (two),
+# expects the Node to report the claim queued with both counts, and only then
+# mines the missing confirmation. Unset, the harness mines it before the press.
+ZEC_CLAIM_AT_ONE = os.environ.get("LEZ_ZEC_CLAIM_AT_ONE_CONFIRMATION") == "1"
 ZEC_CATALOG_SCENARIOS = {"zec-regenerated-catalog", "zec-tampered-catalog"}
 # zec-maker-early-claim reads the dealer's corridor layout (the Taker's half,
 # the Maker's corridor signer and agreement); the take-time product path's
@@ -3802,7 +3807,7 @@ def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict) -
     # Taker Node's supervisor; the Node then offers the Taker its one claim,
     # the revealing one on the Maker-funded leg (Zcash selling LEZ).
     view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
-                           describe=zec_flow())
+                           describe=zec_flow(), mine_pending_only=ZEC_CLAIM_AT_ONE)
     funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
     if funding is None:
         raise Failure("claim_available, but no zebra block spends the provisioned coinbase outpoint")
@@ -3811,6 +3816,8 @@ def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict) -
                                                    "swap_id": swap_id, "expected_generation": view["progress_generation"]},
                   timeout=300)
     log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')})")
+    if ZEC_CLAIM_AT_ONE:
+        zec_claim_queued_at_one_confirmation(swap_id, corridor)
     # The Zcash claim (the Taker's revealing one selling LEZ, or the Maker's
     # follow-up after the Taker's revealing LEZ claim) sits in zebra's mempool
     # until a block is generated; the actors observe it on their next drive.
@@ -3860,6 +3867,27 @@ def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict) -
             "zcash_claim": {"transaction_id": claim_tx[0], "height": claim_tx[1]},
             "maker_claim_operations": maker_claims,
             "zcash_refund_height": corridor["zcash_refund_height"]}
+
+
+def zec_claim_queued_at_one_confirmation(swap_id: str, corridor: dict) -> None:
+    """Issue #130: a Claim pressed with the Zcash funding one deep is admitted
+    and held by the actor's pre-reveal gate; the Node says it is queued, with
+    the required and actual confirmations, and nothing is sent until a block
+    makes the funding two deep (the caller then waits for completion)."""
+    confirmations = zec_funding_confirmations(corridor)
+    if confirmations != 1:
+        raise Failure(f"the claim was pressed with the funding {confirmations} deep, not one")
+    view = taker_view(swap_id)
+    outcome = view.get("last_outcome") or {}
+    expected = {"kind": "zcash_funding_confirmations", "chain": "zcash",
+                "confirmations": 1, "required_confirmations": 2}
+    if view["state"] != "claim_in_progress" or outcome.get("outcome") != "queued" \
+            or outcome.get("waiting_for") != expected:
+        raise Failure(f"a claim pressed at one confirmation reads {view['state']} with last outcome {outcome}, "
+                      f"not claim_in_progress, queued, waiting for {expected}")
+    log(f"  the Node reports the claim queued: {outcome['waiting_for']} (last failure class "
+        f"{view.get('last_failure_class')}); mining the second confirmation")
+    zebra_mine(1, "the funding's second confirmation, which the pre-reveal gate waits for")
 
 
 # ---- the take-time Zcash agreement (zec_reserve_v1, docs/sdk-lez-zec.md) ------------

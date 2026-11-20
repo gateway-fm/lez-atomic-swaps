@@ -425,11 +425,9 @@ impl RouteActor {
                         }
                     }
                     Ok(ActorCommandOutputV1::Status(_)) => {}
-                    Err(error) => record_failed_outcome(
-                        outcomes,
-                        config.swap_id(),
-                        name,
-                        super::zec_supervisor::failure_of(*error).class(),
+                    Err(error) => outcomes.record(
+                        config.swap_id().as_str(),
+                        super::zec_supervisor::refused_outcome(name, *error, now_unix_seconds()),
                     ),
                 }
                 match result {
@@ -4474,6 +4472,74 @@ mod tests {
         zcash.last_failure_class = Some("actor_timeout".to_owned());
         overlay_last_outcome(&mut zcash, outcomes.get(swap.as_str()));
         assert_eq!(zcash.last_failure_class.as_deref(), Some("actor_timeout"));
+    }
+
+    /// Issue #130: a claim admitted while the actor's reveal gate still wants
+    /// Zcash depth is queued, with both counts on the row; once the gate is
+    /// met the actor's effect says `submitted`; any other refusal is a failure.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_claim_refused_for_zcash_depth_reads_queued_with_its_counts() {
+        use zec_reference_actor::ActorCommandError;
+        let zcash_row = || {
+            let mut row = btc_row(TakerSwapStateV1::ClaimInProgress, 2);
+            row.route =
+                lez_swap_store::MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsForeign)
+                    .unwrap();
+            row
+        };
+        let mut queued = zcash_row();
+        let outcome = super::super::zec_supervisor::refused_outcome(
+            "claim",
+            ActorCommandError::ClaimAwaitingZcashConfirmations {
+                required: 2,
+                actual: 1,
+            },
+            now_unix_seconds(),
+        );
+        overlay_last_outcome(&mut queued, Some(outcome));
+        let value = serde_json::to_value(&queued).unwrap();
+        assert_eq!(value["state"], "claim_in_progress");
+        assert_eq!(value["last_outcome"]["outcome"], "queued");
+        assert_eq!(
+            value["last_outcome"]["waiting_for"],
+            serde_json::json!({"kind": "zcash_funding_confirmations", "chain": "zcash",
+                               "confirmations": 1, "required_confirmations": 2})
+        );
+        assert!(value["last_outcome"].get("failure_class").is_none());
+        assert_eq!(
+            super::super::zec_supervisor::failure_of(
+                ActorCommandError::ClaimAwaitingZcashConfirmations {
+                    required: 2,
+                    actual: 1
+                }
+            )
+            .class(),
+            "claim_awaiting_zcash_confirmations"
+        );
+
+        let mut submitted = zcash_row();
+        let effect =
+            serde_json::json!({"outcome": "submitted", "operation": "revealing_lez_claim"});
+        overlay_last_outcome(
+            &mut submitted,
+            Some(recorded("r103-outcome-swap", "claim", &effect)),
+        );
+        let last = submitted.last_outcome.expect("kept");
+        assert_eq!(last.outcome, "submitted");
+        assert_eq!(last.waiting_for, None);
+
+        let refused = super::super::zec_supervisor::refused_outcome(
+            "claim",
+            ActorCommandError::ClaimUnavailable,
+            now_unix_seconds(),
+        );
+        assert_eq!(refused.outcome, "failed");
+        assert_eq!(
+            refused.failure_class.as_deref(),
+            Some("actor_drive_unavailable")
+        );
+        assert_eq!(refused.waiting_for, None);
     }
 
     /// A finished swap carries no outcome, nor does a row whose actor moved
