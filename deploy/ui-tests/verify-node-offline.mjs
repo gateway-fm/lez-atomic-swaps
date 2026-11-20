@@ -9,6 +9,10 @@
 //                                         unavailable and keep saying so
 //   verify-node-offline.mjs <role> up     the Nodes were released; the desk
 //                                         must pick its Node up again
+//   verify-node-offline.mjs <role> down <text>
+//                                         as down, and the strip's detail must
+//                                         contain <text> (issue 151: the
+//                                         launcher's refusal, verbatim)
 //
 // It reads the view's own state through the inspector rather than the strip's
 // pixels: `nodeLink` is the property the status strip renders from.
@@ -17,6 +21,7 @@ const framework = "/opt/qt-mcp/test-framework/framework.mjs";
 const { test, run } = await import(framework);
 const role = process.argv[2] === "taker" ? "taker" : "maker";
 const phase = process.argv[3] === "up" ? "up" : "down";
+const expected = process.argv[4] ?? "";
 if (process.env.BASECAMP_ROLE !== role) {
   throw new Error(`this is the ${process.env.BASECAMP_ROLE ?? "unknown"} Basecamp; run the ${role} check in lez-${role}-node`);
 }
@@ -63,6 +68,12 @@ if (phase === "down") {
     console.log(`  last =${JSON.stringify(last)}`);
     if (last.link !== "down") throw new Error(`never reported unavailable: ${JSON.stringify(last)}`);
     if (last.mode !== "error") throw new Error(`unavailable was not an error state: ${JSON.stringify(last)}`);
+    if (expected) {
+      const found = await app.findByProperty("objectName", `${role}BtcWallet`);
+      const out = await app.inspector.send("evaluate", { objectId: found.matches[0].id, expression: "String(root.statusDetail)" });
+      console.log(`  detail=${out.result}`);
+      if (!String(out.result).includes(expected)) throw new Error(`the detail does not say ${JSON.stringify(expected)}`);
+    }
     // ... and must not claim a connection while the Node stays down.
     const watched = Date.now();
     while (Date.now() - watched < 15000) {

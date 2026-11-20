@@ -698,7 +698,9 @@ default umask is 002, so `logosctl package install` there leaves
 too. The launcher removes group and other write from its own package's
 directories and programs, and refuses to start, naming the directory and the
 fix, when a directory above the swaps' or the ZEC sidecars' state breaks the
-rule (exit 78; the line is in `LEZ_<ROLE>_NODE_LOG`). Keep the Node's files
+rule (exit 78; the line is in `LEZ_<ROLE>_NODE_LOG`, in `lez_swap_node`'s
+`node_status` as `last_exit`, and on the desk under "Node unavailable").
+Keep the Node's files
 under directories only you can write (`chmod go-w`), or run `logosctl` and
 Basecamp under `umask 022`.
 

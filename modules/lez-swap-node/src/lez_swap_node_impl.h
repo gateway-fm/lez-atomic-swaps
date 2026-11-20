@@ -54,7 +54,10 @@ public:
 
     /// `role`'s supervision as compact JSON: {role, state (running, held,
     /// restarting, stopped), pid, starts, last_exit}; empty when the role was
-    /// never started.
+    /// never started. last_exit is "exit <n>" or "signal <n>"; after exit 78,
+    /// the launcher's refusal to start, it is "exit 78: " and the launcher's
+    /// last line in the log that starts with "<role>: " (what it refused and
+    /// the fix).
     std::string node_status(const std::string& role);
 
     /// `role`'s Node's resource use as compact JSON, read from /proc: the
