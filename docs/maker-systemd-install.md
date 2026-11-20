@@ -94,8 +94,11 @@ install -D -m 0644 /etc/lez/maker/monero.conf.example /etc/systemd/system/lez-ma
 Each login is the RPC's `user:password` (its `--rpc-login`). The drop-in loads both credentials
 and names their directory to the launcher (`LEZ_MONERO_LOGIN_DIR`), and sets the three windows
 `LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS`, `LEZ_XMR_REFUND_SECONDS` and `LEZ_XMR_PUNISH_SECONDS`
-to the devnet's fast profile (edit them there or set them in `env`; the Taker must use the
-same). The launcher then writes
+to the packaging defaults 260, 700 and 1000 s (`packaging/systemd/lez-maker-node-monero.conf`;
+edit them there or set them in `env`; the Taker must use the same three). These are not the
+devnet's windows: the devnet's `fast` profile uses 320, 720 and 1000 s, derived in
+`deploy/scripts/gen-config.sh` ([deploy/README.md](../deploy/README.md#monero-lez_monero1),
+"The windows"). The launcher then writes
 `xmr-role.json`, the actor root `xmr-actors/` (0700) and owner-private copies of both logins in
 `monero-rpc/` under `/var/lib/lez/maker/`, and the Node keeps its wallet lock in
 `btc/monero-rpc/`; every swap's effect authority holds the logins again, split into user and

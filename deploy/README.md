@@ -590,15 +590,18 @@ LEZ step and two of the Maker's actor drives counted at 80 s each
 and one Monero swap's drives started at most 50 s apart with the three
 heaviest Monero tests on three lanes, five times on 2026-11-17; a swap's
 funding stood at depth at most 143 s after its take started, and C is 2.2
-times that). P is R plus a step, a stall, the margin and two such drives. On
-`fast`, the profile every Monero scenario runs on, that is +320, +720 and
+times that). P is R plus a step, a stall, the margin and two such drives.
+In seconds, with the LEZ step S, the stall T and the profile's Bitcoin Maker
+cutoff B and margin M: C = max(B + 20, 60 + 3 × 80 + 20 = 320),
+R = C + 2 × (20 + S + 2 × 80), P = R + S + T + M + 2 × 80. With the default
+S = 20 and T = 40, R − C is 400 s on every profile. On `fast` (B = 240,
+M = 60), the profile every Monero scenario runs on, that is +320, +720 and
 +1000 s: the Taker may refund only in the 280 s between R and P, and from P a
-Maker can take the LEZ while the Monero stays locked. `refund` gives +320,
-+720, +955 s and `local` +1820, +2220, +2740 s (default LEZ step 20 s, stall
-40 s). On `local`, the profile closest to a real deployment, the rule adds
-40 s to R − C and 20 s to P − R over the values before it; it holds only while the Maker Node is no busier
-than three devnet lanes: a Maker driving more swaps at once spaces each swap's
-drives further apart and needs wider windows.
+Maker can take the LEZ while the Monero stays locked. `refund` (B = 2S + 20 + T
+= 100, M = 15) gives +320, +720, +955 s (235 s to refund) and `local`
+(B = 1800, M = 300) +1820, +2220, +2740 s (520 s). The drive count holds only
+while the Maker Node is no busier than three devnet lanes: a Maker driving more
+swaps at once spaces each swap's drives further apart and needs wider windows.
 
 **Scenarios.** `node-e2e.py --pair Monero <scenario>` drives both Nodes over
 their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over

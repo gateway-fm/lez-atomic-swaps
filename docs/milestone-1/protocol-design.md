@@ -120,9 +120,12 @@ The construction has had no third-party review.
 Only `TakerSellsLez`: the Taker sells LEZ and locks first, the Maker sells XMR
 and funds Monero second. The SDK keeps the other direction only to refuse it
 (`XmrSwapDirectionV1::TakerSellsXmr`), and the Maker CLI refuses a Monero route
-in any other direction. XMR first would have the Maker's Monero locked before
-any LEZ the Maker could claim, and this construction gives that direction no
-recovery path.
+in any other direction. In the refused direction the Taker sells XMR and
+would fund the shared Monero address first; if the Maker then never locked
+LEZ, nothing on either chain would give the Taker its Monero back (there is no
+LEZ escrow to refund from yet, and a Monero output has no time lock), and this
+construction has no pre-signed Monero refund to close that gap
+([ADR 0217](../architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md#decision)).
 
 This order (the Maker holds the completing secret and claims LEZ first; the Taker's LEZ refund is the only refund) departs from the common flow of BTC and ZEC; [ADR 0217](../architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md) states why, and why it is safe.
 
@@ -193,28 +196,37 @@ roles configure alike (`funding_cutoff_seconds`, `refund_seconds`,
   `drive_once`). The funding tool runs after that check, so the transfer can
   leave after C: by the tool's own run time (in a desk run of 2026-11-16,
   20261116T010314Z, the transfer was handed to the wallet-rpc 0.3 s before C and
-  reached monerod's pool 0.4 s after it), at most the Maker's two-minute
-  attempt deadline. That is by design: only the Maker enforces C, and only for
+  reached monerod's pool 0.4 s after it), at most the two-minute timeout of
+  the Maker's Monero effect tools (`MONERO_EFFECT_TIMEOUT`). That is by design: only the Maker enforces C, and only for
   its own sake. The Taker takes the exact output at 10 confirmations whenever
   it appears before R, authorises its claim (tag 14) only before R by its own
   clock, and the escrow admits tags 14 and 15 only before R by block time, so
-  a late funding shortens only the Maker's claim window (at most 120 s of the
-  220 s from C to R − (R − C)/2 on `fast`); the Taker's refund window [R, P)
-  is untouched.
+  a late funding shortens only the Maker's claim window (at most those 120 s
+  of the (R − C)/2 from C to R − (R − C)/2, 200 s on every devnet profile);
+  the Taker's refund window [R, P) is untouched.
 - **R, the refund time.** Tags 13–15 are valid before R; tag 16 from R.
   The Maker claims (tag 15) only on a tag 14 it sees final before
   R − (R − C)/2, so its claim lands before R. A Maker that does not act within
   its claim window forfeits it and the swap falls back to the Taker's refund.
 - **P, the punish time.** Tag 16 is valid before P; tag 17 from P.
 
-The SDK requires R − C and P − R of at least 10 s on regtest. The devnet's
-`fast` profile, which every Monero scenario runs on, uses C, R, P = +320, +720,
-+1000 s; `refund` +320, +720, +955 s; `local` +1820, +2220, +2740 s, all with
-the default LEZ step (20 s) and stall (40 s) (`deploy/scripts/gen-config.sh`:
-C holds a take and three of the Maker's drives for the second of two swaps
-taken one after the other; each half of R − C and the refund window P − R
-hold two of the Maker's actor drives at 80 s apart, measured under three-lane
-devnet load).
+The SDK requires R − C and P − R of at least 10 s on regtest. The devnet
+derives the windows in `deploy/scripts/gen-config.sh`, in seconds after the
+take, from the LEZ step S and stall T (20 s and 40 s by default), the
+profile's Bitcoin Maker lock cutoff B and margin M, a Maker actor drive
+counted at 80 s and the 20 s the ten Monero confirmations take on regtest:
+
+- C = max(B + 20, 60 + 3 × 80 + 20 = 320): a take and three of the Maker's
+  drives for the second of two swaps taken one after the other, plus the depth;
+- R = C + 2 × (20 + S + 2 × 80): each half of R − C holds the depth, a LEZ step
+  and two of the Maker's drives (measured under three-lane devnet load);
+- P = R + S + T + M + 2 × 80.
+
+With the defaults, R − C = 400 s on every profile. `fast` (B = 240 s,
+M = 60 s), which every Monero scenario runs on, gives C, R, P = +320, +720,
++1000 s and a refund window P − R of 280 s; `refund` (B = 2S + 20 + T = 100 s,
+M = 15 s) +320, +720, +955 s and 235 s; `local` (B = 1800 s, M = 300 s)
++1820, +2220, +2740 s and 520 s.
 The Monero output must have 10 confirmations.
 
 ### Sequence
@@ -275,13 +287,14 @@ Taker learns the Maker's only from a tag 15, and after a tag 17 neither can
 ever be sent. This is the COMIT punish branch, kept as designed: without it a
 Taker that disappears would keep the Maker's Monero and its own LEZ locked
 forever; with it the Maker gets the LEZ instead. On the devnet's `fast`
-profile the refund window [R, P) is 120 s.
+profile the refund window [R, P) is 280 s (P − R above).
 
 - The escrow allows tag 17 from Funded too, with no condition on Monero: a
   Maker that never funded Monero, running other software than this
-  repository's Maker Node, can also take the LEZ from P. The reference Maker
-  Node punishes only a swap it funded (an unfunded swap ends `expired`). A
-  Taker must refund before P in every case, whether or not Monero was funded.
+  repository's Maker Node, can also take the LEZ from P (threat TM-0031). The
+  reference Maker Node punishes only a swap whose Monero funding it invoked
+  (an unfunded swap ends `expired`). A Taker must refund before P in every
+  case, whether or not Monero was funded.
 - **Refunds are owner-commanded, never automatic.** The Taker Node offers the
   refund (`available_action: "refund"`, actor phase `refund_available`) from R
   and sends tag 16 only after its owner's `taker_swap_refund_v1`
@@ -289,7 +302,8 @@ profile the refund window [R, P) is 120 s.
   its next sweep (`--observer-sweep-seconds`, 3 s on the devnet's `fast` and
   `refund` profiles). A Taker Node that is down, or an owner
   who does not act, through [R, P) loses the LEZ.
-- **The Taker Node warns.** From R + (P − R)/2 a funded swap not yet refunded is
+- **The Taker Node warns.** From R + (P − R)/2 (R + 140 s on `fast`) a swap
+  whose escrow is funded and not yet refunded is
   `attention_required` with `attention_reason: "refund_window_closing"` (the CLI
   prints "the refund window is half over: refund now, or from the punish time
   the Maker takes your LEZ and the Monero stays locked"); from R a swap whose
