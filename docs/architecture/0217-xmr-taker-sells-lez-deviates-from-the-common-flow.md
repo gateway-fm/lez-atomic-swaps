@@ -3,8 +3,8 @@
 Status: Proposed, 2026-11-20. Relates to issue #161 (the XMR leg, RFP-003 M4)
 and to [ADR 0216](0216-zec-taker-reveals-first-in-both-directions.md), which
 fixes the common flow for BTC and ZEC and leaves XMR as it is. It changes no
-code, no escrow instruction and no profile. Threat-model delta: none; see
-below.
+code, no escrow instruction and no profile. Threat-model delta: TM-0031, the
+unfunded punishment; see below.
 
 ```mermaid
 flowchart TB
@@ -215,8 +215,8 @@ first residual risk below.
 
 - **Unfunded punishment.** A Maker running other software than this
   repository's Maker Node can send tag 17 from P on a swap it never funded
-  ([PUNISH](../milestone-1/protocol-design.md#punish-a-taker-that-does-not-act-before-p-loses-its-lez)).
-  The Taker bears it; what bounds it is the Taker's refund in [R, P), which is
+  ([PUNISH](../milestone-1/protocol-design.md#punish-a-taker-that-does-not-act-before-p-loses-its-lez),
+  TM-0031). The Taker bears it; what bounds it is the Taker's refund in [R, P), which is
   owner-commanded, never automatic. The Taker Node marks a funded swap not yet
   refunded `refund_window_closing` from R + (P − R)/2, and the Taker CLI and
   the desks' refund prompts say that from P the Maker takes the LEZ. The reference
@@ -332,11 +332,12 @@ separate one, recorded in the protocol design and in F3.
 
 ## Threat-model delta
 
-None. TM-0018 (XMR DLEQ, shares, tags 14–17, direction) and TM-0019 (withheld
-or invalid claim partial; tag 17 awards only LEZ) already cover this flow, and
-TM-0006 names XMR punishment economics as open. The unfunded punishment above
-is stated in the protocol design's PUNISH section; it has no row of its own in
-the threat model.
+One new entry, [TM-0031](../milestone-1/threat-model.md): the unfunded
+punishment above (a Maker running other software sends tag 17 from P on a swap
+whose Monero it never funded; the Taker bears it unless it refunds in
+[R, P)). TM-0018 (XMR DLEQ, shares, tags 14–17, direction) and TM-0019
+(withheld or invalid claim partial; tag 17 awards only LEZ) already cover the
+rest of this flow, and TM-0006 names XMR punishment economics as open.
 
 ## Evidence
 

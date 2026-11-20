@@ -1113,6 +1113,32 @@
       "remaining": "If Zcash runs slower than the profile's slowest pace, the Zcash refund height can fall after the LEZ refund time minus the margin, and a dishonest Taker can claim ZEC late and also refund LEZ; this mirrors TakerSellsForeign's dependence on the fastest pace. The BIP-199 claim branch has no deadline, so a Maker offline from its refund height to the LEZ refund time can lose both legs. The prepared ZEC setup is single-operator: the preparation ceremony signs the template with both roles' keys and holds both halves, the preimage included, while it runs, so it is safe only where the preparer is trusted by the Taker; Node-side take-time preparation (the Taker's Node creates the secret, each Node its own Zcash key) is tracked in issue #162 for M5. A Maker who also mines Zcash (or controls the miners the Taker's claim reaches) can read the preimage from the mempool, claim the LEZ, and keep the Taker's claim out of blocks until its own Zcash refund is mined at the refund height; the Taker's only protection is the reveal margin (it claims only while tip + R < H_z), which bounds how long such a Maker must censor, not whether it can. A miner can malleate the Taker's claim (ZIP-244 transaction ids do not cover scriptSigs) so the mined transaction is not byte-identical to the one the Taker sent; the Taker observes its own claim by its transaction id and exact bytes, so a malleated claim fails that check (ObservedClaimBytesMismatch) on every drive and the Taker's Node never records its own claim: the ZEC is the Taker's on chain and the Maker still claims the LEZ, but the Taker's swap does not reach completed without an operator. A public Testnet run under public-testnet-v3 has not run. The devnet scenario zec-maker-early-claim has not run yet.",
       "owner": "zec-protocol",
       "state": "checking"
+    },
+    {
+      "id": "TM-0031",
+      "old_ids": [],
+      "view": "chain-protocol",
+      "scenario": "In XMR TakerSellsLez a Maker running other software than this repository's Maker Node sends PunishNativeXmr (tag 17) from the punish time P on a swap whose Monero it never funded, and takes the Taker's locked LEZ, because the escrow accepts tag 17 from Funded as from XmrClaimAuthorized, checking only the Maker's owner signature, the bound accounts and the window from P, with no condition on Monero.",
+      "scope": {
+        "routes": ["lez-xmr"],
+        "directions": ["taker-sells-lez"],
+        "phases": ["first-lock", "second-lock", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E04", "E06", "E10", "E12", "E16", "F05", "F10", "F13", "F17"]
+      },
+      "classes": ["stride.elevation-of-privilege", "protocol.authorization", "protocol.deadline-inclusion", "protocol.recovery"],
+      "harms": ["AS-FUNDS", "INV-03", "INV-05", "INV-07"],
+      "milestones": ["M4", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 4 }, "residual": { "likelihood": 2, "impact": 4 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 4 }, "residual": { "likelihood": 3, "impact": 4 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "The Taker bears it, and keeps its LEZ by refunding with RefundNativeXmr (tag 16) in [R, P), which the escrow accepts from Funded or XmrClaimAuthorized, whether or not Monero was funded. The refund is owner-commanded, never automatic: the Taker Node offers it from R and its refund step submits it only while its clock is in [R, P) (refund_step in crates/taker-node/src/taker_service/xmr_supervisor.rs). From R + (P - R)/2 a swap whose escrow is funded and not refunded reads attention_required with refund_window_closing, and from P xmr_refund_window_closed (xmr_taker_view); the Taker CLI and the desks' refund prompts say that from the punish time the Maker takes the LEZ. The reference Maker actor (crates/maker-node/src/bin/xmr-maker-actor.rs, drive_once) activates the punishment only for a swap whose Monero funding it invoked, once the finalized LEZ clock is past P and no refund is found to the finalized tip; an unfunded swap ends expired. The escrow test xmr_native_claim_refund_and_punish_are_atomic_and_disjoint checks the tag 16 window [R, P) and tag 17 from P, from Funded; the Maker actor test the_maker_punishes_only_past_p_with_no_refund_to_the_tip and the Taker supervisor test the_status_table_follows_the_record_and_the_clock check the rules above. The devnet scenarios node:xmr:xmr-maker-never-funds:TakerSellsLez (the Maker never funds; the Taker refunds in [R, P)), node:xmr:xmr-taker-refund:TakerSellsLez, node:xmr:xmr-taker-refund-kill:TakerSellsLez and node:xmr:xmr-punish:TakerSellsLez (a funded swap the Taker neither completes nor refunds; the Maker takes the LEZ from P) passed in the full regression at 9a15d94b (docs/evidence/regression-m4-2026-11-19).",
+      "proofs": ["docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md", "compat/lez-v0.2-provisional/escrow/src/lib.rs", "crates/maker-node/src/bin/xmr-maker-actor.rs", "crates/taker-node/src/taker_service/xmr_supervisor.rs", "crates/taker-node/src/bin/lez-taker-cli.rs", "deploy/scripts/node-e2e.py", "docs/evidence/regression-m4-2026-11-19/results.tsv"],
+      "remaining": "The escrow does not bind tag 17 to the Monero funding, and the reference Maker's rule binds only that software; any Maker key holder can send tag 17 from P. A Taker Node that is down, or an owner who does not act, through [R, P) loses the LEZ whether or not Monero was funded; nothing outside the owner's own polling of the Node delivers the warning. The devnet windows are sized for regtest (gen-config.sh: P - R = LEZ step + stall + margin + 2 Maker drives, 280 s on fast); no profile sized for a public network exists. No scenario sends tag 17 on an unfunded swap: the unfunded case is shown only by the escrow unit test xmr_native_claim_refund_and_punish_are_atomic_and_disjoint, which accepts tag 17 from Funded from P, and by xmr-maker-never-funds, which ends with the Taker's refund.",
+      "owner": "xmr-protocol",
+      "state": "open"
     }
   ]
 }
