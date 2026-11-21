@@ -86,6 +86,9 @@ const TAG13_LOOKBACK_BLOCKS: u64 = 256;
 const TAG13_FILE: &str = "tag13-funding-finalized.json";
 const TAG14_FILE: &str = "tag14-finalized.json";
 const TAG16_FILE: &str = "tag16-finalized.json";
+/// The actor's own scan for the Maker's claim (the claim observer keeps its
+/// finality evidence apart).
+const TAG15_SCAN_FILE: &str = "tag15-scan-finalized.json";
 const CLAIM_SIGNATURE_FILE: &str = "maker-claim-completed-signature.json";
 const REFUND_SIGNATURE_FILE: &str = "maker-refund-observed-signature.json";
 const CLAIM_ACTIVATION_FILE: &str = "maker-claim-activation.json";
@@ -256,6 +259,9 @@ fn derive_status(facts: &Facts, now_ms: u64) -> Status {
 enum Watched {
     TakerLock,
     ClaimAuthorization,
+    /// The Maker's own claim (tag 15): scanned only before a claim gives way
+    /// to the punishment.
+    Claim,
     Refund,
 }
 
@@ -423,9 +429,18 @@ fn settle_spent_effect(
         let lez_ms = chains.lez_clock()?;
         if lez_ms >= facts.refund_ms {
             let refund = chains.scan(Watched::Refund)?;
+            // The claim observer reads an unavailable history or a spent
+            // page budget as "not final yet": the punishment needs the
+            // Maker's own claim proven absent to the finalized tip too, or a
+            // claimed swap would switch to a tag 17 that can never land.
             if let Some(branch) = match refund {
                 Scan::Found(_) => Some(XmrWorkflowBranch::Refund),
-                Scan::Absent(true) if lez_ms >= facts.punish_ms => Some(XmrWorkflowBranch::Punish),
+                Scan::Absent(true)
+                    if lez_ms >= facts.punish_ms
+                        && chains.scan(Watched::Claim)? == Scan::Absent(true) =>
+                {
+                    Some(XmrWorkflowBranch::Punish)
+                }
                 Scan::Absent(_) => None,
             } {
                 chains.activate(branch)?;
@@ -701,6 +716,8 @@ fn replace_private(path: &Path, bytes: &[u8]) -> Result<()> {
 struct ScanCursor {
     taker_lock: Option<u64>,
     claim_authorization: Option<u64>,
+    #[serde(default)]
+    claim: Option<u64>,
     refund: Option<u64>,
 }
 
@@ -709,6 +726,7 @@ impl ScanCursor {
         match watched {
             Watched::TakerLock => self.taker_lock,
             Watched::ClaimAuthorization => self.claim_authorization,
+            Watched::Claim => self.claim,
             Watched::Refund => self.refund,
         }
     }
@@ -717,6 +735,7 @@ impl ScanCursor {
         match watched {
             Watched::TakerLock => self.taker_lock = Some(height),
             Watched::ClaimAuthorization => self.claim_authorization = Some(height),
+            Watched::Claim => self.claim = Some(height),
             Watched::Refund => self.refund = Some(height),
         }
     }
@@ -850,6 +869,7 @@ impl LiveMaker {
         let effect = match watched {
             Watched::TakerLock => XmrNativeEffectV3::Fund,
             Watched::ClaimAuthorization => XmrNativeEffectV3::AuthorizeClaim,
+            Watched::Claim => XmrNativeEffectV3::Claim,
             Watched::Refund => XmrNativeEffectV3::Refund,
         };
         let terms = self.terms;
@@ -1023,6 +1043,7 @@ impl MakerChains for LiveMaker {
         let file = match watched {
             Watched::TakerLock => TAG13_FILE,
             Watched::ClaimAuthorization => TAG14_FILE,
+            Watched::Claim => TAG15_SCAN_FILE,
             Watched::Refund => TAG16_FILE,
         };
         // Found once is found: a later scan's clock and window differ, so a
@@ -1685,6 +1706,12 @@ mod tests {
         assert_eq!(swap.revision(), 5);
     }
 
+    impl Default for Scan {
+        fn default() -> Self {
+            Self::Absent(true)
+        }
+    }
+
     /// The durable model a stub drive works on, with every effect counted
     /// and an optional crash right after an effect's durable consumption.
     #[derive(Default)]
@@ -1699,6 +1726,9 @@ mod tests {
         tag14: bool,
         tag16: bool,
         refund_scan_to_tip: bool,
+        /// The Maker's tag 15 scan: found, or absent with whether it reached
+        /// the tip.
+        tag15: Scan,
         funds: u32,
         observed_funding: bool,
         activations: Vec<XmrWorkflowBranch>,
@@ -1718,6 +1748,7 @@ mod tests {
             Self {
                 facts: Some(facts()),
                 refund_scan_to_tip: true,
+                tag15: Scan::Absent(true),
                 ..Self::default()
             }
         }
@@ -1749,6 +1780,7 @@ mod tests {
                 Watched::Refund if self.tag16 => Scan::Found(0),
                 Watched::Refund => Scan::Absent(self.refund_scan_to_tip),
                 Watched::ClaimAuthorization => Scan::Absent(true),
+                Watched::Claim => self.tag15,
             })
         }
 
@@ -2126,6 +2158,31 @@ mod tests {
             derive_status(&stub.facts().unwrap(), P).next_action,
             "punish_lez"
         );
+    }
+
+    /// Past `P` with the refund absent to the tip, a claimed swap used to
+    /// switch to the punishment whenever the claim observer said "pending",
+    /// which it also says for an unavailable history or a spent page budget.
+    /// The Maker's own claim must now be absent to the tip as well.
+    #[test]
+    fn a_claim_gives_way_to_the_punishment_only_once_proven_absent() {
+        for tag15 in [Scan::Absent(false), Scan::Found(0)] {
+            let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, P);
+            stub.unwritten = false;
+            stub.tag15 = tag15;
+            assert_eq!(
+                settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+                "awaiting_observation"
+            );
+            assert!(stub.activations.is_empty());
+        }
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, P);
+        stub.unwritten = false;
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+            "activated"
+        );
+        assert_eq!(stub.activations, [XmrWorkflowBranch::Punish]);
     }
 
     #[test]
