@@ -8,6 +8,9 @@
 //! activation imports. The funding tool writes them right after it mined;
 //! the funding observer writes them after a crash, from the shared output it
 //! finds. The transfer itself is the workflow's one `FundMonero` invocation.
+//! The receipt is written first; a receipt without its evidence (a crash
+//! between the two) is completed from that receipt, and it also stops the
+//! funding tool from sending again.
 
 use std::{path::Path, str::FromStr as _};
 
@@ -167,11 +170,10 @@ pub async fn fund_maker_monero(
     view_key: MoneroPrivateViewKey,
     shared_wallet_password: &str,
 ) -> Result<[u8; 32]> {
+    // Either file means a funding was observed: a receipt alone is a record
+    // the observer completes, never a reason to send once more.
     ensure!(
-        !plan
-            .evidence_root()
-            .join(XMR_MAKER_FUNDING_EVIDENCE_FILE)
-            .exists(),
+        !recorded_funding_files(plan.evidence_root()),
         "the Monero funding is already recorded"
     );
     let _lock = rpc.lock().context(MoneroFundingNotSent)?;
@@ -259,6 +261,16 @@ pub async fn observe_maker_monero_funding(
     .await;
     let _ = rpc.role_effects()?.open_role_wallet().await;
     recorded
+}
+
+/// Whether either funding record exists: the funding was observed.
+fn recorded_funding_files(evidence_root: &Path) -> bool {
+    [
+        XMR_MAKER_FUNDING_EVIDENCE_FILE,
+        XMR_MAKER_FUNDING_RECEIPT_FILE,
+    ]
+    .iter()
+    .any(|file| evidence_root.join(file).exists())
 }
 
 fn recorded_funding(plan: &XmrEffectChildPlanV1) -> Result<Option<[u8; 32]>> {
@@ -389,14 +401,36 @@ async fn record_maker_monero_funding_locked(
         public_rpc_used: false,
         faucet_used: false,
     };
-    let evidence = FundingEvidenceV2 {
+    record_funding_files(
+        plan.evidence_root(),
+        &receipt,
+        &FundingFacts {
+            agreement_commitment: hex::encode(agreement.agreement_commitment()),
+            shared_address: agreement.shared_address().address_string(),
+            amount_piconero: amount,
+        },
+    )
+    .map(Some)
+}
+
+/// The agreement's facts the funding evidence repeats.
+struct FundingFacts {
+    agreement_commitment: String,
+    shared_address: String,
+    amount_piconero: u64,
+}
+
+/// The funding evidence a receipt implies: every field comes from the
+/// receipt or the agreement, so one receipt always gives the same bytes.
+fn funding_evidence(facts: &FundingFacts, receipt: &MoneroReceiptEvidenceV2) -> FundingEvidenceV2 {
+    FundingEvidenceV2 {
         schema: FUNDING_SCHEMA.to_owned(),
         attempt_state: "confirmed".to_owned(),
-        agreement_commitment: hex::encode(agreement.agreement_commitment()),
-        shared_address: agreement.shared_address().address_string(),
-        amount_piconero: amount,
-        transaction_id: Some(transaction_id),
-        confirmation_tip_height: Some(observation.stable_tip_height()),
+        agreement_commitment: facts.agreement_commitment.clone(),
+        shared_address: facts.shared_address.clone(),
+        amount_piconero: facts.amount_piconero,
+        transaction_id: Some(receipt.transaction_id.clone()),
+        confirmation_tip_height: Some(receipt.stable_tip_height),
         required_confirmations: REQUIRED_MONERO_CONFIRMATIONS,
         restore_height: RESTORE_HEIGHT,
         wallet_role: "stage_a_shared_view_only".to_owned(),
@@ -404,22 +438,73 @@ async fn record_maker_monero_funding_locked(
         public_rpc_used: false,
         faucet_used: false,
         automatic_submission_retry: false,
+    }
+}
+
+/// Whether two receipts observe the same output in the same block. The tip,
+/// its confirmation count and the topology facts move with every block.
+fn same_funding(a: &MoneroReceiptEvidenceV2, b: &MoneroReceiptEvidenceV2) -> bool {
+    a.schema == b.schema
+        && a.run_id == b.run_id
+        && a.agreement_commitment == b.agreement_commitment
+        && a.monero_genesis_hash == b.monero_genesis_hash
+        && a.transaction_id == b.transaction_id
+        && a.destination_address == b.destination_address
+        && a.amount_piconero == b.amount_piconero
+        && a.containing_block_hash == b.containing_block_hash
+        && a.containing_block_height == b.containing_block_height
+}
+
+/// Writes the receipt, then the evidence it implies, and returns their
+/// digest.
+///
+/// The receipt is written first, so a crash can leave a receipt without its
+/// evidence. The next observation sees a later tip, so its own receipt
+/// differs in bytes. A receipt already on disk is kept when it observes the
+/// same output in the same block, and the evidence is made from it: the
+/// half-written pair is completed exactly as the first run would have
+/// completed it. A receipt of another output or block is a conflict.
+fn record_funding_files(
+    evidence_root: &Path,
+    fresh: &MoneroReceiptEvidenceV2,
+    facts: &FundingFacts,
+) -> Result<[u8; 32]> {
+    let receipt_path = evidence_root.join(XMR_MAKER_FUNDING_RECEIPT_FILE);
+    let (receipt, receipt_bytes) = if receipt_path.exists() {
+        let bytes = read_private_input(
+            &receipt_path,
+            crate::M4_MONERO_EVIDENCE_MAX_BYTES,
+            "recorded Monero funding receipt",
+        )?;
+        let recorded: MoneroReceiptEvidenceV2 =
+            serde_json::from_slice(&bytes).context("decode the recorded Monero funding receipt")?;
+        ensure!(
+            canonical_json_bytes(&recorded, "re-encode the recorded Monero funding receipt")?
+                == bytes,
+            "the recorded Monero funding receipt is not canonical"
+        );
+        ensure!(
+            same_funding(&recorded, fresh),
+            "the recorded Monero funding receipt names another output or block"
+        );
+        (recorded, bytes)
+    } else {
+        let bytes = canonical_json_bytes(fresh, "encode the Monero funding receipt")?;
+        persist_or_validate_private(&receipt_path, &bytes)?;
+        (fresh.clone(), bytes)
     };
-    let receipt_bytes = canonical_json_bytes(&receipt, "encode the Monero funding receipt")?;
-    let evidence_bytes = canonical_json_bytes(&evidence, "encode the Monero funding evidence")?;
-    // The receipt first: the evidence file is what marks the funding recorded.
-    persist_or_validate_private(
-        &plan.evidence_root().join(XMR_MAKER_FUNDING_RECEIPT_FILE),
-        &receipt_bytes,
+    let evidence_bytes = canonical_json_bytes(
+        &funding_evidence(facts, &receipt),
+        "encode the Monero funding evidence",
     )?;
     persist_or_validate_private(
-        &plan.evidence_root().join(XMR_MAKER_FUNDING_EVIDENCE_FILE),
+        &evidence_root.join(XMR_MAKER_FUNDING_EVIDENCE_FILE),
         &evidence_bytes,
     )?;
-    Ok(Some(maker_monero_funding_evidence_sha256(
+    Ok(maker_monero_funding_evidence_sha256(
         &evidence_bytes,
         &receipt_bytes,
-    )))
+    ))
 }
 
 /// A regtest duty, here only: on a real network miners confirm the funding,
@@ -452,4 +537,121 @@ const fn pending(error: &MoneroEvidenceError) -> bool {
             | MoneroEvidenceError::InsufficientConfirmations
             | MoneroEvidenceError::NonzeroUnlockDistance
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, os::unix::fs::PermissionsExt as _, path::PathBuf};
+
+    use super::{
+        FundingFacts, MoneroReceiptEvidenceV2, XMR_MAKER_FUNDING_EVIDENCE_FILE,
+        XMR_MAKER_FUNDING_RECEIPT_FILE, record_funding_files, recorded_funding_files,
+    };
+    use crate::canonical_json_bytes;
+
+    fn receipt(tip: u64) -> MoneroReceiptEvidenceV2 {
+        MoneroReceiptEvidenceV2 {
+            schema: crate::M4_MONERO_RECEIPT_SCHEMA.to_owned(),
+            run_id: "xmr-funding-run-0001".to_owned(),
+            agreement_commitment: "aa".repeat(32),
+            monero_genesis_hash: "bb".repeat(32),
+            transaction_id: "cc".repeat(32),
+            destination_address: "shared-address".to_owned(),
+            amount_piconero: 1_000_000,
+            containing_block_hash: "dd".repeat(32),
+            containing_block_height: 100,
+            confirmations: tip - 99,
+            stable_tip_hash: format!("{tip:064x}"),
+            stable_tip_height: tip,
+            peer_count: 0,
+            daemon_version: "0.18".to_owned(),
+            target_wallet_version: 1,
+            foreign_wallet_version: 1,
+            network_scope: crate::M4_MONERO_NETWORK_SCOPE.to_owned(),
+            public_rpc_used: false,
+            faucet_used: false,
+        }
+    }
+
+    fn facts() -> FundingFacts {
+        FundingFacts {
+            agreement_commitment: "aa".repeat(32),
+            shared_address: "shared-address".to_owned(),
+            amount_piconero: 1_000_000,
+        }
+    }
+
+    /// An owner-private evidence root by its canonical path (the secure
+    /// writer refuses a parent reached through a symlink, as macOS's
+    /// temporary directory is).
+    fn evidence_root() -> (tempfile::TempDir, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let path = fs::canonicalize(root.path()).unwrap();
+        (root, path)
+    }
+
+    /// The crash the review found: the receipt is on disk, the evidence is
+    /// not, and the next observation sees a later tip. The pair is completed
+    /// from the first receipt, to the bytes an uninterrupted run writes.
+    #[test]
+    fn a_crash_between_receipt_and_evidence_is_completed_from_the_receipt() {
+        let (_whole, whole) = evidence_root();
+        let expected = record_funding_files(whole.as_path(), &receipt(110), &facts()).unwrap();
+
+        let (_crashed, crashed) = evidence_root();
+        let receipt_bytes = canonical_json_bytes(&receipt(110), "receipt").unwrap();
+        fs::write(
+            crashed.as_path().join(XMR_MAKER_FUNDING_RECEIPT_FILE),
+            &receipt_bytes,
+        )
+        .unwrap();
+        fs::set_permissions(
+            crashed.as_path().join(XMR_MAKER_FUNDING_RECEIPT_FILE),
+            fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        assert!(
+            !crashed
+                .as_path()
+                .join(XMR_MAKER_FUNDING_EVIDENCE_FILE)
+                .exists()
+        );
+        // Blocks were mined since: the fresh observation's tip moved.
+        let digest = record_funding_files(crashed.as_path(), &receipt(125), &facts())
+            .expect("the half-written pair is completed");
+        assert_eq!(digest, expected);
+        for file in [
+            XMR_MAKER_FUNDING_RECEIPT_FILE,
+            XMR_MAKER_FUNDING_EVIDENCE_FILE,
+        ] {
+            assert_eq!(
+                fs::read(crashed.as_path().join(file)).unwrap(),
+                fs::read(whole.as_path().join(file)).unwrap(),
+                "{file}"
+            );
+        }
+        assert!(recorded_funding_files(crashed.as_path()));
+        // Any later observation is a replay of the same record.
+        assert_eq!(
+            record_funding_files(crashed.as_path(), &receipt(140), &facts()).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_recorded_receipt_of_another_output_is_a_conflict() {
+        let (_root, root) = evidence_root();
+        record_funding_files(root.as_path(), &receipt(110), &facts()).unwrap();
+        fs::remove_file(root.as_path().join(XMR_MAKER_FUNDING_EVIDENCE_FILE)).unwrap();
+        let mut other = receipt(125);
+        other.transaction_id = "ee".repeat(32);
+        assert!(record_funding_files(root.as_path(), &other, &facts()).is_err());
+        assert!(
+            !root
+                .as_path()
+                .join(XMR_MAKER_FUNDING_EVIDENCE_FILE)
+                .exists()
+        );
+    }
 }
