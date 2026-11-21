@@ -567,7 +567,8 @@ when the owner is needed (`crates/taker-node/src/taker_service/xmr_supervisor.rs
 | `actor_phase` | `state` | `available_action` | Meaning |
 |---|---|---|---|
 | `lez_locking` | `awaiting_first_lock` | — | the Node is locking the LEZ |
-| `lez_lock_window_closed` | `attention_required` (`xmr_lez_lock_window_closed`) | — | the lock was not final by the funding cutoff C: nothing is locked, the take is over |
+| `lez_lock_unconfirmed` | `attention_required` (`xmr_lez_lock_unconfirmed`) | — | C passed with a lock prepared and not seen final: the Node sends nothing more and keeps looking for it on chain; a lock found (final before or after C) turns the row locked, and is refunded from R |
+| `lez_lock_window_closed` | `attention_required` (`xmr_lez_lock_window_closed`) | — | no lock was prepared by C, or the finalized LEZ time reached R with nothing in the escrow: nothing is locked, the take is over |
 | `taker_lock_confirmed` | `awaiting_second_lock` | — | LEZ locked; waiting for the Maker's Monero at 10 confirmations |
 | `both_legs_locked` | `claim_available` | `claim` | both legs locked, before R |
 | `claim_authorizing` | `claim_in_progress` | — | tag 14 sent, not yet final |

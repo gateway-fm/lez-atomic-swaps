@@ -386,6 +386,9 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         if (nodeState == "awaiting_first_lock")
             return {"lock_pending", "LEZ lock pending", 20,
                     "Your Node is locking your LEZ (automatic, no Lock button); the desk follows it", "", ""};
+        if (attentionReason == QStringLiteral("xmr_lez_lock_unconfirmed"))
+            return {"attention_required", "LEZ lock not confirmed", 15,
+                    "The Maker's funding cutoff passed before your LEZ lock was seen final: your Node keeps looking for it and refunds it from the refund time if it landed", "", ""};
         if (attentionReason == QStringLiteral("xmr_lez_lock_window_closed"))
             return {"attention_required", "LEZ lock window closed", 0,
                     "Your LEZ was not locked before the Maker's funding cutoff: nothing of yours is locked and this take is over", "", ""};

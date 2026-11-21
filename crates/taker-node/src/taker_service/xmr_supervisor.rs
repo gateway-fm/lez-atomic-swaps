@@ -95,6 +95,7 @@ pub(super) struct FinalizedLezEffectV1 {
 }
 
 /// What the supervisor has observed and done for one swap.
+#[allow(clippy::struct_excessive_bools)] // Each is one recorded fact.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct XmrTakerProgressV1 {
@@ -142,6 +143,10 @@ pub(super) struct XmrTakerProgressV1 {
     /// The swept output is final and unlocked in the role wallet.
     #[serde(default)]
     pub(super) claim_completed: bool,
+    /// Past the funding cutoff, the lock was proven never funded: the
+    /// finalized LEZ time reached R with nothing in the escrow at the tip.
+    #[serde(default)]
+    pub(super) lock_unfunded: bool,
 }
 
 /// The Maker's finalized claim and its aggregate signature (public: it is on
@@ -286,8 +291,28 @@ pub(super) fn xmr_taker_view(
         );
     }
     if progress.funded.is_none() {
-        // The escrow is funded only at or before the funding cutoff; past it
-        // nothing of the Taker's is locked and the take is over.
+        // Past the funding cutoff no lock is sent. One prepared before it may
+        // still be final, or become final, without the Node having seen it:
+        // until it is found or proven never funded the swap says so.
+        if now_ms >= windows.funding_cutoff_ms
+            && progress.scan_from.is_some()
+            && !progress.lock_unfunded
+        {
+            let phase = if progress.initialized.is_some() {
+                Phase::AwaitingTakerConfirmations
+            } else {
+                Phase::Offered
+            };
+            return view(
+                phase,
+                1,
+                State::AttentionRequired,
+                None,
+                Some("xmr_lez_lock_unconfirmed"),
+                "lez_lock_unconfirmed",
+            );
+        }
+        // Nothing of the Taker's is locked and the take is over.
         if now_ms >= windows.funding_cutoff_ms {
             return view(
                 Phase::Offered,
@@ -847,11 +872,6 @@ async fn drive_lez_lock(
     facts: &XmrTakerSwapFactsV1,
     progress: &XmrTakerProgressV1,
 ) -> Result<()> {
-    let (agreement, activation, _) = files.agreement()?;
-    let terms = XmrLezBridgeBindingV3::new(&agreement, &activation)
-        .map_err(|error| anyhow::anyhow!("derive the LEZ escrow terms: {error:?}"))?
-        .terms();
-    let lez = SwapLez::connect(dynamic, &facts.reservation_id)?;
     // The pair is planned at the owner's live nonce by the first preparation;
     // it takes the Node's LEZ lock gate as a Bitcoin lock does, so that no
     // Bitcoin lock is prepared while the pair is not yet in blocks (that
@@ -880,50 +900,131 @@ async fn drive_lez_lock(
         }
         gate = Some((held, nonce));
     }
-    let prepared = lez
-        .client
-        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
-            lez.context(derived_request_id(
-                &facts.reservation_id,
-                "xmr",
-                b"tag13-prepare",
-            )?),
-            lez.runtime.clone(),
-            terms,
-        ))
-        .await
-        .context("prepare the LEZ escrow")?;
-    let cursor = if let Some(cursor) = progress.scan_from {
-        cursor
-    } else {
-        let height = lez.finalized_height().await?;
-        files.update(|record| record.scan_from = Some(height))?;
-        height
-    };
-    let (effect, transaction) = if progress.initialized.is_none() {
-        (XmrNativeEffectV3::Initialize, &prepared.initialization)
-    } else {
-        (XmrNativeEffectV3::Fund, &prepared.funding)
-    };
-    lez.submit(transaction).await?;
-    if let Some((mut held, nonce)) = gate {
+    let chains = LiveLock::connect(dynamic, files, facts)?;
+    let sent = lock_step(&chains, files, XmrWindows::of(facts), progress, now_ms()).await;
+    if let (Some((mut held, nonce)), Ok(true)) = (gate, &sent) {
         // The next lock waits until the account has passed the pair.
         *held = nonce + 2;
         if let Ok(mut raised) = RAISED_LOCK_GATE.lock() {
             *raised = Some((facts.swap_id.as_str().to_owned(), *held));
         }
     }
-    if effect == XmrNativeEffectV3::Initialize {
-        let runtime = dynamic.btc().runtime();
-        submit_once_sequenced(
-            || sequenced(runtime, &prepared.initialization),
-            || lez.submit(&prepared.funding),
-            FUNDING_AFTER_INITIALIZATION_WAIT,
-            FUNDING_AFTER_INITIALIZATION_POLL,
-        )
-        .await?;
+    sent.map(drop)
+}
+
+/// The chain effects of the LEZ lock (tag 13), one seam so its steps run with
+/// the chains stubbed: the swap's own LEZ sidecar.
+#[async_trait::async_trait]
+pub(super) trait XmrLockChains: Sync {
+    type Transaction: Send + Sync;
+
+    /// The initialization and the funding, prepared once (the sidecar
+    /// replays its durable preparation: the same bytes on every call).
+    async fn prepare_pair(&self) -> Result<(Self::Transaction, Self::Transaction)>;
+    async fn finalized_height(&self) -> Result<u64>;
+    async fn submit(&self, transaction: &Self::Transaction) -> Result<()>;
+    /// Sends the funding once the initialization is in a block, looking for
+    /// a bounded time (`submit_once_sequenced`).
+    async fn submit_funding_after(
+        &self,
+        initialization: &Self::Transaction,
+        funding: &Self::Transaction,
+    ) -> Result<()>;
+    async fn find_final(
+        &self,
+        effect: XmrNativeEffectV3,
+        transaction: &Self::Transaction,
+        cursor: u64,
+    ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>>;
+    /// The finalized LEZ consensus time, ms.
+    async fn lez_time_ms(&self) -> Result<u64>;
+    /// The escrow's state at the sequencer tip.
+    async fn escrow_state_at_tip(&self) -> Result<Option<XmrNativeEscrowStateV3>>;
+}
+
+/// One lock step; returns whether the pair's next transaction went out.
+///
+/// Before the funding cutoff C it sends the pair's next transaction and
+/// looks for it. A send that fails, or whose answer was lost (the sidecar
+/// then answers "unknown" for that request from then on), does not stop the
+/// look: what is final is found and recorded. From C nothing is sent, but a
+/// pair once prepared is still looked for, because a lock may land or be
+/// seen final after C (the Node was down, its scan lagged, the sequencer
+/// was slow; the escrow takes the funding until R), and a locked escrow the
+/// Node does not know of is LEZ the Maker can punish at P. The look ends
+/// once the funding is found, or once the take is proven never funded: the
+/// finalized LEZ time is at or past R (no funding can land any more) and
+/// the escrow at the sequencer tip holds nothing.
+pub(super) async fn lock_step<C: XmrLockChains>(
+    chains: &C,
+    files: &XmrSwapFiles,
+    windows: XmrWindows,
+    progress: &XmrTakerProgressV1,
+    now_ms: u64,
+) -> Result<bool> {
+    let past_cutoff = now_ms >= windows.funding_cutoff_ms;
+    if progress.funded.is_some()
+        || progress.lock_unfunded
+        || (past_cutoff && progress.scan_from.is_none())
+    {
+        return Ok(false);
     }
-    match lez.find_final(&terms, effect, transaction, cursor).await? {
+    let (initialization, funding) = chains.prepare_pair().await?;
+    let cursor = if let Some(cursor) = progress.scan_from {
+        cursor
+    } else {
+        let height = chains.finalized_height().await?;
+        files.update(|record| record.scan_from = Some(height))?;
+        height
+    };
+    let (effect, transaction) = if progress.initialized.is_none() {
+        (XmrNativeEffectV3::Initialize, &initialization)
+    } else {
+        (XmrNativeEffectV3::Fund, &funding)
+    };
+    let sent = if past_cutoff {
+        Ok(false)
+    } else {
+        async {
+            chains.submit(transaction).await?;
+            if effect == XmrNativeEffectV3::Initialize {
+                chains
+                    .submit_funding_after(&initialization, &funding)
+                    .await?;
+            }
+            Ok(true)
+        }
+        .await
+    };
+    let found = record_lock(chains, files, effect, transaction, cursor).await?;
+    if found && effect == XmrNativeEffectV3::Initialize {
+        // The funding is in a later block, possibly final already.
+        let cursor = files.progress()?.scan_from.unwrap_or(cursor);
+        record_lock(chains, files, XmrNativeEffectV3::Fund, &funding, cursor).await?;
+    }
+    if past_cutoff && files.progress()?.funded.is_none() {
+        let unfunded = chains.lez_time_ms().await? >= windows.refund_ms
+            && matches!(
+                chains.escrow_state_at_tip().await?,
+                None | Some(XmrNativeEscrowStateV3::Empty)
+            );
+        if unfunded {
+            files.update(|record| record.lock_unfunded = true)?;
+        }
+    }
+    sent
+}
+
+/// Looks for the pair's `effect` in finalized history from `cursor` and
+/// records it once final, or the cursor to resume from.
+async fn record_lock<C: XmrLockChains>(
+    chains: &C,
+    files: &XmrSwapFiles,
+    effect: XmrNativeEffectV3,
+    transaction: &C::Transaction,
+    cursor: u64,
+) -> Result<bool> {
+    match chains.find_final(effect, transaction, cursor).await? {
         Ok(finalized) => {
             let next = finalized.block_id.saturating_add(1);
             files.update(|record| {
@@ -934,12 +1035,107 @@ async fn drive_lez_lock(
                     record.funded = Some(finalized);
                 }
             })?;
+            Ok(true)
         }
         Err(cursor) => {
             files.update(|record| record.scan_from = Some(cursor))?;
+            Ok(false)
         }
     }
-    Ok(())
+}
+
+/// The lock's chain in the Node: the swap's sidecar and its sequencer.
+struct LiveLock<'a> {
+    dynamic: &'a DynamicXmrRole,
+    facts: XmrTakerSwapFactsV1,
+    lez: SwapLez,
+    terms: XmrNativeEscrowTermsV3,
+}
+
+impl<'a> LiveLock<'a> {
+    fn connect(
+        dynamic: &'a DynamicXmrRole,
+        files: &XmrSwapFiles,
+        facts: &XmrTakerSwapFactsV1,
+    ) -> Result<Self> {
+        let (agreement, activation, _) = files.agreement()?;
+        let terms = XmrLezBridgeBindingV3::new(&agreement, &activation)
+            .map_err(|error| anyhow::anyhow!("derive the LEZ escrow terms: {error:?}"))?
+            .terms();
+        Ok(Self {
+            dynamic,
+            facts: facts.clone(),
+            lez: SwapLez::connect(dynamic, &facts.reservation_id)?,
+            terms,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl XmrLockChains for LiveLock<'_> {
+    type Transaction = PreparedTransaction;
+
+    async fn prepare_pair(&self) -> Result<(PreparedTransaction, PreparedTransaction)> {
+        let prepared = self
+            .lez
+            .client
+            .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+                self.lez.context(derived_request_id(
+                    &self.facts.reservation_id,
+                    "xmr",
+                    b"tag13-prepare",
+                )?),
+                self.lez.runtime.clone(),
+                self.terms,
+            ))
+            .await
+            .context("prepare the LEZ escrow")?;
+        Ok((prepared.initialization, prepared.funding))
+    }
+
+    async fn finalized_height(&self) -> Result<u64> {
+        self.lez.finalized_height().await
+    }
+
+    async fn submit(&self, transaction: &PreparedTransaction) -> Result<()> {
+        self.lez.submit(transaction).await
+    }
+
+    async fn submit_funding_after(
+        &self,
+        initialization: &PreparedTransaction,
+        funding: &PreparedTransaction,
+    ) -> Result<()> {
+        let runtime = self.dynamic.btc().runtime();
+        submit_once_sequenced(
+            || sequenced(runtime, initialization),
+            || self.lez.submit(funding),
+            FUNDING_AFTER_INITIALIZATION_WAIT,
+            FUNDING_AFTER_INITIALIZATION_POLL,
+        )
+        .await
+    }
+
+    async fn find_final(
+        &self,
+        effect: XmrNativeEffectV3,
+        transaction: &PreparedTransaction,
+        cursor: u64,
+    ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>> {
+        self.lez
+            .find_final(&self.terms, effect, transaction, cursor)
+            .await
+    }
+
+    async fn lez_time_ms(&self) -> Result<u64> {
+        Ok(self.lez.finalized_clock().await?.timestamp_ms)
+    }
+
+    async fn escrow_state_at_tip(&self) -> Result<Option<XmrNativeEscrowStateV3>> {
+        self.lez
+            .escrow_state_at_tip(&self.facts.swap_id, &self.terms)
+            .await
+    }
 }
 
 /// Submits once `sequenced` says the predecessor is in a block, looking
@@ -992,6 +1188,27 @@ async fn sequenced(
 }
 
 impl SwapLez {
+    /// The escrow's state at the sequencer tip, not finalized.
+    async fn escrow_state_at_tip(
+        &self,
+        swap_id: &SwapId,
+        terms: &XmrNativeEscrowTermsV3,
+    ) -> Result<Option<XmrNativeEscrowStateV3>> {
+        let request_id = RequestId::new(hex::encode(Sha256::digest(
+            format!("xmr-taker-escrow-tip/{}/{}", swap_id.as_str(), now_ms()).as_bytes(),
+        )))?;
+        Ok(self
+            .client
+            .observe_native_xmr_escrow_tip_v3(ObserveNativeXmrEscrowTipV3Request::new(
+                self.context(request_id),
+                self.runtime.clone(),
+                *terms,
+            ))
+            .await
+            .context("read the LEZ escrow at the sequencer tip")?
+            .state)
+    }
+
     async fn finalized_height(&self) -> Result<u64> {
         Ok(self.finalized_clock().await?.height)
     }
@@ -1314,25 +1531,9 @@ impl XmrRefundChains for LiveRefund {
     }
 
     async fn escrow_state_at_tip(&self) -> Result<Option<XmrNativeEscrowStateV3>> {
-        let request_id = RequestId::new(hex::encode(Sha256::digest(
-            format!(
-                "xmr-taker-escrow-tip/{}/{}",
-                self.facts.swap_id.as_str(),
-                now_ms()
-            )
-            .as_bytes(),
-        )))?;
-        Ok(self
-            .lez
-            .client
-            .observe_native_xmr_escrow_tip_v3(ObserveNativeXmrEscrowTipV3Request::new(
-                self.lez.context(request_id),
-                self.lez.runtime.clone(),
-                self.terms,
-            ))
+        self.lez
+            .escrow_state_at_tip(&self.facts.swap_id, &self.terms)
             .await
-            .context("read the LEZ escrow at the sequencer tip")?
-            .state)
     }
 
     async fn complete_refund(&self) -> Result<PreparedTransaction> {
@@ -1954,7 +2155,16 @@ async fn tick_swap(
     match status.revision {
         0 if owner_busy && progress.scan_from.is_none() => Ok(()),
         0 => drive_lez_lock(dynamic, files, &facts, &progress).await,
-        1 => release_lock_gate(dynamic, &facts.swap_id).await,
+        1 => {
+            let released = release_lock_gate(dynamic, &facts.swap_id).await;
+            if progress.scan_from.is_some() && !progress.lock_unfunded {
+                drive_lez_lock(dynamic, files, &facts, &progress)
+                    .await
+                    .and(released)
+            } else {
+                released
+            }
+        }
         // Waiting for the Maker's Monero is no reason not to refund from R.
         2 if dynamic.automatic_refund() => {
             let observed = observe_monero(dynamic, files, &facts, &progress).await;
@@ -3271,6 +3481,283 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((refund.calls("submit"), refund.calls("find")), (0, 1));
+    }
+
+    /// The lock's chain, stubbed: what is final, the submissions' answer,
+    /// the finalized LEZ time and the escrow at the tip.
+    struct StubLock {
+        calls: Mutex<std::collections::BTreeMap<&'static str, u32>>,
+        /// The effects found final, with their finalized time.
+        initialized_at: Mutex<Option<u64>>,
+        funded_at: Mutex<Option<u64>>,
+        submit_fails: bool,
+        lez_ms: Mutex<u64>,
+        tip: Mutex<Option<XmrNativeEscrowStateV3>>,
+    }
+
+    impl StubLock {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::default(),
+                initialized_at: Mutex::new(None),
+                funded_at: Mutex::new(None),
+                submit_fails: false,
+                lez_ms: Mutex::new(0),
+                tip: Mutex::new(None),
+            }
+        }
+
+        fn called(&self, name: &'static str) {
+            *self.calls.lock().unwrap().entry(name).or_default() += 1;
+        }
+
+        fn calls(&self, name: &str) -> u32 {
+            self.calls.lock().unwrap().get(name).copied().unwrap_or(0)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl XmrLockChains for StubLock {
+        type Transaction = &'static str;
+
+        async fn prepare_pair(&self) -> Result<(&'static str, &'static str)> {
+            self.called("prepare");
+            Ok(("initialization", "funding"))
+        }
+
+        async fn finalized_height(&self) -> Result<u64> {
+            Ok(3)
+        }
+
+        async fn submit(&self, _: &&'static str) -> Result<()> {
+            self.called("submit");
+            ensure!(!self.submit_fails, "unknown submission outcome");
+            Ok(())
+        }
+
+        async fn submit_funding_after(&self, _: &&'static str, _: &&'static str) -> Result<()> {
+            self.called("submit");
+            ensure!(!self.submit_fails, "unknown submission outcome");
+            Ok(())
+        }
+
+        async fn find_final(
+            &self,
+            kind: XmrNativeEffectV3,
+            _: &&'static str,
+            cursor: u64,
+        ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>> {
+            self.called("find");
+            let at = if kind == XmrNativeEffectV3::Initialize {
+                *self.initialized_at.lock().unwrap()
+            } else {
+                *self.funded_at.lock().unwrap()
+            };
+            Ok(at.map_or(Err(cursor + 1), |at| Ok(effect(at).unwrap())))
+        }
+
+        async fn lez_time_ms(&self) -> Result<u64> {
+            Ok(*self.lez_ms.lock().unwrap())
+        }
+
+        async fn escrow_state_at_tip(&self) -> Result<Option<XmrNativeEscrowStateV3>> {
+            self.called("tip");
+            Ok(*self.tip.lock().unwrap())
+        }
+    }
+
+    fn lock_prepared() -> XmrTakerProgressV1 {
+        let mut progress = record();
+        progress.scan_from = Some(3);
+        progress
+    }
+
+    /// A lock final before C that the Node had not seen final by C (it was
+    /// down, or its scan lagged) is looked for and found after C; the swap
+    /// then reads locked, and is refunded from R.
+    #[tokio::test]
+    async fn a_lock_final_before_c_and_seen_after_c_is_found() {
+        let mut progress = lock_prepared();
+        progress.initialized = effect(200_000);
+        let (_directory, files) = swap(&progress);
+        let chains = StubLock::new();
+        *chains.funded_at.lock().unwrap() = Some(WINDOWS.funding_cutoff_ms - 1);
+        let after_c = WINDOWS.funding_cutoff_ms + 30_000;
+        assert_eq!(actor_phase(&files, after_c), "lez_lock_unconfirmed");
+        lock_step(
+            &chains,
+            &files,
+            WINDOWS,
+            &files.progress().unwrap(),
+            after_c,
+        )
+        .await
+        .unwrap();
+        assert_eq!(chains.calls("submit"), 0, "nothing is sent past C");
+        assert_eq!(
+            files.progress().unwrap().funded,
+            effect(WINDOWS.funding_cutoff_ms - 1)
+        );
+        assert_eq!(actor_phase(&files, after_c), "taker_lock_confirmed");
+        let (claim, refund) = (StubChains::default(), StubRefund::at(WINDOWS.refund_ms));
+        settle(&claim, &refund, &files, WINDOWS.refund_ms, None, true)
+            .await
+            .unwrap();
+        assert_eq!(refund.calls("submit"), 1);
+    }
+
+    /// A lock that becomes final only after C (the escrow takes the funding
+    /// until R) is found, reads locked with no claim, and is refunded from R,
+    /// by the Node itself or on the owner's command.
+    #[tokio::test]
+    async fn a_lock_final_after_c_is_found_and_refunded_from_r() {
+        for (automatic, admitted) in [(true, None), (false, Some(TakerFacadeActionV1::Refund))] {
+            let mut progress = lock_prepared();
+            progress.initialized = effect(200_000);
+            let (_directory, files) = swap(&progress);
+            let chains = StubLock::new();
+            let after_c = WINDOWS.funding_cutoff_ms + 30_000;
+            lock_step(
+                &chains,
+                &files,
+                WINDOWS,
+                &files.progress().unwrap(),
+                after_c,
+            )
+            .await
+            .unwrap();
+            assert_eq!(files.progress().unwrap().funded, None);
+            *chains.funded_at.lock().unwrap() = Some(after_c);
+            lock_step(
+                &chains,
+                &files,
+                WINDOWS,
+                &files.progress().unwrap(),
+                after_c + 1,
+            )
+            .await
+            .unwrap();
+            assert_eq!(files.progress().unwrap().funded, effect(after_c));
+            let refundable = xmr_taker_view(&files.progress().unwrap(), WINDOWS, WINDOWS.refund_ms);
+            assert_eq!(
+                refundable.available_action,
+                Some(TakerTerminalActionV1::Refund)
+            );
+            let (claim, refund) = (StubChains::default(), StubRefund::at(WINDOWS.refund_ms));
+            settle(
+                &claim,
+                &refund,
+                &files,
+                WINDOWS.refund_ms,
+                admitted,
+                automatic,
+            )
+            .await
+            .unwrap();
+            assert_eq!(refund.calls("submit"), 1);
+        }
+    }
+
+    /// A submission whose answer was lost (the sidecar replays "unknown"
+    /// for it from then on) does not stop the look for the lock: before C
+    /// and after it, the pair is found once it is final.
+    #[tokio::test]
+    async fn a_lost_submit_answer_does_not_stop_the_look_for_the_lock() {
+        let (_directory, files) = swap(&lock_prepared());
+        let chains = StubLock {
+            submit_fails: true,
+            ..StubLock::new()
+        };
+        *chains.initialized_at.lock().unwrap() = Some(10_000);
+        assert!(
+            lock_step(&chains, &files, WINDOWS, &files.progress().unwrap(), 11_000)
+                .await
+                .is_err()
+        );
+        assert_eq!(files.progress().unwrap().initialized, effect(10_000));
+        *chains.funded_at.lock().unwrap() = Some(12_000);
+        let after_c = WINDOWS.funding_cutoff_ms + 1;
+        lock_step(
+            &chains,
+            &files,
+            WINDOWS,
+            &files.progress().unwrap(),
+            after_c,
+        )
+        .await
+        .unwrap();
+        assert_eq!(files.progress().unwrap().funded, effect(12_000));
+    }
+
+    /// Past C a lock not found final is looked for until it is proven never
+    /// funded: once the finalized LEZ time is at or past R (the escrow takes
+    /// no funding from then on) and the escrow at the tip holds nothing.
+    /// Then, and only then, the take reads closed with nothing locked.
+    #[tokio::test]
+    async fn a_lock_not_found_reads_closed_only_once_it_is_proven_unfunded() {
+        let (_directory, files) = swap(&lock_prepared());
+        let chains = StubLock::new();
+        let after_c = WINDOWS.funding_cutoff_ms + 1;
+        *chains.lez_ms.lock().unwrap() = WINDOWS.refund_ms - 1;
+        lock_step(
+            &chains,
+            &files,
+            WINDOWS,
+            &files.progress().unwrap(),
+            after_c,
+        )
+        .await
+        .unwrap();
+        assert_eq!(actor_phase(&files, after_c), "lez_lock_unconfirmed");
+        // Funded at the tip, not yet final: still looked for.
+        *chains.lez_ms.lock().unwrap() = WINDOWS.refund_ms;
+        *chains.tip.lock().unwrap() = Some(XmrNativeEscrowStateV3::Funded);
+        lock_step(
+            &chains,
+            &files,
+            WINDOWS,
+            &files.progress().unwrap(),
+            WINDOWS.refund_ms,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            actor_phase(&files, WINDOWS.refund_ms),
+            "lez_lock_unconfirmed"
+        );
+        *chains.tip.lock().unwrap() = None;
+        lock_step(
+            &chains,
+            &files,
+            WINDOWS,
+            &files.progress().unwrap(),
+            WINDOWS.refund_ms,
+        )
+        .await
+        .unwrap();
+        assert!(files.progress().unwrap().lock_unfunded);
+        assert_eq!(
+            actor_phase(&files, WINDOWS.refund_ms),
+            "lez_lock_window_closed"
+        );
+        let before = chains.calls("find");
+        lock_step(
+            &chains,
+            &files,
+            WINDOWS,
+            &files.progress().unwrap(),
+            WINDOWS.refund_ms,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            chains.calls("find"),
+            before,
+            "a proven-unfunded take is not looked at again"
+        );
+        // A take that never prepared a pair reads closed past C at once.
+        let (_directory, files) = swap(&record());
+        assert_eq!(actor_phase(&files, after_c), "lez_lock_window_closed");
     }
 
     #[test]

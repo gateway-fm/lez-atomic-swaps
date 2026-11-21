@@ -1110,6 +1110,10 @@ fn xmr_offer_words(offer: &lez_swap_store::MakerOfferV1) -> Option<String> {
 fn xmr_phase_words(phase: &str) -> Option<&'static str> {
     Some(match phase {
         "lez_locking" => "the Node is locking your LEZ (automatic, no `swap lock`)",
+        "lez_lock_unconfirmed" => {
+            "the funding cutoff passed before your LEZ lock was seen final: the Node keeps \
+             looking for it, and refunds it from the refund time if it landed"
+        }
         "lez_lock_window_closed" => {
             "your LEZ was not locked before the Maker's funding cutoff: nothing of yours is \
              locked and this take is over"
@@ -1146,6 +1150,9 @@ fn xmr_phase_words(phase: &str) -> Option<&'static str> {
 fn xmr_attention_words(reason: &str) -> Option<&'static str> {
     Some(match reason {
         "xmr_lez_lock_window_closed" => "the LEZ lock window closed before your LEZ was locked",
+        "xmr_lez_lock_unconfirmed" => {
+            "your LEZ lock may have landed after the window closed: the Node keeps looking"
+        }
         "refund_window_closing" => {
             "the refund window is half over: refund now, or from the punish time the Maker \
              takes your LEZ and the Monero stays locked"
@@ -2164,6 +2171,13 @@ mod xmr_words_tests {
                 "xmr_lez_lock_window_closed",
                 None,
                 "needs you: the LEZ lock window closed before your LEZ was locked",
+            ),
+            (
+                "lez_lock_unconfirmed",
+                "xmr_lez_lock_unconfirmed",
+                None,
+                "needs you: your LEZ lock may have landed after the window closed: the Node \
+                 keeps looking",
             ),
             (
                 "refund_available",
