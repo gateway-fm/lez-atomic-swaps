@@ -660,7 +660,7 @@ async fn first_lock_proof_accepts_a_credited_custody() {
     )
     .expect("binding");
     let preparation = asset_preparation(&binding, token_effects());
-    adapter(
+    let _proof = adapter(
         RecordingTransport::with_asset_proof(AssetProofMutation::CreditedCustody),
         Participant::Maker,
         runtime(Participant::Maker),
