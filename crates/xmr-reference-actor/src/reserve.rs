@@ -841,6 +841,7 @@ pub fn accept_xmr_maker_stage_a(role_root: &Path, agreement_wire: &[u8]) -> Resu
     Ok(agreement)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_input(
     profile: XmrNamedProfileV1,
     terms: &XmrReservationTerms,
@@ -1569,7 +1570,7 @@ pub(crate) mod tests {
             );
         }
         let path = write_config(&root, |json| {
-            json["profile"] = serde_json::json!("fakechain")
+            json["profile"] = serde_json::json!("fakechain");
         });
         assert!(
             format!("{:#}", XmrRoleConfigV1::load(&path).unwrap_err())
