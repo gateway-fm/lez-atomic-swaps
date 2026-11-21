@@ -1419,7 +1419,7 @@ mod tests {
     }
 
     /// The reopen path of a sweep driven again: the wallet file exists, so
-    /// generate_from_keys fails, open_wallet succeeds and the address read
+    /// `generate_from_keys` fails, `open_wallet` succeeds and the address read
     /// fails.
     fn shared_wallet_failing_reopened_address(method: &str) -> serde_json::Value {
         match method {
