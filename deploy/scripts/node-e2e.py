@@ -409,6 +409,14 @@ def node_command(role: str, argv: list[str]) -> list[str]:
     return [node_path(role, part) for part in argv]
 
 
+def node_command_stdin(role: str, argv: list[str]) -> list[str]:
+    """node_command for a command that reads the caller's stdin (`input=`):
+    `docker exec` passes stdin on only with -i, and without it the command
+    reads an empty stdin."""
+    command = node_command(role, argv)
+    return [*command[:2], "-i", *command[2:]] if not NATIVE_RUN_ROOT else command
+
+
 def node_run(role: str, *argv: str) -> None:
     """`argv` where the role's Node runs (node_command); fails on a non-zero exit."""
     subprocess.run(node_command(role, list(argv)), check=True, capture_output=True)
@@ -8169,7 +8177,7 @@ def run_custody_credit_probe(depositor: str, units: int, timeout: int) -> dict:
             "--escrow-program-id", escrow_program_id(), "--depositor", lez_owner_account(depositor),
             "--private-key-file", CUSTODY_CREDIT_KEY, "--amount", str(units),
             "--wait-funded-seconds", str(timeout), "--observe-seconds", "60"]
-    install = subprocess.run(node_command("maker", ["sh", "-c", f"umask 077 && cat > {CUSTODY_CREDIT_KEY}"]),
+    install = subprocess.run(node_command_stdin("maker", ["sh", "-c", f"umask 077 && cat > {CUSTODY_CREDIT_KEY}"]),
                              input=custody_credit_key(), capture_output=True, check=False, timeout=60)
     if install.returncode != 0:
         raise Failure(f"could not write the stranger's key into the Maker's container: {install.stderr[-200:]!r}")

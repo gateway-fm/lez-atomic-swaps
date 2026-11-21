@@ -940,6 +940,21 @@ class CustodyCredit(unittest.TestCase):
         self.assertEqual(sorted(name for name in e2e.XMR_SCENARIOS if 'custody-credit' in name),
                          ['xmr-custody-credit', 'xmr-custody-credit-refund'])
 
+    def test_the_strangers_key_reaches_the_container_on_stdin(self):
+        # docker exec without -i gives the command an empty stdin: the key
+        # file was written empty and the probe refused it
+        runs = []
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), \
+                patch.object(e2e, 'custody_credit_key', lambda: b'71' * 32 + b'\n'), \
+                patch.object(e2e, 'lez_owner_account', lambda role: 'owner'), \
+                patch.object(e2e, 'escrow_program_id', lambda: 'aa' * 32), \
+                patch.object(e2e.subprocess, 'run', lambda argv, **kw: runs.append((argv, kw)) or
+                             subprocess.CompletedProcess(argv, 0, json.dumps(credit_evidence()) + '\n', '')):
+            e2e.run_custody_credit_probe('taker', 1, 60)
+        install = next((argv, kw) for argv, kw in runs if kw.get('input'))
+        self.assertEqual(install[0][:4], ['docker', 'exec', '-i', 'lez-maker-node'])
+        self.assertEqual(install[1]['input'], b'71' * 32 + b'\n')
+
     def test_the_evidence_of_a_landed_stranger_credit_is_accepted(self):
         evidence = e2e.parse_custody_credit_evidence(0, json.dumps(credit_evidence()) + '\n', 1)
         self.assertEqual(evidence['after']['custody_balance'], 1_001)
