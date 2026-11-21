@@ -94,7 +94,8 @@ static PROGRESS_WRITE: Mutex<()> = Mutex::new(());
 pub(super) struct FinalizedLezEffectV1 {
     pub(super) transaction_id: String,
     pub(super) block_id: u64,
-    /// The finalized LEZ consensus time it was observed final at, ms.
+    /// The LEZ consensus time of the block that holds it, ms (a record an
+    /// earlier Node wrote holds the finalized time it was first seen at).
     pub(super) finalized_at_ms: u64,
 }
 
@@ -828,11 +829,7 @@ impl SwapLez {
                 .await
                 .context("classify finalized LEZ history")?;
             match result.outcome {
-                FinalizedNativeXmrScanOutcomeV3::Found {
-                    finalized_clock,
-                    facts,
-                    ..
-                } => {
+                FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } => {
                     if let FinalizedNativeXmrTransactionTargetV3::Exact { transaction } = target {
                         ensure!(
                             facts.transaction.transaction_id == transaction.transaction_id,
@@ -844,13 +841,10 @@ impl SwapLez {
                         "the classifier found another effect"
                     );
                     return Ok(Ok((
-                        FinalizedLezEffectV1 {
-                            transaction_id: hex::encode(
-                                facts.transaction.transaction_id.as_bytes(),
-                            ),
-                            block_id: facts.containing_block.block_id,
-                            finalized_at_ms: finalized_clock.timestamp_ms,
-                        },
+                        recorded_effect(
+                            hex::encode(facts.transaction.transaction_id.as_bytes()),
+                            facts.containing_block,
+                        ),
                         *facts,
                     )));
                 }
@@ -877,6 +871,20 @@ impl SwapLez {
             }
         }
         Ok(Err(cursor))
+    }
+}
+
+/// One effect as found final: its transaction, its block, and the time it
+/// counts at, its block's consensus time (not the end of the scan that found
+/// it, which may be much later: the Node was down, or its scan lagged).
+fn recorded_effect(
+    transaction_id: String,
+    block: lez_bridge_protocol::FinalizedBlockIdentity,
+) -> FinalizedLezEffectV1 {
+    FinalizedLezEffectV1 {
+        transaction_id,
+        block_id: block.block_id,
+        finalized_at_ms: block.timestamp_ms,
     }
 }
 
@@ -3973,6 +3981,30 @@ mod tests {
         step(&chains, &files, now, false).await.unwrap();
         assert!(files.progress().unwrap().claim_sweep.is_some());
         assert_eq!(files.progress().unwrap().claim_sweep_retry_at_ms, None);
+    }
+
+    /// An effect counts at its own block's time, not at the end of the scan
+    /// that found it: a funding in a block before C that the Node first scans
+    /// after C is a funding before C, and the claim is offered on it, as the
+    /// Maker (which reads the containing block) funds the Monero on it.
+    #[test]
+    fn an_effect_counts_at_its_blocks_time_not_the_scans() {
+        let block = lez_bridge_protocol::FinalizedBlockIdentity::new(
+            41,
+            lez_bridge_protocol::Hex32::from_bytes([7; 32]),
+            WINDOWS.funding_cutoff_ms - 5_000,
+        );
+        // Found by a scan that ended a minute after C.
+        let funded = recorded_effect("cd".repeat(32), block);
+        assert_eq!(funded.block_id, 41);
+        assert_eq!(funded.finalized_at_ms, WINDOWS.funding_cutoff_ms - 5_000);
+        let mut progress = record();
+        progress.funded = Some(funded);
+        progress.monero_funding_transaction = Some("cd".repeat(32));
+        assert_eq!(
+            xmr_taker_view(&progress, WINDOWS, WINDOWS.funding_cutoff_ms + 60_000).state,
+            TakerSwapStateV1::ClaimAvailable
+        );
     }
 
     #[test]
