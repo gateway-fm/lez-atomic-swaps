@@ -2973,6 +2973,8 @@ pub(crate) enum LezSnapshotMutation {
     MetadataAmount,
     CustodyAccount,
     CustodyAmount,
+    /// TM-0032: a stranger credited the funded custody.
+    CustodyCredited,
     Pending,
     DeeperSafe,
     DeeperFinalized,
@@ -3136,10 +3138,10 @@ pub(crate) fn canonical_lez_snapshot(
     } else {
         *terms.metadata_account()
     };
-    let custody_amount = if matches!(mutation, LezSnapshotMutation::CustodyAmount) {
-        terms.amount() + 1
-    } else {
-        terms.amount()
+    let custody_amount = match mutation {
+        LezSnapshotMutation::CustodyAmount => terms.amount() - 1,
+        LezSnapshotMutation::CustodyCredited => terms.amount() + 1,
+        _ => terms.amount(),
     };
     let custody_account = if matches!(mutation, LezSnapshotMutation::CustodyAccount) {
         [0x54; 32]
