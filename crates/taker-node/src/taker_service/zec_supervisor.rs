@@ -1136,10 +1136,7 @@ pub(super) fn overlay_schedule(
     };
     view.last_failure_class = record.last_failure_class().map(str::to_owned);
     if record.schedule_state() == lez_actor_supervision::ScheduleState::Failed
-        && !matches!(
-            view.state,
-            TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
-        )
+        && !view.state.is_terminal()
     {
         view.state = TakerSwapStateV1::AttentionRequired;
         view.available_action = None;

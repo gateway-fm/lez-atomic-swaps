@@ -91,7 +91,8 @@ open_swaps=()
 if running taker && list="$(owner_call taker taker_swap_list_v1 '{"schema_version":1}')" &&
    jq -e '.result.swaps | type == "array"' <<<"$list" >/dev/null 2>&1; then
   mapfile -t -O "${#open_swaps[@]}" open_swaps < <(jq -r '.result.swaps[]
-    | select(.state != "completed" and .state != "refunded") | "taker \(.swap_id) \(.state)"' <<<"$list")
+    | select(.state as $s | ["completed", "refunded", "expired", "punished"] | index($s) | not)
+    | "taker \(.swap_id) \(.state)"' <<<"$list")
 else
   open_swaps+=("taker - unknown (its Node does not answer taker_swap_list_v1)")
 fi

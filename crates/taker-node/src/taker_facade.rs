@@ -282,8 +282,26 @@ pub enum TakerSwapStateV1 {
     Completed,
     /// The complete recovery lifecycle reached its terminal state.
     Refunded,
+    /// The take ended before anything of the Taker's was locked (Monero: the
+    /// Maker's funding cutoff passed with no LEZ lock). Terminal.
+    Expired,
+    /// The refund window closed with the Taker's LEZ still locked and no
+    /// refund: it is the Maker's to take by its punishment, and the Monero
+    /// stays at the shared address (Monero). Terminal.
+    Punished,
     /// Durable state requires explicit operator attention.
     AttentionRequired,
+}
+
+impl TakerSwapStateV1 {
+    /// Whether nothing more can happen on the swap.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Refunded | Self::Expired | Self::Punished
+        )
+    }
 }
 
 /// Explicit terminal action the UI may offer at one observed generation.

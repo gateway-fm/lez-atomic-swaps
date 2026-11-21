@@ -723,7 +723,7 @@ one. What the Monero side does about it, and what is left:
   is planned at the live nonce without the gate, moves it). Left open: a Zcash
   lock sent within the same LEZ block as the Monero lock is planned. If the
   Monero pair loses, nothing is locked and the swap ends
-  `xmr_lez_lock_window_closed` at C (it is not planned again); if the Zcash
+  `expired` at C (it is not planned again); if the Zcash
   lock loses, the Zcash actor plans it again. A Monero pair that dies gives the
   gate back at C, so later locks of either pair do not wait for it.
 - The Taker's tag 14 (the claim authorization) is signed by its owner account

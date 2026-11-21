@@ -6982,14 +6982,16 @@ def scenario_xmr_punish(stamp: str) -> dict:
         raise Failure("Monero left the shared address of a punished swap")
     log(f"  the Maker's Monero funding {funded[0]['txid'][:16]}… stays at the shared address: neither party received it")
     view = taker_view(swap_id)
-    if (view["state"], view.get("attention_reason")) != ("attention_required", "xmr_refund_window_closed"):
+    # Terminal on the Taker's side as well: nothing is left to drive, so the
+    # swap no longer counts as open (reset-swaps.sh, the desk's active rows).
+    if (view["state"], view.get("attention_reason")) != ("punished", None):
         raise Failure(f"the Taker, back up past the punish time, reads {view['state']} "
-                      f"({view.get('attention_reason')}), not attention_required (xmr_refund_window_closed)")
-    log(f"  the Taker, back up, reads {view['state']} ({view['attention_reason']}, actor {view.get('actor_phase')})")
+                      f"({view.get('attention_reason')}), not punished")
+    log(f"  the Taker, back up, reads {view['state']} (actor {view.get('actor_phase')})")
     return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, "lez_before": before["lez"],
             "lez_deltas": deltas, "maker_terminal_phase": phase, "maker_owner_nonce_before": nonce,
             "maker_owner_nonce_after": punished_nonce, "maker_monero_funding": funded[0],
-            "taker_state": view["state"], "taker_attention_reason": view["attention_reason"]}
+            "taker_state": view["state"], "taker_attention_reason": view.get("attention_reason")}
 
 
 # ---- the Node's own refund, its switch, and the devnet test hooks -------------------
