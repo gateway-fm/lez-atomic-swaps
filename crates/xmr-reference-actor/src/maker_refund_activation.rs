@@ -16,7 +16,7 @@ use lez_swap_store::{
     SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowReconciliationSource,
     XmrWorkflowReconciliationV2, XmrWorkflowStep,
 };
-use lez_xmr_swap_sdk::{MoneroAddressNetworkV1, XmrActivatedAgreementV1, XmrAgreementV1};
+use lez_xmr_swap_sdk::{XmrActivatedAgreementV1, XmrAgreementV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -337,8 +337,9 @@ pub fn activate_taker_claim_workflow(
     let agreement = XmrAgreementV1::from_wire(&execution.application.stage_a_wire)
         .context("effect application Stage A is invalid")?;
     ensure!(
-        agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
-        "M7 local claim activation requires Monero Regtest"
+        MoneroEvidenceScope::of_genesis(agreement.body().monero().genesis_hash()).network()
+            == crate::agreement_monero_network(&agreement),
+        "claim activation: Stage A's Monero genesis is not its profile's network"
     );
     let view_key = parse_private_view_key_bytes(&execution.application.private_view_key)?;
     let activation = XmrActivatedAgreementV1::from_wire(
@@ -1068,8 +1069,9 @@ impl MakerBranchActivation {
         let agreement = XmrAgreementV1::from_wire(&execution.application.stage_a_wire)
             .context("effect application Stage A is invalid")?;
         ensure!(
-            agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
-            "M7 local {label} activation requires Monero Regtest"
+            MoneroEvidenceScope::of_genesis(agreement.body().monero().genesis_hash()).network()
+                == crate::agreement_monero_network(&agreement),
+            "{label} activation: Stage A's Monero genesis is not its profile's network"
         );
         let view_key = parse_private_view_key_bytes(&execution.application.private_view_key)?;
         let activation = XmrActivatedAgreementV1::from_wire(

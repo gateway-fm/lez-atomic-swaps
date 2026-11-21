@@ -133,7 +133,7 @@ use lez_xmr_swap_sdk::{
 };
 #[cfg(feature = "sessions")]
 use lez_xmr_swap_sdk::{
-    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES, MoneroAddressNetworkV1,
+    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES,
     ReconstructedMoneroSpendKey, ValidatedXmrActivationBodyV1, XmrActivatedAgreementV1,
     XmrActivationBodyV1, XmrSessionTranscriptV1,
 };
@@ -3918,8 +3918,10 @@ fn bind_finalized_claim_sweep(
         activation_stage_b,
     )?;
     ensure!(
-        lifecycle.agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
-        "Stage A is not bound to Monero Regtest"
+        MoneroEvidenceScope::of_genesis(lifecycle.agreement.body().monero().genesis_hash())
+            .network()
+            == agreement_monero_network(&lifecycle.agreement),
+        "Stage A's Monero genesis is not its profile's network"
     );
 
     let result = read_finalized_xmr_effect(finalized_claim)?;
@@ -4163,8 +4165,10 @@ fn bind_finalized_refund_sweep(
         activation_stage_b,
     )?;
     ensure!(
-        lifecycle.agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
-        "Stage A is not bound to Monero Regtest"
+        MoneroEvidenceScope::of_genesis(lifecycle.agreement.body().monero().genesis_hash())
+            .network()
+            == agreement_monero_network(&lifecycle.agreement),
+        "Stage A's Monero genesis is not its profile's network"
     );
 
     let result = read_finalized_xmr_effect(finalized_refund)?;
