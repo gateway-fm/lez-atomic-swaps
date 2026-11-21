@@ -780,6 +780,41 @@ class XmrOwnRefundAndAdversaries(unittest.TestCase):
 
         return ran, fake_run
 
+    def test_a_scenarios_second_take_has_a_stamp_of_its_own(self):
+        # the Maker's configure-pair and publish request ids and the Taker's
+        # take request id come from the stamp; the second take under the same
+        # stamp was refused (-32009, the request id conflicts with its mutation)
+        for scenario in (e2e.scenario_xmr_unfunded_punish, e2e.scenario_xmr_taker_cheats):
+            stamps = []
+
+            class Stop(Exception):
+                pass
+
+            def take(stamp, offer_id):
+                stamps.append(stamp)
+                if len(stamps) == 2:
+                    raise Stop
+                return 'aa' * 32, {'LEZ_XMR_REFUND_SECONDS': 1, 'LEZ_XMR_PUNISH_SECONDS': 1,
+                                   'LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS': 1}
+
+            quiet = lambda *a, **k: {'state': 'refunded', 'attention_reason': None, 'status': 'Refunded',
+                                     'before': {'status': 'Refunded'}, 'refund_submitted': 'x',
+                                     'lez': {}, 'refunded': None}
+            with patch.object(e2e, 'xmr_take', take), patch.object(e2e, 'xmr_take_unfunded', take), \
+                    patch.multiple(e2e, xmr_before=quiet, xmr_require_test_hooks=quiet, xmr_hook=quiet,
+                                   xmr_wait_funded=quiet, xmr_wait_until=quiet, xmr_taker_record=quiet,
+                                   xmr_windows_ms=lambda swap: {'C': 0, 'R': 10**15, 'P': 0},
+                                   lez_finalized_time_ms=lambda: 0, wait_lez_time=quiet, node_stop=quiet,
+                                   node_start=quiet, wait_healthy=quiet,
+                                   taker_view=lambda swap: {'state': 'claim_available'},
+                                   xmr_escrow_probe=quiet, xmr_maker_wallet=quiet, lez_balances=lambda: {},
+                                   expected_settlement=lambda *a: {}, wait_maker_terminal=lambda *a, **k: 'refunded',
+                                   assert_lez_settled=quiet, log=quiet), \
+                    patch.object(e2e.time, 'sleep', lambda s: None):
+                with self.assertRaises(Stop):
+                    scenario('1795280156')
+            self.assertEqual(len(set(stamps)), 2, (scenario.__name__, stamps))
+
     def test_the_scenarios_are_registered_and_need_the_containers(self):
         for name in XMR_NEW_SCENARIOS:
             self.assertIn(name, e2e.XMR_SCENARIOS)

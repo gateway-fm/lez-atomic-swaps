@@ -7381,7 +7381,10 @@ def scenario_xmr_unfunded_punish(stamp: str) -> dict:
         if punished != want:
             raise Failure(f"the unfunded punishment moved LEZ {punished}, the lot to the Maker expected: {want}")
         between = lez_balances()
-        running, _ = xmr_take_unfunded(stamp, second)
+        # a stamp of its own: the Maker's configure and publish request ids
+        # and the Taker's take request id are made from it, and one request
+        # id may not carry a second, different mutation
+        running, _ = xmr_take_unfunded(f"{stamp}b", second)
         xmr_wait_until(running, {"refunded"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 300,
                        describe="(the Taker Node's own refund from R)")
         wait_lez_time(xmr_windows_ms(running)["P"], "P", timeout=windows["LEZ_XMR_PUNISH_SECONDS"] + 120)
@@ -7436,8 +7439,9 @@ def scenario_xmr_taker_cheats(stamp: str) -> dict:
     assert_lez_settled(before["lez"], "refunded", phase)
 
     second = xmr_before()
-    completed, windows = xmr_take(stamp, f"offer-e2e-xmr-{stamp}-b")
-    xmr_claim_and_complete(stamp, completed, windows)
+    # a stamp of its own (the request ids of the second take, as in xmr-unfunded-punish)
+    completed, windows = xmr_take(f"{stamp}b", f"offer-e2e-xmr-{stamp}-b")
+    xmr_claim_and_complete(f"{stamp}b", completed, windows)
     settled = xmr_assert_completed(second, completed)
     lez_completed = lez_balances()
     xmr_hook("taker", "cheat-refund-after-claim", "1")
