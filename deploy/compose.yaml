@@ -469,6 +469,8 @@ services:
       LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS: ${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:-}
       LEZ_XMR_REFUND_SECONDS: ${LEZ_XMR_REFUND_SECONDS:-}
       LEZ_XMR_PUNISH_SECONDS: ${LEZ_XMR_PUNISH_SECONDS:-}
+      # regtest (the lane's monerod) or stagenet (compose.stagenet.yaml)
+      LEZ_XMR_NETWORK: ${LEZ_MONERO_NETWORK:-regtest}
       # The actor supervisor's polling (gen-config.sh, per timing profile);
       # empty = the Node's defaults (5 s requeue, 30 s failure backoff).
       LEZ_MAKER_ACTOR_REQUEUE_SECONDS: ${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}
@@ -582,6 +584,8 @@ services:
       LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS: ${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:-}
       LEZ_XMR_REFUND_SECONDS: ${LEZ_XMR_REFUND_SECONDS:-}
       LEZ_XMR_PUNISH_SECONDS: ${LEZ_XMR_PUNISH_SECONDS:-}
+      # regtest (the lane's monerod) or stagenet (compose.stagenet.yaml)
+      LEZ_XMR_NETWORK: ${LEZ_MONERO_NETWORK:-regtest}
       # The Bitcoin observer's pause between sweeps (gen-config.sh, per timing
       # profile); empty = the Node's default (15 s).
       LEZ_TAKER_OBSERVER_SWEEP_SECONDS: ${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}

@@ -73,6 +73,25 @@ monero="${LEZ_MONERO:-}"
 [[ -n "$monero" || ! -s "$RUNTIME/runtime.env" ]] || monero="$(sed -n 's/^LEZ_MONERO=//p' "$RUNTIME/runtime.env" | head -1)"
 monero="${monero:-0}"
 [[ "$monero" =~ ^[01]$ ]] || { echo "LEZ_MONERO must be 0 or 1" >&2; exit 1; }
+# The Monero network of the Nodes' swaps (LEZ_MONERO_NETWORK, kept like
+# LEZ_MONERO): regtest, the lane's own offline chain, or stagenet, public
+# Monero Stagenet through the operator's own monerod and two wallet-rpcs
+# (docs/monero-stagenet-guide.md). On Stagenet no lane chain is started: the
+# Nodes' logins come from LEZ_XMR_STAGENET_LOGINS (monerod.login,
+# maker-wallet-rpc.login, taker-wallet-rpc.login, each user:password), and
+# compose.stagenet.yaml forwards to the hosts it names. Mainnet and testnet
+# are refused.
+monero_network="${LEZ_MONERO_NETWORK:-}"
+[[ -n "$monero_network" || ! -s "$RUNTIME/runtime.env" ]] || monero_network="$(sed -n 's/^LEZ_MONERO_NETWORK=//p' "$RUNTIME/runtime.env" | head -1)"
+monero_network="${monero_network:-regtest}"
+case "$monero_network" in
+  regtest) ;;
+  stagenet)
+    [[ "$monero" == 1 ]] || { echo "LEZ_MONERO_NETWORK=stagenet needs LEZ_MONERO=1" >&2; exit 1; }
+    [[ "${LEZ_LANE:-1}" == 1 ]] || { echo "Monero Stagenet runs on lane 1 only" >&2; exit 1; } ;;
+  mainnet|testnet) echo "LEZ_MONERO_NETWORK=$monero_network: Monero mainnet and testnet are refused; regtest or stagenet" >&2; exit 1 ;;
+  *) echo "LEZ_MONERO_NETWORK must be regtest or stagenet" >&2; exit 1 ;;
+esac
 
 # The stack this runtime belongs to (scripts/lane.sh derives its names and
 # ports): a prefix or port offset other than the default is recorded in
@@ -202,7 +221,16 @@ role_files() {
   # (node-entrypoint.sh: a Node without them has no Monero route); with Monero
   # off they are taken away again.
   local name
-  if [[ "$monero" == 1 ]]; then
+  if [[ "$monero" == 1 && "$monero_network" == stagenet ]]; then
+    local logins="${LEZ_XMR_STAGENET_LOGINS:?LEZ_MONERO_NETWORK=stagenet needs LEZ_XMR_STAGENET_LOGINS, the directory of monerod.login, maker-wallet-rpc.login and taker-wallet-rpc.login}"
+    for role in maker taker; do
+      [[ -s "$logins/monerod.login" && -s "$logins/$role-wallet-rpc.login" ]] ||
+        { echo "LEZ_XMR_STAGENET_LOGINS ($logins) lacks monerod.login or $role-wallet-rpc.login" >&2; exit 1; }
+      install -m "$key_mode" "$logins/monerod.login" "$dir/lez/$role/monerod.login"
+      install -m "$key_mode" "$logins/$role-wallet-rpc.login" "$dir/lez/$role/monero-wallet-rpc.login"
+    done
+    echo "Monero: Stagenet, the operator's logins from $logins"
+  elif [[ "$monero" == 1 ]]; then
     mkdir -p "$dir/monero"
     for name in daemon funding maker taker; do
       [[ -s "$dir/monero/$name.login" ]] || printf '%s:%s\n' "$name" "$(openssl rand -hex 16)" >"$dir/monero/$name.login"
@@ -645,6 +673,16 @@ xmr_cutoff=$(( timing[1] + xmr_depth ))
 (( xmr_cutoff >= xmr_take + 3 * xmr_drive + xmr_depth )) || xmr_cutoff=$(( xmr_take + 3 * xmr_drive + xmr_depth ))
 xmr_refund=$(( xmr_cutoff + 2 * (xmr_depth + lez_step_seconds + 2 * xmr_drive) ))
 xmr_punish=$(( xmr_refund + lez_step_seconds + lez_stall_seconds + timing[4] + 2 * xmr_drive ))
+# On Stagenet the windows are sized for its 2-minute blocks, whatever the
+# timing profile (docs/monero-stagenet-guide.md, "The windows"): C at +10 min
+# (the Taker's lock final and the Maker's submit-only funding), R - C twice
+# 55 min (eleven blocks and both roles' LEZ steps; PublicStagenet admits 100
+# min), P - R 30 min (the Taker's refund on LEZ alone; the profile's minimum).
+if [[ "$monero_network" == stagenet ]]; then
+  xmr_cutoff=600
+  xmr_refund=$(( xmr_cutoff + 2 * 55 * 60 ))
+  xmr_punish=$(( xmr_refund + 30 * 60 ))
+fi
 # The Maker's actor supervisor observes a live swap's actor 5 s after each
 # attempt and retries a failed one after 30 s (the Node's defaults, kept on
 # `local`). On the devnet's own profiles a step it waits for (the Taker's lock,
@@ -674,6 +712,10 @@ esac
 node_finality_stall="$heartbeat_stall_seconds"
 (( node_finality_stall >= 10 && node_finality_stall <= 86400 )) ||
   { echo "LEZ_HEARTBEAT_STALL_SECONDS must be 10..=86400 for the Nodes' stall threshold" >&2; exit 1; }
+# On Stagenet compose.stagenet.yaml comes on top (COMPOSE_FILE, which every
+# script exports with runtime.env).
+stagenet_compose=()
+[[ "$monero_network" != stagenet ]] || stagenet_compose=("COMPOSE_FILE=compose.yaml:compose.stagenet.yaml")
 printf '%s\n' \
   ${stack_lines[@]+"${stack_lines[@]}"} \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
@@ -712,6 +754,8 @@ printf '%s\n' \
   "LEZ_HEARTBEAT_SECONDS=$heartbeat_seconds" \
   "LEZ_HEARTBEAT_STALL_SECONDS=$heartbeat_stall_seconds" \
   "LEZ_MONERO=$monero" \
+  "LEZ_MONERO_NETWORK=$monero_network" \
+  ${stagenet_compose[@]+"${stagenet_compose[@]}"} \
   "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS=$xmr_cutoff" \
   "LEZ_XMR_REFUND_SECONDS=$xmr_refund" \
   "LEZ_XMR_PUNISH_SECONDS=$xmr_punish" \

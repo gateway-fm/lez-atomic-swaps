@@ -1,0 +1,32 @@
+# compose.stagenet.yaml — the Nodes' Monero on public Monero Stagenet.
+#
+# gen-config.sh puts this file into COMPOSE_FILE when LEZ_MONERO_NETWORK is
+# stagenet (docs/monero-stagenet-guide.md). No lane monerod or wallet-rpc
+# runs: each Node forwards its loopback 18081 and 18083, which the Monero
+# adapter alone accepts, to the operator's own Stagenet monerod and to the
+# role's own wallet-rpc, on the Docker network that holds them.
+#
+#   LEZ_XMR_STAGENET_NETWORK         the external Docker network of monerod
+#                                    and the two wallet-rpcs
+#   LEZ_XMR_STAGENET_MONEROD         monerod's host:port on it
+#   LEZ_XMR_STAGENET_MAKER_WALLET    the Maker's wallet-rpc host:port
+#   LEZ_XMR_STAGENET_TAKER_WALLET    the Taker's wallet-rpc host:port
+#
+# Their logins come from LEZ_XMR_STAGENET_LOGINS (gen-config.sh), never from
+# this file or a command line.
+services:
+  maker-node:
+    environment:
+      LEZ_MONEROD_HOST: ${LEZ_XMR_STAGENET_MONEROD:?the Stagenet monerod host:port}
+      LEZ_XMR_WALLET_HOST: ${LEZ_XMR_STAGENET_MAKER_WALLET:?the Maker's Stagenet wallet-rpc host:port}
+    networks: [chains, stagenet]
+  taker-node:
+    environment:
+      LEZ_MONEROD_HOST: ${LEZ_XMR_STAGENET_MONEROD:?the Stagenet monerod host:port}
+      LEZ_XMR_WALLET_HOST: ${LEZ_XMR_STAGENET_TAKER_WALLET:?the Taker's Stagenet wallet-rpc host:port}
+    networks: [chains, stagenet]
+
+networks:
+  stagenet:
+    external: true
+    name: ${LEZ_XMR_STAGENET_NETWORK:?the Docker network of the Stagenet monerod and wallet-rpcs}

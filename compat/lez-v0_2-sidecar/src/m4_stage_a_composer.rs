@@ -13,9 +13,9 @@ use lez_xmr_monero_adapter::{
     LoopbackRpcEndpoint, MoneroChainIdentity, MoneroChainIdentityAttestor, MoneroNetwork,
 };
 use lez_xmr_swap_sdk::{
-    MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES, MoneroAddressNetworkV1, MoneroSharedAddressV1,
-    ValidatedXmrAgreementBodyV1, XmrAgreementBodyV1, XmrLezTermsV1, XmrMessagesV1,
-    XmrMoneroTermsV1, XmrNamedProfileV1, XmrParticipantsV1, XmrSwapDirectionV1, XmrWindowsV1,
+    MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES, MoneroSharedAddressV1, ValidatedXmrAgreementBodyV1,
+    XmrAgreementBodyV1, XmrLezTermsV1, XmrMessagesV1, XmrMoneroTermsV1, XmrNamedProfileV1,
+    XmrParticipantsV1, XmrSwapDirectionV1, XmrWindowsV1,
 };
 use nssa::{Account, AccountId};
 use rustix::fs::{Mode, OFlags, open};
@@ -1062,7 +1062,7 @@ mod tests {
         assert_eq!(body.body().profile(), XmrNamedProfileV1::PublicStagenet);
         assert_eq!(
             body.body().monero().network(),
-            MoneroAddressNetworkV1::Stagenet
+            lez_xmr_swap_sdk::MoneroAddressNetworkV1::Stagenet
         );
         assert!(body.shared_address().address_string().starts_with('5'));
         // The same facts without a profile are the devnet's Regtest, whose

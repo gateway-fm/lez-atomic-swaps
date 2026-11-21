@@ -187,7 +187,10 @@ load_env
 # Monero's services (LEZ_MONERO, as runtime.env now records it); none when off.
 monero_services=()
 monero_profile=()
-[[ "${LEZ_MONERO:-0}" != 1 ]] || { monero_services=(monerod xmr-funding-wallet maker-xmr-wallet taker-xmr-wallet); monero_profile=(--profile monero); }
+# (On Stagenet the operator's own monerod and wallet-rpcs serve the Nodes:
+# compose.stagenet.yaml, no lane chain.)
+[[ "${LEZ_MONERO:-0}" != 1 || "${LEZ_MONERO_NETWORK:-regtest}" == stagenet ]] ||
+  { monero_services=(monerod xmr-funding-wallet maker-xmr-wallet taker-xmr-wallet); monero_profile=(--profile monero); }
 
 stage "images"
 echo "[2/6] images…"

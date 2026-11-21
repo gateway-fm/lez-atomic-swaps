@@ -234,11 +234,13 @@ sha256_of() {
 # LEZ_CHAIN_FORWARDS=0 leaves them all out where the chains already answer on
 # loopback (a systemd deployment, where both roles share one network).
 chain_forwards="${LEZ_CHAIN_FORWARDS:-1}"
-forward() {
+forward() { # forward <loopback port> <host>[:<port>]: the same port unless named
   case "$2" in
-    127.0.0.1|localhost) return 0 ;;
+    127.0.0.1|localhost|127.0.0.1:*|localhost:*) return 0 ;;
   esac
-  node_helper socat "TCP-LISTEN:$1,bind=127.0.0.1,fork,reuseaddr" "TCP:$2:$1" &
+  local target="$2"
+  [[ "$target" == *:* ]] || target="$target:$1"
+  node_helper socat "TCP-LISTEN:$1,bind=127.0.0.1,fork,reuseaddr" "TCP:$target" &
 }
 bitcoin_host="${LEZ_BITCOIN_CORE_HOST:-${default_chain_host:-bitcoin-core}}"
 sequencer_host="${LEZ_SEQUENCER_HOST:-${default_chain_host:-sequencer}}"
@@ -562,8 +564,20 @@ chmod 0600 "$zec_role_config"
 # the role's own wallet (monero-lane.py creates it without a password), the
 # recovery windows of gen-config.sh (both roles take the same), the Stage-A
 # planner and, for the Maker, its six effect tools, all beside the Node.
+# LEZ_XMR_NETWORK picks the Monero network, and with it the profile Stage A
+# carries: regtest (the devnet's offline chain, the default) or stagenet
+# (public Monero Stagenet: LEZ_MONEROD_HOST and LEZ_XMR_WALLET_HOST name the
+# role's own daemon and wallet-rpc as host:port, docs/monero-stagenet-guide.md).
 xmr_role_config="$state/xmr-role.json"
 rm -f "$xmr_role_config"
+case "${LEZ_XMR_NETWORK:-regtest}" in
+  regtest) xmr_profile=accelerated-regtest ;;
+  stagenet) xmr_profile=public-stagenet ;;
+  mainnet|testnet)
+    echo "$role: LEZ_XMR_NETWORK=${LEZ_XMR_NETWORK}: Monero mainnet and testnet are refused; regtest or stagenet" >&2
+    exit 2 ;;
+  *) echo "$role: LEZ_XMR_NETWORK must be regtest or stagenet, not '${LEZ_XMR_NETWORK}'" >&2; exit 2 ;;
+esac
 if [[ "$monero_ready" == 1 ]]; then
   xmr_tools='{}'
   if [[ "$role" == maker ]]; then
@@ -587,8 +601,8 @@ if [[ "$monero_ready" == 1 ]]; then
     --argjson cutoff "${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:?the Monero role needs LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS}" \
     --argjson refund "${LEZ_XMR_REFUND_SECONDS:?the Monero role needs LEZ_XMR_REFUND_SECONDS}" \
     --argjson punish "${LEZ_XMR_PUNISH_SECONDS:?the Monero role needs LEZ_XMR_PUNISH_SECONDS}" \
-    --argjson tools "$xmr_tools" '
-    {schema_version:1, profile:"accelerated-regtest",
+    --argjson tools "$xmr_tools" --arg profile "$xmr_profile" '
+    {schema_version:1, profile:$profile,
      monerod_endpoint:"http://127.0.0.1:18081/", monerod_login_file:$monerod_login,
      wallet_rpc_endpoint:"http://127.0.0.1:18083/", wallet_rpc_login_file:$wallet_login, wallet_name:$role,
      funding_cutoff_seconds:$cutoff, refund_seconds:$refund, punish_seconds:$punish,
