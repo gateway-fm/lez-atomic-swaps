@@ -2137,7 +2137,7 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
     participant Monero as monerod and wallet RPC
 
-    Note over Maker,Taker: Six Chat rounds fix Stage A, both MuSig2 sessions and Stage B; windows C < R < P
+    Note over Maker,Taker: Six Chat rounds fix Stage A, both MuSig2 sessions and Stage B, with windows C < R < P
     Taker->>LezSeq: Tag 13 and fund (Taker Node, automatic)
     LezIdx-->>Maker: Taker lock final at a consensus time no later than C
     alt Maker funds before C
