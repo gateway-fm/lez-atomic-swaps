@@ -1185,6 +1185,7 @@ pub(super) fn view_from_snapshot(
         status_detail: None,
         actor_phase: None,
         claim_window_closed: None,
+        monero_network: None,
         last_failure_class: None,
         last_outcome: None,
         observed_at: Some(snapshot.observed_at),

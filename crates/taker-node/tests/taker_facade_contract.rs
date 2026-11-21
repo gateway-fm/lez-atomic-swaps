@@ -252,6 +252,7 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
         status_detail: None,
         actor_phase: None,
         claim_window_closed: None,
+        monero_network: None,
         last_failure_class: None,
         last_outcome: None,
         observed_at: None,

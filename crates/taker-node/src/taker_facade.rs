@@ -358,6 +358,12 @@ pub struct TakerSwapViewV1 {
     /// window closed" (FINDINGS 26).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_window_closed: Option<bool>,
+    /// A Monero swap's network, `regtest` or `stagenet`, from its Stage A:
+    /// a desk names it beside the swap and sizes its waits by it (ten
+    /// confirmations take seconds on the devnet's regtest and 20 to 30
+    /// minutes on Stagenet). Absent for the other pairs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monero_network: Option<String>,
     /// Why the Node's supervisor last backed off on this swap's actor, or
     /// why it stopped (a `failed` row): one of the shared failure classes.
     /// For a Bitcoin swap, the class of the actor's last attempt when it

@@ -1202,11 +1202,27 @@ fn xmr_swap_words(view: &TakerSwapViewV1) -> Option<String> {
         |phase| xmr_phase_words(phase).map_or_else(|| phase.to_owned(), str::to_owned),
     );
     let id = view.swap_id.as_str();
+    // The network beside the amount; on Stagenet with its real waits.
+    let network = match view.monero_network.as_deref() {
+        Some("stagenet") => " on Stagenet",
+        Some("regtest") => " on the devnet's regtest",
+        _ => "",
+    };
     let mut words = format!(
-        "swap {id}: Monero, {} for {} LEZ units: {phase}",
+        "swap {id}: Monero{network}, {} for {} LEZ units: {phase}",
         xmr_amount(view.foreign_units),
         view.lez_units
     );
+    if view.monero_network.as_deref() == Some("stagenet")
+        && matches!(
+            view.actor_phase.as_deref(),
+            Some("taker_lock_confirmed" | "sweeping")
+        )
+    {
+        words.push_str(
+            "\n  wait: Stagenet's blocks come every 2 minutes; 10 confirmations take about 20 to 30 minutes",
+        );
+    }
     if let Some(reason) = view.attention_reason.as_deref() {
         let reason = xmr_attention_words(reason).unwrap_or(reason);
         words.push_str("\n  needs you: ");
@@ -2029,6 +2045,7 @@ mod xmr_words_tests {
             status_detail: None,
             actor_phase: Some(phase.to_owned()),
             claim_window_closed: None,
+            monero_network: None,
             last_failure_class: None,
             last_outcome: None,
             observed_at: None,
@@ -2181,6 +2198,32 @@ mod xmr_words_tests {
             assert!(printed.contains(expected), "{phase}: {printed}");
             assert!(!printed.contains('\n'), "{phase}: {printed}");
         }
+    }
+
+    #[test]
+    fn a_stagenet_swap_names_its_network_and_its_waits() {
+        let mut row = view(
+            TakerSwapStateV1::AwaitingSecondLock,
+            "taker_lock_confirmed",
+            None,
+            None,
+        );
+        row.monero_network = Some("stagenet".to_owned());
+        let printed = words(&row);
+        assert!(
+            printed.starts_with("swap xmr-swap-1: Monero on Stagenet, 1.500000000000 XMR"),
+            "{printed}"
+        );
+        assert!(
+            printed.ends_with(
+                "\n  wait: Stagenet's blocks come every 2 minutes; 10 confirmations take about 20 to 30 minutes"
+            ),
+            "{printed}"
+        );
+        row.monero_network = Some("regtest".to_owned());
+        let printed = words(&row);
+        assert!(printed.starts_with("swap xmr-swap-1: Monero on the devnet's regtest, "));
+        assert!(!printed.contains('\n'), "{printed}");
     }
 
     #[test]

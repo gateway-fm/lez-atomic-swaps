@@ -96,6 +96,11 @@ pub(super) struct XmrTakerSwapFactsV1 {
     pub(super) maker_xmr_funding_cutoff_ms: u64,
     pub(super) refund_at_ms: u64,
     pub(super) punish_at_ms: u64,
+    /// The Monero network of the role the swap was taken under, `regtest`
+    /// or `stagenet` (Stage A's profile, which the take checked against
+    /// it); absent in a swap taken before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) monero_network: Option<String>,
 }
 
 /// What the negotiation leaves: the Maker's R1 answer and the windows the
@@ -669,6 +674,7 @@ pub(super) async fn prepare(
         maker_xmr_funding_cutoff_ms: windows.maker_xmr_funding_cutoff_ms(),
         refund_at_ms: windows.refund_at_ms(),
         punish_at_ms: windows.punish_at_ms(),
+        monero_network: Some(dynamic.config.network().name().to_owned()),
     })?;
     let facts_file = layout.root().join(SWAP_FACTS_FILE);
     write_private_exact(&facts_file, &facts)?;

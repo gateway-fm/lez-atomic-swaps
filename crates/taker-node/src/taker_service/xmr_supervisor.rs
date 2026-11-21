@@ -537,6 +537,9 @@ impl XmrBoundSwap {
 /// What a Monero row adds to the generic view: its phase and, when the
 /// clock or a closed window needs the owner, the reason.
 pub(super) fn overlay_view(view: &mut crate::TakerSwapViewV1, files: &XmrSwapFiles) {
+    // From the swap's facts, not by validating Stage A again (its proofs
+    // take about a second of CPU, and this runs on every listing).
+    view.monero_network = files.facts().ok().and_then(|facts| facts.monero_network);
     if let Ok(status) = files.status() {
         view.actor_phase = Some(status.actor_phase.to_owned());
         if let Some(reason) = status.attention_reason {
@@ -3903,6 +3906,7 @@ mod tests {
             maker_xmr_funding_cutoff_ms: WINDOWS.funding_cutoff_ms,
             refund_at_ms: WINDOWS.refund_ms,
             punish_at_ms: WINDOWS.punish_ms,
+            monero_network: Some("stagenet".to_owned()),
         };
         let facts_file = files.swap_root.join(SWAP_FACTS_FILE);
         replace_private(&facts_file, &serde_json::to_vec(&facts).unwrap()).unwrap();

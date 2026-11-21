@@ -609,10 +609,10 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
                     "Your Node funds Monero once the Taker's LEZ lock is final; nothing to click", "", ""};
         if (phase == "taker_lock_confirmed")
             return {"funding_xmr", "Taker's LEZ lock seen · funding Monero", 45,
-                    "Your Node funds the Monero leg on its own before the funding cutoff", "", ""};
+                    "Your Node funds the Monero leg on its own before the funding cutoff; on Stagenet its 10 confirmations then take about 25 minutes", "", ""};
         if (phase == "maker_funding_in_doubt")
             return {"attention_required", "Monero funding in doubt", 45,
-                    "Your Node sent the Monero funding and does not see it past the funding cutoff; it is never resent. Check the Monero wallet and the Node log", "", ""};
+                    "Your Node sent the Monero funding and does not see it confirmed in time (past the funding cutoff on regtest, past the claim deadline on Stagenet, whose 10 confirmations take about 25 minutes); it is never resent. Check the Monero wallet and the Node log", "", ""};
         if (phase == "both_legs_locked")
             return {"awaiting_taker_claim", "Monero funded · waiting for the Taker's claim", 65,
                     "The Taker authorises your LEZ claim, or refunds its LEZ from the refund time", "", ""};
@@ -933,6 +933,19 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
             // A running row that asks nothing of the owner says what its
             // actor waits for, when the Node names it.
             if (!wait.text.isEmpty() && waitSpeaksFor(row.state, row.action)) row.detail = wait.text;
+            // A Monero swap on Stagenet names its network and its real waits:
+            // 2-minute blocks, ten confirmations for the Maker's funding and
+            // ten more before the swept Monero is spendable (the devnet's
+            // regtest mines them in seconds and says nothing more).
+            if (pair == QStringLiteral("Monero") && swap.value("monero_network").toString() == QStringLiteral("stagenet")) {
+                row.label += QStringLiteral(" · Monero Stagenet");
+                if (row.state == QStringLiteral("awaiting_maker_lock"))
+                    row.detail += QStringLiteral("; on Stagenet the funding and its 10 confirmations take about 25 minutes, longer on a slow stretch");
+                else if (row.state == QStringLiteral("claiming_xmr"))
+                    row.detail += QStringLiteral("; on Stagenet the swept Monero is spendable after 10 more confirmations, about 20 minutes");
+                else if (row.state == QStringLiteral("claim_ready"))
+                    row.detail += QStringLiteral("; on Stagenet the Maker's claim and your sweep follow within minutes, the sweep's 10 confirmations take about 20 more");
+            }
             // A Monero sweep in doubt: the Node names the wallet that holds the spend key.
             if (swap.value("attention_reason").toString() == QStringLiteral("xmr_claim_sweep_in_doubt"))
                 row.detail += " (" + swap.value("status_detail").toString() + ")";
