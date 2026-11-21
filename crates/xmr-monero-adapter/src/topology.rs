@@ -80,10 +80,11 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
     }
 
     /// Creates the verifier for a role with one wallet-rpc: that wallet is
-    /// both target and foreign, so [`Self::verify`] proves the daemon
-    /// profile, the empty peer set and the wallet's liveness, but not the
-    /// cross-wallet credential rejection (one wallet-rpc has no foreign
-    /// credentials to replay).
+    /// both target and foreign. With no foreign credentials to replay,
+    /// [`Self::verify`] proves the daemon profile, the empty peer set, the
+    /// wallet's liveness and that the wallet refuses a wrong password for
+    /// its own user with 401, so the attestation never stands for a wallet
+    /// that does not enforce its credentials.
     ///
     /// # Errors
     ///
@@ -163,15 +164,26 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
             .await?;
         validate_wallet_version("foreign_wallet.get_version", &foreign_version)?;
 
-        if self.target_wallet.base_url != self.foreign_wallet.base_url {
-            let crossed = self
-                .send(self.target_wallet, self.foreign_wallet, GET_VERSION_REQUEST)
-                .await?;
-            if crossed.status() != StatusCode::UNAUTHORIZED {
-                return Err(MoneroTopologyError::ForeignCredentialNotRejected {
-                    actual: crossed.status().as_u16(),
-                });
-            }
+        // The credentials replayed against the target must be refused: the
+        // foreign wallet's, or with one wallet its own user with a wrong
+        // password.
+        let wrong = LoopbackRpcEndpoint {
+            base_url: self.target_wallet.base_url.clone(),
+            username: self.target_wallet.username.clone(),
+            password: format!("{}-wrong", self.target_wallet.password),
+        };
+        let replayed = if self.target_wallet.base_url == self.foreign_wallet.base_url {
+            &wrong
+        } else {
+            self.foreign_wallet
+        };
+        let crossed = self
+            .send(self.target_wallet, replayed, GET_VERSION_REQUEST)
+            .await?;
+        if crossed.status() != StatusCode::UNAUTHORIZED {
+            return Err(MoneroTopologyError::ForeignCredentialNotRejected {
+                actual: crossed.status().as_u16(),
+            });
         }
 
         let daemon = self
@@ -1076,6 +1088,45 @@ mod tests {
             verifier.verify().await,
             Err(MoneroTopologyError::ForeignCredentialNotRejected { actual: 403 })
         ));
+    }
+
+    /// One wallet-rpc has no foreign credentials, yet its attestation was
+    /// minted without any wrong-credential probe. Now its own user with a
+    /// wrong password must finish with 401.
+    #[tokio::test]
+    async fn one_wallet_rpc_must_refuse_a_wrong_password_with_401() {
+        let (daemon, target, _foreign) = valid_servers().await;
+        let attestation = MoneroTopologyVerifier::for_one_wallet_rpc(
+            run("topology-one-wallet"),
+            identity(),
+            &daemon.endpoint,
+            &target.endpoint,
+        )
+        .expect("one-wallet verifier")
+        .verify()
+        .await
+        .expect("a wallet that refuses a wrong password");
+        assert_eq!(attestation.target_wallet_version(), 65567);
+        for status in [200, 403] {
+            let mut lax = RpcBehavior::valid();
+            lax.bad_auth_status = status;
+            let wallet = spawn_server(USER, PASSWORD, lax).await;
+            let verifier = MoneroTopologyVerifier::for_one_wallet_rpc(
+                run("topology-one-lax-wallet"),
+                identity(),
+                &daemon.endpoint,
+                &wallet.endpoint,
+            )
+            .expect("one-wallet verifier");
+            assert!(
+                matches!(
+                    verifier.verify().await,
+                    Err(MoneroTopologyError::ForeignCredentialNotRejected { actual })
+                        if actual == status
+                ),
+                "{status}"
+            );
+        }
     }
 
     #[tokio::test]

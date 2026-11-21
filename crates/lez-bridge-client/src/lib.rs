@@ -49,31 +49,32 @@ use lez_bridge_protocol::{
     ObserveFinalizedWitnessedAssetClaimV2Request, ObserveFinalizedWitnessedAssetClaimV2Result,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
     ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObserveWitnessedAssetEscrowV2Request,
-    ObserveWitnessedAssetEscrowV2Result, ObserveWitnessedAssetRefundV2Request,
-    ObserveWitnessedAssetRefundV2Result, ObserveWitnessedEscrowRequest,
-    ObserveWitnessedEscrowResult, Participant, PrepareCurrentProfileClockRequest,
-    PrepareCurrentProfileClockResult, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
-    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
-    PrepareNativeXmrRefundV3Result, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedAssetClaimV2Request, PrepareWitnessedAssetClaimV2Result,
-    PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
-    PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RunId, RuntimeDescriptor, SubmissionOutcome,
-    SubmitNativeXmrClaimAuthorizationV3Request, SubmitNativeXmrClaimAuthorizationV3Result,
-    SubmitTransactionRequest, SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
-    SupersedeNativeEscrowPrepareResult, SupersedeRevealingClaimRequest,
-    SupersedeRevealingClaimResult, VerifyCurrentProfileClockRequest,
-    VerifyCurrentProfileClockResult, WitnessedAssetPreparedEffectV2,
-    WitnessedAssetRefundObservationV2, WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2,
-    WitnessedLezAssetV2, WitnessedNativeEscrowTerms, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveNativeXmrEscrowTipV3Request,
+    ObserveNativeXmrEscrowTipV3Result, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
+    ObserveWitnessedAssetEscrowV2Request, ObserveWitnessedAssetEscrowV2Result,
+    ObserveWitnessedAssetRefundV2Request, ObserveWitnessedAssetRefundV2Result,
+    ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult, Participant,
+    PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
+    PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,
+    PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
+    PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
+    PrepareWitnessedAssetClaimV2Result, PrepareWitnessedAssetEscrowV2Request,
+    PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedAssetRefundV2Request,
+    PrepareWitnessedAssetRefundV2Result, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId, RuntimeDescriptor,
+    SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
+    SubmitNativeXmrClaimAuthorizationV3Result, SubmitTransactionRequest, SubmitTransactionResult,
+    SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult,
+    SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult,
+    VerifyCurrentProfileClockRequest, VerifyCurrentProfileClockResult,
+    WitnessedAssetPreparedEffectV2, WitnessedAssetRefundObservationV2,
+    WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
+    WitnessedNativeEscrowTerms, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
 };
 pub use lez_bridge_protocol::{
     MAX_NATIVE_ESCROW_REPLANS, MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
@@ -88,18 +89,18 @@ pub use lez_bridge_protocol::{
     METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_CLOCK,
     METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
     METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
-    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2,
-    METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_CURRENT_PROFILE_CLOCK, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
-    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
-    METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2,
-    METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW,
-    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_SUBMIT_TRANSACTION,
-    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE, METHOD_VERIFY_CURRENT_PROFILE_CLOCK, RUN_ID_HEADER,
-    SIDECAR_ROLE_HEADER,
+    METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3, METHOD_OBSERVE_REVEALING_CLAIM,
+    METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2, METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
+    METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_CURRENT_PROFILE_CLOCK,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
+    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2, METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
+    METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_SUBMIT_TRANSACTION, METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE,
+    METHOD_VERIFY_CURRENT_PROFILE_CLOCK, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use secp256k1::{
     Message as SecpMessage, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
@@ -306,6 +307,8 @@ pub enum BridgeOperation {
     SubmitNativeXmrClaimAuthorizationV3,
     /// Conservative finalized XMR-native effect classification.
     ClassifyFinalizedNativeXmrEffectV3,
+    /// XMR-native escrow state at the sequencer tip.
+    ObserveNativeXmrEscrowTipV3,
 }
 
 /// Actor-facing finalized witnessed-funding classification.
@@ -2401,6 +2404,41 @@ impl BridgeClient {
             expected_window,
             &result,
         )?;
+        Ok(result)
+    }
+
+    /// Reads one XMR-native escrow's state at the sequencer tip once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on runtime, terms, response, timeout, transport, or typed
+    /// remote error.
+    pub async fn observe_native_xmr_escrow_tip_v3(
+        &self,
+        request: ObserveNativeXmrEscrowTipV3Request,
+    ) -> Result<ObserveNativeXmrEscrowTipV3Result, BridgeClientError> {
+        let operation = BridgeOperation::ObserveNativeXmrEscrowTipV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Either,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveNativeXmrEscrowTipV3Result = self
+            .request(
+                operation,
+                METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
         Ok(result)
     }
 

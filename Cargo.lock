@@ -2320,6 +2320,7 @@ dependencies = [
  "async-trait",
  "digest_auth",
  "diqwest",
+ "hex",
  "lez-bridge-protocol",
  "lez-xmr-swap-sdk",
  "monero-rpc",

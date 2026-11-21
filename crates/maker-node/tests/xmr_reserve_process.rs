@@ -462,7 +462,9 @@ async fn a_crash_between_stage_and_rename_leaves_no_reservation() {
     // What a Maker that died after composing, before its rename, leaves: a
     // stage with a role root and even a record, beside no swap directory.
     let swap = maker.deployment.swap(&reservation_id);
-    let stage = PathBuf::from(format!("{}.xmr-stage", swap.display()));
+    let stages = swap.parent().unwrap().join(".stage");
+    private_dir(&stages);
+    let stage = stages.join(format!("{}.xmr", reservation_id.as_str()));
     private_dir(&stage);
     private_dir(&stage.join("xmr"));
     write_private(&stage.join("xmr-reservation.json"), b"{\"half\":true}");
@@ -484,6 +486,45 @@ async fn a_crash_between_stage_and_rename_leaves_no_reservation() {
             maker_key().serialize(),
         )
         .expect("the remade reservation is whole");
+}
+
+/// The attack the stage once allowed: a Taker reserves `x.xmr-stage`, the
+/// Maker funds Monero for it, then the Taker reserves `x`, and composing the
+/// stage of `x` deleted the funded swap's directory with the only copy of
+/// the Maker's Monero share. A dotted id is now refused on the wire, and a
+/// directory with such a name (a swap reserved before the grammar) is no
+/// stage of anything.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reservation_cannot_delete_a_swap_named_like_its_stage() {
+    let maker = Maker::start(20, 300).await;
+    let taker = maker.taker();
+    let reservation_id = RequestId::new("xmr-reserve-reservation-004").unwrap();
+    let dotted = RequestId::new(format!("{}.xmr-stage", reservation_id.as_str())).unwrap();
+    let error = maker
+        .chat::<_, XmrReserveResponseV1>("xmr_reserve_v1", &maker.reserve_request(&taker, &dotted))
+        .await
+        .expect_err("a dotted reservation id is refused");
+    assert!(format!("{error:#}").contains("reservation id"), "{error:#}");
+    assert!(!maker.deployment.swap(&dotted).exists());
+
+    // A funded swap that was named so before the grammar existed.
+    let funded = maker.deployment.swap(&dotted);
+    private_dir(&funded);
+    private_dir(&funded.join("xmr"));
+    write_private(&funded.join("xmr/maker-share.key"), b"the only copy");
+    let reserved: XmrReserveResponseV1 = maker
+        .chat(
+            "xmr_reserve_v1",
+            &maker.reserve_request(&taker, &reservation_id),
+        )
+        .await
+        .expect("the prefix id reserves");
+    assert!(!reserved.was_replay);
+    assert_eq!(
+        fs::read(funded.join("xmr/maker-share.key")).unwrap(),
+        b"the only copy",
+        "reserving the prefix id left the funded swap whole"
+    );
 }
 
 fn spawn(

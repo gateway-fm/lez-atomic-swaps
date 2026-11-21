@@ -667,6 +667,10 @@ pub(super) async fn reserve(
     {
         return Err(invalid_request("unsupported or empty BTC reservation"));
     }
+    // The id names the swap directory; decoding already refused any other.
+    if !request.reservation_id.is_reservation_id() {
+        return Err(invalid_request("the BTC reservation id is not path-safe"));
+    }
     let lifecycle = context
         .btc_lifecycle
         .as_ref()

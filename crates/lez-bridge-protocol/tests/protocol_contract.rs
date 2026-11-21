@@ -3642,3 +3642,30 @@ fn json_set(value: &mut serde_json::Value, path: &[&str], replacement: serde_jso
         current[*last] = replacement;
     }
 }
+
+#[test]
+fn a_reservation_id_is_a_request_id_without_a_dot() {
+    for good in ["abcdefgh", "xmr-reserve_reservation-01", &"f".repeat(64)] {
+        let id = RequestId::new_reservation_id(good).unwrap();
+        assert!(id.is_reservation_id());
+    }
+    for bad in [
+        "victim-01.xmr-stage",
+        "victim-01.zec-stage",
+        "victim-01.",
+        "a/b/c/d/e",
+        "../../../x",
+        "",
+        "short",
+        &"f".repeat(65),
+    ] {
+        assert!(RequestId::new_reservation_id(bad).is_err(), "{bad:?}");
+    }
+    // A dotted value stays a valid request id: only reservation ids, which
+    // name directories, lose the dot.
+    assert!(
+        !RequestId::new("victim-01.xmr-stage")
+            .unwrap()
+            .is_reservation_id()
+    );
+}

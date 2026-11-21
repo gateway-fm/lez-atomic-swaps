@@ -469,6 +469,18 @@ pub(super) struct InitiationConfigurationV1 {
     #[cfg(feature = "pair-xmr")]
     #[serde(default)]
     xmr_role_config: Option<PathBuf>,
+    /// The Node refunds a Monero swap's LEZ (tag 16) by itself from `R`
+    /// (finalized LEZ time) while the Maker has not claimed. On unless set
+    /// to `false`, which leaves the refund to the owner's command; the
+    /// owner's refund works either way.
+    #[cfg(feature = "pair-xmr")]
+    #[serde(default = "automatic_refund_default")]
+    xmr_automatic_refund: bool,
+}
+
+#[cfg(feature = "pair-xmr")]
+const fn automatic_refund_default() -> bool {
+    true
 }
 
 impl InitiationConfigurationV1 {
@@ -632,7 +644,8 @@ pub(super) fn build_initiation_context(
         (Some(_), None) => return Err(TakerServiceStartupError::InvalidConfiguration),
         (Some(path), Some(btc)) => {
             let role = crate::taker_service::DynamicXmrRole::load(path, std::sync::Arc::clone(btc))
-                .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
+                .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?
+                .with_automatic_refund(configuration.xmr_automatic_refund);
             // As the Zcash swaps above.
             for configured in role.persisted_entries() {
                 match role.load_entry(&configured) {

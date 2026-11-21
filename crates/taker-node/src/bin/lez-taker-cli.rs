@@ -1128,7 +1128,11 @@ fn xmr_phase_words(phase: &str) -> Option<&'static str> {
         "refund_available" => {
             "the refund window is open: refund your LEZ (tag 16) before the punish time"
         }
-        "refund_in_flight" => "your LEZ refund is sent; waiting for it to be final",
+        "refund_in_flight" => "your LEZ refund is sent; the Node sends it again until it is final",
+        "refund_not_final" => {
+            "your LEZ refund was sent and is not final at the punish time; the Node keeps \
+             looking for it"
+        }
         "refunded" => "refunded: your LEZ is back",
         "punish_open" => {
             "the refund window closed: the Maker may take your LEZ (punish); the Monero stays \
@@ -1155,6 +1159,10 @@ fn xmr_attention_words(reason: &str) -> Option<&'static str> {
         }
         "xmr_refund_window_closed" => {
             "the refund window closed without a refund: the Maker can punish and take your LEZ"
+        }
+        "xmr_refund_not_final_by_punish_time" => {
+            "your refund did not land before the punish time: unless it is still found final, \
+             the Maker can punish and take your LEZ"
         }
         _ => return None,
     })
@@ -2183,6 +2191,13 @@ mod xmr_words_tests {
                 "xmr_refund_window_closed",
                 None,
                 "needs you: the refund window closed without a refund: the Maker can punish",
+            ),
+            (
+                "refund_not_final",
+                "xmr_refund_not_final_by_punish_time",
+                None,
+                "needs you: your refund did not land before the punish time: unless it is still \
+                 found final, the Maker can punish and take your LEZ",
             ),
         ] {
             let printed = words(&view(State::AttentionRequired, phase, Some(reason), action));

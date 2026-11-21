@@ -187,6 +187,7 @@ refund.
 | Stage A composed and checked at take time | `ValidatedXmrAgreementBodyV1::from_unsigned_wire`, `XmrAgreementV1::from_wire` | `reserve_xmr_maker_role`, `check_xmr_taker_role`, `crates/xmr-reference-actor/src/reserve.rs` |
 | Both MuSig2 sessions and Stage B | the session descriptors, `ValidatedXmrActivationBodyV1`, `XmrActivatedAgreementV1` | `crates/xmr-reference-actor/src/ceremony.rs` |
 | The Taker's sweep after the Maker's LEZ claim | `ReconstructedMoneroSpendKey::reconstruct` | `crates/taker-node/src/taker_service/xmr_supervisor.rs` |
+| The Taker's LEZ refund (tag 16): the refund pre-signature completed with the Taker's share, sent by the Taker Node by itself from R by finalized LEZ time and again until it is final or LEZ time reaches P, never while the Maker's claim is at the sequencer tip | `XmrAgreementV1::refund_session_descriptor`, `CrossCurveScalar::adaptor_scalar_big_endian` | `refund_signature`, `refund_step`, `crates/taker-node/src/taker_service/xmr_supervisor.rs` |
 
 ## Scope
 

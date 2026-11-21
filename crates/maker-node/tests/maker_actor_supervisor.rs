@@ -1480,7 +1480,9 @@ fn successful_actor_leader_cannot_leave_stdout_holding_descendant() {
     .expect("descendant cycle")
     .expect("one due actor");
 
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // The descendant never exits: a supervisor that waited for it would end
+    // only at the 20 s timeout. Half of it leaves a loaded host room.
+    assert!(started.elapsed() < Duration::from_secs(10));
     assert_eq!(
         outcome.resolution(),
         MakerActorSupervisorResolution::Terminal
@@ -1556,10 +1558,11 @@ fn oversized_actor_output_is_drained_reaped_and_failed_closed() {
     let program = b"#!/bin/sh\n\
         test \"$1\" = \"--config-fd\" || exit 91\n\
         test \"$2\" = \"196\" || exit 92\n\
-        i=0\n\
-        while [ \"$i\" -lt 300 ]; do printf x; i=$((i + 1)); done\n";
+        printf '%0300d' 0\n";
     let mut store = registered_store(root.path(), swap_id, program);
-    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 256)
+    // The 300 bytes go out in one write, so the cap, not the timeout, ends
+    // the actor however loaded the host is; the timeout only bounds a hang.
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 256)
         .expect("minimum bounded output config");
 
     let outcome = supervise_one_due_maker_actor(

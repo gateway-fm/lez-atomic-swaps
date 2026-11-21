@@ -419,7 +419,10 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
             return {"refund_ready", "Refund window open", 60,
                     "Refund " + mine + " (tag 16) before the punish time" + punish, "refund_lez", "Refund " + mine};
         if (nodeState == "refund_in_progress")
-            return {"refunding", "LEZ refund sent", 80, "Your LEZ refund is sent; waiting for it to be final", "", ""};
+            return {"refunding", "LEZ refund sent", 80, "Your LEZ refund is sent; your Node sends it again until it is final", "", ""};
+        if (attentionReason == QStringLiteral("xmr_refund_not_final_by_punish_time"))
+            return {"attention_required", "Refund not final", 0,
+                    "Your LEZ refund was sent and did not land before the punish time: unless your Node still finds it final, the Maker can punish and take your LEZ", "", ""};
         if (attentionReason == QStringLiteral("xmr_refund_window_closed"))
             return {"attention_required", "Refund window closed", 0,
                     "The refund window closed without a refund: the Maker can punish and take your LEZ; the Monero stays locked", "", ""};

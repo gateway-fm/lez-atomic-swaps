@@ -7,18 +7,19 @@ use lez_bridge_protocol::{
     FinalizedBlockIdentity, FinalizedNativeXmrEffectFactsV3, FinalizedNativeXmrScanOutcomeV3,
     FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3, Hex32,
     METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
-    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
-    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
-    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, MessageContext, NativeCustodyFacts,
-    ObservedTransactionFacts, Participant, PrepareCurrentProfileClockRequest,
-    PrepareCurrentProfileClockResult, PrepareNativeXmrClaimAuthorizationV3Request,
-    PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
-    PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,
-    PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
-    PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolValueError, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
+    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
+    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    MessageContext, NativeCustodyFacts, ObservedTransactionFacts, Participant,
+    PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult,
+    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
+    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
+    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
+    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
+    PrepareNativeXmrRefundV3Result, PreparedTransaction, PreparedWitnessedClaim,
+    ProtocolValueError, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
     SubmitNativeXmrClaimAuthorizationV3Result, SubmitTransactionResult, TransactionId,
     VerifyCurrentProfileClockRequest, VerifyCurrentProfileClockResult,
     XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3, XmrNativeEffectV3,
@@ -163,6 +164,10 @@ fn xmr_v3_method_names_are_strictly_additive() {
     assert_eq!(
         METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
         "lez_bridge.v3.classify_finalized_native_xmr_effect"
+    );
+    assert_eq!(
+        METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+        "lez_bridge.v3.observe_native_xmr_escrow_tip"
     );
 }
 

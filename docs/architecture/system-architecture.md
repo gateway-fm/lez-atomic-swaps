@@ -2176,9 +2176,11 @@ missing Monero key.
 **The punish path is not atomic by design**: a Taker that neither completes nor
 refunds before P loses its LEZ and the Monero stays locked for good. The
 escrow allows tag 17 whether or not the Maker funded Monero; the reference
-Maker Node punishes only swaps it funded. The Taker Node never refunds by
-itself; it warns (`refund_window_closing` from R + (P − R)/2) and its owner
-must send the refund.
+Maker Node punishes only swaps it funded. The Taker Node refunds by itself
+from R (finalized LEZ time) while the Maker has not claimed, and its owner can
+send the refund as well; it warns (`refund_window_closing` from R + (P − R)/2)
+while a funded swap is not refunded. A Taker Node that is down through [R, P)
+loses the LEZ.
 
 **Replay/idempotency:** the Maker's actor consumes each effect's one
 invocation in its workflow journal before running it, so a restarted Maker

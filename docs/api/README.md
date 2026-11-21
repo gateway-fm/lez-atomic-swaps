@@ -550,10 +550,14 @@ the punish branch are in [protocol-design.md](../milestone-1/protocol-design.md#
   the claim authorisation (tag 14), waits for the Maker's LEZ claim (tag 15),
   rebuilds the Monero spend key from it and sweeps the output into the role
   wallet.
-- **Refund.** `available_action: "refund"` from R. `taker_swap_refund_v1`
-  admits it and the supervisor sends the LEZ refund (tag 16) on its next pass;
-  it is valid only before P. **The Node never refunds by itself**: from P the
-  Maker can take the LEZ (tag 17) and the Monero stays locked for good.
+- **Refund.** The Node refunds by itself: from R by the finalized LEZ time,
+  while the Maker's LEZ claim (tag 15) has not landed, its supervisor sends
+  the LEZ refund (tag 16) with no owner's command, and sends it again until
+  it is final; it is valid only before P, and from P the Maker can take the
+  LEZ (tag 17) and the Monero stays locked for good. `available_action:
+  "refund"` is offered from R as well, and `taker_swap_refund_v1` admits it
+  for the supervisor's next pass. Setting `initiation.xmr_automatic_refund`
+  to `false` in the Node's configuration leaves the refund to that command.
 
 An admitted Monero claim or refund is run by the Node's supervisor on its next
 pass (`--observer-sweep-seconds`, 3 s on the devnet). The `swap` view of a
@@ -571,7 +575,8 @@ when the owner is needed (`crates/taker-node/src/taker_service/xmr_supervisor.rs
 | `sweeping` | `claim_in_progress`, or `attention_required` (`xmr_claim_sweep_in_doubt`) | — | the Maker claimed; the Monero is being swept |
 | `completed` | `completed` | — | the swept output is in the role wallet |
 | `refund_available` | `refund_available`, or `attention_required` (`xmr_maker_did_not_claim` from R after a tag 14 the Maker did not answer; `refund_window_closing` from R + (P − R)/2) | `refund` | the refund window [R, P) is open |
-| `refund_in_flight` | `refund_in_progress` | — | tag 16 sent, not yet final |
+| `refund_in_flight` | `refund_in_progress` | — | tag 16 sent, not yet final; sent again, the same bytes, while the finalized LEZ time is before P |
+| `refund_not_final` | `attention_required` (`xmr_refund_not_final_by_punish_time`) | — | P passed with tag 16 sent and not seen final: one that landed before P still turns the row `refunded`; otherwise the Maker can take the LEZ |
 | `refunded` | `refunded` | — | the LEZ is back |
 | `punish_open` | `attention_required` (`xmr_refund_window_closed`) | — | P passed without a refund: the Maker can take the LEZ; the Monero stays locked |
 
