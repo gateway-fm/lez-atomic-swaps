@@ -340,7 +340,10 @@ guest itself authorises tag 17 by its signer, accounts and the P window. In
 
 - Regtest only. The role configuration accepts only the `accelerated-regtest`
   profile and the Monero wallet effects are regtest-only (they mine their own
-  confirmations); no Monero stagenet, testnet or mainnet run exists.
+  confirmations); no Node has run on Monero stagenet, testnet or mainnet.
+  The Monero leg of a completed swap, SDK and adapter alone, has run on
+  Stagenet
+  ([Stagenet guide](../monero-stagenet-guide.md)).
 - The Taker's claim partial is withheld, not verifiably encrypted (the SDK's
   own note on `commit_taker_claim_partial`; threat TM-0019): a Taker can lock,
   let the Maker fund, and never authorise. The Maker then gets its Monero back

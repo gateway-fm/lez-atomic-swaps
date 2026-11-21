@@ -87,8 +87,11 @@ otherwise; the deliverables and their proof are in
 Scope:
 
 - Monero 0.18.5.1 **regtest** on the private LEZ devnet only. No Monero
-  stagenet, testnet or mainnet swap has run; no window profile sized for a
-  public network exists (R6); the LEZ testnet waits for the LEZ 0.4 port
+  stagenet, testnet or mainnet swap has run; on Stagenet only the Monero
+  leg of a completed swap has run, SDK and adapter alone with the LEZ escrow
+  modelled
+  ([Stagenet guide](../docs/monero-stagenet-guide.md)), and no Node offers a
+  window profile sized for a public network (R6); the LEZ testnet waits for the LEZ 0.4 port
   (#107). LEZ v0.2.4 pins RISC Zero 3.0, which is yanked
   (GHSA-g6qg-9j8p-7j87); its `cargo-deny` exemption is an accepted risk on
   devnet-only software (#184), and no public-network release is made while it

@@ -514,8 +514,10 @@ when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
 Monero swaps run on this devnet only: an offline Monero **regtest** chain on
 each lane, on x86_64 and arm64 hosts alike (the pinned release has an archive
 for each, `linux-x64` and `linux-armv8`; `stage-assets.sh` takes the host's).
-No Monero stagenet, testnet or mainnet route exists: the Nodes' Monero role accepts only the
-`accelerated-regtest` profile. The protocol, its windows and the punish branch
+No Monero stagenet, testnet or mainnet route exists for the Nodes: their Monero role accepts
+only the `accelerated-regtest` profile. Monero Stagenet itself (the release, monerod,
+wallet-rpc, coins, the SDK's Monero leg) is in the
+[Stagenet guide](../docs/monero-stagenet-guide.md). The protocol, its windows and the punish branch
 are in [protocol-design.md](../docs/milestone-1/protocol-design.md#xmrlez).
 
 Monero is off by default: a Bitcoin/Zcash run starts and waits for nothing of

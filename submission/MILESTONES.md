@@ -74,8 +74,9 @@ release record is the [v0.3.0 release page](https://github.com/gateway-fm/lez-at
 ## M4 — XMR/LEZ leg
 
 Upstream: [logos-co/rfp#124](https://github.com/logos-co/rfp/issues/124).
-Version 0.4.0. One direction, the Taker sells LEZ, on Monero 0.18.5.1 regtest
-and the private LEZ devnet only; why the pair keeps its own order, and where
+Version 0.4.0. One direction, the Taker sells LEZ; Node-driven swaps on
+Monero 0.18.5.1 regtest and the private LEZ devnet only, the Monero leg of a
+completed swap also on Monero Stagenet; why the pair keeps its own order, and where
 it departs from RFP-003 F5 and F6, is
 [ADR 0217](../docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md).
 Each deliverable with its proof and its limits:
@@ -84,9 +85,11 @@ Each deliverable with its proof and its limits:
 | Official deliverable | Submission artifact | Status |
 |---|---|---|
 | LEZ escrow program update for the XMR cross-curve DLEQ claim path | Escrow tags 13–17 in [`compat/lez-v0.2-provisional/escrow/src/lib.rs`](../compat/lez-v0.2-provisional/escrow/src/lib.rs) (ImageID `ca66e0dc…`, with the custody-credit fix of TM-0032), [protocol design](../docs/milestone-1/protocol-design.md#xmrlez), [compute units](../docs/lez-compute-units.md) | Included, devnet only. The escrow checks BIP-340 signatures of two-party MuSig2 keys; the DLEQ proofs are checked off chain by each party |
-| LEZ/XMR SDK with full lifecycle coverage, including the spend-key-share recovery path under partial information loss | [`lez-xmr-swap-sdk`](../docs/sdk-lez-xmr.md), each area mapped to its public API and tests; [`examples/full-lifecycle.rs`](../crates/xmr-reference-actor/examples/full-lifecycle.rs) in `xmr-reference-actor`, the layer the Nodes run: a completed and a refunded swap, each recovering role rebuilding the spend key after losing its session state, Monero regtest live | Included; the example models the LEZ escrow in memory and has no recorded run |
+| LEZ/XMR SDK with full lifecycle coverage, including the spend-key-share recovery path under partial information loss | [`lez-xmr-swap-sdk`](../docs/sdk-lez-xmr.md), each area mapped to its public API and tests; [`examples/full-lifecycle.rs`](../crates/xmr-reference-actor/examples/full-lifecycle.rs) in `xmr-reference-actor`, the layer the Nodes run: a completed and a refunded swap, each recovering role rebuilding the spend key after losing its session state, Monero regtest live | Included; the example models the LEZ escrow in memory; its one recorded run, on Monero Stagenet, completed the claim swap and stopped the refund swap at its funding ([Stagenet guide](../docs/monero-stagenet-guide.md#the-run-of-2026-11-21)) |
 | DLEQ test-vector conformance against `comit-network/cross-curve-dleq` | [Erratum GW-M4-001](../docs/proposal-acceptance-errata.md): COMIT publishes no vectors and proves differently; the generators and the keys of a scalar are checked against COMIT's crate instead; self-generated vectors in [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs) | **Qualified deviation**, as GW-M3-001 was for M3; no Logos decision |
+| `monerod` + `monero-wallet-rpc` stagenet setup documentation per U9 | [`docs/monero-stagenet-guide.md`](../docs/monero-stagenet-guide.md): the pinned release verified, a self-hosted pruned `monerod` and public nodes, `monero-wallet-rpc` on both, faucet coins, the SDK and adapter on Stagenet through `examples/full-lifecycle.rs`, timings and windows for 2-minute blocks, refund and punish; every command run on 2026-11-21 | Included. On Stagenet the example's completed swap ran end to end (funded, verified at ten confirmations, swept with the rebuilt key); its refunded swap stopped at the funding, refused by a public node; the self-hosted node was syncing, not at the tip. No Node-driven Stagenet swap: the Nodes take XMR swaps only on regtest |
 | XMR demo set per D1 | `TakerSellsLez-xmr-happy.mp4`, `TakerSellsLez-xmr-taker-refund.mp4`, `TakerSellsLez-xmr-concurrent.mp4` in [`docs/evidence/regression-m4-desks-2026-11-20/videos/`](../docs/evidence/regression-m4-desks-2026-11-20/videos/), each a by-product of a desk journey that passed while being recorded | Included; regtest, the one direction |
+| Self-hosted stagenet `monerod` running in CI | The `monero-stagenet` job of [`ci.yml`](../.github/workflows/ci.yml): [`scripts/run-monero-stagenet-ci.sh`](../scripts/run-monero-stagenet-ci.sh) starts the verified `monerod --stagenet` and `monero-wallet-rpc --stagenet` and runs [`tests/stagenet_daemon.rs`](../crates/xmr-monero-adapter/tests/stagenet_daemon.rs) against them, then a bounded sync from public peers | Included; a 1,000-block prefix of the chain, no coins and no swap in CI |
 
 The regression evidence set is
 [`regression-m4-2026-11-21`](../docs/evidence/regression-m4-2026-11-21/README.md):
