@@ -546,8 +546,11 @@ downloaded binaries never run on the host. `images/monerod/provenance.json`
 records the archive and its architecture, and a binary staged for another
 architecture is staged again. The image `lez-monerod:local` (115 MB on x86_64)
 runs them on a distroless base (a multi-architecture index); its build checks
-that both binaries are executables of the image's architecture and labels the
-archive they came from. Monero's binaries are under the BSD 3-clause licence
+that both binaries are executables of the image's architecture, and its labels
+name both pinned archives. Its Dockerfile is the isolated lane's
+(`tests/e2e/monero/Dockerfile`), which `stage-assets.sh` and `up.sh` copy into
+`images/monerod/`: Compose's bake builder refuses a Dockerfile outside
+`deploy/`. Monero's binaries are under the BSD 3-clause licence
 (the archive's `LICENSE`); the image carries the licence label, as the Bitcoin
 Core and Zebra images do.
 

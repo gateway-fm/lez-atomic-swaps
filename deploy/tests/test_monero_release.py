@@ -54,21 +54,30 @@ class MoneroReleasePins(unittest.TestCase):
         # no architecture-less archive pin is left for a consumer to take as the only one
         self.assertNotIn('MONERO_ARCHIVE_NAME', p)
 
-    def test_the_image_labels_the_archive_of_its_architecture(self):
+    def test_the_image_labels_both_archives_and_checks_its_binaries(self):
         p = pins()
         for suffix, (_, docker_arch, _) in ARCHES.items():
-            stage = DOCKERFILE.split(f'AS runtime-{docker_arch}\n', 1)[1].split('\nFROM ', 1)[0]
-            self.assertIn(f'release-archive="{p[f"MONERO_ARCHIVE_NAME_{suffix}"]}"', stage)
-            self.assertIn(f'release-archive-sha256="{p[f"MONERO_ARCHIVE_SHA256_{suffix}"]}"', stage)
-        self.assertIn('FROM runtime-${TARGETARCH}', DOCKERFILE)
-        # every base the image is built on is the one the contract pins
-        base = p['MONERO_RUNTIME_BASE']
-        self.assertEqual(DOCKERFILE.count(f'FROM {base} AS runtime-'), 2)
+            self.assertIn(f'release-archive-linux-{docker_arch}="{p[f"MONERO_ARCHIVE_NAME_{suffix}"]}"', DOCKERFILE)
+            self.assertIn(f'release-archive-sha256-linux-{docker_arch}="{p[f"MONERO_ARCHIVE_SHA256_{suffix}"]}"', DOCKERFILE)
+        # the ELF machine of each architecture (EM_X86_64 0x3e, EM_AARCH64 0xb7)
+        self.assertIn('amd64) want=3e00', DOCKERFILE)
+        self.assertIn('arm64) want=b700', DOCKERFILE)
+        # the base the image runs on is the one the contract pins, and no FROM
+        # names a build argument (up.sh and from-scratch.sh pull every FROM)
+        self.assertIn(f"\nFROM {p['MONERO_RUNTIME_BASE']}\n", DOCKERFILE)
+        self.assertNotRegex(DOCKERFILE, r'(?m)^FROM \S*\$')
 
     def test_staging_takes_the_hosts_architecture_and_refuses_none(self):
         stage = (ROOT / 'deploy/scripts/stage-assets.sh').read_text()
         self.assertNotIn('linux-x64 only', stage)
         self.assertIn('-e MONERO_ARCH="$monero_arch"', stage)
+        # Compose's bake builder reads no Dockerfile outside deploy/: the
+        # image's is copied into its context
+        compose = (ROOT / 'deploy/compose.yaml').read_text()
+        self.assertIn('    build: ./images/monerod\n', compose)
+        self.assertIn('install -m 0644 ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile', stage)
+        self.assertIn('install -m 0644 ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile',
+                      (ROOT / 'deploy/scripts/up.sh').read_text())
 
 
 def tool_missing():

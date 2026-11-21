@@ -142,7 +142,9 @@ services:
   # Monero regtest for the LEZ <-> XMR pair, in the profile "monero", off by
   # default (LEZ_MONERO=1, which gen-config.sh keeps in runtime.env; up.sh and
   # lanes.sh then start it). The isolated lane's image (tests/e2e/monero) on
-  # the release scripts/verify-monero-release.sh verified (stage-assets.sh).
+  # the release scripts/verify-monero-release.sh verified (stage-assets.sh);
+  # stage-assets.sh and up.sh copy its Dockerfile into the context, since
+  # Compose's bake builder refuses a Dockerfile outside this directory.
   # An offline fakechain: no peers, no miner; blocks are generated on demand
   # (the Monero adapter mines its own ten confirmations, the harness the
   # rest). Every RPC takes a Digest login (gen-config.sh, runtime/monero); the
@@ -151,9 +153,7 @@ services:
   # forwards (node-entrypoint.sh). No health check: nothing waits for it.
   # Its volumes take their owner (65532) from the image.
   monerod:
-    build:
-      context: ./images/monerod
-      dockerfile: ../../../tests/e2e/monero/Dockerfile
+    build: ./images/monerod
     image: ${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}
     container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-monerod
     profiles: [monero]

@@ -224,6 +224,9 @@ case "${LEZ_IMAGES:-build}" in
     if (( ${#monero_services[@]} )) &&
        { [[ "$BUILD" == 1 ]] || ! docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1; }; then
       [[ -x images/monerod/bin/monerod ]] || { echo "Monero is not staged: LEZ_MONERO=1 scripts/stage-assets.sh" >&2; exit 1; }
+      # (the isolated lane's Dockerfile, copied into the context: compose.yaml)
+      cmp -s ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile ||
+        install -m 0644 ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile
       docker compose --profile monero build monerod
     fi
     ;;

@@ -65,6 +65,9 @@ if [[ "${LEZ_MONERO:-0}" == 1 ]] &&
         mv /out/verified/bin /out/bin && rmdir /out/verified
         chown -R "$(stat -c %u:%g /out)" /out/bin /out/provenance.json'
 fi
+# the image's Dockerfile, the isolated lane's, inside the build context
+# (compose.yaml, monerod; up.sh refreshes it before each build)
+[[ "${LEZ_MONERO:-0}" != 1 ]] || install -m 0644 ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile
 
 # ---- lez-services: pinned logos-execution-zone v0.2.0 (a58fbce) ------------
 # Native arm64 release build with rust 1.94.0 and the Logos rapidsnark fork's

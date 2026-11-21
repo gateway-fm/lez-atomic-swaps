@@ -1,8 +1,7 @@
 # One image per Linux architecture, linux/amd64 or linux/arm64 (BuildKit's
-# TARGETARCH): the build context holds the release archive of that
-# architecture, which scripts/verify-monero-release.sh verified and extracted
-# (provenance.env pins both), and the binaries' ELF machine is checked below.
-ARG TARGETARCH
+# TARGETARCH): the build context holds the binaries of that architecture's
+# release archive, which scripts/verify-monero-release.sh verified and
+# extracted (provenance.env pins both), and their ELF machine is checked below.
 
 # The data directories, owned by the runtime user: a new data volume takes its
 # owner from here on its first mount (the devnet's Monero services,
@@ -21,23 +20,19 @@ RUN set -eu; \
     rm -rf /check
 
 # The runtime base is a multi-architecture index (provenance.env,
-# MONERO_RUNTIME_BASE); each architecture's stage labels the archive it carries.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512 AS runtime-amd64
-LABEL org.logos-co.atomic-swaps.release-archive="monero-linux-x64-v0.18.5.1.tar.bz2"
-LABEL org.logos-co.atomic-swaps.release-archive-sha256="22a7dda7b0cb699fdd6b7674c3b4a4465b337cc98a54983523b759e1e7cc9958"
-
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512 AS runtime-arm64
-LABEL org.logos-co.atomic-swaps.release-archive="monero-linux-armv8-v0.18.5.1.tar.bz2"
-LABEL org.logos-co.atomic-swaps.release-archive-sha256="c0caf042cb7c7b760f5ad6be188084b59352440b32990a78b8051497b9398dbc"
-
-# hadolint ignore=DL3006
-FROM runtime-${TARGETARCH}
+# MONERO_RUNTIME_BASE). The labels name the archive of each architecture; the
+# check above holds the binaries to the one of the image's.
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512
 
 LABEL org.opencontainers.image.source="https://github.com/monero-project/monero"
 LABEL org.opencontainers.image.version="0.18.5.1"
 LABEL org.opencontainers.image.revision="4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 LABEL org.logos-co.atomic-swaps.purpose="isolated-monero-regtest"
+LABEL org.logos-co.atomic-swaps.release-archive-linux-amd64="monero-linux-x64-v0.18.5.1.tar.bz2"
+LABEL org.logos-co.atomic-swaps.release-archive-sha256-linux-amd64="22a7dda7b0cb699fdd6b7674c3b4a4465b337cc98a54983523b759e1e7cc9958"
+LABEL org.logos-co.atomic-swaps.release-archive-linux-arm64="monero-linux-armv8-v0.18.5.1.tar.bz2"
+LABEL org.logos-co.atomic-swaps.release-archive-sha256-linux-arm64="c0caf042cb7c7b760f5ad6be188084b59352440b32990a78b8051497b9398dbc"
 LABEL org.logos-co.atomic-swaps.release-signer="81AC591FE9C4B65C5806AFC3F0AF4D462A0BDF92"
 
 # The build context is extracted only after the official signed hash manifest,
