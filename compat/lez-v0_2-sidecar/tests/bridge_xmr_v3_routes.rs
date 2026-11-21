@@ -814,7 +814,7 @@ async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
     clippy::too_many_lines,
     reason = "one tag-16 journey keeps exact composition, adversarial bindings, restart recovery, and no-submission proof joined"
 )]
-async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
+async fn taker_prepares_completes_and_submits_exact_tag_16() {
     let (depositor, depositor_key) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1029,12 +1029,16 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
     assert_eq!(submitted.transaction_id, completed.refund.transaction_id);
     assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
     assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
-    let replayed_submission = taker
+    // Accepted is not included: a refund the sequencer admitted and dropped
+    // (its window not yet open at block building) is sent again, the same
+    // bytes under the same request id.
+    let resent_submission = taker
         .fresh_client()
         .submit_transaction(submission_request)
         .await
-        .expect("successful tag-16 submission replays without node I/O");
-    assert_eq!(replayed_submission, submitted);
+        .expect("a tag-16 refund not yet included is sent again");
+    assert_eq!(resent_submission, submitted);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
     assert_remote_code(
         taker
             .fresh_client()
@@ -1046,7 +1050,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
             .await,
         ErrorCode::InvalidTransaction,
     );
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
 
     let taker_directory = taker.directory.path().to_path_buf();
     taker
@@ -1087,7 +1091,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
         0,
         "startup recovery must not regenerate the refund-authority nonce"
     );
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
     restarted_server
         .stop()
         .await
@@ -1116,7 +1120,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
         Err(BridgeServerError::InvalidDurableState)
     ));
     assert_eq!(corrupt_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
     fs::write(&completion_path, completion_bytes).expect("restore refund completion");
 
     fs::remove_file(
@@ -1143,7 +1147,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
         Err(BridgeServerError::InvalidDurableState)
     ));
     assert_eq!(missing_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
 
     maker.server.stop().await.expect("maker stop");
     sequencer.stop().expect("sequencer stop");
@@ -1151,7 +1155,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
 }
 
 #[tokio::test]
-async fn tag16_unknown_submission_is_never_resent_after_restart() {
+async fn tag16_not_included_is_sent_again_until_it_lands() {
     let (depositor, depositor_key) = account(31);
     let (claimant, _) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1211,6 +1215,16 @@ async fn tag16_unknown_submission_is_never_resent_after_restart() {
     );
     assert_eq!(fixture.send_count(), 1);
     assert_eq!(fixture.lookup_count(), 1);
+    // An unknown outcome is no answer: the refund can still land, so the same
+    // bytes go out again.
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(submission.clone())
+            .await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(fixture.send_count(), 2);
 
     let taker_directory = taker.directory.path().to_path_buf();
     taker
@@ -1233,12 +1247,28 @@ async fn tag16_unknown_submission_is_never_resent_after_restart() {
     .await
     .expect("Taker restarts after unknown tag-16 submission");
     assert_remote_code(
-        restarted_client.submit_transaction(submission).await,
+        restarted_client
+            .submit_transaction(submission.clone())
+            .await,
         ErrorCode::UnknownSubmissionOutcome,
     );
     assert_eq!(restart_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(fixture.send_count(), 1);
-    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 3);
+    // Once included it is already known, and nothing is sent.
+    fixture.include_exact(&submission.transaction);
+    let landed = BridgeClient::connect(BridgeClientConfig::new(
+        restarted_server.endpoint(),
+        SidecarCapability::new(CAPABILITY).expect("client capability"),
+        RunId::new(RUN_ID).expect("run id"),
+        submission.runtime.clone(),
+        Duration::from_secs(2),
+    ))
+    .expect("bridge client")
+    .submit_transaction(submission)
+    .await
+    .expect("an included tag-16 refund is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 3);
     restarted_server
         .stop()
         .await

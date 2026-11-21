@@ -1615,9 +1615,17 @@ fn register_methods(
         // (chain 35, 2026-10-29). Other submissions keep their one attempt.
         // The same for an owned revealing claim (FINDINGS 24): a claim whose
         // nonce another claim of this signer took is named Superseded.
-        let decide_again = runtime
-            .native_escrow_lineage_member(&request.transaction)
-            .await
+        // A recovery that can still land and that nothing else replaces (the
+        // Taker's XMR refund, tag 16) is decided again whatever was journaled
+        // for it: a sequencer that admitted it and dropped it at block
+        // building, or a send whose outcome is unknown, would otherwise leave
+        // it unsent for good. Sending the identical bytes again is harmless:
+        // one transaction id, one nonce, included at most once.
+        let recovery = runtime.xmr_recovery_submission(&request.transaction).await;
+        let decide_again = recovery
+            || runtime
+                .native_escrow_lineage_member(&request.transaction)
+                .await
             || runtime
                 .revealing_claim_lineage_member(&request.transaction)
                 .await;
@@ -1627,6 +1635,7 @@ fn register_methods(
                 &request.context,
                 &request,
                 decide_again,
+                recovery,
                 || async move {
                     runtime
                         .submit_transaction(&operation)
@@ -2119,6 +2128,7 @@ impl ServerState {
                 METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
                     | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
             ),
+            false,
             operation,
         )
         .await
@@ -2126,14 +2136,16 @@ impl ServerState {
 
     /// As [`Self::execute`]; `decide_success_again` re-runs the operation for
     /// a journaled success instead of replaying it (errors and in-flight
-    /// markers stay single-attempt either way, except a submission refused as
-    /// `unavailable` before its send, which is tried again).
+    /// markers stay single-attempt, except a submission refused as
+    /// `unavailable` before its send, which is tried again, and every outcome
+    /// of a submission with `decide_failure_again`).
     async fn execute_with_policy<Request, Operation, Fut>(
         &self,
         method: &'static str,
         context: &MessageContext,
         request: &Request,
         decide_success_again: bool,
+        decide_failure_again: bool,
         operation: Operation,
     ) -> Result<Value, ErrorObjectOwned>
     where
@@ -2151,13 +2163,14 @@ impl ServerState {
                 .replay(context.request_id.as_str(), method, &request_sha256)
                 .map_err(|failure| protocol_error(context, failure))?
             {
-                let PersistedOutcome::Success(value) = &outcome else {
-                    return outcome.into_rpc_result();
-                };
-                if !decide_success_again {
-                    return outcome.into_rpc_result();
+                match &outcome {
+                    PersistedOutcome::Success(value) if decide_success_again => {
+                        decided_before = Some(value.clone());
+                    }
+                    PersistedOutcome::Error(_) | PersistedOutcome::SubmissionInFlight(_)
+                        if decide_failure_again && is_submission_method(method) => {}
+                    _ => return outcome.into_rpc_result(),
                 }
-                decided_before = Some(value.clone());
             }
             if is_submission_method(method) {
                 store

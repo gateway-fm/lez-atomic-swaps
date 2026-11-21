@@ -121,7 +121,13 @@ against LEZ block time; C is not on chain.
    may be seen later.
 7. **Taker refunds LEZ, in [R, P) (tag 16).** On the owner's refund the Taker
    completes the refund pre-signature with its own share (`refund_signature`)
-   and submits it only while its clock is in [R, P) (`refund_step`).
+   and submits it once the finalized LEZ time is at or past R (`refund_step`):
+   LEZ admits a transaction whose window is not open and drops it at block
+   building, so the Taker's own clock does not decide. A refund not yet final
+   is sent again, the same bytes, on every supervisor tick while the
+   finalized LEZ time is before P; the sidecar decides each such submission
+   on the chain (already known once included, sent again otherwise). Past P a
+   refund that is not final reads `xmr_refund_not_final_by_punish_time`.
    `RefundNativeXmr` is signed by the refund aggregate authority account, is
    accepted from `Funded` or `XmrClaimAuthorized`, only in [R, P), and pays
    the Taker. The completed signature gives the Maker the Taker's share, and
@@ -176,6 +182,7 @@ Every abort point, from the code above:
 | Before the Taker's lock | nothing at stake | nothing at stake; the reservation lapses after 900 s | — |
 | Taker locked; Maker never funds, or the lock is final after C | refunds LEZ with tag 16 in [R, P) | nothing at stake; its actor ends `expired`; the share tag 16 reveals opens an empty address | `xmr-maker-never-funds` |
 | Maker funded; Taker never authorises | refunds LEZ with tag 16 in [R, P) | sweeps its Monero back with the revealed share | `xmr-taker-refund`, `xmr-taker-refund-kill` |
+| Taker's refund sent and dropped (its clock ahead of LEZ time, or lost by the sequencer) | sends nothing before the finalized LEZ time reaches R, then sends the same tag 16 again on every tick until it is final or LEZ time reaches P | sweeps its Monero back once tag 16 is final; punishes only with no tag 16 to the finalized tip from P | unit tests: `a_refund_accepted_and_never_included_is_sent_again_until_it_lands`, `a_host_clock_ahead_of_lez_time_does_not_send_the_refund_early`, `a_refund_not_final_at_p_says_so` (Taker supervisor), `tag16_not_included_is_sent_again_until_it_lands` (sidecar); no devnet scenario skews the Taker's clock |
 | Taker authorised (tag 14); Maker does not claim by its deadline | from R the escrow refunds from `XmrClaimAuthorized`; the Node shows `xmr_maker_did_not_claim` with `refund`; refunds with tag 16 | sweeps its Monero back with the revealed share; a Maker that claims later than its own deadline but before R gives the Taker the share instead | unit tests: `a_late_claim_authorization_is_left_to_the_takers_refund` (Maker actor), `the_claim_path_reads_in_the_status_table` (Taker supervisor); no devnet scenario holds the Maker there |
 | Maker claimed (tag 15) | has the Maker's share; sweeps whenever it is back, no deadline | has the LEZ | `xmr-happy`, `xmr-concurrent`, `xmr-kill-taker` (7 kill points, among them "waiting for the Maker's claim" and "sweeping") |
 | Nothing before P, Maker funded | loses its LEZ | takes the LEZ with tag 17; its Monero stays locked | `xmr-punish` |

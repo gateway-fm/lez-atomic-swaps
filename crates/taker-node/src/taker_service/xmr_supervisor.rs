@@ -12,7 +12,9 @@
 //! refund time `R` the refund (tag 16) is offered and runs on the owner's
 //! command; halfway through `[R, P)` a swap still not refunded needs attention
 //! (`refund_window_closing`), and from the punish time `P` it can no longer be
-//! refunded (the Maker may take the LEZ).
+//! refunded (the Maker may take the LEZ). The refund's window is read from the
+//! finalized LEZ time, not the host's clock, and a refund not yet final is
+//! sent again, the same bytes, while that time is before `P`.
 //!
 //! The LEZ effects go through the swap's own sidecar, in process: the Taker's
 //! effect-tool profile has no tag-13 slot, and its tag-14 tool does not exist
@@ -258,6 +260,19 @@ pub(super) fn xmr_taker_view(
         return view(Phase::Refunded, 9, State::Refunded, None, None, "refunded");
     }
     if progress.refund_submitted.is_some() {
+        if now_ms >= windows.punish_ms {
+            // Sent and not seen final by P: one that landed before P is
+            // still recorded once seen final; otherwise it can no longer
+            // land and the Maker may punish.
+            return view(
+                Phase::TakerLegRefunded,
+                8,
+                State::AttentionRequired,
+                None,
+                Some("xmr_refund_not_final_by_punish_time"),
+                "refund_not_final",
+            );
+        }
         return view(
             Phase::TakerLegRefunded,
             8,
@@ -493,6 +508,11 @@ pub(super) fn overlay_view(view: &mut crate::TakerSwapViewV1, files: &XmrSwapFil
             Some("xmr_maker_did_not_claim") => {
                 view.status_detail = Some(
                     "the claim was authorised on LEZ (tag 14) and the Maker did not claim before the refund time, so it no longer can: refund (tag 16) before the punish time, or the Maker takes the LEZ and the Monero stays locked".to_owned(),
+                );
+            }
+            Some("xmr_refund_not_final_by_punish_time") => {
+                view.status_detail = Some(
+                    "the refund (tag 16) was sent and not seen final by the punish time: one that landed before it is recorded once seen final; otherwise it can no longer land, and the Maker can punish (tag 17) and take the LEZ".to_owned(),
                 );
             }
             Some("xmr_claim_sweep_in_doubt") => {
@@ -970,6 +990,12 @@ async fn sequenced(
 
 impl SwapLez {
     async fn finalized_height(&self) -> Result<u64> {
+        Ok(self.finalized_clock().await?.height)
+    }
+
+    /// The finalized LEZ clock: the latest finalized block's height and
+    /// consensus timestamp.
+    async fn finalized_clock(&self) -> Result<lez_bridge_protocol::ChainClock> {
         let observed = self
             .client
             .observe_finalized_clock(lez_bridge_protocol::ObserveFinalizedClockRequest {
@@ -980,7 +1006,7 @@ impl SwapLez {
             })
             .await
             .context("observe the finalized LEZ clock")?;
-        Ok(observed.clock.height)
+        Ok(observed.clock)
     }
 }
 
@@ -1139,71 +1165,73 @@ fn refund_signature(
     Ok(signature)
 }
 
-/// One refund step (tag 16): submits the completed refund once, inside
-/// `[R, P)`, then follows it to finality. The caller holds the swap's actor
-/// lock.
-pub(super) async fn refund_step(dynamic: &DynamicXmrRole, files: &XmrSwapFiles) -> Result<()> {
-    let facts = files.facts()?;
-    let progress = files.progress()?;
-    let windows = XmrWindows::of(&facts);
-    let (agreement, activation, _) = files.agreement()?;
-    let terms = XmrLezBridgeBindingV3::new(&agreement, &activation)
-        .map_err(|error| anyhow::anyhow!("derive the LEZ escrow terms: {error:?}"))?
-        .terms();
-    let lez = SwapLez::connect(dynamic, &facts.reservation_id)?;
-    let prepared = lez
-        .client
-        .prepare_native_xmr_refund_v3(PrepareNativeXmrRefundV3Request::new(
-            lez.context(derived_request_id(
-                &facts.reservation_id,
-                "xmr",
-                b"tag16-prepare",
-            )?),
-            lez.runtime.clone(),
-            terms,
-        ))
-        .await
-        .context("prepare the LEZ refund")?;
-    let completed = lez
-        .client
-        .complete_native_xmr_refund_v3(
-            CompleteNativeXmrRefundV3Request::new(
-                lez.context(derived_request_id(
-                    &facts.reservation_id,
-                    "xmr",
-                    b"tag16-complete",
-                )?),
-                lez.runtime.clone(),
-                terms,
-                prepared.refund,
-                AggregateBip340Signature::from_bytes(refund_signature(
-                    files,
-                    &agreement,
-                    &activation,
-                )?),
-            )
-            .map_err(|error| anyhow::anyhow!("the refund completion: {error:?}"))?,
-        )
-        .await
-        .context("complete the LEZ refund")?;
-    if progress.refund_submitted.is_none() {
-        let now = now_ms();
-        ensure!(
-            windows.refund_ms <= now && now < windows.punish_ms,
-            "the refund is valid only between the refund and the punish time"
-        );
-        lez.submit(&completed.refund).await?;
-        files.update(|record| {
-            record.refund_submitted = Some(hex::encode(completed.refund.transaction_id.as_bytes()));
-        })?;
+/// The chain effects of the refund (tag 16), one seam so its steps run with
+/// the chains stubbed: the swap's own LEZ sidecar.
+#[async_trait::async_trait]
+pub(super) trait XmrRefundChains: Sync {
+    type Refund: Send + Sync;
+
+    /// The finalized LEZ consensus time, ms (the latest finalized block's
+    /// timestamp).
+    async fn lez_time_ms(&self) -> Result<u64>;
+    /// The completed refund as the sidecar holds it: prepared and completed
+    /// once, then replayed (the same bytes on every call).
+    async fn complete_refund(&self) -> Result<Self::Refund>;
+    fn refund_id(refund: &Self::Refund) -> String;
+    async fn submit_refund(&self, refund: &Self::Refund) -> Result<()>;
+    async fn find_refund(
+        &self,
+        refund: &Self::Refund,
+        cursor: u64,
+    ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>>;
+}
+
+/// One refund step (tag 16), on the chain's clock. LEZ admits a transaction
+/// to its mempool and drops it at block building when its validity window is
+/// not open (`docs/milestone-1/lez-primitive-verification.md`), so the window
+/// is read from the finalized LEZ time, never from the host's clock: the
+/// refund is first sent once the finalized LEZ time is at or past `R` (every
+/// block still to come is later than the finalized one; the finality lag is
+/// the margin), and while it is not final and the finalized LEZ time is
+/// before `P` the identical bytes are sent again on every step. The sidecar
+/// decides each of those submissions on the chain (already known once
+/// included, sent again otherwise); the refund is completed once and nothing
+/// is re-signed. From `P` it can no longer land and is only looked for. The
+/// caller holds the swap's actor lock.
+pub(super) async fn refund_step<C: XmrRefundChains>(
+    chains: &C,
+    files: &XmrSwapFiles,
+    windows: XmrWindows,
+    progress: &XmrTakerProgressV1,
+) -> Result<()> {
+    if progress.refunded.is_some() {
+        return Ok(());
     }
+    let lez_ms = chains.lez_time_ms().await?;
+    if progress.refund_submitted.is_none()
+        && !(windows.refund_ms <= lez_ms && lez_ms < windows.punish_ms)
+    {
+        return Ok(());
+    }
+    let refund = chains.complete_refund().await?;
+    let id = C::refund_id(&refund);
+    match &progress.refund_submitted {
+        // From here the refund is followed, and sent until it lands or `P`.
+        None => {
+            files.update(|record| record.refund_submitted = Some(id))?;
+        }
+        Some(recorded) => ensure!(*recorded == id, "the sidecar completed another refund"),
+    }
+    // A failed send does not stop the look for an earlier one.
+    let sent = if lez_ms < windows.punish_ms {
+        chains.submit_refund(&refund).await
+    } else {
+        Ok(())
+    };
     let cursor = progress
         .scan_from
         .unwrap_or(progress.funded.as_ref().map_or(1, |funded| funded.block_id));
-    match lez
-        .find_final(&terms, XmrNativeEffectV3::Refund, &completed.refund, cursor)
-        .await?
-    {
+    match chains.find_refund(&refund, cursor).await? {
         Ok(finalized) => {
             files.update(|record| record.refunded = Some(finalized))?;
         }
@@ -1211,7 +1239,111 @@ pub(super) async fn refund_step(dynamic: &DynamicXmrRole, files: &XmrSwapFiles) 
             files.update(|record| record.scan_from = Some(cursor))?;
         }
     }
-    Ok(())
+    sent
+}
+
+/// The refund's chain in the Node: the swap's sidecar.
+struct LiveRefund {
+    files: XmrSwapFiles,
+    facts: XmrTakerSwapFactsV1,
+    lez: SwapLez,
+    terms: XmrNativeEscrowTermsV3,
+}
+
+impl LiveRefund {
+    fn connect(
+        dynamic: &DynamicXmrRole,
+        files: &XmrSwapFiles,
+        facts: &XmrTakerSwapFactsV1,
+    ) -> Result<Self> {
+        let (agreement, activation, _) = files.agreement()?;
+        let terms = XmrLezBridgeBindingV3::new(&agreement, &activation)
+            .map_err(|error| anyhow::anyhow!("derive the LEZ escrow terms: {error:?}"))?
+            .terms();
+        Ok(Self {
+            files: files.clone(),
+            facts: facts.clone(),
+            lez: SwapLez::connect(dynamic, &facts.reservation_id)?,
+            terms,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl XmrRefundChains for LiveRefund {
+    type Refund = PreparedTransaction;
+
+    async fn lez_time_ms(&self) -> Result<u64> {
+        Ok(self.lez.finalized_clock().await?.timestamp_ms)
+    }
+
+    async fn complete_refund(&self) -> Result<PreparedTransaction> {
+        let (agreement, activation, _) = self.files.agreement()?;
+        let prepared = self
+            .lez
+            .client
+            .prepare_native_xmr_refund_v3(PrepareNativeXmrRefundV3Request::new(
+                self.lez.context(derived_request_id(
+                    &self.facts.reservation_id,
+                    "xmr",
+                    b"tag16-prepare",
+                )?),
+                self.lez.runtime.clone(),
+                self.terms,
+            ))
+            .await
+            .context("prepare the LEZ refund")?;
+        let completed = self
+            .lez
+            .client
+            .complete_native_xmr_refund_v3(
+                CompleteNativeXmrRefundV3Request::new(
+                    self.lez.context(derived_request_id(
+                        &self.facts.reservation_id,
+                        "xmr",
+                        b"tag16-complete",
+                    )?),
+                    self.lez.runtime.clone(),
+                    self.terms,
+                    prepared.refund,
+                    AggregateBip340Signature::from_bytes(refund_signature(
+                        &self.files,
+                        &agreement,
+                        &activation,
+                    )?),
+                )
+                .map_err(|error| anyhow::anyhow!("the refund completion: {error:?}"))?,
+            )
+            .await
+            .context("complete the LEZ refund")?;
+        Ok(completed.refund)
+    }
+
+    fn refund_id(refund: &PreparedTransaction) -> String {
+        hex::encode(refund.transaction_id.as_bytes())
+    }
+
+    async fn submit_refund(&self, refund: &PreparedTransaction) -> Result<()> {
+        self.lez.submit(refund).await
+    }
+
+    async fn find_refund(
+        &self,
+        refund: &PreparedTransaction,
+        cursor: u64,
+    ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>> {
+        self.lez
+            .find_final(&self.terms, XmrNativeEffectV3::Refund, refund, cursor)
+            .await
+    }
+}
+
+/// One refund step through the swap's own chains.
+async fn refund(dynamic: &DynamicXmrRole, files: &XmrSwapFiles) -> Result<()> {
+    let facts = files.facts()?;
+    let progress = files.progress()?;
+    let chains = LiveRefund::connect(dynamic, files, &facts)?;
+    refund_step(&chains, files, XmrWindows::of(&facts), &progress).await
 }
 
 /// Tag 14 publishes the Taker's claim partial: only on the owner's command,
@@ -1757,6 +1889,9 @@ async fn tick_swap(
     let refund_admitted = admitted == Some(TakerFacadeActionV1::Refund);
     let claim_admitted = admitted == Some(TakerFacadeActionV1::Claim);
     let refund_waits = owner_busy && progress.refund_submitted.is_none();
+    // A refund once sent is driven until it is final: sent again while LEZ
+    // time is before P, and looked for after (the host's P may be early).
+    let refunding = refund_admitted || progress.refund_submitted.is_some();
     match status.revision {
         0 if owner_busy && progress.scan_from.is_none() => Ok(()),
         0 => drive_lez_lock(dynamic, files, &facts, &progress).await,
@@ -1770,17 +1905,13 @@ async fn tick_swap(
         // The watch never holds the refund back.
         6..=8 | 10 if progress.claim_authorization.is_some() => {
             let watched = claim(dynamic, files, &facts, &progress, now, claim_admitted).await;
-            if refund_admitted
-                && !refund_waits
-                && status.revision <= 8
-                && files.progress()?.maker_claim.is_none()
-            {
-                refund_step(dynamic, files).await?;
+            if refunding && !refund_waits && files.progress()?.maker_claim.is_none() {
+                refund(dynamic, files).await?;
             }
             watched
         }
-        6..=8 if refund_admitted && refund_waits => Ok(()),
-        6..=8 if refund_admitted => refund_step(dynamic, files).await,
+        6..=8 | 10 if refunding && refund_waits => Ok(()),
+        6..=8 | 10 if refunding => refund(dynamic, files).await,
         _ => Ok(()),
     }
 }
@@ -1872,9 +2003,7 @@ async fn supervise_once(state: &TakerServiceState) {
             let claiming = actor
                 .xmr_files()
                 .and_then(|files| files.progress().ok())
-                .is_some_and(|progress| {
-                    progress.claim_authorization.is_some() && !progress.claim_completed
-                });
+                .is_some_and(|progress| drives_adaptor_material(&progress));
             let held = if admitted.is_some() || claiming {
                 Some(lez_swap_store::ActorHeldLock::acquire_for(
                     actor.swap_id(),
@@ -1923,6 +2052,14 @@ async fn supervise_once(state: &TakerServiceState) {
             );
         }
     }
+}
+
+/// Whether the supervisor's next step of the swap may read its adaptor
+/// material without an owner's action: a claim it follows, or a refund it
+/// sends until it is final.
+fn drives_adaptor_material(progress: &XmrTakerProgressV1) -> bool {
+    (progress.claim_authorization.is_some() && !progress.claim_completed)
+        || (progress.refund_submitted.is_some() && progress.refunded.is_none())
 }
 
 /// Whether a bound swap has an owner transaction in flight, read from its
@@ -2707,6 +2844,177 @@ mod tests {
         assert!(maker_claim_key(&files, &agreement, wrong).is_err());
         // Nor is any other signature.
         assert!(maker_claim_key(&files, &agreement, [0x11; 64]).is_err());
+    }
+
+    /// The refund's chain, stubbed: the finalized LEZ time, whether the
+    /// refund is final, and every call counted.
+    struct StubRefund {
+        calls: Mutex<std::collections::BTreeMap<&'static str, u32>>,
+        lez_ms: Mutex<u64>,
+        final_at: Mutex<Option<u64>>,
+    }
+
+    impl StubRefund {
+        fn at(lez_ms: u64) -> Self {
+            Self {
+                calls: Mutex::default(),
+                lez_ms: Mutex::new(lez_ms),
+                final_at: Mutex::new(None),
+            }
+        }
+
+        fn called(&self, name: &'static str) {
+            *self.calls.lock().unwrap().entry(name).or_default() += 1;
+        }
+
+        fn calls(&self, name: &str) -> u32 {
+            self.calls.lock().unwrap().get(name).copied().unwrap_or(0)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl XmrRefundChains for StubRefund {
+        type Refund = String;
+
+        async fn lez_time_ms(&self) -> Result<u64> {
+            Ok(*self.lez_ms.lock().unwrap())
+        }
+
+        async fn complete_refund(&self) -> Result<String> {
+            self.called("complete");
+            Ok("16".repeat(32))
+        }
+
+        fn refund_id(refund: &String) -> String {
+            refund.clone()
+        }
+
+        async fn submit_refund(&self, refund: &String) -> Result<()> {
+            assert_eq!(*refund, "16".repeat(32), "the same bytes every time");
+            self.called("submit");
+            Ok(())
+        }
+
+        async fn find_refund(
+            &self,
+            _: &String,
+            cursor: u64,
+        ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>> {
+            self.called("find");
+            Ok(match *self.final_at.lock().unwrap() {
+                Some(at) => Ok(effect(at).unwrap()),
+                None => Err(cursor + 1),
+            })
+        }
+    }
+
+    /// One refund step at the host time `_host_ms`, which plays no part: the
+    /// refund runs on LEZ time.
+    async fn refund_tick(chains: &StubRefund, files: &XmrSwapFiles, _host_ms: u64) -> Result<()> {
+        refund_step(chains, files, WINDOWS, &files.progress().unwrap()).await
+    }
+
+    /// LEZ admits a refund to its mempool and drops it at block building
+    /// when its window is not open: an accepted refund that never lands is
+    /// sent again, the identical bytes, on every tick while LEZ time is
+    /// before P, until it is final.
+    #[tokio::test]
+    async fn a_refund_accepted_and_never_included_is_sent_again_until_it_lands() {
+        let (_directory, files) = swap(&locked());
+        let chains = StubRefund::at(WINDOWS.refund_ms);
+        refund_tick(&chains, &files, WINDOWS.refund_ms)
+            .await
+            .unwrap();
+        assert_eq!(chains.calls("submit"), 1);
+        assert_eq!(
+            files.progress().unwrap().refund_submitted,
+            Some("16".repeat(32))
+        );
+        // Accepted, dropped: the next ticks send it again.
+        *chains.lez_ms.lock().unwrap() = WINDOWS.refund_ms + 1_000;
+        refund_tick(&chains, &files, WINDOWS.refund_ms + 1_000)
+            .await
+            .unwrap();
+        refund_tick(&chains, &files, WINDOWS.refund_ms + 2_000)
+            .await
+            .unwrap();
+        assert_eq!(chains.calls("submit"), 3);
+        assert_eq!(files.progress().unwrap().refunded, None);
+        // A later send lands.
+        *chains.final_at.lock().unwrap() = Some(WINDOWS.refund_ms + 3_000);
+        refund_tick(&chains, &files, WINDOWS.refund_ms + 3_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            files.progress().unwrap().refunded,
+            effect(WINDOWS.refund_ms + 3_000)
+        );
+        assert_eq!(actor_phase(&files, WINDOWS.refund_ms + 3_000), "refunded");
+        // Final: nothing more is sent.
+        refund_tick(&chains, &files, WINDOWS.refund_ms + 4_000)
+            .await
+            .unwrap();
+        assert_eq!(chains.calls("submit"), 4);
+        assert_eq!(chains.calls("complete"), 4);
+    }
+
+    /// The refund's window is the chain's: a Taker whose clock runs ahead of
+    /// LEZ time sends nothing before LEZ time reaches R, and sends it then;
+    /// from P by LEZ time it is no longer sent, only looked for.
+    #[tokio::test]
+    async fn a_host_clock_ahead_of_lez_time_does_not_send_the_refund_early() {
+        let (_directory, files) = swap(&locked());
+        let chains = StubRefund::at(WINDOWS.refund_ms - 30_000);
+        refund_tick(&chains, &files, WINDOWS.refund_ms + 60_000)
+            .await
+            .unwrap();
+        assert_eq!((chains.calls("complete"), chains.calls("submit")), (0, 0));
+        assert_eq!(files.progress().unwrap().refund_submitted, None);
+        *chains.lez_ms.lock().unwrap() = WINDOWS.refund_ms;
+        refund_tick(&chains, &files, WINDOWS.refund_ms + 90_000)
+            .await
+            .unwrap();
+        assert_eq!(chains.calls("submit"), 1);
+        // The host clock past P while LEZ time is not: still sent.
+        *chains.lez_ms.lock().unwrap() = WINDOWS.punish_ms - 1;
+        refund_tick(&chains, &files, WINDOWS.punish_ms + 30_000)
+            .await
+            .unwrap();
+        assert_eq!(chains.calls("submit"), 2);
+        // LEZ time at P: it can no longer land, it is only looked for.
+        *chains.lez_ms.lock().unwrap() = WINDOWS.punish_ms;
+        refund_tick(&chains, &files, WINDOWS.punish_ms)
+            .await
+            .unwrap();
+        assert_eq!(chains.calls("submit"), 2);
+        assert_eq!(chains.calls("find"), 3);
+    }
+
+    /// Past P a refund that is not final is no longer "in flight": the row
+    /// says it did not land before the punish time and offers nothing, and a
+    /// refund seen final afterwards still reads refunded.
+    #[test]
+    fn a_refund_not_final_at_p_says_so() {
+        use TakerSwapStateV1 as State;
+        let mut progress = locked();
+        progress.refund_submitted = Some("16".repeat(32));
+        let at = |progress: &XmrTakerProgressV1, now| xmr_taker_view(progress, WINDOWS, now);
+        assert_eq!(
+            at(&progress, WINDOWS.punish_ms - 1).actor_phase,
+            "refund_in_flight"
+        );
+        let late = at(&progress, WINDOWS.punish_ms);
+        assert_eq!(late.state, State::AttentionRequired);
+        assert_eq!(late.actor_phase, "refund_not_final");
+        assert_eq!(
+            late.attention_reason,
+            Some("xmr_refund_not_final_by_punish_time")
+        );
+        assert_eq!(late.available_action, None);
+        progress.refunded = effect(WINDOWS.punish_ms - 1);
+        let refunded = at(&progress, WINDOWS.punish_ms + 1);
+        assert_eq!(refunded.state, State::Refunded);
+        assert!(refunded.revision >= late.revision);
     }
 
     #[test]

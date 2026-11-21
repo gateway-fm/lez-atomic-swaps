@@ -423,7 +423,8 @@ pub(crate) enum OwnedSubmission {
 /// bytes. On Linux, an owner-only durable store can reserve those bytes before
 /// exposure. The generic submission validator admits only active, revalidated
 /// preparations. Native-XMR init, fund, and tag-16 refund submissions additionally
-/// use their transaction IDs as canonical one-attempt request identities.
+/// use their transaction IDs as canonical request identities (one attempt for
+/// init and fund; the refund is sent again until it lands).
 pub struct NativeEscrowPlanner {
     role: Participant,
     signer: Arc<dyn MessageSigner>,
@@ -3063,6 +3064,16 @@ impl NativeEscrowPlanner {
             return Ok(None);
         }
         prepared_signer_nonce(prepared, self.signer_account_id).map(Some)
+    }
+
+    /// Whether `prepared` is the completed tag-16 refund this sidecar holds:
+    /// a recovery whose identical bytes are sent again until it lands.
+    pub async fn xmr_recovery_submission(&self, prepared: &PreparedTransaction) -> bool {
+        let state = self.state.lock().await;
+        state
+            .completed_xmr_refund_v3
+            .as_ref()
+            .is_some_and(|completed| completed.result.refund == *prepared)
     }
 
     fn validate_claim_supersede_request(

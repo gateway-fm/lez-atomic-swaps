@@ -1537,6 +1537,12 @@ impl BridgeRuntime {
         )
     }
 
+    /// Whether these exact bytes are an owned XMR recovery the request journal
+    /// decides again on every submission (the completed tag-16 refund).
+    pub async fn xmr_recovery_submission(&self, prepared: &PreparedTransaction) -> bool {
+        self.planner.xmr_recovery_submission(prepared).await
+    }
+
     /// Submits only exact bytes owned by this actor's active durable planner.
     ///
     /// An exact canonical lookup is performed before submission. A found byte-
