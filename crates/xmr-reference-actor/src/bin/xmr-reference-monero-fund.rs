@@ -10,6 +10,7 @@
 // Only the Linux sealed-descriptor reader reads.
 #[cfg_attr(target_os = "macos", allow(unused_imports))]
 use std::io::Read as _;
+#[cfg(target_os = "linux")]
 use std::{fs::File, os::unix::fs::PermissionsExt as _};
 
 use anyhow::{Context as _, Result, ensure};
