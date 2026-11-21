@@ -114,6 +114,11 @@ tier_tests() { # tier_tests <tier>
       # a Zcash offer from the Maker desk's form, taken from the Taker desk (no corridor)
       echo "ui:zec:zec-desk-offer:TakerSellsLez"; echo "ui:zec:zec-desk-offer:TakerSellsForeign"
       # last: each makes its own chain, one no other test can run on
+      # a stranger's credit to a funded escrow's custody (TM-0032): the swap still settles,
+      # the ending's recipient gets the lot and the credit; refunds refund the Taker's LEZ
+      for d in "${directions[@]}"; do echo "node:btc:btc-custody-credit:$d"; echo "node:zec:zec-custody-credit:$d"; done
+      echo "node:btc:btc-custody-credit-refund:TakerSellsLez"; echo "node:zec:zec-custody-credit-refund:TakerSellsLez"
+      for s in xmr-custody-credit xmr-custody-credit-refund; do echo "node:xmr:$s:TakerSellsLez"; done
       # the Monero swaps through the two Nodes (only where LEZ_MONERO=1)
       for s in xmr-happy xmr-taker-refund xmr-maker-never-funds xmr-punish xmr-concurrent xmr-kill-taker xmr-kill-maker xmr-taker-refund-kill \
         xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock mixed-three-pair; do echo "node:xmr:$s:TakerSellsLez"; done
@@ -229,12 +234,12 @@ profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile t
   # LEZ its Taker-reveals-first twin): the refund journeys' (-v6, -v8) is group
   # zec-v6, every other ZEC test runs on -v5 (-v7) in `fast`.
   if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
-    case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window) echo zec-v6 ;; *) echo fast ;; esac
+    case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window|zec-custody-credit-refund) echo zec-v6 ;; *) echo fast ;; esac
     return 0
   fi
   [[ "$pair" != xmr ]] || { echo fast; return 0; }
   [[ "$pair" == btc ]] || return 0
-  case "$scenario" in taker-refund|taker-refund-offline|maker-refund|refund-then-maker-lock) echo refund ;; *) echo fast ;; esac
+  case "$scenario" in taker-refund|taker-refund-offline|maker-refund|refund-then-maker-lock|btc-custody-credit-refund) echo refund ;; *) echo fast ;; esac
 }
 switches=0
 use_profile() { # use_profile <profile>: switch the standing stack to it unless it runs on it already
@@ -353,7 +358,7 @@ expected_seconds() { # expected_seconds <test>
       node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
       # waits for the agreement's punish time P (+1000 s on fast), or its refund time R (+720 s)
       node:xmr:xmr-punish:*) seconds=1340 ;;
-      node:xmr:xmr-wallet-restart:*|node:xmr:xmr-taker-refund*|node:xmr:xmr-maker-never-funds:*|ui:xmr:xmr-taker-refund:*) seconds=1020 ;;
+      node:xmr:xmr-wallet-restart:*|node:xmr:xmr-taker-refund*|node:xmr:xmr-custody-credit-refund:*|node:xmr:xmr-maker-never-funds:*|ui:xmr:xmr-taker-refund:*) seconds=1020 ;;
       node:xmr:*|ui:xmr:*) seconds=600 ;;
       # ~2 min a try, and its provoked race may need several (NOT-EXERCISED):
       # started early, its tries do not hold one lane while the others idle
