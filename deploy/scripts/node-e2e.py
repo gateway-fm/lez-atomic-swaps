@@ -4005,11 +4005,16 @@ def zec_dynamic_publish(stamp: str, offers: list[tuple[str, str]]) -> None:
     route = ["--pair", "zcash", "--direction", "taker-sells-lez" if zec_taker_sells_lez() else "taker-sells-foreign"]
     revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
                                      if r["value"]["route"] == ROUTE), [])
-    maker_cli("configure-pair", "--request-id", f"e2e-zecdyn-pair-{stamp}", *revision(maker_cli("pairs")), *route,
-              "--enabled", "true", "--price-source", "local", "--minimum-foreign-units", str(ZEC_FOREIGN_UNITS),
-              "--maximum-foreign-units", str(ZEC_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
-    maker_cli("set-local-price", "--request-id", f"e2e-zecdyn-price-{stamp}", *revision(maker_cli("prices")), *route,
-              "--lez-units-per-lot", "1", "--foreign-units-per-lot", str(ZEC_FOREIGN_UNITS // ZEC_LEZ_UNITS))
+    # A price needs its route configured and an enabled route needs its price:
+    # on a Maker that has never priced this route, it is saved disabled first.
+    for enabled in ("false", "true"):
+        maker_cli("configure-pair", "--request-id", f"e2e-zecdyn-pair-{stamp}-{enabled}", *revision(maker_cli("pairs")),
+                  *route, "--enabled", enabled, "--price-source", "local", "--minimum-foreign-units",
+                  str(ZEC_FOREIGN_UNITS), "--maximum-foreign-units", str(ZEC_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+        if enabled == "false":
+            maker_cli("set-local-price", "--request-id", f"e2e-zecdyn-price-{stamp}", *revision(maker_cli("prices")),
+                      *route, "--lez-units-per-lot", "1", "--foreign-units-per-lot",
+                      str(ZEC_FOREIGN_UNITS // ZEC_LEZ_UNITS))
     for request_id, offer_id in offers:
         maker_cli("publish-offer", "--request-id", request_id, "--offer-id", offer_id, *route)
         log(f"  Maker CLI published {offer_id} on its running Node (no corridor)")
