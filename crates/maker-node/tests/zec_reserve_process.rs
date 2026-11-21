@@ -217,6 +217,15 @@ async fn agree_at_take_time(direction: SwapDirection) {
         logos_offer_announcement_base64: None,
         funding_transaction_hex: None,
     };
+    // A swap a Taker named `<id>.zec-stage` before the reservation-id grammar
+    // existed: composing the stage of `<id>` must leave it whole.
+    let reservation_id = derived_request_id(&request.request_id, b"node-reservation");
+    let decoy = private_dir(
+        &maker_home
+            .join("swaps")
+            .join(format!("{}.zec-stage", reservation_id.as_str())),
+    );
+    write_private(&decoy.join("zec-reservation.json"), b"funded swap");
     let module =
         taker_service_rpc_module(load_taker_service_context(&service_config).unwrap()).unwrap();
     let commit: TakerInitiationCommitV1 = module
@@ -224,6 +233,11 @@ async fn agree_at_take_time(direction: SwapDirection) {
         .await
         .expect("the take reserves, proposes and completes over Chat");
     assert!(!commit.was_replay);
+    assert_eq!(
+        fs::read(decoy.join("zec-reservation.json")).unwrap(),
+        b"funded swap",
+        "reserving the prefix id left the swap named like its stage whole"
+    );
     let swap_id = commit.swap.swap_id.clone();
     assert!(swap_id.as_str().starts_with("zec-"));
 
@@ -604,7 +618,10 @@ fn only_child(directory: &Path) -> PathBuf {
     let children: Vec<PathBuf> = fs::read_dir(directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .filter(|path| path.is_dir())
+        // Swap directories only: not the stage directory, not a decoy.
+        .filter(|path| {
+            path.is_dir() && !path.file_name().unwrap().to_str().unwrap().contains('.')
+        })
         .collect();
     assert_eq!(children.len(), 1, "{}: {children:?}", directory.display());
     children.into_iter().next().unwrap()

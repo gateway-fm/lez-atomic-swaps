@@ -19,6 +19,11 @@ use std::fs::{File, Metadata};
 use std::io::Read as _;
 use std::path::Component;
 
+/// The directory under a swaps root where reservations are composed before
+/// one rename publishes each as its swap directory. Its name is no
+/// reservation id, so it is never a swap directory, and nothing in it is one.
+pub const STAGE_DIRECTORY: &str = ".stage";
+
 /// The files of one swap for one role.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SwapLayout {
@@ -40,6 +45,7 @@ impl SwapLayout {
     ///
     /// Fails when the directory exists or cannot be created.
     pub fn create(&self) -> Result<()> {
+        self.reservation_id()?;
         DirBuilder::new()
             .mode(0o700)
             .create(&self.root)
@@ -48,6 +54,77 @@ impl SwapLayout {
             DirBuilder::new().mode(0o700).create(self.root.join(sub))?;
         }
         Ok(())
+    }
+
+    /// The reservation id that names this swap directory.
+    ///
+    /// Fails for a name outside the reservation-id grammar
+    /// ([`RequestId::is_reservation_id`]): no directory is made for it.
+    fn reservation_id(&self) -> Result<&str> {
+        let name = self
+            .root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("the swap directory has no name")?;
+        ensure!(
+            RequestId::new(name).is_ok_and(|id| id.is_reservation_id()),
+            "{name:?} is not a reservation id"
+        );
+        Ok(name)
+    }
+
+    /// A fresh, empty, owner-private directory in which this swap's `pair`
+    /// reservation is composed: `<swaps root>/.stage/<reservation id>.<pair>`.
+    ///
+    /// A stale stage of the same reservation and pair (a crash before its
+    /// rename) is removed first. The stage lives outside the swaps root's id
+    /// namespace, so removing it never touches another swap's directory.
+    /// The caller publishes it with one rename onto [`Self::root`].
+    ///
+    /// # Errors
+    ///
+    /// Fails for an id outside the reservation-id grammar, a `pair` that is
+    /// not lowercase ASCII letters, or a stage directory that cannot be made
+    /// owner-private.
+    pub fn fresh_stage(&self, pair: &str) -> Result<PathBuf> {
+        let name = self.reservation_id()?;
+        ensure!(
+            !pair.is_empty() && pair.bytes().all(|byte| byte.is_ascii_lowercase()),
+            "{pair:?} is not a pair name"
+        );
+        let stages = self
+            .root
+            .parent()
+            .context("the swap directory has no swaps root")?
+            .join(STAGE_DIRECTORY);
+        match DirBuilder::new().mode(0o700).create(&stages) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("create {}", stages.display()));
+            }
+        }
+        let metadata = fs::symlink_metadata(&stages)?;
+        ensure!(
+            metadata.is_dir()
+                && metadata.mode().trailing_zeros() >= 6
+                && metadata.uid() == rustix::process::geteuid().as_raw(),
+            "{} must be an owner-private directory",
+            stages.display()
+        );
+        let stage = stages.join(format!("{name}.{pair}"));
+        match fs::remove_dir_all(&stage) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("remove {}", stage.display()));
+            }
+        }
+        DirBuilder::new()
+            .mode(0o700)
+            .create(&stage)
+            .with_context(|| format!("create {}", stage.display()))?;
+        Ok(stage)
     }
 
     /// Whether the swap directory exists and is owner-private.
@@ -285,7 +362,78 @@ pub fn read_vetted(path: &Path, maximum: usize) -> Result<Vec<u8>> {
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt as _};
 
-    use super::read_private;
+    use std::path::Path;
+
+    use lez_bridge_protocol::RequestId;
+
+    use super::{STAGE_DIRECTORY, SwapLayout, read_private};
+
+    fn private_dir(path: &Path) {
+        fs::create_dir(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    /// A Taker named one swap `Y.xmr-stage`, then reserves `Y`: the stage of
+    /// `Y` is not the first swap's directory, so composing it leaves that
+    /// swap whole. The same holds for every pair's stage suffix.
+    #[test]
+    fn staging_a_reservation_never_touches_a_swap_named_like_its_stage() {
+        let run = tempfile::tempdir().unwrap();
+        let swaps = run.path().join("swaps");
+        private_dir(&swaps);
+        let id = RequestId::new("victim-reservation-01").unwrap();
+        let layout = SwapLayout::new(&swaps, &id);
+        for pair in ["xmr", "zec", "btc"] {
+            for suffix in [format!(".{pair}-stage"), format!(".{pair}")] {
+                let funded = swaps.join(format!("{}{suffix}", id.as_str()));
+                private_dir(&funded);
+                fs::write(funded.join("role-key"), b"funded").unwrap();
+            }
+            let stage = layout.fresh_stage(pair).unwrap();
+            assert_eq!(
+                stage,
+                swaps
+                    .join(STAGE_DIRECTORY)
+                    .join(format!("{}.{pair}", id.as_str()))
+            );
+            assert!(stage.is_dir() && fs::read_dir(&stage).unwrap().next().is_none());
+        }
+        for pair in ["xmr", "zec", "btc"] {
+            for suffix in [format!(".{pair}-stage"), format!(".{pair}")] {
+                let funded = swaps.join(format!("{}{suffix}", id.as_str()));
+                assert_eq!(fs::read(funded.join("role-key")).unwrap(), b"funded");
+            }
+        }
+    }
+
+    #[test]
+    fn a_stale_stage_is_made_again_empty() {
+        let run = tempfile::tempdir().unwrap();
+        let swaps = run.path().join("swaps");
+        private_dir(&swaps);
+        let layout = SwapLayout::new(&swaps, &RequestId::new("stale-reservation-1").unwrap());
+        let stage = layout.fresh_stage("xmr").unwrap();
+        fs::write(stage.join("half"), b"x").unwrap();
+        assert_eq!(layout.fresh_stage("xmr").unwrap(), stage);
+        assert!(fs::read_dir(&stage).unwrap().next().is_none());
+    }
+
+    /// An id outside the reservation-id grammar gets no swap directory and
+    /// no stage, whatever made it past the wire.
+    #[test]
+    fn no_directory_is_made_for_an_id_outside_the_reservation_grammar() {
+        let run = tempfile::tempdir().unwrap();
+        let swaps = run.path().join("swaps");
+        private_dir(&swaps);
+        let dotted = SwapLayout::new(&swaps, &RequestId::new("victim-01.xmr-stage").unwrap());
+        assert!(dotted.create().is_err());
+        assert!(dotted.fresh_stage("xmr").is_err());
+        assert!(!dotted.root().exists());
+        let good = SwapLayout::new(&swaps, &RequestId::new("good_reservation-01").unwrap());
+        assert!(good.fresh_stage("x.y").is_err());
+        assert!(good.fresh_stage("").is_err());
+        good.create().unwrap();
+    }
 
     #[test]
     fn read_private_keeps_its_owner_rule_outside_the_credential_directory() {

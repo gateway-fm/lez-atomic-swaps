@@ -166,6 +166,7 @@ pub struct ZecOutpointV1 {
 #[serde(deny_unknown_fields)]
 pub struct ZecReserveRequestV1 {
     pub schema_version: u16,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub offer_id: MakerOfferId,
     pub signed_offer_envelope: Vec<u8>,
@@ -205,6 +206,7 @@ pub struct ZecChatProposeRequestV1 {
     pub request_id: RequestId,
     pub offer_id: MakerOfferId,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub foreign_units: u64,
     pub signed_offer_envelope: Vec<u8>,
@@ -217,6 +219,7 @@ pub struct ZecChatProposalV1 {
     pub schema_version: u16,
     pub offer_revision: u64,
     pub was_replay: bool,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub lez_units: u128,
     pub maker_identity: Vec<u8>,
@@ -232,6 +235,7 @@ pub struct ZecChatCompleteRequestV1 {
     pub request_id: RequestId,
     pub offer_id: MakerOfferId,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub final_agreement_wire: Vec<u8>,
 }
@@ -252,6 +256,7 @@ pub struct BtcChatProposeRequestV1 {
     pub request_id: RequestId,
     pub offer_id: MakerOfferId,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub foreign_units: u64,
     pub signed_offer_envelope: Vec<u8>,
@@ -265,6 +270,7 @@ pub struct BtcChatProposeRequestV2 {
     pub request_id: RequestId,
     pub offer_id: MakerOfferId,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub foreign_units: u64,
     pub signed_offer_envelope: Vec<u8>,
@@ -279,6 +285,7 @@ pub struct BtcChatProposalV1 {
     pub schema_version: u16,
     pub offer_revision: u64,
     pub was_replay: bool,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub lez_units: u128,
     pub maker_identity: Vec<u8>,
@@ -293,6 +300,7 @@ pub struct BtcChatProposalV2 {
     pub schema_version: u16,
     pub offer_revision: u64,
     pub was_replay: bool,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub lez_units: u128,
     pub maker_identity: Vec<u8>,
@@ -311,6 +319,7 @@ pub struct BtcChatCompleteRequestV1 {
     pub request_id: RequestId,
     pub offer_id: MakerOfferId,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub final_agreement_wire: Vec<u8>,
 }
@@ -322,6 +331,7 @@ pub struct BtcChatCompleteRequestV2 {
     pub request_id: RequestId,
     pub offer_id: MakerOfferId,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub final_agreement_wire: Vec<u8>,
 }
@@ -353,6 +363,7 @@ pub struct XmrChatStageARequestV1 {
     pub request_id: RequestId,
     pub offer_id: MakerOfferId,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub foreign_units: u64,
     pub signed_offer_envelope: Vec<u8>,
@@ -366,6 +377,7 @@ pub struct XmrChatStageAResponseV1 {
     pub schema_version: u16,
     pub offer_revision: u64,
     pub was_replay: bool,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub lez_units: u128,
     pub swap_id: Box<str>,
@@ -379,6 +391,7 @@ pub struct XmrChatActivateRequestV1 {
     pub request_id: RequestId,
     pub offer_id: MakerOfferId,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     #[serde(with = "activation_wire_base64")]
     pub activation_wire: Vec<u8>,
@@ -401,6 +414,7 @@ pub struct XmrChatActivateResponseV1 {
 #[serde(deny_unknown_fields)]
 pub struct XmrReserveRequestV1 {
     pub schema_version: u16,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub offer_id: MakerOfferId,
     pub signed_offer_envelope: Vec<u8>,
@@ -448,6 +462,7 @@ pub struct XmrLegPacketsV1 {
 pub struct XmrCeremonyReserveRequestV1 {
     pub schema_version: u16,
     pub request_id: RequestId,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub taker_commitments: XmrLegPacketsV1,
 }
@@ -465,6 +480,7 @@ pub struct XmrCeremonyReserveResponseV1 {
 pub struct XmrCeremonyNonceRequestV1 {
     pub schema_version: u16,
     pub request_id: RequestId,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub taker_nonces: XmrLegPacketsV1,
 }
@@ -484,6 +500,7 @@ pub struct XmrCeremonyNonceResponseV1 {
 pub struct XmrCeremonyPartialRequestV1 {
     pub schema_version: u16,
     pub request_id: RequestId,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     #[serde(with = "ceremony_packet_base64")]
     pub taker_refund_partial: Vec<u8>,
@@ -570,6 +587,90 @@ mod tests {
         let decoded: T = serde_json::from_slice(&json).expect("deserialize XMR wire");
         assert_eq!(&decoded, value);
         json
+    }
+
+    /// Ids a Taker might choose to reach a path beside another swap's
+    /// directory, or outside the swaps root.
+    const NOT_RESERVATION_IDS: [&str; 7] = [
+        "victim-reservation-01.xmr-stage",
+        "victim-reservation-01.zec-stage",
+        "victim-reservation-01.",
+        "victim/reservation-01",
+        "../../victim-reservation",
+        "",
+        "an-id-that-is-far-too-long-to-name-a-swap-directory-under-a-swaps-root",
+    ];
+
+    fn with_reservation_id(mut value: Value, id: &str) -> Value {
+        value["reservation_id"] = Value::String(id.to_owned());
+        value
+    }
+
+    /// Every pair's reserve, round and completion wire refuses a reservation
+    /// id that could name another swap's sibling path.
+    #[test]
+    fn every_reservation_wire_refuses_an_id_that_is_not_path_safe() {
+        let xmr = serde_json::to_value(reserve_request(vec![0x7b; 64])).unwrap();
+        let ceremony = serde_json::to_value(XmrCeremonyReserveRequestV1 {
+            schema_version: 1,
+            request_id: request_id("xmr-ceremony-reserve-001"),
+            reservation_id: request_id("xmr-reserve-reservation-001"),
+            taker_commitments: packets(0x10),
+        })
+        .unwrap();
+        let zec = serde_json::to_value(ZecReserveRequestV1 {
+            schema_version: 1,
+            reservation_id: request_id("zec-reserve-reservation-001"),
+            offer_id: MakerOfferId::new("zec-reserve-offer-001").unwrap(),
+            signed_offer_envelope: vec![1],
+            foreign_units: 1,
+            taker_zcash_public_key: vec![2; 33],
+            taker_lez_account: [3; 32],
+            taker_funding: None,
+            taker_secret_digest: None,
+        })
+        .unwrap();
+        let zec_complete = serde_json::to_value(ZecChatCompleteRequestV1 {
+            schema_version: 1,
+            request_id: request_id("zec-complete-request-001"),
+            offer_id: MakerOfferId::new("zec-reserve-offer-001").unwrap(),
+            expected_offer_revision: 1,
+            reservation_id: request_id("zec-reserve-reservation-001"),
+            final_agreement_wire: vec![4],
+        })
+        .unwrap();
+        serde_json::from_value::<XmrReserveRequestV1>(xmr.clone()).unwrap();
+        serde_json::from_value::<XmrCeremonyReserveRequestV1>(ceremony.clone()).unwrap();
+        serde_json::from_value::<ZecReserveRequestV1>(zec.clone()).unwrap();
+        serde_json::from_value::<ZecChatCompleteRequestV1>(zec_complete.clone()).unwrap();
+        for id in NOT_RESERVATION_IDS {
+            assert!(
+                serde_json::from_value::<XmrReserveRequestV1>(with_reservation_id(xmr.clone(), id))
+                    .is_err(),
+                "XMR reserve accepted {id:?}"
+            );
+            assert!(
+                serde_json::from_value::<XmrCeremonyReserveRequestV1>(with_reservation_id(
+                    ceremony.clone(),
+                    id
+                ))
+                .is_err(),
+                "XMR ceremony accepted {id:?}"
+            );
+            assert!(
+                serde_json::from_value::<ZecReserveRequestV1>(with_reservation_id(zec.clone(), id))
+                    .is_err(),
+                "ZEC reserve accepted {id:?}"
+            );
+            assert!(
+                serde_json::from_value::<ZecChatCompleteRequestV1>(with_reservation_id(
+                    zec_complete.clone(),
+                    id
+                ))
+                .is_err(),
+                "ZEC completion accepted {id:?}"
+            );
+        }
     }
 
     #[test]

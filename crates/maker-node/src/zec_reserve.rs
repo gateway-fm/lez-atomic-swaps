@@ -12,7 +12,6 @@
 
 use std::{
     fs,
-    os::unix::fs::DirBuilderExt as _,
     path::{Path, PathBuf},
 };
 
@@ -309,6 +308,10 @@ pub(super) async fn reserve(
     if request.schema_version != 1 || request.foreign_units == 0 {
         return Err(invalid_request("unsupported or empty ZEC reservation"));
     }
+    // The id names the swap directory; decoding already refused any other.
+    if !request.reservation_id.is_reservation_id() {
+        return Err(invalid_request("the ZEC reservation id is not path-safe"));
+    }
     let reservations = context
         .zec_reservations
         .as_ref()
@@ -389,13 +392,11 @@ pub(super) async fn reserve(
         .config
         .connect()
         .map_err(|error| internal(&error))?;
-    // Everything is made in a private stage beside the swap directory and
-    // published by one rename, so a crash leaves no half reservation.
-    let stage = PathBuf::from(format!("{}.zec-stage", layout.root().display()));
-    let _ = fs::remove_dir_all(&stage);
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&stage)
+    // Everything is made in a private stage outside the swaps root's id
+    // namespace and published by one rename, so a crash leaves no half
+    // reservation and no stage is ever another swap's directory.
+    let stage = layout
+        .fresh_stage("zec")
         .map_err(|error| internal(&error))?;
     let reserved = reserve_zec_maker_role(
         &reservations.config,
