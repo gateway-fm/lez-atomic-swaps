@@ -77,6 +77,10 @@ const PROGRESS_FILE: &str = "xmr-taker-progress.json";
 const MAX_PROGRESS_BYTES: usize = 64 * 1024;
 const MAX_WIRE_BYTES: usize = 300 * 1024;
 const ROLE_SHARE_FILE: &str = "xmr-share.key";
+/// A sweep that sent nothing is retried after this, doubling per attempt up
+/// to `SWEEP_RETRY_MAX_MS`.
+const SWEEP_RETRY_FIRST_MS: u64 = 15_000;
+const SWEEP_RETRY_MAX_MS: u64 = 15 * 60_000;
 /// Bounded finalized-history scans per effect and tick.
 const SCANS_PER_TICK: usize = 8;
 
@@ -138,6 +142,10 @@ pub(super) struct XmrTakerProgressV1 {
     /// never resent.
     #[serde(default)]
     pub(super) claim_sweep_in_doubt: bool,
+    /// The last sweep sent nothing; the next waits until then (host time,
+    /// ms).
+    #[serde(default)]
+    pub(super) claim_sweep_retry_at_ms: Option<u64>,
     #[serde(default)]
     pub(super) claim_sweep: Option<XmrClaimSweepV1>,
     /// The swept output is final and unlocked in the role wallet.
@@ -1710,29 +1718,7 @@ pub(super) async fn claim_step<C: XmrClaimChains>(
         return Ok(());
     }
     if let Some(claim) = &progress.maker_claim {
-        if progress.claim_sweep_in_doubt {
-            return Ok(());
-        }
-        let signature = signature_bytes(&claim.signature)?;
-        let attempt = progress.claim_sweep_attempts.saturating_add(1);
-        files.update(|record| {
-            record.claim_sweep_attempts = attempt;
-            record.claim_sweep_in_doubt = true;
-        })?;
-        return match chains.sweep(signature, attempt).await {
-            Ok(sweep) => {
-                files.update(|record| {
-                    record.claim_sweep = Some(sweep);
-                    record.claim_sweep_in_doubt = false;
-                })?;
-                Ok(())
-            }
-            Err(SweepFailure::NotSent(error)) => {
-                files.update(|record| record.claim_sweep_in_doubt = false)?;
-                Err(error)
-            }
-            Err(SweepFailure::InDoubt(error)) => Err(error),
-        };
+        return sweep_step(chains, files, progress, claim, now_ms).await;
     }
     if let Some(authorized) = &progress.claim_authorized {
         let cursor = progress.claim_scan_from.unwrap_or(authorized.block_id);
@@ -1790,6 +1776,56 @@ pub(super) async fn claim_step<C: XmrClaimChains>(
         }
     }
     Ok(())
+}
+
+/// The sweep of one claim: sent once from a fresh wallet file, recorded as
+/// started before it is sent; one that sent nothing is retried after its
+/// back-off.
+async fn sweep_step<C: XmrClaimChains>(
+    chains: &C,
+    files: &XmrSwapFiles,
+    progress: &XmrTakerProgressV1,
+    claim: &XmrMakerClaimV1,
+    now_ms: u64,
+) -> Result<()> {
+    if progress.claim_sweep_in_doubt
+        || progress
+            .claim_sweep_retry_at_ms
+            .is_some_and(|retry_at| now_ms < retry_at)
+    {
+        return Ok(());
+    }
+    let signature = signature_bytes(&claim.signature)?;
+    let attempt = progress.claim_sweep_attempts.saturating_add(1);
+    files.update(|record| {
+        record.claim_sweep_attempts = attempt;
+        record.claim_sweep_in_doubt = true;
+    })?;
+    return match chains.sweep(signature, attempt).await {
+        Ok(sweep) => {
+            files.update(|record| {
+                record.claim_sweep = Some(sweep);
+                record.claim_sweep_in_doubt = false;
+                record.claim_sweep_retry_at_ms = None;
+            })?;
+            Ok(())
+        }
+        // Nothing was sent: retried, never given up, after a back-off
+        // that doubles per attempt up to a cap, so a sweep that cannot
+        // go out yet is no hot loop and each attempt's wallet file is
+        // not made every tick.
+        Err(SweepFailure::NotSent(error)) => {
+            let wait = SWEEP_RETRY_FIRST_MS
+                .saturating_mul(1 << attempt.saturating_sub(1).min(16))
+                .min(SWEEP_RETRY_MAX_MS);
+            files.update(|record| {
+                record.claim_sweep_in_doubt = false;
+                record.claim_sweep_retry_at_ms = Some(now_ms.saturating_add(wait));
+            })?;
+            Err(error)
+        }
+        Err(SweepFailure::InDoubt(error)) => Err(error),
+    };
 }
 
 fn signature_bytes(text: &str) -> Result<[u8; 64]> {
@@ -3017,13 +3053,15 @@ mod tests {
         assert!(files.progress().unwrap().claim_sweep_in_doubt);
 
         // A sweep refused before the wallet had it is retried, from the next
-        // wallet file.
+        // wallet file, after its back-off.
         let (_directory, files) = swap(&progress);
         let chains = StubChains::default();
         *chains.sweep_fails.lock().unwrap() = Some(true);
         assert!(step(&chains, &files, 140_000, false).await.is_err());
         assert!(!files.progress().unwrap().claim_sweep_in_doubt);
-        step(&chains, &files, 140_000, false).await.unwrap();
+        step(&chains, &files, 140_000 + SWEEP_RETRY_FIRST_MS, false)
+            .await
+            .unwrap();
         assert_eq!(*chains.sweep_attempts.lock().unwrap(), vec![1, 2]);
         assert!(files.progress().unwrap().claim_sweep.is_some());
 
@@ -3847,6 +3885,42 @@ mod tests {
         let mut progress = locked();
         progress.refund_submitted = Some("16".repeat(32));
         assert!(!lez_in_flight(&progress, WINDOWS, WINDOWS.refund_ms));
+    }
+
+    /// A sweep that sends nothing (`RestoredBalanceMismatch` is one: no
+    /// unspent output of the swap's amount yet) is retried, never given up,
+    /// but each retry waits longer, up to a cap: no hot loop, and wallet
+    /// files grow slowly. The sweep spends the swap's output by its key
+    /// image (`restore_shared_and_sweep_once`), so extra outputs at the
+    /// shared address do not stop it.
+    #[tokio::test]
+    async fn a_sweep_that_sends_nothing_backs_off_and_is_retried() {
+        let mut progress = locked();
+        progress.claim_authorization = Some("ab".repeat(32));
+        progress.claim_authorized = effect(110_000);
+        progress.maker_claim = Some(maker_claim(130_000));
+        let (_directory, files) = swap(&progress);
+        let chains = StubChains::default();
+        let mut now = 140_000;
+        let mut waits = Vec::new();
+        for _ in 0..12 {
+            *chains.sweep_fails.lock().unwrap() = Some(true);
+            let before = chains.calls("sweep");
+            assert!(step(&chains, &files, now, false).await.is_err());
+            assert_eq!(chains.calls("sweep"), before + 1);
+            // Not again until its back-off has passed.
+            let retry_at = files.progress().unwrap().claim_sweep_retry_at_ms.unwrap();
+            step(&chains, &files, retry_at - 1, false).await.unwrap();
+            assert_eq!(chains.calls("sweep"), before + 1);
+            waits.push(retry_at - now);
+            now = retry_at;
+        }
+        assert!(waits.windows(2).all(|pair| pair[1] >= pair[0]));
+        assert_eq!(waits[0], SWEEP_RETRY_FIRST_MS);
+        assert_eq!(*waits.last().unwrap(), SWEEP_RETRY_MAX_MS);
+        step(&chains, &files, now, false).await.unwrap();
+        assert!(files.progress().unwrap().claim_sweep.is_some());
+        assert_eq!(files.progress().unwrap().claim_sweep_retry_at_ms, None);
     }
 
     #[test]

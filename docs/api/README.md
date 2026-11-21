@@ -574,7 +574,7 @@ when the owner is needed (`crates/taker-node/src/taker_service/xmr_supervisor.rs
 | `both_legs_locked` | `claim_available` | `claim` | both legs locked, before R |
 | `claim_authorizing` | `claim_in_progress` | — | tag 14 sent, not yet final |
 | `awaiting_maker_claim` | `claim_in_progress` | — | tag 14 final; waiting for the Maker's tag 15 |
-| `sweeping` | `claim_in_progress`, or `attention_required` (`xmr_claim_sweep_in_doubt`) | — | the Maker claimed; the Monero is being swept |
+| `sweeping` | `claim_in_progress`, or `attention_required` (`xmr_claim_sweep_in_doubt`) | — | the Maker claimed; the Monero is being swept: the swap's output by its key image, so other outputs at the shared address are left alone. A sweep that sent nothing (no unspent output of the swap's amount yet) is retried after 15 s, doubling per attempt up to 15 min |
 | `completed` | `completed` | — | the swept output is in the role wallet |
 | `refund_available` | `refund_available`, or `attention_required` (`xmr_maker_did_not_claim` from R after a tag 14 the Maker did not answer; `refund_window_closing` from R + (P − R)/2) | `refund` | the refund window [R, P) is open |
 | `refund_in_flight` | `refund_in_progress` | — | tag 16 sent, not yet final; sent again, the same bytes, while the finalized LEZ time is before P |
