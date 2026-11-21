@@ -229,7 +229,8 @@ class Lanes(Runner):
         self.assertIn('LEZ_LANES=1 DEFER=taker-zurich-01 ', ups[0])
 
     def test_the_two_balance_refusals_run_last_at_once_on_one_chain(self):
-        plan = {'happy': {'sleep': 1}, 'zec-balance-refusal': {'sleep': 1.5}}
+        # the two refusals meet each other: run one after the other they fail
+        plan = {'happy': {'sleep': 1}, 'zec-balance-refusal': {'meet': True}}
         run, _ = self.regress('node:zec:zec-balance-refusal:TakerSellsLez', 'node:zec:zec-balance-refusal:TakerSellsForeign',
                               'node:btc:happy:TakerSellsLez', plan=plan, LEZ_LANES='3')
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
@@ -248,8 +249,7 @@ class Lanes(Runner):
         lsf = next(line for line in refusals if 'TakerSellsForeign' in line)
         self.assertIn('lane=1 ', lsl); self.assertIn('defer=maker-basel-02 ', lsl)
         self.assertIn('lane=2 ', lsf); self.assertIn('defer=taker-zurich-01 ', lsf)
-        first_end = min(float(line.split('at=')[1]) for line in self.calls_of('end') if 'refusal' in line)
-        self.assertLess(max(float(line.split('at=')[1]) for line in refusals), first_end)
+        self.assertEqual(self.calls_of('alone'), [])
         self.assertTrue(all(row[2] == 'PASSED' for row in self.results()))
 
 

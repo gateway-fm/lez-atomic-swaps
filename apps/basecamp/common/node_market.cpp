@@ -595,7 +595,8 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     // Monero (TakerSellsLez): the Maker funds Monero once the Taker's LEZ
     // lock is final, claims LEZ once the Taker authorises it, sweeps its
     // Monero back after the Taker's LEZ refund, and takes the LEZ (punish)
-    // when the Taker misses its refund window; the Monero then stays locked.
+    // when the Taker misses its refund window; its Monero then stays at the
+    // shared address for good (ADR 0217: tag 17 reveals no share).
     if (pair == QStringLiteral("Monero")) {
         if (phase == "offered")
             return {"awaiting_taker_lock", "Offered · waiting for the Taker's LEZ lock", 20,
@@ -617,9 +618,9 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
                     "The Taker refunded its LEZ; your Node sweeps the Monero back into your wallet", "", ""};
         if (phase == "maker_recovery_available")
             return {"recovering", "Punish available: taking the Taker's LEZ", 75,
-                    "The Taker did not refund before the punish time; your Node takes its LEZ (the Monero stays locked)", "", ""};
+                    "The Taker did not refund before the punish time; your Node takes its LEZ, and your Monero stays at the swap's shared address for good: no step of the swap returns it", "", ""};
         if (phase == "punished")
-            return {"punished", "Punished", 100, "Your Node took the Taker's LEZ; the Monero stays locked", "", ""};
+            return {"punished", "Punished", 100, "Your Node took the Taker's LEZ; your Monero stays at the swap's shared address for good: no step of the swap returns it", "", ""};
         if (phase == "expired")
             return {"expired", "Expired", 100, "The funding cutoff passed with none of your Monero funded; nothing of yours is at stake", "", ""};
     }
