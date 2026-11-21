@@ -13,6 +13,7 @@ mod config;
 mod first_lock_attempts;
 mod local_poc;
 mod maker_provision;
+mod reserve;
 mod secure_file;
 #[cfg(feature = "test-crash-hooks")]
 mod test_crash_hook;
@@ -70,18 +71,27 @@ pub use config::{
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
     validate_maker_manifest_config_bytes, validate_rebound_actor_pair,
 };
+pub use local_poc::{LocalPocZcashIdentity, zcash_identity_from_key_file};
+// The dealer test fixture (feature dealer-fixture): it holds both parties' keys.
+#[cfg(feature = "dealer-fixture")]
 pub use local_poc::{
     LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocLezSignerFiles,
-    LocalPocProvisionSummary, LocalPocTransferSummary, LocalPocZcashIdentity,
-    LocalPocZcashKeyFiles, TestnetZebraCredential, finalize_local_v0_2_chat_corridor,
-    prepare_local_v0_2_chat_draft, provision_local_v0_2_corridor,
-    provision_local_v0_2_corridor_with_material, provision_local_v0_2_corridor_with_signers,
-    transfer_local_v0_2_regtest, transfer_v0_2_testnet, zcash_identity_from_key_file,
+    LocalPocProvisionSummary, LocalPocTransferSummary, LocalPocZcashKeyFiles,
+    TestnetZebraCredential, finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
+    provision_local_v0_2_corridor, provision_local_v0_2_corridor_with_material,
+    provision_local_v0_2_corridor_with_signers, transfer_local_v0_2_regtest, transfer_v0_2_testnet,
 };
 pub use maker_provision::{
     ZecActorProvisionV1, ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,
     provision_zec_maker_actor_from_config, provision_zec_taker_actor_from_chat,
     provision_zec_taker_actor_from_config,
+};
+pub use reserve::{
+    MAX_ANCHOR_CLOCK_SKEW_SECONDS, MAX_ANCHOR_HEIGHT_SKEW_BLOCKS, ZEC_ROLE_DRAFT_FILE,
+    ZecFunderBalanceV1, ZecFunderOutputV1, ZecLezRole, ZecMakerReservation, ZecReservationTerms,
+    ZecRoleConfigV1, ZecRoleTemplate, ZecTakerCheck, ZecTakerContribution, begin_zec_taker_role,
+    check_zec_taker_role, reserve_zec_maker_role, select_zec_funding, write_zec_role_template,
+    zec_dynamic_swap_id, zec_funder_balance, zec_tip_height,
 };
 #[cfg(feature = "test-crash-hooks")]
 pub use test_crash_hook::{TestCrashHookError, arm_test_crash_hook};

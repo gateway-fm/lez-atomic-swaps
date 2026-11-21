@@ -28,16 +28,21 @@ class ReleaseWorkflow(unittest.TestCase):
     def test_every_compose_image_is_pushed(self):
         named = set(re.findall(r'image: \$\{LEZ_IMAGE_PREFIX:-lez\}-([a-z0-9-]+):', COMPOSE))
         self.assertTrue(named)
-        self.assertEqual(named - pushed_images(), set())
+        # Monero runs on the devnet only (profile `monero`): a bundle neither
+        # pulls nor publishes its image.
+        self.assertEqual(named - pushed_images() - {'monerod'}, set())
 
     def test_rust_job_uploads_what_the_contexts_copy(self):
         collect = WORKFLOW.split('name: node-payloads')[0].rsplit('- name: Collect payloads', 1)[1]
         roles = set(re.search(r'for role in ([a-z -]+); do', collect).group(1).split())
         for context in ('maker-node', 'taker-node', 'lez-services', 'zebra'):
             self.assertIn(context, roles, context)
-        taker = (ROOT / 'deploy/images/taker-node/Dockerfile').read_text()
-        for tool in re.findall(r'\bzec-local-poc-[a-z-]+', taker):
-            self.assertIn('zec-local-poc-*', collect, tool)
+        # the published Taker image carries zec-local-poc-identity and none of
+        # the dealer test fixture's tools
+        self.assertIn('zec-local-poc-identity', collect)
+        self.assertNotIn('zec-local-poc-*', WORKFLOW)
+        for tool in ('provision', 'chat-draft', 'chat-finalize', 'transfer'):
+            self.assertNotIn(f'zec-local-poc-{tool}', WORKFLOW, tool)
         self.assertIn('source-tree.txt', collect)
 
 

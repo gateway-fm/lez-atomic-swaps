@@ -55,6 +55,10 @@ struct XmrEffectChildPlanWireV1 {
     monero_funding_wallet_url: String,
     monero_shared_wallet_url: String,
     monero_role_wallet_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    monero_role_wallet_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    monero_wallet_lock_file: Option<PathBuf>,
 }
 
 /// Validated child plan reconstructed from sealed descriptor 217.
@@ -77,6 +81,7 @@ pub struct XmrEffectChildPlanV1 {
     monero_funding_wallet_url: Url,
     monero_shared_wallet_url: Url,
     monero_role_wallet_url: Url,
+    monero_role_wallet_file: Option<(Box<str>, PathBuf)>,
 }
 
 impl XmrEffectChildPlanV1 {
@@ -173,6 +178,15 @@ impl XmrEffectChildPlanV1 {
     pub const fn monero_role_wallet_url(&self) -> &Url {
         &self.monero_role_wallet_url
     }
+
+    /// With one wallet-rpc per role: the role wallet file every effect
+    /// reopens (with the empty password) and the wallet-rpc lock it holds.
+    #[must_use]
+    pub fn monero_role_wallet_file(&self) -> Option<(&str, &Path)> {
+        self.monero_role_wallet_file
+            .as_ref()
+            .map(|(filename, lock_file)| (&**filename, lock_file.as_path()))
+    }
 }
 
 pub(crate) fn canonical_xmr_effect_child_plan_bytes(
@@ -206,6 +220,14 @@ pub(crate) fn canonical_xmr_effect_child_plan_bytes(
             .to_owned(),
         monero_shared_wallet_url: authority.monero().shared_wallet().url().as_str().to_owned(),
         monero_role_wallet_url: authority.monero().role_wallet().url().as_str().to_owned(),
+        monero_role_wallet_file: authority
+            .monero()
+            .role_wallet_file()
+            .map(|(filename, _)| filename.to_owned()),
+        monero_wallet_lock_file: authority
+            .monero()
+            .role_wallet_file()
+            .map(|(_, lock_file)| lock_file.to_path_buf()),
     };
     let mut bytes = serde_json::to_vec(&wire).context("encode XMR effect child plan")?;
     bytes.push(b'\n');
@@ -245,7 +267,16 @@ pub fn parse_xmr_effect_child_plan_v1(bytes: &[u8]) -> Result<XmrEffectChildPlan
             && valid_label(&wire.executable_abi)
             && normalized_absolute(&wire.adaptor_journal)
             && normalized_absolute(&wire.evidence_root)
-            && wire.adaptor_journal != wire.evidence_root,
+            && wire.adaptor_journal != wire.evidence_root
+            && wire.monero_role_wallet_file.is_some() == wire.monero_wallet_lock_file.is_some()
+            && wire
+                .monero_role_wallet_file
+                .as_deref()
+                .is_none_or(valid_label)
+            && wire
+                .monero_wallet_lock_file
+                .as_deref()
+                .is_none_or(normalized_absolute),
         "XMR effect child plan authority is invalid"
     );
     Ok(XmrEffectChildPlanV1 {
@@ -265,6 +296,10 @@ pub fn parse_xmr_effect_child_plan_v1(bytes: &[u8]) -> Result<XmrEffectChildPlan
         monero_funding_wallet_url: loopback_url(&wire.monero_funding_wallet_url)?,
         monero_shared_wallet_url: loopback_url(&wire.monero_shared_wallet_url)?,
         monero_role_wallet_url: loopback_url(&wire.monero_role_wallet_url)?,
+        monero_role_wallet_file: wire
+            .monero_role_wallet_file
+            .map(String::into_boxed_str)
+            .zip(wire.monero_wallet_lock_file),
     })
 }
 

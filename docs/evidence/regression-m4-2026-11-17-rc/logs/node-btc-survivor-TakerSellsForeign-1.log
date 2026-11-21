@@ -1,0 +1,35 @@
+[16:53:15] === survivor (stamp 179493439503)
+[16:53:15] preflight: indexer historical reads
+[16:53:16]   indexer serves historical reads at the tip (5043)
+[16:53:16] preflight: LEZ finality check waived by request
+[16:53:17]   Maker published offer-e2e-179493439503
+[16:53:23]   Taker took offer-e2e-179493439503: swap 1dd5df0b16c5 (not_activated)
+[16:53:23]   Taker locked bitcoin: ad56352c0d45 (replay=False)
+[16:53:24]   [0 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 5043, tip 5046 (3 unfinalized) [heartbeat]
+[16:53:28]   [4 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5043, tip 5046 (3 unfinalized) [heartbeat]
+[16:54:29]   [65 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5075, tip 5081 (6 unfinalized) [heartbeat]
+[16:55:32]   [128 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5112, tip 5116 (4 unfinalized) [heartbeat]
+[16:56:35]   [191 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5142, tip 5148 (6 unfinalized) [heartbeat]
+[16:57:38]   [254 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5165, tip 5169 (4 unfinalized) [heartbeat]
+[16:58:40]   [316 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5197, tip 5199 (2 unfinalized) [heartbeat]
+[16:59:43]   [379 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5215, tip 5219 (4 unfinalized) [heartbeat]
+[17:00:43]   [439 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5245, tip 5249 (4 unfinalized) [heartbeat]
+[17:01:46]   [502 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5275, tip 5278 (3 unfinalized) [heartbeat]
+[17:02:50]   [566 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5296, tip 5300 (4 unfinalized) [heartbeat]
+[17:03:53]   [629 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5329, tip 5332 (3 unfinalized) [heartbeat]
+[17:04:54]   [690 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5362, tip 5370 (8 unfinalized) [heartbeat]
+[17:05:55]   [751 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5404, tip 5407 (3 unfinalized) [heartbeat]
+[17:06:57]   [813 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5428, tip 5430 (2 unfinalized) [heartbeat]
+[17:08:00]   [876 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5462, tip 5466 (4 unfinalized) [heartbeat]
+[17:09:02]   [938 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5499, tip 5505 (6 unfinalized) [heartbeat]
+[17:10:04]   [1000 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5540, tip 5544 (4 unfinalized) [heartbeat]
+[17:11:09]   [1065 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5576, tip 5579 (3 unfinalized) [heartbeat]
+[17:12:10]   [1126 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5602, tip 5605 (3 unfinalized) [heartbeat]
+[17:13:11]   [1187 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5639, tip 5646 (7 unfinalized) [heartbeat]
+[17:14:13]   [1249 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5686, tip 5689 (3 unfinalized) [heartbeat]
+[17:15:14]   [1311 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5727, tip 5732 (5 unfinalized) [heartbeat]
+[17:16:17]   [1374 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5768, tip 5772 (4 unfinalized) [heartbeat]
+[17:17:19]   [1435 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5808, tip 5812 (4 unfinalized) [heartbeat]
+[17:18:23]   [1499 s] waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 5836, tip 5840 (4 unfinalized) [heartbeat]
+[17:18:26] FAILED: timed out after 1500 s waiting for the Taker's 1dd5df0b16c5 to reach claim_available (Maker funding); last seen: taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed; LEZ finalized 5852, tip 5854 (2 unfinalized) [heartbeat]
+[17:18:26] === survivor: failed in 1511s

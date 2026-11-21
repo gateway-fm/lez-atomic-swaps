@@ -217,6 +217,17 @@ macOS") lists every setting and its default under `LEZ_NODE_HOME`.
 | `LEZ_SEQUENCER_URL`, `LEZ_WALLET_SEQUENCER_URL`, `LEZ_INDEXER_URL` | the LEZ chain the Node and the wallet use |
 | `LEZ_V02_CHANNEL_ID`, `LEZ_<ROLE>_SIDECAR_PORT_BASE`, `LEZ_<ROLE>_BTC_WALLET`, `LEZ_BTC_CLAIM_DESTINATION`, the timing profile | as the devnet's `runtime/runtime.env` sets them |
 
+**The directory holding the Node's files must not be writable by its group
+or by others**, nor any directory above it: the Node's LEZ sidecars refuse
+such a state directory. Ubuntu's default umask (002) makes a new directory
+group-writable, so create `LEZ_NODE_HOME` (or the role's state directories)
+under `umask 022`, or run `chmod go-w` on it and each directory above it that
+you own. The launcher checks this before the Node starts and refuses to start
+it, naming the directory and the fix, for example `maker: /home/me/lez is
+writable by its group or by others (mode 775). Fix: chmod go-w
+'/home/me/lez'.`; the desk shows that line under "Node unavailable", and it
+is in `LEZ_<ROLE>_NODE_LOG`.
+
 ## Install into isolated Basecamp user directories
 
 Set absolute paths owned by the current user:

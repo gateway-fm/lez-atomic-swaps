@@ -13,9 +13,10 @@ use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
     METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3, METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
-    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
-    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
+    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, ObserveNativeXmrEscrowTipV3Request,
     XmrNativeEscrowTermsV3,
 };
 use lez_bridge_protocol::{
@@ -476,7 +477,9 @@ impl DurableStore {
         let earlier_outcomes =
             if let Some(previous) = self.persisted.entries.get(context.request_id.as_str()) {
                 let mut earlier = previous.earlier_outcomes.clone();
-                earlier.push(previous.outcome.clone());
+                if !matches!(previous.outcome, PersistedOutcome::Repeatable) {
+                    earlier.push(previous.outcome.clone());
+                }
                 earlier
             } else {
                 self.ensure_capacity()?;
@@ -1109,13 +1112,10 @@ async fn restore_runtime_requests(
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
     }
     if let Some((request, expected)) = restored_xmr_punish_v3 {
-        let observed = runtime
-            .prepare_native_xmr_punish_v3(&request)
+        runtime
+            .restore_native_xmr_punish_v3(&request, &expected)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
-        if observed != expected {
-            return Err(BridgeServerError::InvalidDurableState);
-        }
     }
     Ok(())
 }
@@ -1616,9 +1616,17 @@ fn register_methods(
         // (chain 35, 2026-10-29). Other submissions keep their one attempt.
         // The same for an owned revealing claim (FINDINGS 24): a claim whose
         // nonce another claim of this signer took is named Superseded.
-        let decide_again = runtime
-            .native_escrow_lineage_member(&request.transaction)
-            .await
+        // A recovery that can still land and that nothing else replaces (the
+        // Taker's XMR refund, tag 16) is decided again whatever was journaled
+        // for it: a sequencer that admitted it and dropped it at block
+        // building, or a send whose outcome is unknown, would otherwise leave
+        // it unsent for good. Sending the identical bytes again is harmless:
+        // one transaction id, one nonce, included at most once.
+        let recovery = runtime.xmr_recovery_submission(&request.transaction).await;
+        let decide_again = recovery
+            || runtime
+                .native_escrow_lineage_member(&request.transaction)
+                .await
             || runtime
                 .revealing_claim_lineage_member(&request.transaction)
                 .await;
@@ -1628,6 +1636,7 @@ fn register_methods(
                 &request.context,
                 &request,
                 decide_again,
+                recovery,
                 || async move {
                     runtime
                         .submit_transaction(&operation)
@@ -2030,6 +2039,34 @@ fn register_xmr_v3_methods(
                 .await
         },
     )?;
+    module.register_async_method(
+        METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+        |params, state, _| async move {
+            let request: ObserveNativeXmrEscrowTipV3Request = params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                request.context.sidecar_role,
+            )?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .observe_native_xmr_escrow_tip_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
     Ok(())
 }
 
@@ -2108,13 +2145,19 @@ impl ServerState {
         Operation: FnOnce() -> Fut,
         Fut: Future<Output = Result<Value, OperationFailure>>,
     {
-        // The XMR claim authorization's node facts move: its journaled
-        // success is decided again. Everything else replays.
+        // The XMR claim authorization's node facts move, and a tag-17
+        // punishment whose nonce was taken is re-planned: their journaled
+        // successes are decided again. Everything else replays.
         self.execute_with_policy(
             method,
             context,
             request,
-            method == METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+            matches!(
+                method,
+                METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
+                    | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
+            ),
+            false,
             operation,
         )
         .await
@@ -2122,13 +2165,16 @@ impl ServerState {
 
     /// As [`Self::execute`]; `decide_success_again` re-runs the operation for
     /// a journaled success instead of replaying it (errors and in-flight
-    /// markers stay single-attempt either way).
+    /// markers stay single-attempt, except a submission refused as
+    /// `unavailable` before its send, which is tried again, and every outcome
+    /// of a submission with `decide_failure_again`).
     async fn execute_with_policy<Request, Operation, Fut>(
         &self,
         method: &'static str,
         context: &MessageContext,
         request: &Request,
         decide_success_again: bool,
+        decide_failure_again: bool,
         operation: Operation,
     ) -> Result<Value, ErrorObjectOwned>
     where
@@ -2139,14 +2185,21 @@ impl ServerState {
         self.validate_context(context)?;
         let (request_sha256, replay_request) =
             encode_request(method, request).map_err(|failure| protocol_error(context, failure))?;
+        let mut decided_before = None;
         {
             let mut store = self.store.lock().await;
             if let Some(outcome) = store
                 .replay(context.request_id.as_str(), method, &request_sha256)
                 .map_err(|failure| protocol_error(context, failure))?
-                && !(decide_success_again && matches!(outcome, PersistedOutcome::Success(_)))
             {
-                return outcome.into_rpc_result();
+                match &outcome {
+                    PersistedOutcome::Success(value) if decide_success_again => {
+                        decided_before = Some(value.clone());
+                    }
+                    PersistedOutcome::Error(_) | PersistedOutcome::SubmissionInFlight(_)
+                        if decide_failure_again && is_submission_method(method) => {}
+                    _ => return outcome.into_rpc_result(),
+                }
             }
             if is_submission_method(method) {
                 store
@@ -2154,13 +2207,29 @@ impl ServerState {
                     .map_err(|failure| protocol_error(context, failure))?;
             }
         }
+        let mut refused_before_send = false;
         let outcome = match operation().await {
             Ok(value) => PersistedOutcome::Success(value),
             Err(failure) => {
                 report_request_error(method, self.runtime.descriptor().sidecar_role, failure.code);
+                // A submission answers `unavailable` only from the node
+                // lookups before its one send (a send that fails or times
+                // out is `unknown_submission_outcome`): nothing was sent, so
+                // the same request id is tried again instead of replaying
+                // this answer forever.
+                refused_before_send =
+                    is_submission_method(method) && failure.code == ErrorCode::Unavailable;
                 PersistedOutcome::Error(protocol_reply(context, failure))
             }
         };
+        // A preparation decided again that answers as before changes nothing
+        // durable (a punishment is decided again on every drive of it).
+        if let (Some(before), PersistedOutcome::Success(value)) = (&decided_before, &outcome)
+            && before == value
+            && !is_submission_method(method)
+        {
+            return outcome.into_rpc_result();
+        }
         let prepare = matches!(
             method,
             METHOD_PREPARE_CURRENT_PROFILE_CLOCK
@@ -2184,8 +2253,9 @@ impl ServerState {
                 | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
                 | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
         );
-        let repeatable = !is_submission_method(method)
-            && (!prepare || matches!(&outcome, PersistedOutcome::Error(_)));
+        let repeatable = refused_before_send
+            || (!is_submission_method(method)
+                && (!prepare || matches!(&outcome, PersistedOutcome::Error(_))));
         self.store
             .lock()
             .await
@@ -2336,5 +2406,6 @@ fn valid_method(method: &str) -> bool {
             | METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3
+            | METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3
     )
 }

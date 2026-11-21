@@ -297,7 +297,9 @@ impl std::fmt::Debug for RunLocalDelivery {
 }
 
 impl RunLocalDelivery {
-    /// Creates or opens an owner-private publisher directory.
+    /// Creates or opens an owner-private publisher directory. A directory its
+    /// owner cannot use right now (mode 0000 during a Delivery outage) opens;
+    /// every operation checks it again and fails until it is private and usable.
     ///
     /// # Errors
     ///
@@ -316,7 +318,8 @@ impl RunLocalDelivery {
         })
     }
 
-    /// Opens an owner-private discovery directory without maker signing authority.
+    /// Opens an owner-private discovery directory without maker signing
+    /// authority; one its owner cannot use right now opens as the publisher's.
     ///
     /// # Errors
     ///
@@ -326,7 +329,7 @@ impl RunLocalDelivery {
         expected_maker: PublicKey,
     ) -> Result<Self, RunLocalDeliveryError> {
         let directory = directory.into();
-        validate_private_directory(&directory)?;
+        validate_openable_directory(&directory)?;
         Ok(Self {
             directory,
             expected_maker,
@@ -638,16 +641,35 @@ impl RunLocalDelivery {
             }
         }
         paths.sort_unstable();
+        self.authenticate_listed(paths, query)
+    }
+
+    // An entry the Maker withdrew (`withdraw` removes its file) between the
+    // listing and its read is no longer an offer: it is skipped. Every other
+    // failure of an entry still fails the whole discovery.
+    fn authenticate_listed(
+        &self,
+        paths: Vec<PathBuf>,
+        query: &DeliveryOfferQueryV1,
+    ) -> Result<Vec<AuthenticatedOfferRefV1>, RunLocalDeliveryError> {
         let mut offers = Vec::new();
         for path in paths {
-            let metadata = fs::symlink_metadata(&path)?;
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
             if !metadata.file_type().is_file() {
                 return Err(RunLocalDeliveryError::MalformedEnvelope);
             }
             if metadata.len() > MAXIMUM_ENVELOPE_BYTES {
                 return Err(RunLocalDeliveryError::OversizedEnvelope);
             }
-            let encoded = fs::read(path)?;
+            let encoded = match fs::read(path) {
+                Ok(encoded) => encoded,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
             if encoded.len() as u64 > MAXIMUM_ENVELOPE_BYTES {
                 return Err(RunLocalDeliveryError::OversizedEnvelope);
             }
@@ -884,13 +906,29 @@ fn read_regular_offer_file(path: &Path) -> Result<Vec<u8>, RunLocalDeliveryError
 
 fn ensure_private_directory(directory: &Path) -> Result<(), RunLocalDeliveryError> {
     match fs::symlink_metadata(directory) {
-        Ok(_) => validate_private_directory(directory),
+        Ok(_) => validate_openable_directory(directory),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             DirBuilder::new().mode(0o700).create(directory)?;
             validate_private_directory(directory)
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// The check when a Node opens Delivery: the owner's own directory, open to
+/// nobody else. Unlike `validate_private_directory` it accepts one the owner
+/// cannot use right now (mode 0000 while Delivery is cut, R2), so a Node
+/// starts and restores its swaps during an outage; nothing can be read or
+/// written there until the per-operation check passes again.
+fn validate_openable_directory(directory: &Path) -> Result<(), RunLocalDeliveryError> {
+    let metadata = fs::symlink_metadata(directory)?;
+    if !metadata.file_type().is_dir()
+        || metadata.permissions().mode() & 0o7077 != 0
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+    {
+        return Err(RunLocalDeliveryError::InsecureDirectory);
+    }
+    Ok(())
 }
 
 fn validate_private_directory(directory: &Path) -> Result<(), RunLocalDeliveryError> {
@@ -902,4 +940,127 @@ fn validate_private_directory(directory: &Path) -> Result<(), RunLocalDeliveryEr
         return Err(RunLocalDeliveryError::InsecureDirectory);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, io, os::unix::fs::PermissionsExt as _};
+
+    use lez_bridge_protocol::RequestId;
+    use lez_swap_core::{Pair, SwapDirection};
+    use lez_swap_store::{
+        LocalPriceV1, MakerOfferId, MakerOfferV1, MakerPairConfigurationV1, MakerPriceSourceKind,
+        MakerRouteV1, SqliteSwapStore,
+    };
+    use secp256k1::{PublicKey, Secp256k1, SecretKey};
+    use tempfile::tempdir;
+
+    use super::{
+        DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery, RunLocalDeliveryError,
+        offer_path,
+    };
+
+    fn request(value: &str) -> RequestId {
+        RequestId::new(value).unwrap()
+    }
+
+    fn offer(id: &str) -> MakerOfferV1 {
+        let run = tempdir().unwrap();
+        let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+        let mut store = SqliteSwapStore::open(run.path().join("offer.sqlite3")).unwrap();
+        let configuration = |enabled| {
+            MakerPairConfigurationV1::new(
+                route,
+                enabled,
+                MakerPriceSourceKind::Local,
+                1,
+                10_000,
+                300,
+            )
+            .unwrap()
+        };
+        store
+            .configure_maker_pair(&request("pair-create"), None, &configuration(false))
+            .unwrap();
+        store
+            .set_local_price(
+                &request("price-create"),
+                None,
+                &LocalPriceV1::new(route, 5, 2).unwrap(),
+            )
+            .unwrap();
+        store
+            .configure_maker_pair(&request("pair-enable"), Some(1), &configuration(true))
+            .unwrap();
+        store
+            .publish_local_offer(
+                &request("offer-publish"),
+                &MakerOfferId::new(id).unwrap(),
+                route,
+                1_000,
+            )
+            .unwrap();
+        store.list_discoverable_maker_offers(1_000).unwrap()[0]
+            .offer()
+            .clone()
+    }
+
+    // A publisher with three offers, and a subscriber of the same directory.
+    fn published() -> (tempfile::TempDir, RunLocalDelivery, RunLocalDelivery) {
+        let run = tempdir().unwrap();
+        let key = SecretKey::from_slice(&[7; 32]).unwrap();
+        let maker = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key);
+        let publisher = RunLocalDelivery::publisher(run.path().join("delivery"), key).unwrap();
+        for id in ["offer-a1", "offer-b1", "offer-c1"] {
+            publisher
+                .publish_sync(&DeliveryPublicationV1::new(offer(id), 1_000))
+                .unwrap();
+        }
+        let subscriber = RunLocalDelivery::subscriber(run.path().join("delivery"), maker).unwrap();
+        (run, publisher, subscriber)
+    }
+
+    fn listed(delivery: &RunLocalDelivery) -> Vec<std::path::PathBuf> {
+        ["offer-a1", "offer-b1", "offer-c1"]
+            .map(|id| offer_path(delivery.directory(), id))
+            .to_vec()
+    }
+
+    #[test]
+    fn an_offer_withdrawn_after_the_listing_is_skipped() {
+        let (_run, publisher, subscriber) = published();
+        let paths = listed(&subscriber);
+        publisher
+            .withdraw(&MakerOfferId::new("offer-b1").unwrap())
+            .unwrap();
+        let offers = subscriber
+            .authenticate_listed(paths, &DeliveryOfferQueryV1::all(1_001))
+            .unwrap();
+        let ids = offers
+            .iter()
+            .map(|offer| offer.offer().id().as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["offer-a1", "offer-c1"]);
+    }
+
+    #[test]
+    fn a_missing_directory_and_an_unreadable_entry_still_fail_discovery() {
+        let (_run, _publisher, subscriber) = published();
+        let path = offer_path(subscriber.directory(), "offer-b1");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(matches!(
+            subscriber.authenticate_listed(listed(&subscriber), &DeliveryOfferQueryV1::all(1_001)),
+            Err(RunLocalDeliveryError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+        assert!(matches!(
+            subscriber.discover_sync(&DeliveryOfferQueryV1::all(1_001)),
+            Err(RunLocalDeliveryError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+
+        fs::remove_dir_all(subscriber.directory()).unwrap();
+        assert!(matches!(
+            subscriber.discover_sync(&DeliveryOfferQueryV1::all(1_001)),
+            Err(RunLocalDeliveryError::Io(error)) if error.kind() == io::ErrorKind::NotFound
+        ));
+    }
 }

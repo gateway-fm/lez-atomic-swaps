@@ -2,7 +2,7 @@
 
 [package]
 name = "lez-v0-2-sidecar"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2024"
 publish = false
 license = "MIT OR Apache-2.0"
@@ -12,6 +12,12 @@ rust-version = "1.96"
 lez-zec-escrow-v02 = { version = "=0.0.0", path = "../lez-v0.2-provisional/escrow" }
 serde_json = "=1.0.150"
 spel-client-gen = { version = "=0.6.0", git = "https://github.com/logos-co/spel.git", rev = "7f13e71f91372a32e26b71d19dbbb60532711048" }
+
+[features]
+# The devnet's test hooks (src/test_hooks.rs): a nonce thief for the Maker's
+# punishment, read from LEZ_TEST_HOOKS_DIR. The devnet build enables it
+# (deploy/scripts/from-scratch.sh); no release build does.
+test-hooks = []
 
 [dependencies]
 anyhow = "=1.0.103"
@@ -30,6 +36,7 @@ jsonrpsee = { version = "=0.26.0", features = ["client-core", "server"] }
 nssa = { package = "lee", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.4" }
 lez-bridge-client = { version = "=0.1.0", path = "../../crates/lez-bridge-client" }
 lez-bridge-protocol = { version = "=0.1.0", path = "../../crates/lez-bridge-protocol" }
+lez-systemd-credential = { version = "=0.1.0", path = "../../crates/systemd-credential" }
 lez-zec-escrow-v02 = { version = "=0.0.0", path = "../lez-v0.2-provisional/escrow" }
 programs = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.4", features = ["artifacts"] }
 rusqlite = { version = "=0.41.0", features = ["bundled"] }
@@ -60,6 +67,10 @@ rustix = { version = "=1.1.6", features = ["fs", "process"] }
 [dev-dependencies]
 tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread"] }
 
+# The reference actor's reservation runs the real Stage-A planner in tests.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+xmr-reference-actor = { version = "=0.1.0", path = "../../crates/xmr-reference-actor", default-features = false, features = ["sessions"] }
+
 [lints.rust]
 missing_debug_implementations = "warn"
 unsafe_code = "forbid"
@@ -67,3 +78,19 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+
+# The Monero Stage-A planner verifies both role packets' cross-curve DLEQ
+# proofs. As in the root workspace, optimize only those portable crypto
+# kernels in development builds: unoptimized, one planner run took 17 s of
+# CPU on the devnet, and a take's Chat round runs it within a 30 s deadline.
+[profile.dev.package.lez-xmr-swap-sdk]
+opt-level = 3
+
+[profile.dev.package.sigma_fun]
+opt-level = 3
+
+[profile.dev.package.secp256kfun]
+opt-level = 3
+
+[profile.dev.package.curve25519-dalek-ng]
+opt-level = 3

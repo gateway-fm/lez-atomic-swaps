@@ -23,6 +23,15 @@ services:
       BTC_RPC_HOST: "${LEZ_CONTAINER_PREFIX:?export the lane variables (scripts/lane.sh)}-bitcoin-core"
   zebra:
     networks: !override [lane]
+  # (LEZ_MONERO=1: the lane's own monerod and wallet-rpcs, the same way)
+  monerod:
+    networks: !override [lane]
+  xmr-funding-wallet:
+    networks: !override [lane]
+  maker-xmr-wallet:
+    networks: !override [lane]
+  taker-xmr-wallet:
+    networks: !override [lane]
   maker-node:
     depends_on: !override
       bitcoin-core:
@@ -30,6 +39,8 @@ services:
     environment:
       LEZ_BITCOIN_CORE_HOST: ${LEZ_CONTAINER_PREFIX}-bitcoin-core
       LEZ_ZEBRA_HOST: ${LEZ_CONTAINER_PREFIX}-zebra
+      LEZ_MONEROD_HOST: ${LEZ_CONTAINER_PREFIX}-monerod
+      LEZ_XMR_WALLET_HOST: ${LEZ_CONTAINER_PREFIX}-maker-xmr-wallet
     networks: !override [lane, chains]
   taker-node:
     depends_on: !override
@@ -38,6 +49,8 @@ services:
     environment:
       LEZ_BITCOIN_CORE_HOST: ${LEZ_CONTAINER_PREFIX}-bitcoin-core
       LEZ_ZEBRA_HOST: ${LEZ_CONTAINER_PREFIX}-zebra
+      LEZ_MONEROD_HOST: ${LEZ_CONTAINER_PREFIX}-monerod
+      LEZ_XMR_WALLET_HOST: ${LEZ_CONTAINER_PREFIX}-taker-xmr-wallet
     networks: !override [lane, chains]
   # The LEZ chain and everything around it belong to lane 1: a lane project
   # must never start them (a second chain on the same state directories).

@@ -176,7 +176,8 @@ Stated plainly; each one is open unless it says otherwise.
    (`apps/basecamp/common/lez_role_signer.h`), and imports the key again on
    every desk start. `/tmp` is not a volume, so a recreated container builds
    a new wallet from the file: the file, not the wallet, is the durable copy. Signing is raw 32-byte hash signing (patch register above).
-   On the ZEC devnet corridor, `scripts/zec-provision.sh` also copies each
+   On a ZEC catalog corridor (the catalog tests' devnet fixture,
+   `tests/fixtures/zec-catalog-fixture.sh`), the fixture also copies each
    role's LEZ key into the corridor material; the corridor sidecar signs
    through the wallet socket when it is up.
 7. **The LEZ network is an operator package that needs Compose.** Decided as

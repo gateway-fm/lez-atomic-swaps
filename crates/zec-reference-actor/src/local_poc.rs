@@ -1,34 +1,27 @@
 use std::{
-    fs::{self, DirBuilder, OpenOptions},
+    fs::{DirBuilder, OpenOptions},
     io::{Cursor, Write as _},
     os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _},
-    path::{Component, Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context as _, Result, bail, ensure};
-use lez_bridge_protocol::{
-    DiscoveryWindow, Hex32, Participant as BridgeParticipant, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor,
-};
-use lez_swap_core::{Participant, SwapDirection, SwapId, UnixSeconds};
-use lez_swap_store::maker_zec_chat_session_id;
+use lez_bridge_protocol::{DiscoveryWindow, Hex32, RunId, RuntimeDescriptor};
+use lez_swap_core::{Participant, SwapDirection, SwapId};
 use lez_zebra_node_adapter::{
     HttpZebraRpc, HttpZebraRpcConfig, ZebraChainIdentity, ZebraRpc, ZebraRpcChain,
 };
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
-    LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationTranscriptV1,
-    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS,
-    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
-    ZcashFundingInputSetV1, ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementDraftV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
+    Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
+    NegotiationTranscriptV1, PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS,
+    PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS, ZcashFundingInputSetV1, ZcashFundingInputV1,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementV1, ZecLezTermsV1,
     ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
     ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    build_transparent_transfer_transaction, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_public_account_v0_2, derive_lez_swap_id_v1,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use url::Url;
@@ -44,36 +37,74 @@ use zcash_transparent::{
 };
 use zeroize::Zeroizing;
 
+use crate::config::{DeterministicLocalV0_2ActorConfigInput, ProvisionedZebraRoute};
+use crate::secure_file::{FilePrivacy, read_bounded_identified};
+use crate::{ActorRole, CandidateOutpoint};
+
+// The dealer test fixture's own (feature dealer-fixture).
+#[cfg(feature = "dealer-fixture")]
+use std::{
+    fs,
+    path::Component,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[cfg(feature = "dealer-fixture")]
+use lez_bridge_protocol::{Participant as BridgeParticipant, RequestId, RuntimeCompatibility};
+#[cfg(any(test, feature = "dealer-fixture"))]
+use lez_swap_core::UnixSeconds;
+#[cfg(feature = "dealer-fixture")]
+use lez_swap_store::maker_zec_chat_session_id;
+#[cfg(feature = "dealer-fixture")]
+use lez_zec_swap_sdk::{
+    AcceptedZecAgreementV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, TransparentFundingRequest,
+    TransparentUtxo, ZecAgreementDraftV1, build_transparent_transfer_transaction,
+    derive_lez_public_account_v0_2,
+};
+// The dealer's signing, also for the test that a take-time agreement is the dealer's.
+#[cfg(any(test, feature = "dealer-fixture"))]
+use lez_zec_swap_sdk::{ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZecAgreementRecordV1};
+#[cfg(any(test, feature = "dealer-fixture"))]
+use secp256k1::Message;
+
+#[cfg(feature = "dealer-fixture")]
 use crate::config::{
-    DeterministicLocalV0_2ActorConfigInput, ProvisionedZebraRoute,
     encode_deterministic_local_v0_2_actor_config, encode_rebound_local_v0_2_actor_config,
 };
-use crate::secure_file::{FilePrivacy, read_bounded_identified};
-use crate::{ActorConfig, ActorRole, CandidateOutpoint, validate_actor_pair};
+#[cfg(feature = "dealer-fixture")]
+use crate::{ActorConfig, validate_actor_pair};
 
+#[cfg(feature = "dealer-fixture")]
 const SPEC_SCHEMA_VERSION: u16 = 1;
+#[cfg(feature = "dealer-fixture")]
 const MAX_SPEC_BYTES: usize = 32 * 1024;
+#[cfg(feature = "dealer-fixture")]
 const MAX_LEZ_SIGNER_KEY_BYTES: usize = 65;
 // Retained v0.2.0 fixture transfer program, kept for the record:
 // `FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg`. Newer chains differ.
+#[cfg(feature = "dealer-fixture")]
 const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
+#[cfg(feature = "dealer-fixture")]
 const OTHER_ZCASH_KEY_BYTE: u8 = 2;
 /// The claim secret of one provisioned swap: 32 bytes from the OS RNG, owner-
 /// private like the keys beside it (stored only in the Taker's bundle, in both
 /// directions; the agreement carries its SHA-256). Never derived from public inputs such as
 /// the swap id, which the agreement, the offers and the evidence all show.
-fn fresh_claim_preimage() -> anyhow::Result<Zeroizing<[u8; 32]>> {
+pub(crate) fn fresh_claim_preimage() -> anyhow::Result<Zeroizing<[u8; 32]>> {
     let mut preimage = Zeroizing::new([0_u8; 32]);
     getrandom::fill(&mut preimage[..]).map_err(|_| anyhow::anyhow!("claim preimage RNG"))?;
     Ok(preimage)
 }
+#[cfg(feature = "dealer-fixture")]
 const LEZ_NATIVE_AMOUNT: u128 = 50_000;
+#[cfg(feature = "dealer-fixture")]
 const ZCASH_PRINCIPAL_ZATOSHIS: u64 = 100_000_000;
-const FUNDING_FEE_ZATOSHIS: u64 = 10_000;
-const MINIMUM_CHANGE_ZATOSHIS: u64 = 1_000;
+pub(crate) const FUNDING_FEE_ZATOSHIS: u64 = 10_000;
+pub(crate) const MINIMUM_CHANGE_ZATOSHIS: u64 = 1_000;
 const CLAIM_FEE_ZATOSHIS: u64 = 10_000;
 const REFUND_FEE_ZATOSHIS: u64 = 10_000;
 const COINBASE_MATURITY_CONFIRMATIONS: u32 = 100;
+#[cfg(feature = "dealer-fixture")]
 const AGREEMENT_LIFETIME_SECONDS: u64 = 3_600;
 const COUNTERPARTY_SCAN_BLOCKS: u32 = 1_024;
 /// Zcash Testnet's genesis block hash as `getblockhash 0` prints it.
@@ -83,10 +114,11 @@ const TESTNET_GENESIS_HASH_HEX: &str =
 /// 22.7 s average. Each costs a hash, a block and its transactions over a
 /// remote or rate-limited route; a search wider than this names a later
 /// `zcash_funding_scan_from_height`.
-const MAX_TESTNET_FUNDING_SCAN_BLOCKS: u32 = 2_880;
+pub(crate) const MAX_TESTNET_FUNDING_SCAN_BLOCKS: u32 = 2_880;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(feature = "dealer-fixture")]
 struct ProvisionSpec {
     schema_version: u16,
     run_id: RunId,
@@ -123,6 +155,7 @@ struct ProvisionSpec {
     zcash_principal_zatoshis: Option<u64>,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl ProvisionSpec {
     fn profile(&self) -> LocalPocProfile {
         self.profile
@@ -138,7 +171,7 @@ impl ProvisionSpec {
 /// The Zebra a corridor is provisioned against, and its credential.
 #[derive(Clone, Default, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum LocalPocZebraRoute {
+pub(crate) enum LocalPocZebraRoute {
     /// The deterministic Regtest fixture: loopback, no credential.
     #[default]
     DeterministicLocal,
@@ -159,7 +192,7 @@ impl LocalPocZebraRoute {
         }
     }
 
-    const fn network(&self) -> NetworkType {
+    pub(crate) const fn network(&self) -> NetworkType {
         match self {
             Self::DeterministicLocal => NetworkType::Regtest,
             Self::SelfHostedCookie { .. } | Self::TatumTestnetXApiKey { .. } => NetworkType::Test,
@@ -168,7 +201,9 @@ impl LocalPocZebraRoute {
 }
 
 /// Reads a route credential once: owner-private, one line of visible ASCII.
-fn read_zebra_credential(route: &LocalPocZebraRoute) -> Result<Option<Zeroizing<Vec<u8>>>> {
+pub(crate) fn read_zebra_credential(
+    route: &LocalPocZebraRoute,
+) -> Result<Option<Zeroizing<Vec<u8>>>> {
     let Some(path) = route.credential_file() else {
         return Ok(None);
     };
@@ -190,7 +225,7 @@ fn read_zebra_credential(route: &LocalPocZebraRoute) -> Result<Option<Zeroizing<
 }
 
 /// A bounded Zebra client on `endpoint` over `route`, with its credential.
-fn connect_zebra(
+pub(crate) fn connect_zebra(
     endpoint: &Url,
     route: &LocalPocZebraRoute,
     credential: Option<&[u8]>,
@@ -222,18 +257,18 @@ fn connect_zebra(
 
 /// What proves a Zebra is the chain a corridor is provisioned on, and when one
 /// of the funder's outputs may fund it.
-struct FundingChain {
-    identity: ZebraChainIdentity,
+pub(crate) struct FundingChain {
+    pub(crate) identity: ZebraChainIdentity,
     /// Depth a funder output needs: coinbase maturity on the Regtest fixture
     /// (every candidate waits it out, coinbase or not), the profile's Zcash
     /// confirmations on Testnet.
-    min_confirmations: u32,
+    pub(crate) min_confirmations: u32,
     /// Testnet makes its own blocks: the tip may move during the search.
-    tip_may_advance: bool,
+    pub(crate) tip_may_advance: bool,
 }
 
 impl FundingChain {
-    fn for_profile(profile: ZecRefundProfile) -> Result<Self> {
+    pub(crate) fn for_profile(profile: ZecRefundProfile) -> Result<Self> {
         match profile.zcash_network() {
             // The Regtest fixture's branch is its profile's: NU6.2 on the
             // Zebra 5.2 profiles, NU7 on the Zebra 7 ones (same genesis).
@@ -270,11 +305,13 @@ impl FundingChain {
 
 /// Owner-private LEZ signer files provisioned before a fresh local genesis.
 #[derive(Clone)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocLezSignerFiles {
     maker: PathBuf,
     taker: PathBuf,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl std::fmt::Debug for LocalPocLezSignerFiles {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -287,11 +324,13 @@ impl std::fmt::Debug for LocalPocLezSignerFiles {
 
 /// Owner-private Zcash key files of both roles: 32 raw bytes or 64 hex
 /// characters each. Absent, the deterministic test-lane keys apply.
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocZcashKeyFiles {
     maker: PathBuf,
     taker: PathBuf,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl std::fmt::Debug for LocalPocZcashKeyFiles {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -302,6 +341,7 @@ impl std::fmt::Debug for LocalPocZcashKeyFiles {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl LocalPocZcashKeyFiles {
     /// Binds one complete Maker/Taker Zcash key pair.
     #[must_use]
@@ -311,11 +351,13 @@ impl LocalPocZcashKeyFiles {
 }
 
 /// The two roles' Zcash secrets the corridor is built with.
+#[cfg(feature = "dealer-fixture")]
 struct ZcashKeyMaterial {
     maker: Zeroizing<[u8; 32]>,
     taker: Zeroizing<[u8; 32]>,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl ZcashKeyMaterial {
     /// The test-lane constants: the funder of `direction` owns the coinbase
     /// key, the other role the second constant.
@@ -340,7 +382,7 @@ impl ZcashKeyMaterial {
 
 /// Reads one owner-private Zcash key file: 32 raw bytes, or 64 hex characters
 /// with an optional trailing newline, that form a valid secp256k1 secret.
-fn read_zcash_key_file(path: &Path, role: &str) -> Result<Zeroizing<[u8; 32]>> {
+pub(crate) fn read_zcash_key_file(path: &Path, role: &str) -> Result<Zeroizing<[u8; 32]>> {
     ensure!(path.is_absolute(), "{role} Zcash key path must be absolute");
     let (bytes, _) = read_bounded_identified(path, 65, FilePrivacy::OwnerPrivate)
         .map_err(|_| anyhow::anyhow!("{role} Zcash key file is unavailable or unsafe"))?;
@@ -382,7 +424,7 @@ pub struct LocalPocZcashIdentity {
 /// Regtest transparent P2PKH address prefix (ZIP-? constant shared with testnet).
 const REGTEST_P2PKH_PREFIX: [u8; 2] = [0x1D, 0x25];
 
-fn regtest_p2pkh_address(public_key: &PublicKey) -> Result<String> {
+pub(crate) fn regtest_p2pkh_address(public_key: &PublicKey) -> Result<String> {
     let TransparentAddress::PublicKeyHash(hash) = lez_zec_swap_sdk::p2pkh_address(public_key)
     else {
         bail!("public key did not derive a P2PKH address");
@@ -414,6 +456,7 @@ pub fn zcash_identity_from_key_file(path: &Path) -> Result<LocalPocZcashIdentity
 
 /// What one Regtest transfer between the roles' keys produced.
 #[derive(Clone, Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocTransferSummary {
     /// The transfer's transaction id as the RPC displays it.
     pub transaction_id: String,
@@ -439,6 +482,7 @@ pub struct LocalPocTransferSummary {
 ///
 /// Fails closed for unsafe key files, equal keys, a non-Regtest Zebra, a
 /// missing mature output, an unaffordable value, or a rejected broadcast.
+#[cfg(feature = "dealer-fixture")]
 pub async fn transfer_local_v0_2_regtest(
     zebra_endpoint: &Url,
     from_key_file: &Path,
@@ -460,8 +504,11 @@ pub async fn transfer_local_v0_2_regtest(
         value_zatoshis,
         skip,
         1,
-        // Any mature output of the devnet's (1 ZEC + fees) shape pays a transfer.
-        ZCASH_PRINCIPAL_ZATOSHIS
+        // The first mature output that pays this transfer, at least of the
+        // devnet's (1 ZEC + fees) shape: Regtest coinbases halve, and an
+        // earlier output too small for a 2 ZEC payment was once picked first.
+        value_zatoshis
+            .max(ZCASH_PRINCIPAL_ZATOSHIS)
             .saturating_add(FUNDING_FEE_ZATOSHIS)
             .saturating_add(MINIMUM_CHANGE_ZATOSHIS),
         100,
@@ -472,6 +519,7 @@ pub async fn transfer_local_v0_2_regtest(
 /// The credential of a Zcash Testnet route (the self-hosted Zebra's cookie
 /// file or the Tatum API key file), owner-private.
 #[derive(Clone)]
+#[cfg(feature = "dealer-fixture")]
 pub enum TestnetZebraCredential {
     /// A self-hosted Testnet Zebra on loopback and its `.cookie` file.
     SelfHostedCookie(PathBuf),
@@ -479,6 +527,7 @@ pub enum TestnetZebraCredential {
     TatumApiKey(PathBuf),
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl std::fmt::Debug for TestnetZebraCredential {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -488,6 +537,7 @@ impl std::fmt::Debug for TestnetZebraCredential {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl TestnetZebraCredential {
     fn route(&self) -> LocalPocZebraRoute {
         match self {
@@ -512,6 +562,7 @@ impl TestnetZebraCredential {
 ///
 /// As [`transfer_local_v0_2_regtest`], for a Zebra that is not Testnet on NU7,
 /// an unsafe credential, or no such output.
+#[cfg(feature = "dealer-fixture")]
 pub async fn transfer_v0_2_testnet(
     zebra_endpoint: &Url,
     credential: &TestnetZebraCredential,
@@ -546,6 +597,7 @@ pub async fn transfer_v0_2_testnet(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "dealer-fixture")]
 async fn transfer_between_keys(
     rpc: &HttpZebraRpc,
     chain: &FundingChain,
@@ -566,9 +618,16 @@ async fn transfer_between_keys(
     let from_public = PublicKey::from_secret_key(&secp, &from_secret);
     let to_public = PublicKey::from_secret_key(&secp, &to_secret);
     to_secret.non_secure_erase();
-    let (candidate, tip_height, _) =
-        select_funding_candidate(rpc, chain, &from_public, skip, scan_from_height, min_value)
-            .await?;
+    let (candidate, tip_height, _) = select_funding_candidate(
+        rpc,
+        chain,
+        &from_public,
+        skip,
+        &[],
+        scan_from_height,
+        min_value,
+    )
+    .await?;
     let value = Zatoshis::from_u64(value_zatoshis).context("invalid transfer value")?;
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
@@ -601,6 +660,7 @@ async fn transfer_between_keys(
     })
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn load_zcash_key_material(
     key_files: Option<&LocalPocZcashKeyFiles>,
     direction: LocalPocDirection,
@@ -614,6 +674,7 @@ fn load_zcash_key_material(
     Ok(ZcashKeyMaterial { maker, taker })
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl LocalPocLezSignerFiles {
     /// Binds one complete Maker/Taker signer pair for private no-clobber copying.
     #[must_use]
@@ -622,6 +683,7 @@ impl LocalPocLezSignerFiles {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 struct LezSignerMaterial {
     maker: Zeroizing<Vec<u8>>,
     taker: Zeroizing<Vec<u8>>,
@@ -636,7 +698,7 @@ struct LezSignerMaterial {
 /// `TakerSellsLez`) is refused for it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-enum LocalPocProfile {
+pub(crate) enum LocalPocProfile {
     /// `deterministic-local-v1`: the isolated test lane (60 s LEZ refund delay).
     DeterministicLocalV1,
     /// `deterministic-local-devnet-v1`: the same lane with a 30 min LEZ refund
@@ -679,7 +741,7 @@ enum LocalPocProfile {
 }
 
 impl LocalPocProfile {
-    const fn id(self) -> ZecProfileId {
+    pub(crate) const fn id(self) -> ZecProfileId {
         match self {
             Self::DeterministicLocalV1 => ZecProfileId::DeterministicLocalV1,
             Self::DeterministicLocalDevnetV1 => ZecProfileId::DeterministicLocalDevnetV1,
@@ -697,9 +759,42 @@ impl LocalPocProfile {
         }
     }
 
+    /// This profile's twin sized for `direction`, or itself when it admits
+    /// `direction` or has no twin. Each profile admits one direction (ADR
+    /// 0216); a take-time role names one profile and takes the other
+    /// direction under its twin, the pairs the dealer fixture signs:
+    /// `deterministic-local-devnet-v5`/`-v7`, `-v6`/`-v8`,
+    /// `public-testnet-v2`/`-v3` and `deterministic-local-v2`/`-v3`.
+    pub(crate) const fn for_direction(self, direction: SwapDirection) -> Self {
+        match (direction, self) {
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalDevnetV5) => {
+                Self::DeterministicLocalDevnetV7
+            }
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalDevnetV6) => {
+                Self::DeterministicLocalDevnetV8
+            }
+            (SwapDirection::TakerSellsLez, Self::PublicTestnetV2) => Self::PublicTestnetV3,
+            (SwapDirection::TakerSellsLez, Self::DeterministicLocalV2) => {
+                Self::DeterministicLocalV3
+            }
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalDevnetV7) => {
+                Self::DeterministicLocalDevnetV5
+            }
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalDevnetV8) => {
+                Self::DeterministicLocalDevnetV6
+            }
+            (SwapDirection::TakerSellsForeign, Self::PublicTestnetV3) => Self::PublicTestnetV2,
+            (SwapDirection::TakerSellsForeign, Self::DeterministicLocalV3) => {
+                Self::DeterministicLocalV2
+            }
+            (_, other) => other,
+        }
+    }
+
     /// The isolated test lane's profile for a direction: the Taker-reveals-first
     /// `deterministic-local-v3` for `TakerSellsLez`, `deterministic-local-v2`
     /// (Regtest NU7) for `TakerSellsForeign`.
+    #[cfg(feature = "dealer-fixture")]
     const fn test_lane(direction: LocalPocDirection) -> Self {
         match direction {
             LocalPocDirection::TakerSellsForeign => Self::DeterministicLocalV2,
@@ -710,11 +805,13 @@ impl LocalPocProfile {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[cfg(feature = "dealer-fixture")]
 enum LocalPocDirection {
     TakerSellsForeign,
     TakerSellsLez,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl LocalPocDirection {
     const fn protocol(self) -> SwapDirection {
         match self {
@@ -756,6 +853,7 @@ impl LocalPocDirection {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(feature = "dealer-fixture")]
 struct LezRuntimeSpec {
     chain_id: Hex32,
     channel_id: Hex32,
@@ -768,6 +866,7 @@ struct LezRuntimeSpec {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(feature = "dealer-fixture")]
 struct BridgeSpec {
     maker_endpoint: Url,
     taker_endpoint: Url,
@@ -775,6 +874,7 @@ struct BridgeSpec {
 
 /// Secret-free result of provisioning one pair of local actor inputs.
 #[derive(Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocProvisionSummary {
     schema_version: u16,
     run_id: RunId,
@@ -803,6 +903,7 @@ pub struct LocalPocProvisionSummary {
 
 /// Secret-free result of binding a validated chain-fact template to Chat.
 #[derive(Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocChatDraftSummary {
     schema_version: u16,
     draft_file: PathBuf,
@@ -817,6 +918,7 @@ pub struct LocalPocChatDraftSummary {
 
 /// Secret-free result of producing fresh actors from a Chat agreement.
 #[derive(Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocChatFinalizeSummary {
     schema_version: u16,
     run_id: RunId,
@@ -832,6 +934,7 @@ pub struct LocalPocChatFinalizeSummary {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 struct RolePaths {
     state_root: PathBuf,
     config_file: PathBuf,
@@ -840,14 +943,15 @@ struct RolePaths {
     sidecar_capability_file: PathBuf,
 }
 
-struct SelectedCandidate {
-    outpoint: OutPoint,
-    output: TxOut,
-    rpc_transaction_id: Hex32,
+pub(crate) struct SelectedCandidate {
+    pub(crate) outpoint: OutPoint,
+    pub(crate) output: TxOut,
+    pub(crate) rpc_transaction_id: Hex32,
     /// Height of the block that holds it.
-    height: u32,
+    pub(crate) height: u32,
 }
 
+#[cfg(feature = "dealer-fixture")]
 struct AgreementFixture {
     wire: Zeroizing<Vec<u8>>,
     sha256: Hex32,
@@ -874,6 +978,7 @@ struct AgreementFixture {
 /// non-Regtest Zebra, unstable RPC view, missing mature actor-owned output,
 /// invalid agreement, unsafe output path, file collision, or actor-pair check.
 #[allow(clippy::too_many_lines)]
+#[cfg(feature = "dealer-fixture")]
 pub async fn provision_local_v0_2_corridor(
     spec_file: &Path,
     output_root: &Path,
@@ -892,6 +997,7 @@ pub async fn provision_local_v0_2_corridor(
 ///
 /// In addition to [`provision_local_v0_2_corridor`], fails for absent, aliased,
 /// non-canonical, non-private, malformed, equal, or account-mismatched signers.
+#[cfg(feature = "dealer-fixture")]
 pub async fn provision_local_v0_2_corridor_with_signers(
     spec_file: &Path,
     output_root: &Path,
@@ -913,6 +1019,7 @@ pub async fn provision_local_v0_2_corridor_with_signers(
 /// In addition to [`provision_local_v0_2_corridor_with_signers`], fails for an
 /// absent, non-private, malformed or equal Zcash key file pair.
 #[allow(clippy::too_many_lines)]
+#[cfg(feature = "dealer-fixture")]
 pub async fn provision_local_v0_2_corridor_with_material(
     spec_file: &Path,
     output_root: &Path,
@@ -953,6 +1060,7 @@ pub async fn provision_local_v0_2_corridor_with_material(
         &FundingChain::for_profile(ZecRefundProfile::for_id(spec.profile().id()))?,
         &funding_zcash_public,
         spec.zcash_funding_skip,
+        &[],
         spec.zcash_funding_scan_from_height,
         spec.zcash_principal()
             .saturating_add(FUNDING_FEE_ZATOSHIS)
@@ -1063,7 +1171,7 @@ pub async fn provision_local_v0_2_corridor_with_material(
     };
 
     let maker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
-        &spec,
+        &RoleCorridor::of_spec(&spec, ActorRole::Maker),
         &swap_id,
         ActorRole::Maker,
         &agreement_file,
@@ -1078,7 +1186,7 @@ pub async fn provision_local_v0_2_corridor_with_material(
     ))
     .context("failed to encode maker actor config")?;
     let taker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
-        &spec,
+        &RoleCorridor::of_spec(&spec, ActorRole::Taker),
         &swap_id,
         ActorRole::Taker,
         &agreement_file,
@@ -1155,6 +1263,7 @@ pub async fn provision_local_v0_2_corridor_with_material(
 ///
 /// Fails closed for unsafe input/output files, an invalid or expired template,
 /// invalid transcript expiry, or a draft that changes executable chain facts.
+#[cfg(feature = "dealer-fixture")]
 pub fn prepare_local_v0_2_chat_draft(
     source_agreement_file: &Path,
     now: UnixSeconds,
@@ -1214,6 +1323,7 @@ pub fn prepare_local_v0_2_chat_draft(
 /// agreements, incorrect role authority, changed chain facts, output collision,
 /// or a generated config that cannot be securely reloaded and activated.
 #[allow(clippy::too_many_lines, clippy::similar_names)]
+#[cfg(feature = "dealer-fixture")]
 pub fn finalize_local_v0_2_chat_corridor(
     source_maker_config_file: &Path,
     source_taker_config_file: &Path,
@@ -1409,29 +1519,33 @@ pub(crate) fn validate_role_authority(
     Ok(())
 }
 
-struct MaterialPaths {
-    state_root: PathBuf,
-    config: PathBuf,
-    runtime: PathBuf,
-    role_state_db: PathBuf,
-    claim_recovery_key: PathBuf,
-    claim_preimage: PathBuf,
-    zcash_key: PathBuf,
-    lez_signer_key: PathBuf,
-    bridge_journal_db: PathBuf,
-    capability: PathBuf,
-    zebra_credential: PathBuf,
+pub(crate) struct MaterialPaths {
+    pub(crate) state_root: PathBuf,
+    pub(crate) config: PathBuf,
+    #[cfg(feature = "dealer-fixture")]
+    pub(crate) runtime: PathBuf,
+    pub(crate) role_state_db: PathBuf,
+    pub(crate) claim_recovery_key: PathBuf,
+    pub(crate) claim_preimage: PathBuf,
+    pub(crate) zcash_key: PathBuf,
+    #[cfg(feature = "dealer-fixture")]
+    pub(crate) lez_signer_key: PathBuf,
+    pub(crate) bridge_journal_db: PathBuf,
+    pub(crate) capability: PathBuf,
+    pub(crate) zebra_credential: PathBuf,
 }
 
-fn material_paths(root: &Path, state_root: &Path) -> MaterialPaths {
+pub(crate) fn material_paths(root: &Path, state_root: &Path) -> MaterialPaths {
     MaterialPaths {
         state_root: state_root.to_path_buf(),
         config: root.join("actor-config.json"),
+        #[cfg(feature = "dealer-fixture")]
         runtime: root.join("lez-runtime.json"),
         role_state_db: state_root.join("actor.sqlite3"),
         claim_recovery_key: root.join("claim-recovery.key"),
         claim_preimage: root.join("claim-preimage.key"),
         zcash_key: root.join("zcash.key"),
+        #[cfg(feature = "dealer-fixture")]
         lez_signer_key: root.join("lez-signer.key"),
         bridge_journal_db: state_root.join("bridge.sqlite3"),
         capability: root.join("sidecar.capability"),
@@ -1439,9 +1553,35 @@ fn material_paths(root: &Path, state_root: &Path) -> MaterialPaths {
     }
 }
 
+/// What one role's actor config takes from its corridor besides the
+/// agreement: the run, the role's sidecar, the Zebra route and the profile.
+pub(crate) struct RoleCorridor<'a> {
+    pub(crate) run_id: &'a RunId,
+    pub(crate) bridge_endpoint: &'a Url,
+    pub(crate) zebra_endpoint: &'a Url,
+    pub(crate) zebra_route: &'a LocalPocZebraRoute,
+    pub(crate) profile: ZecProfileId,
+}
+
+#[cfg(feature = "dealer-fixture")]
+impl<'a> RoleCorridor<'a> {
+    fn of_spec(spec: &'a ProvisionSpec, role: ActorRole) -> Self {
+        Self {
+            run_id: &spec.run_id,
+            bridge_endpoint: match role {
+                ActorRole::Maker => &spec.bridge.maker_endpoint,
+                ActorRole::Taker => &spec.bridge.taker_endpoint,
+            },
+            zebra_endpoint: &spec.zebra_endpoint,
+            zebra_route: &spec.zebra_route,
+            profile: spec.profile().id(),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-fn actor_config_input(
-    spec: &ProvisionSpec,
+pub(crate) fn actor_config_input(
+    corridor: &RoleCorridor<'_>,
     swap_id: &SwapId,
     role: ActorRole,
     agreement_file: &Path,
@@ -1453,28 +1593,28 @@ fn actor_config_input(
     discovery: DiscoveryWindow,
     candidates: Vec<CandidateOutpoint>,
 ) -> DeterministicLocalV0_2ActorConfigInput {
-    let (endpoint, role_name) = match role {
-        ActorRole::Maker => (spec.bridge.maker_endpoint.clone(), "maker"),
-        ActorRole::Taker => (spec.bridge.taker_endpoint.clone(), "taker"),
+    let role_name = match role {
+        ActorRole::Maker => "maker",
+        ActorRole::Taker => "taker",
     };
-    let profile = ZecRefundProfile::for_id(spec.profile().id());
+    let profile = ZecRefundProfile::for_id(corridor.profile);
     DeterministicLocalV0_2ActorConfigInput {
         role,
-        run_id: spec.run_id.clone(),
+        run_id: corridor.run_id.clone(),
         swap_id: swap_id.clone(),
         signed_agreement_file: agreement_file.to_path_buf(),
         signed_agreement_sha256: agreement_sha256,
         role_state_db: paths.role_state_db.clone(),
-        claim_recovery_key_id: format!("{}-{role_name}-claim", spec.run_id.as_str()).into(),
+        claim_recovery_key_id: format!("{}-{role_name}-claim", corridor.run_id.as_str()).into(),
         claim_recovery_key_file: paths.claim_recovery_key.clone(),
         claim_preimage_file,
         zcash_key_file: paths.zcash_key.clone(),
-        bridge_endpoint: endpoint,
+        bridge_endpoint: corridor.bridge_endpoint.clone(),
         bridge_journal_db: paths.bridge_journal_db.clone(),
         bridge_capability_file: paths.capability.clone(),
         bridge_runtime: runtime,
-        zebra_endpoint: spec.zebra_endpoint.clone(),
-        zebra_route: match spec.zebra_route {
+        zebra_endpoint: corridor.zebra_endpoint.clone(),
+        zebra_route: match corridor.zebra_route {
             LocalPocZebraRoute::DeterministicLocal => ProvisionedZebraRoute::DeterministicLocal,
             LocalPocZebraRoute::SelfHostedCookie { .. } => {
                 ProvisionedZebraRoute::SelfHostedTestnetCookie {
@@ -1498,6 +1638,7 @@ fn actor_config_input(
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn runtime_descriptor(
     spec: &ProvisionSpec,
     role: BridgeParticipant,
@@ -1514,6 +1655,7 @@ fn runtime_descriptor(
     )
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn role_summary(paths: &MaterialPaths) -> RolePaths {
     RolePaths {
         state_root: paths.state_root.clone(),
@@ -1524,12 +1666,14 @@ fn role_summary(paths: &MaterialPaths) -> RolePaths {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn load_spec(path: &Path) -> Result<ProvisionSpec> {
     let (bytes, _) = read_bounded_identified(path, MAX_SPEC_BYTES, FilePrivacy::OwnerPrivate)
         .map_err(|_| anyhow::anyhow!("local PoC spec is unavailable or unsafe"))?;
     serde_json::from_slice(bytes.as_slice()).context("local PoC spec is invalid")
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn load_lez_signer_material(
     signer_files: Option<&LocalPocLezSignerFiles>,
     maker_account_id: &str,
@@ -1593,6 +1737,7 @@ fn load_lez_signer_material(
     Ok(LezSignerMaterial { maker, taker })
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn validate_external_lez_signer_encoding(bytes: &[u8]) -> Result<()> {
     ensure!(
         bytes.len() == MAX_LEZ_SIGNER_KEY_BYTES
@@ -1605,6 +1750,7 @@ fn validate_external_lez_signer_encoding(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn derive_lez_signer_account(bytes: &[u8]) -> Result<[u8; 32]> {
     let encoded = bytes.strip_suffix(b"\n").unwrap_or(bytes);
     ensure!(
@@ -1624,6 +1770,7 @@ fn derive_lez_signer_account(bytes: &[u8]) -> Result<[u8; 32]> {
     Ok(derive_lez_public_account_v0_2(&x_only))
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
     ensure!(
         spec.schema_version == SPEC_SCHEMA_VERSION,
@@ -1672,6 +1819,7 @@ fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
 /// under `public-testnet-v3`, whose Zcash window is sized for the Maker's
 /// earlier Zcash refund of `TakerSellsLez` and is shorter than the LEZ refund
 /// delay that direction needs it to outlast.
+#[cfg(feature = "dealer-fixture")]
 fn validate_profile_direction(
     profile: LocalPocProfile,
     direction: LocalPocDirection,
@@ -1697,11 +1845,12 @@ fn validate_profile_direction(
 /// unspent, reading blocks from `scan_from_height` up. Returns it with the tip
 /// height it was selected at and the chain's genesis.
 #[allow(clippy::too_many_lines)]
-async fn select_funding_candidate<R>(
+pub(crate) async fn select_funding_candidate<R>(
     rpc: &R,
     chain: &FundingChain,
     funding_key: &PublicKey,
     skip: u32,
+    exclude: &[OutPoint],
     scan_from_height: u32,
     min_value: u64,
 ) -> Result<(SelectedCandidate, u32, BlockHash)>
@@ -1793,6 +1942,10 @@ where
                 }
                 let output_index = u32::try_from(index).context("Zcash vout index overflow")?;
                 let outpoint = OutPoint::new(*transaction_id.as_ref(), output_index);
+                // Committed to another live reservation of this funder.
+                if exclude.contains(&outpoint) {
+                    continue;
+                }
                 let Some(unspent) = rpc
                     .unspent_output(&outpoint)
                     .await
@@ -1849,20 +2002,24 @@ where
             "Zebra tip changed during candidate selection"
         );
     }
+    // The refusal names the funder's address, so its owner knows what to pay.
+    let address = regtest_p2pkh_address(funding_key).unwrap_or_default();
     let candidate = selected.with_context(|| match identity.network() {
         NetworkType::Regtest => format!(
-            "no mature deterministic Zebra funder output is available after passing over {skip}"
+            "no mature deterministic Zebra funder output for {address} is available after \
+             passing over {skip}"
         ),
         NetworkType::Test | NetworkType::Main => format!(
-            "no unspent funder output of at least {min_value} zatoshis, {} blocks deep, \
-             from height {scan_from_height} after passing over {skip}",
+            "no unspent funder output for {address} of at least {min_value} zatoshis, {} blocks \
+             deep, from height {scan_from_height} after passing over {skip}",
             chain.min_confirmations
         ),
     })?;
     Ok((candidate, tip_height, genesis))
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
+#[cfg(feature = "dealer-fixture")]
 fn build_agreement(
     spec: &ProvisionSpec,
     zcash_keys: &ZcashKeyMaterial,
@@ -1877,22 +2034,6 @@ fn build_agreement(
         .duration_since(UNIX_EPOCH)
         .context("system clock precedes Unix epoch")?
         .as_secs();
-    let profile = ZecRefundProfile::for_id(spec.profile().id());
-    let zcash_anchor = zebra_tip_height
-        .checked_add(1)
-        .context("Zebra funding anchor overflow")?;
-    let zcash_refund_height = zcash_anchor
-        .checked_add(profile.zcash_refund_blocks())
-        .context("Zebra refund height overflow")?;
-    let lez_refund_seconds = now
-        .checked_add(profile.lez_refund_delay().value())
-        .context("LEZ refund time overflow")?;
-    let (earlier_refund_latest_ms, later_refund_earliest) =
-        refund_plan(profile, spec.direction, now, lez_refund_seconds)?;
-    let expires_at = now
-        .checked_add(AGREEMENT_LIFETIME_SECONDS)
-        .context("agreement expiry overflow")?;
-
     let maker_bytes = zcash_keys.maker.clone();
     let taker_bytes = zcash_keys.taker.clone();
     let mut maker_secret = SecretKey::from_slice(maker_bytes.as_ref())?;
@@ -1906,51 +2047,176 @@ fn build_agreement(
     // first swap's funding as its Maker lock, then tried to spend an output
     // already claimed (zec-concurrent, chain 37, 2026-10-29).
     let preimage = fresh_claim_preimage()?;
-    let secret_digest: [u8; 32] = Sha256::digest(&preimage[..]).into();
-    let maker_hash = public_key_hash(&maker_public);
-    let taker_hash = public_key_hash(&taker_public);
-    let (zcash_funder_hash, zcash_claimant_hash) = match spec.direction.zcash_funder() {
+    let facts = AgreementFacts {
+        profile: spec.profile().id(),
+        direction: spec.direction.protocol(),
+        swap_id: swap_id.clone(),
+        maker_lez_account,
+        taker_lez_account,
+        maker_zcash_key: maker_public,
+        taker_zcash_key: taker_public,
+        secret_digest: Sha256::digest(&preimage[..]).into(),
+        lez: LezChainFacts {
+            channel_id: *spec.lez_runtime.channel_id.as_bytes(),
+            genesis_block_hash: *spec.lez_runtime.genesis_block_hash.as_bytes(),
+            escrow_program_id: spec.lez_runtime.escrow_program_id,
+            authenticated_transfer_program_id: authenticated_transfer,
+        },
+        lez_amount: LEZ_NATIVE_AMOUNT,
+        zcash_principal: spec.zcash_principal(),
+        funding_input: candidate.funding_input(),
+        zebra_tip_height,
+        now,
+        transcript: NegotiationTranscriptV1::new(
+            labeled_hash(spec.run_id.as_str(), b"session"),
+            labeled_hash(spec.run_id.as_str(), b"offer"),
+            now.checked_add(AGREEMENT_LIFETIME_SECONDS)
+                .context("agreement expiry overflow")?,
+        ),
+    };
+    let (body, zcash_refund_height) = compose_agreement_body(&facts)?;
+    let wire = sign_agreement_body(body, &maker_secret, &taker_secret, now)?;
+    maker_secret.non_secure_erase();
+    taker_secret.non_secure_erase();
+    let sha256 = Hex32::from_bytes(Sha256::digest(wire.as_slice()).into());
+    Ok(AgreementFixture {
+        wire,
+        sha256,
+        maker_zcash_public_key: maker_public.serialize(),
+        taker_zcash_public_key: taker_public.serialize(),
+        maker_zcash_key: maker_bytes,
+        taker_zcash_key: taker_bytes,
+        preimage,
+        zcash_candidate: CandidateOutpoint::new(
+            candidate.rpc_transaction_id,
+            candidate.outpoint.n(),
+        ),
+        zcash_refund_height,
+    })
+}
+
+#[cfg(feature = "dealer-fixture")]
+impl SelectedCandidate {
+    fn funding_input(&self) -> ZcashFundingInputV1 {
+        ZcashFundingInputV1::new(
+            *self.outpoint.hash(),
+            self.outpoint.n(),
+            u64::from(self.output.value()),
+            self.output.script_pubkey().0.0.clone(),
+        )
+    }
+}
+
+/// The LEZ chain a Zcash agreement settles against.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LezChainFacts {
+    pub(crate) channel_id: [u8; 32],
+    pub(crate) genesis_block_hash: [u8; 32],
+    pub(crate) escrow_program_id: Hex32,
+    pub(crate) authenticated_transfer_program_id: [u8; 32],
+}
+
+/// Every public fact one Zcash agreement body is composed from. The dealer
+/// (`zec-local-poc-provision`) and the two roles of a take-time reservation
+/// (`zec_reserve_v1`) compose the same body from the same facts, so each
+/// role can recompute what the other sent.
+#[derive(Clone, Debug)]
+pub(crate) struct AgreementFacts {
+    pub(crate) profile: ZecProfileId,
+    pub(crate) direction: SwapDirection,
+    pub(crate) swap_id: SwapId,
+    pub(crate) maker_lez_account: [u8; 32],
+    pub(crate) taker_lez_account: [u8; 32],
+    pub(crate) maker_zcash_key: PublicKey,
+    pub(crate) taker_zcash_key: PublicKey,
+    /// SHA-256 of the Taker's claim preimage (the Taker holds it in both
+    /// directions, ADR 0216).
+    pub(crate) secret_digest: [u8; 32],
+    pub(crate) lez: LezChainFacts,
+    pub(crate) lez_amount: u128,
+    pub(crate) zcash_principal: u64,
+    /// The Zcash funder's one committed funding input.
+    pub(crate) funding_input: ZcashFundingInputV1,
+    /// Zebra tip the anchor is fixed after (the anchor is the next block).
+    pub(crate) zebra_tip_height: u32,
+    /// The LEZ funding anchor, Unix seconds.
+    pub(crate) now: u64,
+    pub(crate) transcript: NegotiationTranscriptV1,
+}
+
+/// The role that funds Zcash in `direction`.
+pub(crate) const fn zcash_funder(direction: SwapDirection) -> ActorRole {
+    match direction {
+        SwapDirection::TakerSellsForeign => ActorRole::Taker,
+        SwapDirection::TakerSellsLez => ActorRole::Maker,
+    }
+}
+
+/// Composes the unsigned agreement body and its Zcash refund height: the
+/// anchor is the block after `zebra_tip_height`, the deadlines follow the
+/// profile from `now`.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn compose_agreement_body(facts: &AgreementFacts) -> Result<(ZecAgreementBodyV1, u32)> {
+    let now = facts.now;
+    let profile = ZecRefundProfile::for_id(facts.profile);
+    let zcash_anchor = facts
+        .zebra_tip_height
+        .checked_add(1)
+        .context("Zebra funding anchor overflow")?;
+    let zcash_refund_height = zcash_anchor
+        .checked_add(profile.zcash_refund_blocks())
+        .context("Zebra refund height overflow")?;
+    let lez_refund_seconds = now
+        .checked_add(profile.lez_refund_delay().value())
+        .context("LEZ refund time overflow")?;
+    let (earlier_refund_latest_ms, later_refund_earliest) =
+        refund_plan(profile, facts.direction, now, lez_refund_seconds)?;
+    let maker_hash = public_key_hash(&facts.maker_zcash_key);
+    let taker_hash = public_key_hash(&facts.taker_zcash_key);
+    let (zcash_funder_hash, zcash_claimant_hash) = match zcash_funder(facts.direction) {
         ActorRole::Maker => (maker_hash, taker_hash),
         ActorRole::Taker => (taker_hash, maker_hash),
     };
     // The profile decides the claim branch: the Taker-reveals-first profiles check
     // that the preimage is 32 bytes, the length the LEZ escrow claims with.
     let contract = Bip199Contract::for_profile(
-        spec.profile().id(),
+        facts.profile,
         zcash_refund_height,
         zcash_funder_hash,
-        secret_digest,
+        facts.secret_digest,
         zcash_claimant_hash,
     );
     let expected_output = ExpectedBip199Output::new(
         profile.zcash_network(),
         profile.consensus_branch_id(),
-        Zatoshis::from_u64(spec.zcash_principal())?,
+        Zatoshis::from_u64(facts.zcash_principal)?,
         contract,
     );
-    let binding = ZecSwapBinding::new(spec.profile().id(), expected_output)?;
-    let funding_inputs = ZcashFundingInputSetV1::new(vec![ZcashFundingInputV1::new(
-        *candidate.outpoint.hash(),
-        candidate.outpoint.n(),
-        u64::from(candidate.output.value()),
-        candidate.output.script_pubkey().0.0.clone(),
-    )])?;
+    let binding = ZecSwapBinding::new(facts.profile, expected_output)?;
+    let funding_inputs = ZcashFundingInputSetV1::new(vec![facts.funding_input.clone()])?;
 
-    let escrow_program = program_id_words(spec.lez_runtime.escrow_program_id);
-    let authenticated_transfer_program =
-        program_id_words(Hex32::from_bytes(authenticated_transfer));
-    let onchain_swap_id = derive_lez_swap_id_v1(swap_id.as_str().as_bytes());
+    let escrow_program = program_id_words(facts.lez.escrow_program_id);
+    let authenticated_transfer_program = program_id_words(Hex32::from_bytes(
+        facts.lez.authenticated_transfer_program_id,
+    ));
+    let onchain_swap_id = derive_lez_swap_id_v1(facts.swap_id.as_str().as_bytes());
     let metadata_account = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
     let custody_account = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
     let body = ZecAgreementBodyV1::new(
-        swap_id.as_str(),
-        spec.direction.protocol(),
-        ZecProfileRecordV1::from(spec.profile().id()),
+        facts.swap_id.as_str(),
+        facts.direction,
+        ZecProfileRecordV1::from(facts.profile),
         ZecParticipantsV1::new(
-            ZecParticipantIdentityV1::new(maker_lez_account, maker_public.serialize()),
-            ZecParticipantIdentityV1::new(taker_lez_account, taker_public.serialize()),
+            ZecParticipantIdentityV1::new(
+                facts.maker_lez_account,
+                facts.maker_zcash_key.serialize(),
+            ),
+            ZecParticipantIdentityV1::new(
+                facts.taker_lez_account,
+                facts.taker_zcash_key.serialize(),
+            ),
         ),
-        secret_digest,
+        facts.secret_digest,
         ZecLezTermsV1::new(
             LezChainIdentityV1::new(
                 match profile.zcash_network() {
@@ -1959,14 +2225,14 @@ fn build_agreement(
                     // LEZ v0.2 testnet (zec-swap-sdk agreement_v1.rs).
                     NetworkType::Test | NetworkType::Main => LezEnvironmentV1::PublicTestnetV0_2,
                 },
-                *spec.lez_runtime.channel_id.as_bytes(),
-                *spec.lez_runtime.genesis_block_hash.as_bytes(),
+                facts.lez.channel_id,
+                facts.lez.genesis_block_hash,
             ),
             escrow_program,
             LezAssetV1::Native {
                 authenticated_transfer_program_id: authenticated_transfer_program,
             },
-            LEZ_NATIVE_AMOUNT,
+            facts.lez_amount,
             metadata_account,
             custody_account,
         ),
@@ -1988,17 +2254,23 @@ fn build_agreement(
             earlier_refund_latest_ms,
             later_refund_earliest,
         ),
-        NegotiationTranscriptV1::new(
-            labeled_hash(spec.run_id.as_str(), b"session"),
-            labeled_hash(spec.run_id.as_str(), b"offer"),
-            expires_at,
-        ),
+        facts.transcript,
     );
+    Ok((body, zcash_refund_height))
+}
+
+/// Signs one composed body with both roles' keys and validates the record at
+/// `now`: the dealer's one-step countersignature.
+#[cfg(any(test, feature = "dealer-fixture"))]
+pub(crate) fn sign_agreement_body(
+    body: ZecAgreementBodyV1,
+    maker_secret: &SecretKey,
+    taker_secret: &SecretKey,
+    now: u64,
+) -> Result<Zeroizing<Vec<u8>>> {
     let commitment = body.commitment();
-    let maker_signature = sign_agreement(commitment, &maker_secret);
-    let taker_signature = sign_agreement(commitment, &taker_secret);
-    maker_secret.non_secure_erase();
-    taker_secret.non_secure_erase();
+    let maker_signature = sign_agreement(commitment, maker_secret);
+    let taker_signature = sign_agreement(commitment, taker_secret);
     let record = ZecAgreementRecordV1::from_parts(
         ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
         body,
@@ -2007,22 +2279,7 @@ fn build_agreement(
         taker_signature,
     );
     let agreement = ZecAgreementV1::validate_at(record, UnixSeconds::new(now))?;
-    let wire = Zeroizing::new(agreement.encode_wire()?);
-    let sha256 = Hex32::from_bytes(Sha256::digest(wire.as_slice()).into());
-    Ok(AgreementFixture {
-        wire,
-        sha256,
-        maker_zcash_public_key: maker_public.serialize(),
-        taker_zcash_public_key: taker_public.serialize(),
-        maker_zcash_key: maker_bytes,
-        taker_zcash_key: taker_bytes,
-        preimage,
-        zcash_candidate: CandidateOutpoint::new(
-            candidate.rpc_transaction_id,
-            candidate.outpoint.n(),
-        ),
-        zcash_refund_height,
-    })
+    Ok(Zeroizing::new(agreement.encode_wire()?))
 }
 
 /// The signed refund plan's two bounds, `(earlier_refund_latest_ms,
@@ -2042,7 +2299,7 @@ fn build_agreement(
 /// the margin before the LEZ deadline.
 fn refund_plan(
     profile: ZecRefundProfile,
-    direction: LocalPocDirection,
+    direction: SwapDirection,
     now: u64,
     lez_refund_seconds: u64,
 ) -> Result<(u64, u64)> {
@@ -2051,7 +2308,7 @@ fn refund_plan(
         .checked_mul(1_000)
         .context("LEZ refund millisecond overflow")?;
     match direction {
-        LocalPocDirection::TakerSellsForeign => {
+        SwapDirection::TakerSellsForeign => {
             let later_refund_earliest = match profile.zcash_network() {
                 // The fixture's harness mines every block: the bound is the schedule's own.
                 NetworkType::Regtest => lez_refund_seconds
@@ -2077,7 +2334,7 @@ fn refund_plan(
             };
             Ok((lez_refund_ms, later_refund_earliest))
         }
-        LocalPocDirection::TakerSellsLez => {
+        SwapDirection::TakerSellsLez => {
             let earlier_refund_latest_ms = match profile.zcash_network() {
                 NetworkType::Regtest => lez_refund_seconds
                     .checked_sub(margin)
@@ -2104,19 +2361,21 @@ fn refund_plan(
     }
 }
 
-fn public_key_hash(key: &PublicKey) -> [u8; 20] {
+pub(crate) fn public_key_hash(key: &PublicKey) -> [u8; 20] {
     match lez_zec_swap_sdk::p2pkh_address(key) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("a public key always maps to P2PKH"),
     }
 }
 
+#[cfg(any(test, feature = "dealer-fixture"))]
 fn sign_agreement(commitment: [u8; 32], key: &SecretKey) -> [u8; 64] {
     Secp256k1::signing_only()
         .sign_ecdsa(&Message::from_digest(commitment), key)
         .serialize_compact()
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn labeled_hash(run_id: &str, label: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"logos.gateway.local-poc.v1\0");
@@ -2134,6 +2393,7 @@ fn program_id_words(value: Hex32) -> [u32; 8] {
     words
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn decode_base58_32(value: &str) -> Result<[u8; 32]> {
     let decoded = bs58::decode(value).into_vec()?;
     decoded
@@ -2141,18 +2401,19 @@ fn decode_base58_32(value: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow::anyhow!("base58 value is not 32 bytes"))
 }
 
-fn txid_display_hex(transaction_id: TxId) -> Hex32 {
+pub(crate) fn txid_display_hex(transaction_id: TxId) -> Hex32 {
     let mut display = *transaction_id.as_ref();
     display.reverse();
     Hex32::from_bytes(display)
 }
 
-fn block_hash_display_hex(block_hash: BlockHash) -> Hex32 {
+pub(crate) fn block_hash_display_hex(block_hash: BlockHash) -> Hex32 {
     let mut display = block_hash.0;
     display.reverse();
     Hex32::from_bytes(display)
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn random_capability() -> Result<Zeroizing<Vec<u8>>> {
     let mut random = Zeroizing::new([0_u8; 32]);
     getrandom::fill(&mut random[..])
@@ -2160,6 +2421,7 @@ fn random_capability() -> Result<Zeroizing<Vec<u8>>> {
     Ok(Zeroizing::new(hex::encode(&random[..]).into_bytes()))
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn avoid_zero_or_equal(maker: &mut [u8; 32], taker: &mut [u8; 32]) {
     if maker.iter().all(|byte| *byte == 0) {
         maker[31] = 1;
@@ -2169,7 +2431,8 @@ fn avoid_zero_or_equal(maker: &mut [u8; 32], taker: &mut [u8; 32]) {
     }
 }
 
-fn validate_new_output_root(path: &Path) -> Result<()> {
+#[cfg(feature = "dealer-fixture")]
+pub(crate) fn validate_new_output_root(path: &Path) -> Result<()> {
     ensure!(path.is_absolute(), "output root must be absolute");
     ensure!(
         path.components()
@@ -2213,7 +2476,7 @@ pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to sync private file {}", path.display()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "dealer-fixture"))]
 mod zcash_identity_tests {
     use super::*;
 
@@ -2230,7 +2493,7 @@ mod zcash_identity_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "dealer-fixture"))]
 mod signer_tests {
     use std::{fs, os::unix::fs::PermissionsExt as _};
 
@@ -2353,7 +2616,7 @@ mod claim_preimage_tests {
 }
 
 #[cfg(test)]
-mod testnet_provision_tests {
+pub(crate) mod testnet_provision_tests {
     use std::collections::HashMap;
 
     use lez_zebra_node_adapter::{
@@ -2389,18 +2652,18 @@ mod testnet_provision_tests {
 
     #[derive(Debug, thiserror::Error)]
     #[error("not served by the fake")]
-    struct Unserved;
+    pub(crate) struct Unserved;
 
     /// A Testnet Zebra serving one real block at `NU7_TX_HEIGHT` (and empty
     /// blocks elsewhere) and the UTXO set it is told; with `regtest_nu7`, the
     /// Zebra 7 Regtest fixture's block 1 instead.
-    struct FakeTestnet {
-        tip: u32,
+    pub(crate) struct FakeTestnet {
+        pub(crate) tip: u32,
         tx_height: u32,
         branch: BranchId,
         genesis: BlockHash,
         transaction: Vec<u8>,
-        unspent: HashMap<(TxId, u32), u32>,
+        pub(crate) unspent: HashMap<(TxId, u32), u32>,
     }
 
     impl FakeTestnet {
@@ -2420,7 +2683,7 @@ mod testnet_provision_tests {
             }
         }
 
-        fn regtest_nu7() -> Self {
+        pub(crate) fn regtest_nu7() -> Self {
             Self {
                 tip: 1 + COINBASE_MATURITY_CONFIRMATIONS,
                 tx_height: 1,
@@ -2431,7 +2694,7 @@ mod testnet_provision_tests {
             }
         }
 
-        fn txid(&self) -> TxId {
+        pub(crate) fn txid(&self) -> TxId {
             Transaction::read(self.transaction.as_slice(), BranchId::Nu7)
                 .unwrap()
                 .txid()
@@ -2620,7 +2883,7 @@ mod testnet_provision_tests {
             .unspent
             .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS + 1);
         let (candidate, tip, genesis) =
-            select_funding_candidate(&zebra, &chain, &miner, 0, 1, 100_000_000)
+            select_funding_candidate(&zebra, &chain, &miner, 0, &[], 1, 100_000_000)
                 .await
                 .unwrap();
         assert_eq!(candidate.outpoint, OutPoint::new(*txid.as_ref(), 0));
@@ -2637,7 +2900,7 @@ mod testnet_provision_tests {
             .unspent
             .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS - 1);
         assert!(
-            select_funding_candidate(&young, &chain, &miner, 0, 1, 100_000_000)
+            select_funding_candidate(&young, &chain, &miner, 0, &[], 1, 100_000_000)
                 .await
                 .is_err()
         );
@@ -2647,7 +2910,7 @@ mod testnet_provision_tests {
             .unspent
             .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS + 1);
         assert!(
-            select_funding_candidate(&old_branch, &chain, &miner, 0, 1, 100_000_000)
+            select_funding_candidate(&old_branch, &chain, &miner, 0, &[], 1, 100_000_000)
                 .await
                 .is_err()
         );
@@ -2663,6 +2926,7 @@ mod testnet_provision_tests {
             &testnet(),
             &spender(),
             0,
+            &[],
             NU7_TX_HEIGHT - 5,
             100_000_000 + FUNDING_FEE_ZATOSHIS + MINIMUM_CHANGE_ZATOSHIS,
         )
@@ -2683,7 +2947,7 @@ mod testnet_provision_tests {
     async fn a_testnet_funder_search_refuses_what_it_cannot_spend() {
         let wanted = 100_000_000 + FUNDING_FEE_ZATOSHIS + MINIMUM_CHANGE_ZATOSHIS;
         let select = |zebra: FakeTestnet, from: u32, min_value: u64| async move {
-            select_funding_candidate(&zebra, &testnet(), &spender(), 0, from, min_value)
+            select_funding_candidate(&zebra, &testnet(), &spender(), 0, &[], from, min_value)
                 .await
                 .map(|(candidate, _, _)| candidate.outpoint)
         };
@@ -2725,10 +2989,12 @@ mod testnet_provision_tests {
         assert!(select(regtest, NU7_TX_HEIGHT - 5, wanted).await.is_err());
     }
 
+    #[cfg(feature = "dealer-fixture")]
     fn spec(profile: &str, route: &serde_json::Value) -> ProvisionSpec {
         spec_in("taker_sells_foreign", profile, route)
     }
 
+    #[cfg(feature = "dealer-fixture")]
     fn spec_in(direction: &str, profile: &str, route: &serde_json::Value) -> ProvisionSpec {
         serde_json::from_value(serde_json::json!({
             "schema_version": 1, "run_id": "zec-testnet-1", "swap_id": "zec-testnet-swap-1",
@@ -2749,6 +3015,7 @@ mod testnet_provision_tests {
         .unwrap()
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_testnet_spec_names_its_route_and_the_profile_must_agree() {
         let tatum = serde_json::json!({"kind": "tatum_testnet_x_api_key", "api_key_file": "/run/secrets/tatum.key"});
@@ -2771,10 +3038,12 @@ mod testnet_provision_tests {
         );
     }
 
+    #[cfg(feature = "dealer-fixture")]
     fn tatum() -> serde_json::Value {
         serde_json::json!({"kind": "tatum_testnet_x_api_key", "api_key_file": "/run/secrets/tatum.key"})
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_testnet_corridor_agrees_on_nu7_the_lez_testnet_and_v2_deadlines() {
         let spec = spec("public-testnet-v2", &tatum());
@@ -2819,6 +3088,86 @@ mod testnet_provision_tests {
         // earlier than the LEZ refund delay plus margin.
     }
 
+    /// A take-time role writes, for its own role, exactly the actor config
+    /// the dealer writes for that role of the same corridor.
+    #[cfg(feature = "dealer-fixture")]
+    #[test]
+    fn a_take_time_template_is_the_dealers_role_config() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let role_root = root.join("maker");
+        create_private_directory(&role_root).unwrap();
+        create_private_directory(&role_root.join("state")).unwrap();
+        // The role's long-lived Zcash key lives outside the swap's role root.
+        let role_key = root.join("role-zcash.key");
+        write_private_new(&role_key, &[2_u8; 32]).unwrap();
+        for (name, bytes) in [
+            ("claim-recovery.key", vec![3_u8; 32]),
+            ("draft.borsh", vec![4_u8; 64]),
+            (
+                "sidecar-capability",
+                b"0123456789abcdef0123456789abcdef\n".to_vec(),
+            ),
+        ] {
+            write_private_new(&role_root.join(name), &bytes).unwrap();
+        }
+        let role_config = root.join("zec-role.json");
+        fs::write(
+            &role_config,
+            br#"{"schema_version":1,"profile":"deterministic-local-devnet-v5","zebra_endpoint":"http://127.0.0.1:18232"}"#,
+        )
+        .unwrap();
+        fs::set_permissions(&role_config, fs::Permissions::from_mode(0o600)).unwrap();
+        let mut spec = spec(
+            "deterministic-local-devnet-v5",
+            &serde_json::json!({"kind": "deterministic_local"}),
+        );
+        spec.zebra_endpoint = Url::parse("http://127.0.0.1:18232").unwrap();
+        spec.run_id = RunId::new("swap-zec-take-time-0001").unwrap();
+        let swap_id = SwapId::new("zec-take-time-swap-0001").unwrap();
+        let runtime =
+            runtime_descriptor(&spec, BridgeParticipant::Maker, Hex32::from_bytes([7; 32]));
+        let discovery = DiscoveryWindow::new(38, 512).unwrap();
+        let written = crate::reserve::write_zec_role_template(
+            &crate::ZecRoleConfigV1::load(&role_config).unwrap(),
+            &role_root,
+            &crate::ZecRoleTemplate {
+                role: ActorRole::Maker,
+                run_id: spec.run_id.clone(),
+                swap_id: swap_id.clone(),
+                direction: SwapDirection::TakerSellsForeign,
+                bridge_endpoint: spec.bridge.maker_endpoint.to_string(),
+                capability_file: role_root.join("sidecar-capability"),
+                runtime: runtime.clone(),
+                zebra_genesis: Hex32::from_bytes([6; 32]),
+                lez_discovery: discovery,
+                funding: None,
+                zcash_key_file: role_key.clone(),
+            },
+        )
+        .unwrap();
+        let mut paths = material_paths(&role_root, &role_root.join("state"));
+        paths.capability = role_root.join("sidecar-capability");
+        paths.zcash_key = role_key;
+        let dealer = encode_deterministic_local_v0_2_actor_config(actor_config_input(
+            &RoleCorridor::of_spec(&spec, ActorRole::Maker),
+            &swap_id,
+            ActorRole::Maker,
+            &role_root.join("draft.borsh"),
+            Hex32::from_bytes(Sha256::digest([4_u8; 64]).into()),
+            &paths,
+            None,
+            runtime,
+            Hex32::from_bytes([6; 32]),
+            discovery,
+            Vec::new(),
+        ))
+        .unwrap();
+        assert_eq!(fs::read(written).unwrap(), dealer);
+    }
+
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn taker_sells_lez_needs_a_taker_reveals_first_profile() {
         let tatum = tatum();
@@ -2883,6 +3232,7 @@ mod testnet_provision_tests {
         assert!(refused.contains("sized for taker_sells_lez"), "{refused}");
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn the_preimage_is_the_takers_in_both_directions() {
         for direction in [
@@ -2901,6 +3251,7 @@ mod testnet_provision_tests {
         );
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn the_test_lane_profile_follows_the_direction() {
         let mut lane = spec_in(
@@ -2934,21 +3285,21 @@ mod testnet_provision_tests {
         // refund opens at the LEZ refund time.
         let v7 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV7);
         assert_eq!(
-            refund_plan(v7, LocalPocDirection::TakerSellsLez, now, now + 720).unwrap(),
+            refund_plan(v7, SwapDirection::TakerSellsLez, now, now + 720).unwrap(),
             ((now + 600) * 1_000, now + 720)
         );
         // public-testnet-v3: 95 blocks + 1 at 75 s = 7 200 s after the anchor,
         // which leaves the 7 200 s margin before the 14 400 s LEZ refund.
         let v3 = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV3);
         assert_eq!(
-            refund_plan(v3, LocalPocDirection::TakerSellsLez, now, now + 14_400).unwrap(),
+            refund_plan(v3, SwapDirection::TakerSellsLez, now, now + 14_400).unwrap(),
             (now * 1_000 + 7_200_000, now + 14_400)
         );
         // TakerSellsForeign keeps its plan: the Maker's LEZ refund first at
         // the LEZ refund time, the Taker's Zcash refund after it.
         let v5 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV5);
         assert_eq!(
-            refund_plan(v5, LocalPocDirection::TakerSellsForeign, now, now + 720).unwrap(),
+            refund_plan(v5, SwapDirection::TakerSellsForeign, now, now + 720).unwrap(),
             (
                 (now + 720) * 1_000,
                 now + 720 + v5.required_margin().value()
@@ -2956,7 +3307,7 @@ mod testnet_provision_tests {
         );
         let v2 = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV2);
         assert_eq!(
-            refund_plan(v2, LocalPocDirection::TakerSellsForeign, now, now + 1_800).unwrap(),
+            refund_plan(v2, SwapDirection::TakerSellsForeign, now, now + 1_800).unwrap(),
             (
                 (now + 1_800) * 1_000,
                 now + u64::from(v2.zcash_refund_blocks()) * PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS
@@ -2965,9 +3316,10 @@ mod testnet_provision_tests {
         );
         // A Zcash window that does not leave the margin before the LEZ refund
         // is refused rather than signed.
-        assert!(refund_plan(v3, LocalPocDirection::TakerSellsLez, now, now + 14_399).is_err());
+        assert!(refund_plan(v3, SwapDirection::TakerSellsLez, now, now + 14_399).is_err());
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_taker_sells_lez_testnet_corridor_validates_under_v3() {
         let spec = spec_in("taker_sells_lez", "public-testnet-v3", &tatum());
@@ -3005,6 +3357,7 @@ mod testnet_provision_tests {
         assert_eq!(&digest, agreement.secret_digest());
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_testnet_actor_config_names_the_route_nu7_and_the_whole_refund_window() {
         let spec = spec("public-testnet-v2", &tatum());
@@ -3013,7 +3366,7 @@ mod testnet_provision_tests {
         let runtime =
             runtime_descriptor(&spec, BridgeParticipant::Maker, Hex32::from_bytes([7; 32]));
         let config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
-            &spec,
+            &RoleCorridor::of_spec(&spec, ActorRole::Maker),
             &SwapId::new(spec.swap_id.clone()).unwrap(),
             ActorRole::Maker,
             Path::new("/var/lib/lez/zec/corridor/shared/agreement-v2.borsh"),

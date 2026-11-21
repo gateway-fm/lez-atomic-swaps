@@ -10,7 +10,7 @@ use lez_taker_node::{
     TakerPairCapabilityV1, TakerPrivacyGuidanceV1, TakerRefundRequestV1,
     TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
     TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
-    taker_pair_capabilities_v1,
+    TakerWalletBalancesRequestV1, taker_pair_capabilities_v1,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -47,6 +47,10 @@ fn every_untrusted_request_is_versioned_strict_and_contains_no_authority_field()
         (
             json!({"schema_version": 1}),
             reject_unknown::<TakerHealthRequestV1> as fn(Value),
+        ),
+        (
+            json!({"schema_version": 1, "zcash": true}),
+            reject_unknown::<TakerWalletBalancesRequestV1> as fn(Value),
         ),
         (
             json!({"schema_version": 1, "route": null}),
@@ -355,6 +359,11 @@ fn assert_all_request_schema_versions(schema_version: u16, accepted: bool) {
         json!({"schema_version": schema_version}),
         accepted,
         TakerHealthRequestV1::validate_schema_version,
+    );
+    assert_request_schema_version::<TakerWalletBalancesRequestV1>(
+        json!({"schema_version": schema_version}),
+        accepted,
+        TakerWalletBalancesRequestV1::validate_schema_version,
     );
     assert_request_schema_version::<TakerOfferListRequestV1>(
         json!({"schema_version": schema_version, "route": null}),

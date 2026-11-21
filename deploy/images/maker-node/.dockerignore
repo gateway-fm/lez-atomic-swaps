@@ -1,5 +1,5 @@
 # Only what the Dockerfile copies: the payload package, the source receipts
-# and the test-only escrow claim probe. The other debug executables staged
+# and the test-only escrow claim and custody credit probes. The other debug executables staged
 # here are inputs of scripts/package-role-node.sh, not of the image.
 *
 !Dockerfile
@@ -7,3 +7,4 @@
 !build-source.txt
 !sidecar-source.txt
 !lez-v02-escrow-claim-probe
+!lez-v02-custody-credit-probe

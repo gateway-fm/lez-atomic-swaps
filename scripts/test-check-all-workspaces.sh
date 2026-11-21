@@ -58,7 +58,7 @@ listed_excludes="$(
   awk '/^readonly root_excludes=\(/ { on = 1; next } on && /^\)/ { exit } on { print $1 }' \
     "$check_all" | LC_ALL=C sort
 )"
-[[ -n "$listed_excludes" ]] || fail "${check_all} has no root_excludes list"
+grep -q '^readonly root_excludes=(' "$check_all" || fail "${check_all} has no root_excludes list"
 for step in 'cargo clippy --locked --workspace --all-targets' \
   'cargo test --locked --workspace --all-targets' \
   'cargo doc --locked --workspace --no-deps'; do

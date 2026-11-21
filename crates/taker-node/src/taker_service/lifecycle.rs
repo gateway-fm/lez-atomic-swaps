@@ -19,7 +19,7 @@ use lez_actor_supervision::{ActorLastOutcomeV1, LastOutcomes};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, Phase, SwapDirection, SwapId};
 use lez_swap_store::{
-    ActorHeldLock, MakerOfferStatus, TakerActionAdmissionV1, TakerFacadeActionV1,
+    ActorHeldLock, MakerOfferStatus, MakerRouteV1, TakerActionAdmissionV1, TakerFacadeActionV1,
     TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1,
 };
 #[cfg(feature = "pair-zec")]
@@ -38,10 +38,10 @@ use crate::zec_taker_accept::{
 };
 use crate::{
     ConfiguredTakerInitiationContext, PreparedTakerInitiationV1, TakerActionCommitV1,
-    TakerBackendError, TakerClaimRequestV1, TakerHealthRequestV1, TakerInitiationCommitV1,
-    TakerLockCommitV1, TakerLockRequestV1, TakerOfferListRequestV1, TakerPrivacyGuidanceV1,
-    TakerRefundRequestV1, TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1,
-    TakerSwapMonitorRequestV1, TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1,
+    TakerBackendError, TakerClaimRequestV1, TakerInitiationCommitV1, TakerLockCommitV1,
+    TakerLockRequestV1, TakerOfferListRequestV1, TakerPrivacyGuidanceV1, TakerRefundRequestV1,
+    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+    TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1, TakerWalletBalancesRequestV1,
     btc_taker_accept::{
         BtcTakeInput, load_btc_taker_actor_from_receipt_for_monitor,
         take_btc_with_authenticated_offer_and_actor_config,
@@ -64,6 +64,10 @@ pub(super) enum RouteActor {
     },
     #[cfg(feature = "pair-zec")]
     Zec(zec_reference_actor::ActorConfig),
+    /// A Monero swap: its receipt-bound files; the Node's own supervisor
+    /// (`xmr_supervisor.rs`) drives it.
+    #[cfg(feature = "pair-xmr")]
+    Xmr(super::xmr_supervisor::XmrBoundSwap),
 }
 
 /// Typed, pair-neutral view of one actor's durable progress.
@@ -153,6 +157,16 @@ impl RouteActor {
                 inode,
             )
             .map(Self::Zec),
+            #[cfg(feature = "pair-xmr")]
+            Pair::Monero => super::xmr_supervisor::XmrBoundSwap::load(
+                receipt,
+                actor_root,
+                swap_id,
+                receipt_sha256,
+                device,
+                inode,
+            )
+            .map(Self::Xmr),
             #[allow(unreachable_patterns)]
             _ => Err(anyhow::anyhow!("pair has no Taker Node lifecycle route")),
         }
@@ -163,6 +177,18 @@ impl RouteActor {
             Self::Btc { swap_id, .. } => swap_id,
             #[cfg(feature = "pair-zec")]
             Self::Zec(config) => config.swap_id(),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(swap) => swap.swap_id(),
+        }
+    }
+
+    /// A Monero swap's files, for its supervisor.
+    #[cfg(feature = "pair-xmr")]
+    pub(super) const fn xmr_files(&self) -> Option<&super::xmr_supervisor::XmrSwapFiles> {
+        if let Self::Xmr(swap) = self {
+            Some(swap.files())
+        } else {
+            None
         }
     }
 
@@ -172,6 +198,8 @@ impl RouteActor {
             Self::Btc { config, .. } => config.agreement_terms(),
             #[cfg(feature = "pair-zec")]
             Self::Zec(_) => None,
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => None,
         }
     }
 
@@ -183,6 +211,8 @@ impl RouteActor {
             }
             #[cfg(feature = "pair-zec")]
             Self::Zec(_) => Vec::new(),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => Vec::new(),
         }
     }
 
@@ -198,6 +228,8 @@ impl RouteActor {
             Self::Btc { config, .. } => config.state_db(),
             #[cfg(feature = "pair-zec")]
             Self::Zec(config) => config.role_state_db(),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(swap) => swap.state_db(),
         }
     }
 
@@ -217,6 +249,8 @@ impl RouteActor {
                 config.bridge_journal_db().to_path_buf(),
                 config.signed_agreement_sha256(),
             ),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(swap) => swap.custody_identity(),
         }
     }
 
@@ -283,6 +317,9 @@ impl RouteActor {
                     }
                 })
             }
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(swap) => super::xmr_supervisor::lifecycle_status(swap.files())
+                .map_err(|error| report_actor_failure("status", &error)),
         }
     }
 
@@ -388,11 +425,9 @@ impl RouteActor {
                         }
                     }
                     Ok(ActorCommandOutputV1::Status(_)) => {}
-                    Err(error) => record_failed_outcome(
-                        outcomes,
-                        config.swap_id(),
-                        name,
-                        super::zec_supervisor::failure_of(*error).class(),
+                    Err(error) => outcomes.record(
+                        config.swap_id().as_str(),
+                        super::zec_supervisor::refused_outcome(name, *error, now_unix_seconds()),
                     ),
                 }
                 match result {
@@ -403,6 +438,14 @@ impl RouteActor {
                         Err(())
                     }
                 }
+            }
+            // A Monero claim or refund is admitted durably and the Node's
+            // supervisor runs it from its next pass, under this same actor
+            // lock (xmr_supervisor.rs).
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => {
+                let _ = (action, outcomes);
+                Ok(())
             }
         }
     }
@@ -425,6 +468,11 @@ impl RouteActor {
                 let _ = outcomes;
                 Ok(())
             }
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => {
+                let _ = outcomes;
+                Ok(())
+            }
         }
     }
 
@@ -440,6 +488,8 @@ impl RouteActor {
             }
             #[cfg(feature = "pair-zec")]
             Self::Zec(_) => Ok(()),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => Ok(()),
         }
     }
 }
@@ -508,6 +558,7 @@ const MAXIMUM_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const SIGNING_KEY_BYTES: u64 = 32;
 
 /// Registers the prepared-ZEC lifecycle methods when a validated catalog exists.
+#[allow(clippy::too_many_lines)]
 pub(super) fn register(
     module: &mut RpcModule<()>,
     state: &Arc<TakerServiceState>,
@@ -518,11 +569,13 @@ pub(super) fn register(
     spawn_dynamic_observer(Arc::clone(state));
     #[cfg(feature = "pair-zec")]
     super::zec_supervisor::spawn_zec_supervisor(Arc::clone(state));
+    #[cfg(feature = "pair-xmr")]
+    super::xmr_supervisor::spawn_xmr_supervisor(Arc::clone(state));
     let balances_state = Arc::clone(state);
     module.register_async_method("taker_wallet_balances_v1", move |params, _, _| {
         let state = Arc::clone(&balances_state);
         async move {
-            let request: TakerHealthRequestV1 = params
+            let request: TakerWalletBalancesRequestV1 = params
                 .one()
                 .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
             request.validate_schema_version().map_err(|_| {
@@ -539,11 +592,21 @@ pub(super) fn register(
                     "initiation_registry_unavailable",
                 )
             })?;
-            let dynamic = tokio::task::spawn_blocking(move || {
-                initiation
-                    .lock()
-                    .ok()
-                    .and_then(|context| context.dynamic_btc())
+            let (dynamic, dynamic_zec, dynamic_xmr) = tokio::task::spawn_blocking(move || {
+                let context = initiation.lock().ok();
+                #[cfg(feature = "pair-zec")]
+                let dynamic_zec = context.as_ref().and_then(|context| context.dynamic_zec());
+                #[cfg(not(feature = "pair-zec"))]
+                let dynamic_zec = None::<()>;
+                #[cfg(feature = "pair-xmr")]
+                let dynamic_xmr = context.as_ref().and_then(|context| context.dynamic_xmr());
+                #[cfg(not(feature = "pair-xmr"))]
+                let dynamic_xmr = None::<()>;
+                (
+                    context.and_then(|context| context.dynamic_btc()),
+                    dynamic_zec,
+                    dynamic_xmr,
+                )
             })
             .await
             .map_err(|_| {
@@ -552,15 +615,45 @@ pub(super) fn register(
                     "Internal error",
                     "initiation_registry_unavailable",
                 )
-            })?
-            .ok_or_else(|| {
+            })?;
+            let dynamic = dynamic.ok_or_else(|| {
                 rpc_error(
                     DEPENDENCY_UNAVAILABLE_CODE,
                     "Taker dependency unavailable",
                     "balances_unavailable",
                 )
             })?;
-            Ok::<_, ErrorObjectOwned>(dynamic.wallet_balances().await)
+            #[cfg_attr(
+                not(any(feature = "pair-zec", feature = "pair-xmr")),
+                allow(unused_mut)
+            )]
+            let mut balances =
+                serde_json::to_value(dynamic.wallet_balances().await).map_err(|_| {
+                    rpc_error(INTERNAL_ERROR_CODE, "Internal error", "balances_encoding")
+                })?;
+            #[cfg(feature = "pair-zec")]
+            if request.zcash
+                && let Some(dynamic_zec) = dynamic_zec
+                && let Some(view) = dynamic_zec.funder_balance().await
+            {
+                balances["zcash"] = serde_json::to_value(view).map_err(|_| {
+                    rpc_error(INTERNAL_ERROR_CODE, "Internal error", "balances_encoding")
+                })?;
+            }
+            #[cfg(not(feature = "pair-zec"))]
+            let _ = dynamic_zec;
+            #[cfg(feature = "pair-xmr")]
+            if request.monero
+                && let Some(dynamic_xmr) = dynamic_xmr
+            {
+                balances["monero"] = serde_json::to_value(dynamic_xmr.wallet_balance().await)
+                    .map_err(|_| {
+                        rpc_error(INTERNAL_ERROR_CODE, "Internal error", "balances_encoding")
+                    })?;
+            }
+            #[cfg(not(feature = "pair-xmr"))]
+            let _ = dynamic_xmr;
+            Ok::<_, ErrorObjectOwned>(balances)
         }
     })?;
     let list_state = Arc::clone(state);
@@ -583,7 +676,7 @@ pub(super) fn register(
             let request: TakerSwapMonitorRequestV1 = params
                 .one()
                 .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
-            monitor_swap(state, request)
+            Box::pin(monitor_swap(state, request))
                 .await
                 .map_err(|error| map_monitoring_error(&error))
         }
@@ -1630,27 +1723,54 @@ async fn list_swaps(
     .await
     .map_err(|_| MonitoringError::RegistryUnavailable)??;
 
-    // One swap whose bundle is gone (an aborted take, a retired swap
-    // directory) must not hide every other swap: it is listed as needing
-    // attention and the desk can still inspect it. Every other failure (a
-    // dependency or state store that cannot answer) still fails the list, so
-    // a degraded Node is reported as degraded rather than as a row.
-    let mut swaps = Vec::with_capacity(swap_ids.len());
+    let mut rows = Vec::with_capacity(swap_ids.len());
     for facts in swap_ids {
-        match project_swap(&initiation, facts.swap_id()).await {
-            Ok(mut view) => {
-                overlay_last_outcome(&mut view, state.last_outcomes.get(facts.swap_id().as_str()));
-                swaps.push(view);
+        let projected = project_swap(&initiation, facts.swap_id()).await;
+        #[cfg(feature = "pair-zec")]
+        let projected = match projected {
+            Err(error @ (MonitoringError::NotFound | MonitoringError::DependencyUnavailable)) => {
+                stored_terminal_view(&initiation, &facts).await.ok_or(error)
             }
-            Err(MonitoringError::NotFound) => swaps
-                .push(commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap),
-            Err(error) => return Err(error),
-        }
+            other => other,
+        };
+        let projected = projected.map(|mut view| {
+            overlay_last_outcome(&mut view, state.last_outcomes.get(facts.swap_id().as_str()));
+            view
+        });
+        rows.push((
+            commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap,
+            projected,
+        ));
     }
     Ok(TakerSwapListV1 {
         schema_version: 1,
-        swaps,
+        swaps: list_rows(rows)?,
     })
+}
+
+/// The list's rows from each swap's attention row and its projection. One
+/// swap whose bundle is gone (an aborted take, a retired swap directory), or
+/// whose own state cannot be read while other swaps' can (a corrupt Zcash
+/// role state; its monitor answers `taker_monitor_unavailable`), must not hide
+/// every other swap: it is listed as needing attention, the latter with that
+/// category as its `attention_reason`, and the desk can still inspect it. A
+/// failure every swap shares, or any other (a registry or result limit),
+/// still fails the list, so a degraded Node is reported as degraded rather
+/// than as rows.
+fn list_rows(
+    rows: Vec<(TakerSwapViewV1, Result<TakerSwapViewV1, MonitoringError>)>,
+) -> Result<Vec<TakerSwapViewV1>, MonitoringError> {
+    let readable = rows.iter().any(|(_, projected)| projected.is_ok());
+    rows.into_iter()
+        .map(|(mut attention, projected)| match projected {
+            Err(MonitoringError::NotFound) => Ok(attention),
+            Err(MonitoringError::DependencyUnavailable) if readable => {
+                attention.attention_reason = Some("taker_monitor_unavailable".to_owned());
+                Ok(attention)
+            }
+            other => other,
+        })
+        .collect()
 }
 
 async fn monitor_swap(
@@ -1664,9 +1784,72 @@ async fn monitor_swap(
         .initiation
         .clone()
         .ok_or(MonitoringError::RegistryUnavailable)?;
-    let mut view = project_swap(&initiation, &request.swap_id).await?;
+    let mut view = match project_swap(&initiation, &request.swap_id).await {
+        #[cfg(feature = "pair-zec")]
+        Err(error @ (MonitoringError::NotFound | MonitoringError::DependencyUnavailable)) => {
+            let facts = registered_facts(&initiation, &request.swap_id).await;
+            match facts {
+                Some(facts) => stored_terminal_view(&initiation, &facts)
+                    .await
+                    .ok_or(error)?,
+                None => return Err(error),
+            }
+        }
+        other => other?,
+    };
     overlay_last_outcome(&mut view, state.last_outcomes.get(request.swap_id.as_str()));
     Ok(view)
+}
+
+/// A Zcash swap whose files the monitor can no longer read (a corridor that a
+/// later provisioning archived, with its catalog entry) is read from the
+/// supervisor's schedule store, which the Node keeps: a swap it saw reach
+/// `completed` or `refunded` keeps that state. Anything else is not answered
+/// from the store, so the caller's error (an attention row in the list)
+/// stands.
+#[cfg(feature = "pair-zec")]
+async fn stored_terminal_view(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    facts: &TakerInitiationFactsV1,
+) -> Option<TakerSwapViewV1> {
+    let record = super::zec_supervisor::schedule_record(initiation, facts.swap_id()).await;
+    terminal_view(facts, record.as_ref())
+}
+
+/// The row of a Zcash swap's stored terminal snapshot: only `completed` or
+/// `refunded`.
+#[cfg(feature = "pair-zec")]
+fn terminal_view(
+    facts: &TakerInitiationFactsV1,
+    record: Option<&lez_swap_store::TakerActorScheduleRecordV1>,
+) -> Option<TakerSwapViewV1> {
+    if facts.route().pair() != Pair::Zcash {
+        return None;
+    }
+    let view = super::zec_supervisor::view_from_snapshot(facts, record?.progress()?);
+    matches!(
+        view.state,
+        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
+    )
+    .then_some(view)
+}
+
+/// The registered facts of one swap, for a monitor read without its bundle.
+#[cfg(feature = "pair-zec")]
+async fn registered_facts(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    swap_id: &SwapId,
+) -> Option<TakerInitiationFactsV1> {
+    let lookup = Arc::clone(initiation);
+    let swap_id = swap_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = lookup.lock().ok()?;
+        let facts = context.registry_mut().list_initiations().ok()?;
+        facts.into_iter().find(|facts| facts.swap_id() == &swap_id)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn project_swap(
@@ -1865,6 +2048,10 @@ async fn project_receipt_bound_swap(
     if pair == Pair::Zcash {
         overlay_held_revealing_claim(&mut view, config.state_db());
         overlay_lez_first_lock_attempts(&mut view, config.state_db());
+    }
+    #[cfg(feature = "pair-xmr")]
+    if let Some(files) = config.xmr_files() {
+        super::xmr_supervisor::overlay_view(&mut view, files);
     }
     #[cfg(feature = "pair-zec")]
     if pair == Pair::Zcash {
@@ -2118,9 +2305,33 @@ enum InitiationError {
     /// (`zec_taker_sells_lez_capacity_reached`); nothing was locked.
     MakerCapacityReached,
     FundingRequired(lez_btc_role_lifecycle::FundingRequired),
+    /// The Taker has no Zcash output to fund from; the reason names its address.
+    #[cfg(feature = "pair-zec")]
+    ZecFundingUnavailable(String),
+    /// The route-health probe reads this pair's chain unavailable.
+    ChainUnavailable(Pair),
     Internal,
 }
 
+/// Refuses a take on `route` while its route-health probe reads the chain
+/// unavailable; a route no probe names is not refused.
+async fn refuse_unavailable_route(
+    state: &TakerServiceState,
+    route: MakerRouteV1,
+) -> Result<(), InitiationError> {
+    let Some(probe) = state.route_health.clone() else {
+        return Ok(());
+    };
+    let available = tokio::task::spawn_blocking(move || probe.route_available(route))
+        .await
+        .map_err(|_| InitiationError::Internal)?;
+    if available == Some(false) {
+        return Err(InitiationError::ChainUnavailable(route.pair()));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
 async fn initiate(
     state: Arc<TakerServiceState>,
     request: TakerSwapInitiateRequestV1,
@@ -2158,28 +2369,53 @@ async fn initiate(
         };
         return Ok(commit_from_facts(&facts, true, state));
     }
+    // A new take on a route whose chain does not answer is refused here, by
+    // name; a replay above and the swaps already taken are left alone.
+    refuse_unavailable_route(&state, request.route).await?;
 
     // Clone private authority under the synchronous mutex, then release it
     // before authenticated Delivery performs asynchronous I/O.
     let offer_id = request.offer_id.clone();
     let selection_context = Arc::clone(&initiation);
-    let (catalog_entry, dynamic) = tokio::task::spawn_blocking(move || {
-        let context = selection_context
-            .lock()
-            .map_err(|_| InitiationError::Internal)?;
-        Ok::<_, InitiationError>((
-            context.prepared_for_offer(&offer_id).cloned(),
-            context.dynamic_btc(),
-        ))
-    })
-    .await
-    .map_err(|_| InitiationError::Internal)??;
-    let prepared = match (catalog_entry, dynamic) {
-        (Some(prepared), _) => prepared,
-        (None, Some(dynamic)) if request.route.pair() == Pair::Bitcoin => {
+    let (catalog_entry, dynamic, dynamic_zec, dynamic_xmr) =
+        tokio::task::spawn_blocking(move || {
+            let context = selection_context
+                .lock()
+                .map_err(|_| InitiationError::Internal)?;
+            #[cfg(feature = "pair-zec")]
+            let dynamic_zec = context.dynamic_zec();
+            #[cfg(not(feature = "pair-zec"))]
+            let dynamic_zec = None::<()>;
+            #[cfg(feature = "pair-xmr")]
+            let dynamic_xmr = context.dynamic_xmr();
+            #[cfg(not(feature = "pair-xmr"))]
+            let dynamic_xmr = None::<()>;
+            Ok::<_, InitiationError>((
+                context.prepared_for_offer(&offer_id).cloned(),
+                context.dynamic_btc(),
+                dynamic_zec,
+                dynamic_xmr,
+            ))
+        })
+        .await
+        .map_err(|_| InitiationError::Internal)??;
+    #[cfg(not(feature = "pair-xmr"))]
+    let _ = dynamic_xmr;
+    let prepared = match (catalog_entry, dynamic, dynamic_zec) {
+        (Some(prepared), _, _) => prepared,
+        (None, Some(dynamic), _) if request.route.pair() == Pair::Bitcoin => {
             prepare_dynamic_btc(&state, &request, &initiation, &dynamic).await?
         }
-        (None, _) => return Err(InitiationError::SelectionMismatch),
+        #[cfg(feature = "pair-zec")]
+        (None, _, Some(dynamic)) if request.route.pair() == Pair::Zcash => {
+            prepare_dynamic_zec(&state, &request, &initiation, &dynamic).await?
+        }
+        #[cfg(feature = "pair-xmr")]
+        (None, _, _) if request.route.pair() == Pair::Monero => {
+            let dynamic = dynamic_xmr.ok_or(InitiationError::SelectionMismatch)?;
+            prepare_dynamic_xmr(&state, &request, &initiation, &dynamic).await?
+        }
+        (None, _, _) => return Err(InitiationError::SelectionMismatch),
     };
     if !request_matches_facts(&request, prepared.facts()) {
         return Err(InitiationError::SelectionMismatch);
@@ -2265,6 +2501,136 @@ async fn prepare_dynamic_btc(
         })?;
     let entry = dynamic
         .load_entry(&prepared.configured)
+        .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    let context = Arc::clone(initiation);
+    let inserted = entry.clone();
+    tokio::task::spawn_blocking(move || {
+        context
+            .lock()
+            .map_err(|_| InitiationError::Internal)?
+            .insert_prepared(inserted)
+            .map_err(|()| InitiationError::Conflict)
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)??;
+    Ok(entry)
+}
+
+/// Prepares a Zcash swap for any live offer at take time (`zec_reserve_v1`,
+/// docs/sdk-lez-zec.md) and registers it in the catalog, so the rest of the
+/// initiation is the prepared Zcash take, unchanged.
+#[cfg(feature = "pair-zec")]
+async fn prepare_dynamic_zec(
+    state: &TakerServiceState,
+    request: &TakerSwapInitiateRequestV1,
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    dynamic: &Arc<super::zec_dynamic::DynamicZecRole>,
+) -> Result<PreparedTakerInitiationV1, InitiationError> {
+    let (now, live_match) = selected_offer_is_live(state, request).await?;
+    if !live_match {
+        return Err(InitiationError::SelectionMismatch);
+    }
+    let announcement = match request.logos_offer_announcement_base64.as_deref() {
+        Some(proof_base64) => {
+            let encoded = BASE64_STANDARD
+                .decode(proof_base64.as_bytes())
+                .map_err(|_| InitiationError::SelectionMismatch)?;
+            Some(
+                verify_logos_offer_announcement(&encoded, now)
+                    .map_err(|_| InitiationError::SelectionMismatch)?
+                    .offer()
+                    .clone(),
+            )
+        }
+        None => None,
+    };
+    let take = btc_dynamic::TakeRequest {
+        request_id: request.request_id.clone(),
+        offer_id: request.offer_id.clone(),
+        route: request.route,
+        maker_identity: *request.maker_identity.as_bytes(),
+        signed_envelope_sha256: request.signed_envelope_sha256,
+        foreign_units: request.foreign_units,
+        expected_lez_units: request.expected_lez_units,
+        announcement,
+        funding_transaction_hex: None,
+    };
+    let configured = super::zec_dynamic::prepare(dynamic, &take, now)
+        .await
+        .map_err(|error| {
+            eprintln!("taker ZEC reservation failed: {error:#}");
+            match error.downcast::<super::zec_dynamic::ZecFundingUnavailable>() {
+                Ok(reason) => InitiationError::ZecFundingUnavailable(reason.0),
+                Err(_) => InitiationError::ExecutionUnavailable,
+            }
+        })?;
+    let entry = dynamic
+        .load_entry(&configured)
+        .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    let context = Arc::clone(initiation);
+    let inserted = entry.clone();
+    tokio::task::spawn_blocking(move || {
+        context
+            .lock()
+            .map_err(|_| InitiationError::Internal)?
+            .insert_prepared(inserted)
+            .map_err(|()| InitiationError::Conflict)
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)??;
+    Ok(entry)
+}
+
+/// Prepares a Monero swap for any live offer at take time (`xmr_reserve_v1`
+/// and the ceremony) and registers it in the catalog, so the rest of the
+/// initiation is the prepared Monero take (`execute_prepared_xmr`).
+#[cfg(feature = "pair-xmr")]
+async fn prepare_dynamic_xmr(
+    state: &TakerServiceState,
+    request: &TakerSwapInitiateRequestV1,
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    dynamic: &Arc<super::xmr_dynamic::DynamicXmrRole>,
+) -> Result<PreparedTakerInitiationV1, InitiationError> {
+    if request.route.direction() != SwapDirection::TakerSellsLez {
+        return Err(InitiationError::UnsupportedPair);
+    }
+    let (now, live_match) = selected_offer_is_live(state, request).await?;
+    if !live_match {
+        return Err(InitiationError::SelectionMismatch);
+    }
+    let announcement = match request.logos_offer_announcement_base64.as_deref() {
+        Some(proof_base64) => {
+            let encoded = BASE64_STANDARD
+                .decode(proof_base64.as_bytes())
+                .map_err(|_| InitiationError::SelectionMismatch)?;
+            Some(
+                verify_logos_offer_announcement(&encoded, now)
+                    .map_err(|_| InitiationError::SelectionMismatch)?
+                    .offer()
+                    .clone(),
+            )
+        }
+        None => None,
+    };
+    let take = btc_dynamic::TakeRequest {
+        request_id: request.request_id.clone(),
+        offer_id: request.offer_id.clone(),
+        route: request.route,
+        maker_identity: *request.maker_identity.as_bytes(),
+        signed_envelope_sha256: request.signed_envelope_sha256,
+        foreign_units: request.foreign_units,
+        expected_lez_units: request.expected_lez_units,
+        announcement,
+        funding_transaction_hex: None,
+    };
+    let configured = super::xmr_dynamic::prepare(dynamic, &take, now)
+        .await
+        .map_err(|error| {
+            eprintln!("taker XMR reservation failed: {error:#}");
+            InitiationError::ExecutionUnavailable
+        })?;
+    let entry = dynamic
+        .load_entry(&configured)
         .map_err(|_| InitiationError::ExecutionUnavailable)?;
     let context = Arc::clone(initiation);
     let inserted = entry.clone();
@@ -2570,6 +2936,8 @@ const fn route_has_node_lifecycle(pair: Pair) -> bool {
         Pair::Bitcoin => true,
         #[cfg(feature = "pair-zec")]
         Pair::Zcash => true,
+        #[cfg(feature = "pair-xmr")]
+        Pair::Monero => true,
         #[allow(unreachable_patterns)]
         _ => false,
     }
@@ -2774,6 +3142,8 @@ async fn execute_prepared(
         Pair::Bitcoin => execute_prepared_btc(prepared, admitted_at).await,
         #[cfg(feature = "pair-zec")]
         Pair::Zcash => execute_prepared_zec(prepared, admitted_at).await,
+        #[cfg(feature = "pair-xmr")]
+        Pair::Monero => execute_prepared_xmr(prepared, admitted_at).await,
         #[allow(unreachable_patterns)]
         _ => Err(InitiationError::UnsupportedPair),
     }
@@ -2938,6 +3308,70 @@ async fn execute_prepared_zec(
     Ok(())
 }
 
+/// Runs the prepared Monero take: provisions the Taker's actor bundle from
+/// the role root the negotiation filled, activates the Maker (R6) and
+/// publishes the acceptance receipt (`take_xmr`; Stage A was countersigned
+/// with the Maker at take time, so it is not resent).
+#[cfg(feature = "pair-xmr")]
+async fn execute_prepared_xmr(
+    prepared: &PreparedTakerInitiationV1,
+    admitted_at: u64,
+) -> Result<(), InitiationError> {
+    use xmr_reference_actor::{
+        XMR_ADAPTOR_JOURNAL_FILE, XMR_MAKER_PACKET_FILE, XMR_STAGE_A_FILE, XMR_STAGE_B_FILE,
+        XMR_TAKER_PACKET_FILE,
+    };
+    let execution = prepared.execution();
+    let stage_b = read_private_file_snapshot(
+        execution.unsigned_draft_path(),
+        MAXIMUM_PREPARED_INPUT_BYTES,
+        "prepared Taker Stage B",
+    )
+    .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    let role_root = execution
+        .agreement_output()
+        .parent()
+        .ok_or(InitiationError::ExecutionUnavailable)?;
+    if stage_b.bytes() != execution.unsigned_draft()
+        || Sha256::digest(stage_b.bytes()).as_slice() != execution.unsigned_draft_sha256()
+        || execution.agreement_output() != role_root.join(XMR_STAGE_A_FILE)
+        || execution.unsigned_draft_path() != role_root.join(XMR_STAGE_B_FILE)
+    {
+        return Err(InitiationError::ExecutionUnavailable);
+    }
+    let paths = |name: &str| role_root.join(name);
+    let (stage_a, stage_b, taker_packet, maker_packet, journal) = (
+        paths(XMR_STAGE_A_FILE),
+        paths(XMR_STAGE_B_FILE),
+        paths(XMR_TAKER_PACKET_FILE),
+        paths(XMR_MAKER_PACKET_FILE),
+        paths(XMR_ADAPTOR_JOURNAL_FILE),
+    );
+    crate::xmr_taker_accept::take_xmr(crate::xmr_taker_accept::XmrTakeInput {
+        delivery: None,
+        now_unix_seconds: admitted_at,
+        offer_id: prepared.offer_id().as_str(),
+        chat_socket: execution.chat_socket(),
+        reservation_id: prepared.reservation_id().as_str(),
+        foreign_units: prepared.facts().foreign_units(),
+        stage_a_file: &stage_a,
+        activation_file: &stage_b,
+        source_taker_root: role_root,
+        taker_public_packet: &taker_packet,
+        maker_public_packet: &maker_packet,
+        taker_role_journal: &journal,
+        taker_actor_root: execution.actor_root(),
+        acceptance_receipt_file: execution.receipt_output(),
+        effect: None,
+    })
+    .await
+    .map_err(|error| {
+        eprintln!("taker XMR take failed: {error:#}");
+        InitiationError::ExecutionUnavailable
+    })?;
+    Ok(())
+}
+
 fn request_matches_facts(
     request: &TakerSwapInitiateRequestV1,
     facts: &TakerInitiationFactsV1,
@@ -3037,6 +3471,14 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
             "Taker dependency unavailable",
             "initiation_execution_unavailable",
         ),
+        // The same code and category as any unavailable execution, with
+        // the reason the owner can act on.
+        #[cfg(feature = "pair-zec")]
+        InitiationError::ZecFundingUnavailable(reason) => ErrorObjectOwned::owned(
+            DEPENDENCY_UNAVAILABLE_CODE,
+            "Taker dependency unavailable",
+            Some(json!({"category": "initiation_execution_unavailable", "reason": reason})),
+        ),
         InitiationError::MakerCapacityReached => rpc_error(
             MAKER_CAPACITY_REACHED_CODE,
             "Maker is at its ZEC TakerSellsLez capacity",
@@ -3051,6 +3493,11 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
                 "amount_sat": required.value_sat,
             })),
         ),
+        InitiationError::ChainUnavailable(pair) => ErrorObjectOwned::owned(
+            DEPENDENCY_UNAVAILABLE_CODE,
+            "Taker dependency unavailable",
+            Some(json!({"category": "chain_unavailable", "pair": pair})),
+        ),
         InitiationError::Internal => rpc_error(
             INTERNAL_ERROR_CODE,
             "Internal error",
@@ -3062,6 +3509,190 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One swap whose own state cannot be read (a corrupt Zcash role state:
+    /// its monitor answers `taker_monitor_unavailable`) must not hide the
+    /// other swaps from the list: it is listed as needing attention with that
+    /// reason. A dependency every swap fails on still fails the list.
+    #[test]
+    fn a_swap_whose_state_cannot_be_read_does_not_hide_the_others() {
+        use lez_swap_core::{Pair, SwapDirection, SwapId};
+        use lez_swap_store::MakerOfferId;
+        let row = |id: &str, state: TakerSwapStateV1| TakerSwapViewV1 {
+            schema_version: 1,
+            swap_id: SwapId::new(id).unwrap(),
+            offer_id: MakerOfferId::new(format!("{id}-offer")).unwrap(),
+            route: MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsForeign).unwrap(),
+            foreign_units: 10_000,
+            lez_units: 25_000,
+            progress_generation: 0,
+            state,
+            available_action: None,
+            privacy_guidance: None,
+            attention_reason: None,
+            revealing_claim_held_by: None,
+            status_detail: None,
+            actor_phase: None,
+            claim_window_closed: None,
+            last_failure_class: None,
+            last_outcome: None,
+            observed_at: None,
+            terms: None,
+            effects: Vec::new(),
+            bitcoin_lock_fee_sat: None,
+        };
+        let healthy = row("m7-healthy", TakerSwapStateV1::ClaimAvailable);
+        let listed = list_rows(vec![
+            (
+                row("m7-healthy", TakerSwapStateV1::AttentionRequired),
+                Ok(healthy.clone()),
+            ),
+            (
+                row("m7-corrupt", TakerSwapStateV1::AttentionRequired),
+                Err(MonitoringError::DependencyUnavailable),
+            ),
+        ])
+        .expect("the healthy swap is listed");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0], healthy);
+        assert_eq!(listed[1].swap_id.as_str(), "m7-corrupt");
+        assert_eq!(listed[1].state, TakerSwapStateV1::AttentionRequired);
+        assert_eq!(listed[1].available_action, None);
+        assert_eq!(
+            listed[1].attention_reason.as_deref(),
+            Some("taker_monitor_unavailable")
+        );
+        assert!(matches!(
+            list_rows(vec![(
+                row("m7-corrupt", TakerSwapStateV1::AttentionRequired),
+                Err(MonitoringError::DependencyUnavailable),
+            )]),
+            Err(MonitoringError::DependencyUnavailable)
+        ));
+    }
+
+    /// Issue #181: a Zcash swap whose files a later provisioning archived
+    /// (its projection `NotFound`) keeps the terminal state the supervisor
+    /// stored; one without a stored terminal state still needs attention.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn an_archived_zcash_swap_keeps_its_stored_terminal_state() {
+        use lez_actor_supervision::AttemptResolution;
+        use lez_swap_store::{
+            MakerOfferId, SqliteTakerActorSchedule, TakerActorProgressSnapshotV1,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let mut schedule =
+            SqliteTakerActorSchedule::open(root.path().join("taker-actor-schedule.sqlite3"))
+                .unwrap();
+        let identity = [
+            0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce,
+            0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81,
+            0x5b, 0x16, 0xf8, 0x17, 0x98,
+        ];
+        let facts = |id: &str| {
+            TakerInitiationFactsV1::new(
+                SwapId::new(id).unwrap(),
+                MakerOfferId::new(format!("{id}-offer")).unwrap(),
+                MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsForeign).unwrap(),
+                identity,
+                [7; 32],
+                200_000_000,
+                1_820,
+            )
+            .unwrap()
+        };
+        let snapshot = |phase: &str, next_action: &str| TakerActorProgressSnapshotV1 {
+            phase: phase.to_owned(),
+            revision: 9,
+            next_action: next_action.to_owned(),
+            state: String::new(),
+            available_action: None,
+            observed_at: 1,
+        };
+        let mut resolve = |id: &str, resolution, snapshot: Option<TakerActorProgressSnapshotV1>| {
+            schedule.register(id, 1).unwrap();
+            let lease = schedule.claim(id, 2).unwrap().unwrap();
+            schedule
+                .resolve(&lease, &resolution, snapshot.as_ref(), 3)
+                .unwrap();
+        };
+        resolve(
+            "zec-completed",
+            AttemptResolution::Terminal,
+            Some(snapshot("completed", "complete")),
+        );
+        resolve(
+            "zec-refunded",
+            AttemptResolution::ManualActionCompleted,
+            Some(snapshot("refunded", "complete")),
+        );
+        resolve(
+            "zec-open",
+            AttemptResolution::Requeue { not_before: 4 },
+            Some(snapshot("both_legs_locked", "claim_lez")),
+        );
+        resolve("zec-unobserved", AttemptResolution::Terminal, None);
+        let ids = [
+            "zec-completed",
+            "zec-refunded",
+            "zec-open",
+            "zec-unobserved",
+            "zec-unknown",
+        ];
+        let rows = ids
+            .iter()
+            .map(|id| {
+                let facts = facts(id);
+                let record = schedule.record(id).unwrap();
+                (
+                    commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap,
+                    terminal_view(&facts, record.as_ref()).ok_or(MonitoringError::NotFound),
+                )
+            })
+            .collect();
+        let listed = list_rows(rows).expect("the list reads");
+        let states: Vec<_> = listed.iter().map(|row| row.state).collect();
+        assert_eq!(
+            states,
+            [
+                TakerSwapStateV1::Completed,
+                TakerSwapStateV1::Refunded,
+                TakerSwapStateV1::AttentionRequired,
+                TakerSwapStateV1::AttentionRequired,
+                TakerSwapStateV1::AttentionRequired,
+            ]
+        );
+        assert_eq!(listed[0].progress_generation, 9);
+        assert!(listed.iter().all(|row| row.available_action.is_none()));
+        // A Bitcoin swap is never answered from the Zcash schedule.
+        let btc = TakerInitiationFactsV1::new(
+            SwapId::new("zec-completed").unwrap(),
+            MakerOfferId::new("btc-offer").unwrap(),
+            MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsForeign).unwrap(),
+            identity,
+            [7; 32],
+            200_000_000,
+            1_820,
+        )
+        .unwrap();
+        let completed = schedule.record("zec-completed").unwrap();
+        assert_eq!(terminal_view(&btc, completed.as_ref()), None);
+    }
+
+    /// A Taker with nothing to fund Zcash from is told why (the address to
+    /// pay) under the code and category every unavailable execution has.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_missing_zcash_funder_output_names_its_reason() {
+        let reason = "no mature deterministic Zebra funder output for tmAddr is available";
+        let error = map_initiation_error(InitiationError::ZecFundingUnavailable(reason.into()));
+        let plain = map_initiation_error(InitiationError::ExecutionUnavailable);
+        assert_eq!(error.code(), plain.code());
+        let data: serde_json::Value = serde_json::from_str(error.data().unwrap().get()).unwrap();
+        assert_eq!(data["category"], "initiation_execution_unavailable");
+        assert_eq!(data["reason"], reason);
+    }
 
     #[test]
     fn the_makers_capacity_refusal_reaches_the_desk_by_its_own_code_and_category() {
@@ -3080,7 +3711,7 @@ mod tests {
     #[test]
     fn an_admitted_zcash_refund_reads_in_progress_until_its_attempt_fails() {
         use lez_swap_core::{Pair, SwapDirection, SwapId};
-        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        use lez_swap_store::MakerOfferId;
         let row = |phase: &str, window_closed: Option<bool>| TakerSwapViewV1 {
             schema_version: 1,
             swap_id: SwapId::new("m7-refund-swap").unwrap(),
@@ -3141,7 +3772,7 @@ mod tests {
     #[test]
     fn a_closed_claim_window_is_flagged_on_both_directions_rows() {
         use lez_swap_core::{Pair, SwapDirection, SwapId};
-        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        use lez_swap_store::MakerOfferId;
         let row = |direction, action| TakerSwapViewV1 {
             schema_version: 1,
             swap_id: SwapId::new("m7-window-swap").unwrap(),
@@ -3206,7 +3837,7 @@ mod tests {
     #[test]
     fn a_claim_held_near_its_refund_time_names_its_holder_on_the_row() {
         use lez_swap_core::{Pair, SwapDirection, SwapId};
-        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        use lez_swap_store::MakerOfferId;
         let swap = tempfile::tempdir().expect("swap directory");
         let state_db = swap.path().join("taker").join("state").join("zec.sqlite3");
         std::fs::create_dir_all(state_db.parent().expect("state directory")).expect("dirs");
@@ -3695,7 +4326,7 @@ mod tests {
 
     /// A Bitcoin row as the monitor projects it before the last outcome.
     fn btc_row(state: TakerSwapStateV1, generation: u64) -> TakerSwapViewV1 {
-        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        use lez_swap_store::MakerOfferId;
         TakerSwapViewV1 {
             schema_version: 1,
             swap_id: SwapId::new("r103-outcome-swap").unwrap(),
@@ -3841,6 +4472,74 @@ mod tests {
         zcash.last_failure_class = Some("actor_timeout".to_owned());
         overlay_last_outcome(&mut zcash, outcomes.get(swap.as_str()));
         assert_eq!(zcash.last_failure_class.as_deref(), Some("actor_timeout"));
+    }
+
+    /// Issue #130: a claim admitted while the actor's reveal gate still wants
+    /// Zcash depth is queued, with both counts on the row; once the gate is
+    /// met the actor's effect says `submitted`; any other refusal is a failure.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_claim_refused_for_zcash_depth_reads_queued_with_its_counts() {
+        use zec_reference_actor::ActorCommandError;
+        let zcash_row = || {
+            let mut row = btc_row(TakerSwapStateV1::ClaimInProgress, 2);
+            row.route =
+                lez_swap_store::MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsForeign)
+                    .unwrap();
+            row
+        };
+        let mut queued = zcash_row();
+        let outcome = super::super::zec_supervisor::refused_outcome(
+            "claim",
+            ActorCommandError::ClaimAwaitingZcashConfirmations {
+                required: 2,
+                actual: 1,
+            },
+            now_unix_seconds(),
+        );
+        overlay_last_outcome(&mut queued, Some(outcome));
+        let value = serde_json::to_value(&queued).unwrap();
+        assert_eq!(value["state"], "claim_in_progress");
+        assert_eq!(value["last_outcome"]["outcome"], "queued");
+        assert_eq!(
+            value["last_outcome"]["waiting_for"],
+            serde_json::json!({"kind": "zcash_funding_confirmations", "chain": "zcash",
+                               "confirmations": 1, "required_confirmations": 2})
+        );
+        assert!(value["last_outcome"].get("failure_class").is_none());
+        assert_eq!(
+            super::super::zec_supervisor::failure_of(
+                ActorCommandError::ClaimAwaitingZcashConfirmations {
+                    required: 2,
+                    actual: 1
+                }
+            )
+            .class(),
+            "claim_awaiting_zcash_confirmations"
+        );
+
+        let mut submitted = zcash_row();
+        let effect =
+            serde_json::json!({"outcome": "submitted", "operation": "revealing_lez_claim"});
+        overlay_last_outcome(
+            &mut submitted,
+            Some(recorded("r103-outcome-swap", "claim", &effect)),
+        );
+        let last = submitted.last_outcome.expect("kept");
+        assert_eq!(last.outcome, "submitted");
+        assert_eq!(last.waiting_for, None);
+
+        let refused = super::super::zec_supervisor::refused_outcome(
+            "claim",
+            ActorCommandError::ClaimUnavailable,
+            now_unix_seconds(),
+        );
+        assert_eq!(refused.outcome, "failed");
+        assert_eq!(
+            refused.failure_class.as_deref(),
+            Some("actor_drive_unavailable")
+        );
+        assert_eq!(refused.waiting_for, None);
     }
 
     /// A finished swap carries no outcome, nor does a row whose actor moved

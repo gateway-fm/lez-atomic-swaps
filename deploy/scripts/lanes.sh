@@ -2,9 +2,9 @@
 # lanes.sh — regression lanes 2..N beside the stack (lane 1).
 #
 # A lane is one more Maker/Taker pair, each party's own Basecamp as in the
-# stack, with its own Bitcoin Core, miner and Zebra, on the stack's one LEZ
-# network (scripts/lane.sh names it; compose.lane.yaml runs it as the Compose
-# project <prefix>-lane-<k>, lez-lane-<k> in the default stack). Lane 2
+# stack, with its own Bitcoin Core, miner and Zebra (and Monero, LEZ_MONERO=1),
+# on the stack's one LEZ network (scripts/lane.sh names it; compose.lane.yaml
+# runs it as the Compose project <prefix>-lane-<k>, lez-lane-<k> by default). Lane 2
 # settles as maker-basel-02 / taker-limmat-02, which every genesis funds; lanes
 # 3 and up need their own funded wallets.
 #
@@ -38,6 +38,9 @@ set -a
 source runtime/runtime.env
 set +a
 export BTC_RPC_PASSWORD
+# Each lane's own monerod and wallet-rpcs when runtime.env says LEZ_MONERO=1.
+monero_services=()
+[[ "${LEZ_MONERO:-0}" != 1 ]] || monero_services=(monerod xmr-funding-wallet maker-xmr-wallet taker-xmr-wallet)
 log() { printf '[lanes %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
 wait_healthy() { # wait_healthy <seconds> <container>...
@@ -63,6 +66,8 @@ lane_up() {
   for wallet in "$LEZ_LANE_MAKER_WALLET" "$LEZ_LANE_TAKER_WALLET"; do
     identity="$market_root/identities/$wallet/identity.json"
     [[ -s "$identity" ]] || { log "lane $LEZ_LANE: no $wallet identity in the market root (scripts/lanes.sh mint $LEZ_LANE, then up.sh --fresh-lez funds it)"; return 1; }
+    # a wallet whose vault claim this chain deferred holds nothing, on purpose (regress.sh)
+    [[ " ${LEZ_BOOTSTRAP_DEFER_CLAIM:-} " != *" $wallet "* ]] || continue
     balance="$(curl -s --max-time 60 -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccount\",\"params\":[\"$(jq -r .account_id "$identity")\"]}" \
       "$LEZ_STACK_INDEXER_URL" | jq -r '.result.balance // 0')"
@@ -70,7 +75,7 @@ lane_up() {
   done
   bash scripts/gen-config.sh runtime || return 1
   # (their new volumes take the chains' uid, 65532, from the images)
-  docker compose "${lane_compose[@]}" up -d --no-build bitcoin-core zebra || return 1
+  docker compose "${lane_compose[@]}" up -d --no-build bitcoin-core zebra ${monero_services[@]+"${monero_services[@]}"} || return 1
   wait_healthy 600 "$LEZ_CONTAINER_PREFIX-bitcoin-core" "$LEZ_CONTAINER_PREFIX-zebra" || return 1
   docker compose "${lane_compose[@]}" up -d --no-build --no-deps btc-miner || return 1
   python3 scripts/seed-btc-wallets.py || return 1
@@ -97,7 +102,7 @@ lane_stop() {
 lane_down() {
   local flags=(--remove-orphans)
   (( wipe == 0 )) || flags+=(-v)
-  docker compose "${lane_compose[@]}" down "${flags[@]}" >/dev/null 2>&1 || return 1
+  docker compose "${lane_compose[@]}" --profile monero down "${flags[@]}" >/dev/null 2>&1 || return 1
   (( wipe == 0 )) || rm -rf "$LEZ_LANE_RUNTIME"
   if (( wipe )); then log "lane $LEZ_LANE down, volumes and files wiped"; else log "lane $LEZ_LANE down"; fi
 }
@@ -115,7 +120,7 @@ lane_mint() {
 }
 lane_status() {
   local c
-  for c in maker-node taker-node bitcoin-core btc-miner zebra; do
+  for c in maker-node taker-node bitcoin-core btc-miner zebra ${monero_services[@]+"${monero_services[@]}"}; do
     printf '  lane %s %-28s %s\n' "$LEZ_LANE" "$LEZ_CONTAINER_PREFIX-$c" \
       "$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$LEZ_CONTAINER_PREFIX-$c" 2>/dev/null || echo absent)"
   done

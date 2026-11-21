@@ -64,3 +64,47 @@ fn role_clis_share_socket_health_and_fixed_service_controls() {
         }
     }
 }
+
+#[test]
+fn maker_cli_offers_monero_only_with_the_taker_selling_lez() {
+    // The route is checked before the Node is called: the refused direction
+    // never reaches the socket, the supported one does.
+    let socket = "/nonexistent/lez-maker-cli-test.sock";
+    let publish = |direction: &[&str]| {
+        let mut arguments = vec![
+            "--socket",
+            socket,
+            "publish-offer",
+            "--request-id",
+            "xmr-publish-1",
+            "--offer-id",
+            "xmr-offer-1",
+            "--pair",
+            "monero",
+        ];
+        arguments.extend_from_slice(direction);
+        let output = maker(&arguments);
+        assert!(!output.status.success());
+        String::from_utf8(output.stderr).unwrap()
+    };
+    for refused in [&[][..], &["--direction", "taker-sells-foreign"][..]] {
+        let stderr = publish(refused);
+        assert!(
+            stderr.contains(
+                "Monero supports only --direction taker-sells-lez (the Taker locks LEZ first, \
+                 the Maker locks XMR); the default taker-sells-foreign is refused"
+            ),
+            "{stderr}"
+        );
+    }
+    let supported = publish(&["--direction", "taker-sells-lez"]);
+    assert!(!supported.contains("Monero supports only"), "{supported}");
+    assert!(
+        supported.contains(&format!("connect local RPC socket {socket}")),
+        "{supported}"
+    );
+
+    let help = maker(&["configure-pair", "--help"]);
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("piconero (10^-12 XMR)"), "{help}");
+}

@@ -55,7 +55,7 @@ const MAKER_APPLICATION_CONFLICT_CODE: i32 = -32_009;
 const MAKER_OFFER_UNAVAILABLE_CODE: i32 = -32_018;
 
 /// The exact application Chat methods allowed through the transport bridge.
-pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 12] = [
+pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 17] = [
     "btc_chat_propose_v1",
     "btc_chat_propose_v2",
     "btc_chat_complete_v1",
@@ -64,10 +64,15 @@ pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 12] = [
     "btc_ceremony_reserve_v1",
     "btc_ceremony_nonce_v1",
     "btc_ceremony_partial_v1",
+    "zec_reserve_v1",
     "zec_chat_propose_v1",
     "zec_chat_complete_v1",
     "xmr_chat_stage_a_v1",
     "xmr_chat_activate_v1",
+    "xmr_reserve_v1",
+    "xmr_ceremony_reserve_v1",
+    "xmr_ceremony_nonce_v1",
+    "xmr_ceremony_partial_v1",
 ];
 
 /// Fixed endpoint role for one gateway process.
@@ -1805,6 +1810,7 @@ mod tests {
         let error = anyhow::Error::new(LocalRpcRemoteError {
             code: -32_045,
             message: "requires Chat completion v2".into(),
+            data: None,
         });
         let failure = maker_remote_failure(&error);
         assert_eq!(failure.code, -32_045);
@@ -1813,6 +1819,7 @@ mod tests {
         let oversized = anyhow::Error::new(LocalRpcRemoteError {
             code: -32_045,
             message: "x".repeat(4 * 1024 + 1).into_boxed_str(),
+            data: None,
         });
         assert_ne!(
             maker_remote_failure(&oversized).message.as_ref(),

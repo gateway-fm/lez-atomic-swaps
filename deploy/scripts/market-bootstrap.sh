@@ -16,7 +16,7 @@ readonly INDEXER_URL="${INDEXER_URL:-http://127.0.0.1:8779}"
 readonly CHANNEL_ID="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
 # LEZ program identity of the pinned escrow guest: its Risc0 image ID, which the
 # deployment evidence's preflight.image_id must equal (checked below).
-readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b}"
+readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98}"
 readonly AUTH_TRANSFER_PROGRAM_ID="fe96c4228babbe8bc578e3e25b884cacb07f8c86541f27ed676789875eef875a"
 readonly DEPLOYER="${DEPLOYER:-/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer}"
 readonly VAULT_CLAIM_BIN="${VAULT_CLAIM_BIN:-/provision/sidecar/lez-v02-vault-claim-poc}"
@@ -134,11 +134,12 @@ for entry in "${WALLETS[@]}"; do
   fi
   [[ "$vault_balance" == "$allocation" ]] ||
     fail "$wallet vault balance unexpected: $vault_balance"
-  # A wallet named here keeps its allocation in the vault: its owner account
-  # holds nothing, which is how the LEZ depositor's balance refusal is shown
-  # on a devnet. Running this script again without the variable claims it,
-  # and a swap refused for the balance then funds its lock on the next drive.
-  if [[ "$wallet" == "${LEZ_BOOTSTRAP_DEFER_CLAIM:-}" ]]; then
+  # A wallet named here (one, or several separated by spaces) keeps its
+  # allocation in the vault: its owner account holds nothing, which is how the
+  # LEZ depositor's balance refusal is shown on a devnet. Running this script
+  # again without it named claims it, and a swap refused for the balance then
+  # funds its lock on the next drive.
+  if [[ " ${LEZ_BOOTSTRAP_DEFER_CLAIM:-} " == *" $wallet "* ]]; then
     echo "$wallet: vault claim deferred (LEZ_BOOTSTRAP_DEFER_CLAIM); its owner account holds nothing until the bootstrap runs again"
     continue
   fi

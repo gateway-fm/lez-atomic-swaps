@@ -195,6 +195,33 @@ fn claim_and_refund_subcommands_expose_the_private_actor_config_boundary() {
     }
 }
 
+#[test]
+fn swap_subcommands_name_the_node_owner_rpc_each_calls() {
+    let help = |arguments: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_lez-taker-cli"))
+            .args(arguments)
+            .output()
+            .expect("run real Taker CLI help");
+        assert!(output.status.success(), "{arguments:?} help failed");
+        String::from_utf8(output.stdout).expect("UTF-8 help")
+    };
+    let top = help(&["--help"]);
+    assert!(top.contains("swap") && top.contains("balances"));
+    let swap = help(&["swap", "--help"]);
+    for (command, method) in [
+        ("offers", "taker_offer_list_v1"),
+        ("take", "taker_swap_initiate_v1"),
+        ("list", "taker_swap_list_v1"),
+        ("monitor", "taker_swap_monitor_v1"),
+        ("lock", "taker_swap_lock_v1"),
+        ("claim", "taker_swap_claim_v1"),
+        ("refund", "taker_swap_refund_v1"),
+    ] {
+        assert!(swap.contains(command) && swap.contains(method), "{command}");
+    }
+    assert!(help(&["swap", "take", "--help"]).contains("--funding-transaction-hex"));
+}
+
 fn taker_command(command: &str, actor_config: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_lez-taker-cli"))
         .arg(command)

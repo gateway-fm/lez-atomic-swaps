@@ -19,7 +19,9 @@ use lez_adaptor_role_runner::{
 use lez_bridge_adapter::XmrLezBridgeBindingV3;
 use lez_bridge_protocol::{MessageContext, Participant, RequestId, RunId, RuntimeDescriptor};
 use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal, XmrWorkflowStep};
-use lez_xmr_monero_adapter::{LoopbackRpcEndpoint, MoneroRegtestWalletEffects};
+use lez_xmr_monero_adapter::{
+    LoopbackRpcEndpoint, MoneroRegtestWalletEffects, MoneroWalletRpcLock,
+};
 use lez_xmr_swap_sdk::{
     CrossCurveScalar, MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES,
     MoneroPrivateViewKey, ReconstructedMoneroSpendKey, XmrActivatedAgreementV1, XmrAgreementV1,
@@ -174,8 +176,21 @@ async fn execute() -> Result<()> {
         "Monero settlement worker accepts no arguments"
     );
     let inputs = validate_inputs()?;
-    let destination_effects = MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.role_wallet)
-        .context("role destination-wallet boundary is invalid")?;
+    // With one wallet-rpc per role the whole sequence holds the role's
+    // wallet-rpc lock, reads the destination from the role wallet, and mines
+    // the sweep's confirmations itself once its evidence is durable.
+    let one_wallet_rpc = inputs.plan.monero_role_wallet_file();
+    let _lock = one_wallet_rpc
+        .map(|(_, lock_file)| MoneroWalletRpcLock::acquire(lock_file))
+        .transpose()
+        .context("lock the role's Monero wallet-rpc")?;
+    let mut destination_effects =
+        MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.role_wallet)
+            .context("role destination-wallet boundary is invalid")?;
+    if let Some((role_wallet, _)) = one_wallet_rpc {
+        destination_effects =
+            destination_effects.with_role_wallet(role_wallet.to_owned(), String::new())?;
+    }
     let destination = destination_effects
         .primary_standard_address()
         .await
@@ -224,7 +239,15 @@ async fn execute() -> Result<()> {
             faucet_used: false,
         },
     };
-    write_evidence(&mut evidence_file, &evidence)
+    write_evidence(&mut evidence_file, &evidence)?;
+    if one_wallet_rpc.is_some() {
+        sweeper
+            .mine_confirmations(destination)
+            .await
+            .context("mine the settlement sweep's confirmations")?;
+        destination_effects.open_role_wallet().await?;
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]

@@ -28,6 +28,35 @@ if [[ ! -x images/bitcoin-core/bin/bitcoind ]] \
     rm -rf "$tmp"
 fi
 
+# ---- monerod/bin: the pinned Monero release, LEZ_MONERO=1 only ---------------
+# tests/e2e/monero/provenance.env pins it (0.18.5.1, linux-x64 only);
+# scripts/verify-monero-release.sh checks the signed hash manifest against the
+# pinned signer, the archive's sha256 and size and the source tag, extracts
+# monerod and monero-wallet-rpc and runs their --version: in a throwaway
+# container, as upstream binaries never run on the host. The archive stays in
+# the lez-build-monero-cache volume, the evidence in images/monerod/provenance.json.
+if [[ "${LEZ_MONERO:-0}" == 1 ]] &&
+   [[ ! -x images/monerod/bin/monerod || ! -x images/monerod/bin/monero-wallet-rpc ]]; then
+    [[ "$(uname -m)" == x86_64 ]] || { echo "the pinned Monero release is linux-x64 only" >&2; exit 1; }
+    log "fetching and verifying Monero (tests/e2e/monero/provenance.env)"
+    rm -rf images/monerod/bin images/monerod/verified images/monerod/provenance.json
+    mkdir -p images/monerod
+    docker run --rm -v "$PWD/..:/workspace:ro" -v "$PWD/images/monerod:/out" -v lez-build-monero-cache:/cache \
+        debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 bash -c '
+        set -euo pipefail
+        apt-get update -qq && apt-get install -qq -y --no-install-recommends \
+            bzip2 ca-certificates curl git gnupg jq ripgrep >/dev/null
+        # (from a copy outside the checkout: its git ls-remote must not take a
+        # worktree'"'"'s .git file for a repository)
+        mkdir -p /verify/scripts /verify/tests/e2e
+        cp /workspace/scripts/verify-monero-release.sh /verify/scripts/
+        cp -r /workspace/tests/e2e/monero /verify/tests/e2e/
+        MONERO_CACHE_DIR=/cache MONERO_BUILD_CONTEXT=/out/verified MONERO_PROVENANCE_EVIDENCE=/out/provenance.json \
+            /verify/scripts/verify-monero-release.sh
+        mv /out/verified/bin /out/bin && rmdir /out/verified
+        chown -R "$(stat -c %u:%g /out)" /out/bin /out/provenance.json'
+fi
+
 # ---- lez-services: pinned logos-execution-zone v0.2.0 (a58fbce) ------------
 # Native arm64 release build with rust 1.94.0 and the Logos rapidsnark fork's
 # rapidsnark-linux-aarch64-pic-v0.0.8 prebuilt libs (RAPIDSNARK_LIB_DIR).
@@ -57,6 +86,7 @@ if [[ ! -x images/maker-node/lez-maker-node \
    || ! -x images/taker-node/lez-btc-taker-actor \
    || ! -x images/maker-node/lez-v02-bridge-poc \
    || ! -x images/maker-node/lez-v02-escrow-claim-probe \
+   || ! -x images/maker-node/lez-v02-custody-credit-probe \
    || ! -x images/taker-node/lez-v02-bridge-poc \
    || ! -x images/lez-services/lez-runtime-healthcheck ]]; then
     cat >&2 <<'MISSING'
@@ -74,7 +104,7 @@ images/maker-node/lez-btc-maker-actor, images/taker-node/lez-btc-taker-actor)
 and the LEZ v0.2 role sidecar, which links libpython3.12 and is built in the
 ephemeral builder image (scripts/from-scratch.sh --only build ->
 provision/data/sidecar/lez-v02-bridge-poc -> both node images, and the
-test-only provision/data/sidecar/lez-v02-escrow-claim-probe -> images/maker-node/).
+test-only provision/data/sidecar/lez-v02-{escrow-claim,custody-credit}-probe -> images/maker-node/).
 MISSING
     exit 1
 fi

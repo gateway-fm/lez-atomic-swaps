@@ -4,11 +4,15 @@
 #include "lez_role_node.h"
 #include "lez_role_signer.h"
 
+#include <QCoreApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSet>
+
+#include <atomic>
+#include <thread>
 
 namespace {
 constexpr qsizetype kMaximumOfferAnnouncementBytes = 32 * 1024;
@@ -69,7 +73,8 @@ void LezAtomicSwapTakerBackend::onContextReady()
 
 QString LezAtomicSwapTakerBackend::health()
 {
-    return rpc_.call("taker_health", "{\"schema_version\":1}");
+    return lez_role_node::withLauncherRefusal(modules().lez_swap_node, QStringLiteral("taker"),
+                                              rpc_.call("taker_health", "{\"schema_version\":1}"));
 }
 
 QString LezAtomicSwapTakerBackend::chatStatus()
@@ -92,13 +97,46 @@ QString LezAtomicSwapTakerBackend::resetChat()
     return chat_->resetSession();
 }
 
+// The Logos transport's offers, Bitcoin, Zcash and Monero: what the desk's Chat
+// gateway holds from Logos Delivery (none when the gateway is not configured).
+QJsonArray LezAtomicSwapTakerBackend::logosOffers()
+{
+    QJsonArray offers;
+    for (const QString pair : {QStringLiteral("Bitcoin"), QStringLiteral("Zcash"), QStringLiteral("Monero")}) {
+        for (const QString direction : {QStringLiteral("TakerSellsForeign"), QStringLiteral("TakerSellsLez")}) {
+            const QJsonObject reply = QJsonDocument::fromJson(chat_->listOffers(pair, direction).toUtf8()).object();
+            for (const QJsonValue& offer : reply.value("result").toObject().value("offers").toArray())
+                offers.append(offer);
+        }
+    }
+    return offers;
+}
+
+// A take whose Chat rounds travel through this desk's Logos Chat bridge, whose
+// timers run on this thread: the call runs on a worker thread while this
+// thread's event loop keeps the bridge moving frames.
+QString LezAtomicSwapTakerBackend::offThread(const std::function<QString()>& call)
+{
+    QString reply;
+    std::atomic<bool> answered{false};
+    std::thread worker([&] {
+        reply = call();
+        answered = true;
+        QMetaObject::invokeMethod(this, [] {}, Qt::QueuedConnection);  // wakes the loop below
+    });
+    while (!answered) QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents);
+    worker.join();
+    return reply;
+}
+
 QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
 {
     if (walletId != kTakerWallet.id) {
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("This desk settles as the Node's own identity"));
     }
-    return node_market::takerSnapshot(snapshotRpc_, kTakerWallet, lockedSwaps_);
+    return lez_role_node::withLauncherRefusal(modules().lez_swap_node, QStringLiteral("taker"),
+        node_market::takerSnapshot(snapshotRpc_, kTakerWallet, lockedSwaps_, logosOffers()));
 }
 
 QString LezAtomicSwapTakerBackend::btcTakeOffer(
@@ -114,7 +152,17 @@ QString LezAtomicSwapTakerBackend::btcTakeOffer(
             QStringLiteral("The selected wallet or offer is invalid"));
     }
     if (!exactUnsigned(foreignUnits, amount)) return invalid();
-    // The reply embeds a market snapshot: the snapshot budget applies.
+    // The reply embeds a market snapshot: the snapshot budget applies. An offer
+    // from Logos Delivery is taken over a Chat conversation with its Maker.
+    const QJsonArray logos = logosOffers();
+    for (const QJsonValue& view : logos) {
+        if (view.toObject().value("offer").toObject().value("id").toString() != offerId) continue;
+        (void)chat_->connectOffer(view.toObject().value("maker_identity").toString(), offerId);
+        return offThread([&] {
+            return node_market::takerTake(snapshotRpc_, slowRpc_, kTakerWallet, requestId, offerId,
+                                          static_cast<qint64>(amount), lockedSwaps_, logos);
+        });
+    }
     return node_market::takerTake(snapshotRpc_, slowRpc_, kTakerWallet, requestId, offerId,
                                   static_cast<qint64>(amount), lockedSwaps_);
 }
@@ -173,12 +221,14 @@ QString LezAtomicSwapTakerBackend::initiate(
         || announcement.toBase64() != logosOfferAnnouncementBase64.toLatin1()) return invalid();
     QJsonArray digestBytes;
     for (const char byte : digest) digestBytes.append(static_cast<unsigned char>(byte));
-    return rpc_.call("taker_swap_initiate_v1", compact({{"schema_version", 1},
+    const QString request = compact({{"schema_version", 1},
         {"request_id", requestId}, {"offer_id", offerId},
         {"route", QJsonObject{{"pair", pair}, {"direction", direction}}},
         {"maker_identity", makerIdentity}, {"signed_envelope_sha256", digestBytes},
         {"foreign_units", static_cast<qint64>(foreign)}, {"expected_lez_units", static_cast<qint64>(lez)},
-        {"logos_offer_announcement_base64", logosOfferAnnouncementBase64}}));
+        {"logos_offer_announcement_base64", logosOfferAnnouncementBase64}});
+    // As long as the main take waits (slowRpc_), off the bridge's thread.
+    return offThread([&] { return slowRpc_.call("taker_swap_initiate_v1", request); });
 }
 
 QString LezAtomicSwapTakerBackend::listSwaps()

@@ -475,6 +475,14 @@ impl PinnedXmrEffectInputsV1 {
             authority.role() == ActorRole::Maker && authority.schema_version() == 3,
             "exact Tag15 observation requires schema-v3 Maker authority"
         );
+        // A tool stopped before it recorded its submission leaves nothing to
+        // pin: the observer then discovers the swap's one tag 15 by its terms.
+        if crate::xmr_maker_submission_unwritten(
+            authority.evidence_root(),
+            XmrWorkflowStep::ClaimLezTag15,
+        )? {
+            return Ok(self);
+        }
         let source = read_stable_private_source(
             &authority
                 .evidence_root()

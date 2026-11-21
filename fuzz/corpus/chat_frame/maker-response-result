@@ -1,0 +1,1 @@
+{"schema_version":1,"frame_id":"a4d1013508b1d9aa98473e09409301d4a928bbbe7ca1d6dc6650646fd4f22da4","sender_role":"maker","recipient_role":"taker","message":{"kind":"response","request_frame_id":"0000000000000000000000000000000000000000000000000000000000000001","result":{"schema_version":1,"was_replay":false},"error":null}}

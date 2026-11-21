@@ -465,13 +465,14 @@ impl BridgeRuntime {
             .checked_add(1)
             .ok_or(BridgeRuntimeError::InvalidObservation)?;
         let metadata_hash_after = account_sha256(after.metadata_account())?;
+        // The custody is not compared: anyone can credit it (TM-0032), and
+        // the unchanged metadata already proves the escrow did not move.
         let custody_hash_after = account_sha256(after.custody_account())?;
         if after.depositor_account().balance != expected_sender_balance
             || u128::from(after.depositor_account().nonce) != expected_sender_nonce
             || after.claimant_account().balance != expected_recipient_balance
             || u128::from(after.claimant_account().nonce) != preparation.recipient_before.nonce
             || metadata_hash_after != preparation.metadata_account_sha256_before
-            || custody_hash_after != preparation.custody_account_sha256_before
             || clock_after.height <= preparation.clock_before.height
             || clock_after.timestamp_ms >= preparation.exclusive_punish_at_ms
         {
@@ -771,18 +772,99 @@ impl BridgeRuntime {
 
     /// Prepares one exact signed tag-17 punishment without submission.
     ///
+    /// The Maker's LEZ owner signs every pair's transactions at its live
+    /// nonce, so another one may take the punishment's nonce first; the
+    /// punishment can then never be included, and after the punish time
+    /// nobody else can move the escrow. A reserved punishment the node has not
+    /// included while the account's sequenced nonce is above its own is
+    /// therefore re-planned at that nonce (the nonce is the one part of the
+    /// message nothing commits). The nonce is read before the inclusion, so a
+    /// punishment included in between is seen and kept.
+    ///
     /// # Errors
     ///
     /// Preserves strict Maker role, runtime, terms, claimant, nonce, message
-    /// hash, ABI, signature, and durable-reservation failures from the planner.
+    /// hash, ABI, signature, re-plan bound and durable-reservation failures
+    /// from the planner; `Unavailable` for node facts.
     pub async fn prepare_native_xmr_punish_v3(
         &self,
         request: &lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
     ) -> Result<lez_bridge_protocol::PrepareNativeXmrPunishV3Result, BridgeRuntimeError> {
+        let prepared = self.planner.prepare_native_xmr_punish_v3(request).await?;
+        let live_nonce = self
+            .planner
+            .live_signer_nonce()
+            .await
+            .map_err(|_| BridgeRuntimeError::Unavailable)?;
+        if !self
+            .planner
+            .native_xmr_punish_nonce_passed(&prepared.punish, live_nonce)?
+            || self
+                .node
+                .prepared_transaction_is_included(&prepared.punish)
+                .await?
+        {
+            return Ok(prepared);
+        }
         self.planner
-            .prepare_native_xmr_punish_v3(request)
+            .supersede_native_xmr_punish_v3(request, prepared.punish.transaction_id, live_nonce)
             .await
             .map_err(Into::into)
+    }
+
+    /// Restores the durable tag-17 lineage at startup without a node call.
+    ///
+    /// # Errors
+    ///
+    /// Preserves the planner's durable-state and drift failures.
+    pub async fn restore_native_xmr_punish_v3(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
+        expected: &lez_bridge_protocol::PrepareNativeXmrPunishV3Result,
+    ) -> Result<(), BridgeRuntimeError> {
+        self.planner
+            .restore_native_xmr_punish_v3(request, expected)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Reads one XMR-native escrow's metadata state at the sequencer tip, under
+    /// one unchanged tip (read again, a bounded number of times, when it
+    /// moved). The tip is not finalized: this is what the sequencer holds
+    /// now, which a refund must not race. It performs no submission.
+    ///
+    /// # Errors
+    ///
+    /// `MovingTip` when the tip moved under every read, `Unavailable` for node
+    /// facts, `InvalidObservation` for metadata the terms do not bind.
+    pub async fn observe_native_xmr_escrow_tip_v3(
+        &self,
+        request: &lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Request,
+    ) -> Result<lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Result, BridgeRuntimeError> {
+        let metadata_id = AccountId::new(*request.terms.to_input().metadata_account_id.as_bytes());
+        for _ in 0..3 {
+            let before = self.node.sequencer_tip().await?;
+            let account = self.node.native_account(metadata_id).await?;
+            if self.node.sequencer_tip().await? != before {
+                continue;
+            }
+            let state = if account == Account::default() {
+                None
+            } else {
+                Some(crate::finalized_xmr_observation::xmr_metadata_state(
+                    &request.terms,
+                    account.program_owner,
+                    account.data.as_ref(),
+                )?)
+            };
+            return Ok(lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Result::new(
+                request.context.clone(),
+                request.terms,
+                before,
+                state,
+            ));
+        }
+        Err(BridgeRuntimeError::MovingTip)
     }
 
     /// Classifies one exact persisted XMR-native Fund in stable finalized history.
@@ -1439,6 +1521,8 @@ impl BridgeRuntime {
     ///
     /// Rejects every generic, unowned, malformed, or drifted transaction and
     /// reports an ambiguous one-attempt node result as unknown.
+    /// [`BridgeRuntimeError::Unavailable`] comes only from the lookups before
+    /// the send: the request journal tries such a request again.
     pub async fn submit_native_xmr_claim_authorization_v3(
         &self,
         request: &lez_bridge_protocol::SubmitNativeXmrClaimAuthorizationV3Request,
@@ -1493,6 +1577,12 @@ impl BridgeRuntime {
         )
     }
 
+    /// Whether these exact bytes are an owned XMR recovery the request journal
+    /// decides again on every submission (the completed tag-16 refund).
+    pub async fn xmr_recovery_submission(&self, prepared: &PreparedTransaction) -> bool {
+        self.planner.xmr_recovery_submission(prepared).await
+    }
+
     /// Submits only exact bytes owned by this actor's active durable planner.
     ///
     /// An exact canonical lookup is performed before submission. A found byte-
@@ -1503,6 +1593,8 @@ impl BridgeRuntime {
     ///
     /// Rejects unowned bytes, malformed official transactions, node failure,
     /// or an unknown one-attempt submission outcome.
+    /// [`BridgeRuntimeError::Unavailable`] comes only from the lookups before
+    /// the send: the request journal tries such a request again.
     pub async fn submit_transaction(
         &self,
         request: &SubmitTransactionRequest,
@@ -1526,6 +1618,12 @@ impl BridgeRuntime {
                 request.transaction.transaction_id,
                 SubmissionOutcome::AlreadyKnown,
             ));
+        }
+        #[cfg(feature = "test-hooks")]
+        if matches!(ownership, OwnedSubmission::XmrPunish)
+            && crate::test_hooks::take("punish-nonce-thefts")
+        {
+            return self.steal_punish_nonce(request).await;
         }
         // A native escrow transaction whose signer nonce the account has
         // already passed (another transaction of this signer took it first,
@@ -1606,6 +1704,37 @@ impl BridgeRuntime {
             .submit_prepared_transaction(&request.transaction)
             .await
             .map_err(|_| BridgeRuntimeError::UnknownSubmissionOutcome)?;
+        Ok(SubmitTransactionResult::new(
+            request.context.clone(),
+            request.transaction.transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
+    }
+
+    /// TEST-ONLY (feature `test-hooks`, the devnet's punish re-plan
+    /// scenario): while `punish-nonce-thefts` holds a count, another
+    /// transaction of the signer takes the punishment's nonce first and the
+    /// punishment itself is not sent, as if the sequencer dropped it; the
+    /// next drive re-plans it.
+    #[cfg(feature = "test-hooks")]
+    async fn steal_punish_nonce(
+        &self,
+        request: &SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
+        let theft = self
+            .planner
+            .punish_nonce_theft(&request.transaction)
+            .await?;
+        self.node
+            .submit_prepared_transaction(&theft)
+            .await
+            .map_err(|_| BridgeRuntimeError::UnknownSubmissionOutcome)?;
+        for _ in 0..60 {
+            if self.node.prepared_transaction_is_included(&theft).await? {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
         Ok(SubmitTransactionResult::new(
             request.context.clone(),
             request.transaction.transaction_id,
@@ -2462,12 +2591,11 @@ impl BridgeRuntime {
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        let expected_balance = if state == EscrowState::Funded {
-            terms.amount().as_u128()
-        } else {
-            0
-        };
-        if facts.custody_account().balance != expected_balance {
+        // Anyone can credit the custody (TM-0032): a funded escrow holds at
+        // least the amount, and any other state may hold a stranger's credit.
+        if state == EscrowState::Funded
+            && facts.custody_account().balance < terms.amount().as_u128()
+        {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         let metadata_facts = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
@@ -2539,12 +2667,11 @@ impl BridgeRuntime {
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        let expected_balance = if state == EscrowState::Funded {
-            terms.amount().as_u128()
-        } else {
-            0
-        };
-        if facts.custody_account().balance != expected_balance {
+        // Anyone can credit the custody (TM-0032): a funded escrow holds at
+        // least the amount, and any other state may hold a stranger's credit.
+        if state == EscrowState::Funded
+            && facts.custody_account().balance < terms.amount().as_u128()
+        {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         let metadata_facts = EscrowMetadataFacts::from_lee_v0_2_native_terms(
@@ -2726,7 +2853,7 @@ fn validate_funded_xmr_clock_state(
             != *input.custody_account_id.as_bytes()
         || facts.metadata_account().program_owner != escrow_program
         || facts.custody_account().program_owner != transfer_program
-        || facts.custody_account().balance != input.amount
+        || facts.custody_account().balance < input.amount
         || facts.depositor_account().program_owner != transfer_program
         || facts.claimant_account().program_owner != transfer_program
         || facts.depositor_account().balance == 0

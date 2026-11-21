@@ -1,0 +1,43 @@
+# The Logos transport (node-entrypoint.sh, LEZ_TRANSPORT=logos): the two
+# parties share nothing but the chains. Offers and the Chat rounds of a take
+# travel through the Logos Delivery and Chat modules of the two Basecamps; each
+# role's Chat gateway sits between its desk's Logos Chat bridge and its Node.
+# The Taker has no Delivery directory and no Maker socket mounted: what a
+# Taker on another host has. It knows the Maker by its public Delivery
+# identity and reaches the Maker's Delivery node at its libp2p address, both
+# given here (scripts/ui-e2e.sh logos-happy reads them from the Maker's
+# Basecamp).
+#
+# The two Delivery nodes form a network of their own rather than joining the
+# public logos.test fleet (LEZ_LOGOS_DELIVERY_CONFIG, passed by the desks'
+# Logos Chat bridge to chat_module's delivery_config, which
+# builder/patches/logos-chat-module adds): a private cluster id, the Maker's
+# node listening on TCP 60000 on every interface, the Taker's dialling it.
+#
+#   docker compose --env-file runtime/runtime.env -f compose.yaml -f compose.logos.yaml \
+#     up -d --no-build --force-recreate --no-deps maker-node
+#   LEZ_MAKER_DELIVERY_IDENTITY=<02|03…> LEZ_MAKER_DELIVERY_PEER=/ip4/<maker address>/tcp/60000/p2p/<peer id> \
+#     docker compose … up -d --no-build --force-recreate --no-deps taker-node
+services:
+  maker-node:
+    environment:
+      LEZ_TRANSPORT: logos
+      LEZ_LOGOS_CHAT_GATEWAY_SOCKET: /run/lez/maker/logos-chat-control.sock
+      LEZ_LOGOS_DELIVERY_CONFIG: '{"mode":"Core","messagingOverrides":{"log-level":"ERROR","cluster-id":${LEZ_LOGOS_CLUSTER_ID:-7341},"num-shards-in-network":8,"listen-address":"0.0.0.0","tcp-port":60000}}'
+
+  taker-node:
+    environment:
+      LEZ_TRANSPORT: logos
+      LEZ_LOGOS_CHAT_GATEWAY_SOCKET: /run/lez/taker/logos-chat-control.sock
+      LEZ_MAKER_DELIVERY_IDENTITY: ${LEZ_MAKER_DELIVERY_IDENTITY:-}
+      LEZ_LOGOS_DELIVERY_CONFIG: '{"mode":"Core","messagingOverrides":{"log-level":"ERROR","cluster-id":${LEZ_LOGOS_CLUSTER_ID:-7341},"num-shards-in-network":8,"entry-node":["${LEZ_MAKER_DELIVERY_PEER:-}"]}}'
+    # compose.yaml's volumes without delivery_dir and maker_socket
+    volumes: !override
+      - taker_state:/var/lib/lez/taker
+      - zec_taker:/var/lib/lez/zec
+      - ./${LEZ_LANE_RUNTIME:-runtime}/lez/taker/identity.json:/run-lez-identity/identity.json:ro
+      - ./${LEZ_LANE_RUNTIME:-runtime}/lez/taker:/run-lez-identity/taker:ro
+      - taker_wallet:/run/lez-wallet/taker
+      - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
+      - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
+      - ./ui-tests:/ui-tests:ro

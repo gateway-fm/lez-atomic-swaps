@@ -26,7 +26,10 @@ use lez_swap_core::{
     Chain, ChainPosition, ChainProof, ConfirmationPolicy, Pair, Participant, RecoverySchedule,
     SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
-use lez_swap_store::{MakerActorKindV1, MakerActorManifestV1, SqliteSwapStore};
+use lez_swap_store::{
+    MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
+    MakerActorProgressObservationV1, SqliteSwapStore,
+};
 use lez_zec_swap_sdk::{
     Bip199Contract, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
     ExpectedBip199Output, TransparentFundingRequest, TransparentUtxo, ZcashNodeRemovalSnapshot,
@@ -143,6 +146,8 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
     assert_eq!(reverse_view["direction"], "TakerSellsLez");
     assert_route_lists(&second_socket);
     assert_route_quote(&second_socket);
+    assert_offer_history(&second_socket, "active", 1);
+    reprice_zec_route(&second_socket);
     assert_offer_history(&second_socket, "active", 1);
     assert_delivery_offer(run.path(), true);
     withdraw_zec_offer(&second_socket);
@@ -439,6 +444,41 @@ fn maker_actor_lifecycle_commands_are_read_only_replay_safe_and_restart_durable(
     assert_missing_actor_errors(&second_socket);
 }
 
+/// `history` reads an actor-driven swap at the phase its actor reached, as
+/// `monitor` does, not at the Offered its Chat aggregate keeps.
+#[test]
+fn history_lists_an_actor_driven_swap_at_its_actor_phase() {
+    let run = tempdir().expect("isolated test directory");
+    let database = run.path().join("actor-history.sqlite3");
+    let swap_id = "m5-maker-history-zec";
+    seed_maker_actor(run.path(), &database, swap_id);
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let lease = store
+        .claim_maker_actor(
+            &SwapId::new(swap_id).unwrap(),
+            MakerActorLeaseOwner::new([7; 16]).unwrap(),
+            11,
+        )
+        .unwrap()
+        .expect("queued actor is leased");
+    store
+        .resolve_maker_actor_attempt_with_progress(
+            &lease,
+            MakerActorAttemptResolution::Terminal,
+            &MakerActorProgressObservationV1::active("completed", 4, "complete").unwrap(),
+            12,
+        )
+        .unwrap();
+    drop(store);
+
+    let (_daemon, socket) = start_daemon(run.path(), &database, "actor-history.ready");
+    let history = maker_cli(&socket, &["history"]);
+    assert_success(&history);
+    let history: Value = serde_json::from_slice(&history.stdout).expect("CLI emits history JSON");
+    assert_eq!(history[0]["id"], swap_id);
+    assert_eq!(history[0]["phase"], "Completed");
+}
+
 fn maker_actor_monitor(socket: &Path, swap_id: &str) -> Value {
     let output = maker_cli(socket, &["monitor", "--id", swap_id]);
     assert_success(&output);
@@ -721,6 +761,49 @@ fn publish_zec_offer(socket: &Path) {
         ],
     );
     assert_configuration_commit(&replay, 1, true);
+}
+
+/// A second price commit moves the quote to revision 2, and a set that still expects
+/// revision 1 is refused; the caller checks the earlier offer keeps its price.
+fn reprice_zec_route(socket: &Path) {
+    let set_price = |request_id: &str| {
+        maker_cli(
+            socket,
+            &[
+                "set-local-price",
+                "--request-id",
+                request_id,
+                "--expected-revision",
+                "1",
+                "--pair",
+                "zcash",
+                "--direction",
+                "taker-sells-lez",
+                "--lez-units-per-lot",
+                "7",
+                "--foreign-units-per-lot",
+                "3",
+            ],
+        )
+    };
+    assert_configuration_commit(&set_price("operator-price-zec-update-001"), 2, false);
+    let stale = set_price("operator-price-zec-update-002");
+    assert!(!stale.status.success(), "stale price revision was accepted");
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains("stale maker configuration revision"),
+        "unexpected stale price error: {}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
+
+    let quote = maker_cli(
+        socket,
+        &["quote", "--pair", "zcash", "--direction", "taker-sells-lez"],
+    );
+    assert_success(&quote);
+    let quote: Value = serde_json::from_slice(&quote.stdout).expect("CLI emits quote JSON");
+    assert_eq!(quote["price"]["lez_units_per_lot"], 7);
+    assert_eq!(quote["price"]["foreign_units_per_lot"], 3);
+    assert_eq!(quote["source_revision"], 2);
 }
 
 fn withdraw_zec_offer(socket: &Path) {

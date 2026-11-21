@@ -12,6 +12,8 @@ compile_error!("xmr-reference-actor requires Unix file-permission semantics");
 #[cfg(feature = "sessions")]
 mod application_provision;
 #[cfg(feature = "sessions")]
+mod ceremony;
+#[cfg(feature = "sessions")]
 mod effect_authority;
 #[cfg(feature = "sessions")]
 mod effect_child_plan;
@@ -21,12 +23,16 @@ mod effect_input_custody;
 mod effect_route;
 #[cfg(feature = "sessions")]
 mod maker_refund_activation;
+#[cfg(feature = "sessions")]
+mod monero_funding;
+#[cfg(feature = "sessions")]
+mod reserve;
 
 #[cfg(feature = "sessions")]
 pub use application_provision::{
     ValidatedXmrEffectExecutionV3, ValidatedXmrMakerAuthorityV2, ValidatedXmrTakerAuthorityV2,
     XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XMR_MAKER_ACTOR_ABI_V1, XMR_MAKER_ACTOR_NEXT_ACTION,
-    XMR_MAKER_ACTOR_PROGRAM_ID, XmrActorProvisionV1, XmrEffectProvisionV3,
+    XMR_MAKER_ACTOR_PROGRAM_ID, XmrActorProvisionV1, XmrEffectProvisionV3, XmrMakerEffectSourcesV1,
     load_validated_xmr_effect_execution_v3_bytes, load_validated_xmr_effect_manifest_v3_bytes,
     load_validated_xmr_maker_authority_fd, load_validated_xmr_maker_effect_execution_fd,
     load_validated_xmr_taker_authority_bytes, provision_xmr_effect_manifest_v3,
@@ -35,11 +41,18 @@ pub use application_provision::{
     validate_taker_manifest_config_bytes, validate_xmr_effect_manifest_v3_projection_bytes,
 };
 #[cfg(feature = "sessions")]
+pub use ceremony::{
+    XmrCeremonyPackets, XmrMakerCeremony, XmrTakerCeremony, XmrTakerStageB,
+    xmr_ceremony_partial_answer, xmr_ceremony_partial_response,
+};
+#[cfg(feature = "sessions")]
 pub use effect_authority::{
-    ValidatedXmrEffectAuthorityV1, XMR_EFFECT_AUTHORITY_MAX_BYTES, XmrEffectAuthenticatedRpcV1,
-    XmrEffectLezRpcV1, XmrEffectMoneroRpcV1, XmrEffectToolV1, XmrMakerEffectToolsV1,
+    ValidatedXmrEffectAuthorityV1, XMR_EFFECT_AUTHORITY_MAX_BYTES, XMR_MAKER_LEZ_SCAN_FILE,
+    XmrEffectAuthenticatedRpcV1, XmrEffectLezRpcV1, XmrEffectMoneroRpcV1, XmrEffectToolV1,
+    XmrMakerEffectFactsV1, XmrMakerEffectToolPinsV1, XmrMakerEffectToolsV1,
     XmrTag14ReleaseAuthorityV1, XmrTag14ReleaseNodeProfileV1, XmrTakerEffectToolsV1,
-    load_validated_xmr_effect_authority_bytes,
+    load_validated_xmr_effect_authority_bytes, provision_xmr_maker_effect_authority,
+    seed_xmr_maker_lez_scan,
 };
 #[cfg(feature = "sessions")]
 pub use effect_child_plan::{
@@ -66,7 +79,16 @@ pub use effect_input_custody::{
 pub use effect_route::{
     XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverResultV1, XmrEffectObserverStateV1,
     XmrPreparedEffectInvocationV1, XmrPreparedEffectObservationV1,
-    parse_xmr_effect_observer_result_v1,
+    parse_xmr_effect_observer_result_v1, xmr_maker_submission_unwritten,
+};
+#[cfg(feature = "sessions")]
+pub use reserve::{
+    MAX_ANCHOR_CLOCK_SKEW_SECONDS, MAX_RESTORE_HEIGHT_SKEW_BLOCKS, XMR_ADAPTOR_JOURNAL_FILE,
+    XMR_MAKER_PACKET_FILE, XMR_STAGE_A_FILE, XMR_STAGE_A_UNSIGNED_FILE, XMR_STAGE_B_FILE,
+    XMR_TAKER_PACKET_FILE, XmrLezRole, XmrMakerReservation, XmrMoneroChainView,
+    XmrProcessStageAPlanner, XmrReservationTerms, XmrRoleConfigV1, XmrStageAPlanInputV1,
+    XmrStageAPlanner, XmrTakerCheck, XmrTakerContribution, accept_xmr_maker_stage_a,
+    begin_xmr_taker_role, check_xmr_taker_role, reserve_xmr_maker_role, xmr_taker_contribution,
 };
 
 use std::{
@@ -107,12 +129,21 @@ use lez_xmr_swap_sdk::{
     XmrActivationBodyV1, XmrSessionTranscriptV1,
 };
 #[cfg(feature = "sessions")]
-use maker_refund_activation::{
-    activate_maker_claim_workflow, activate_maker_refund_workflow,
-    activate_taker_claim_sweep_workflow, activate_taker_claim_workflow,
+pub use maker_refund_activation::{
+    activate_maker_claim_workflow, activate_maker_claim_workflow_bytes,
+    activate_maker_punish_workflow_bytes, activate_maker_refund_workflow,
+    activate_maker_refund_workflow_bytes, activate_taker_claim_sweep_workflow,
+    activate_taker_claim_workflow, maker_monero_funding_evidence_sha256,
+    reconcile_maker_monero_funding_bytes,
 };
 #[cfg(feature = "sessions")]
 use monero::Address as MoneroAddress;
+#[cfg(feature = "sessions")]
+pub use monero_funding::{
+    MoneroFundingNotSent, XMR_MAKER_FUNDING_EVIDENCE_FILE, XMR_MAKER_FUNDING_RECEIPT_FILE,
+    XMR_MONERO_FUNDING_NOT_SENT_EXIT, XmrRoleWalletRpcV1, fund_maker_monero,
+    observe_maker_monero_funding,
+};
 #[cfg(feature = "sessions")]
 use rustix::fs::Dir;
 #[cfg(target_os = "linux")]
@@ -992,7 +1023,18 @@ impl ValidatedRolePacket {
         read_role_packet_with_digest(path).map(|(packet, _)| packet)
     }
 
-    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+    /// Validates canonical public role packet bytes as [`Self::read`] does a
+    /// file, with the same size bound.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized or noncanonical JSON/hex, invalid or aliased keys, or
+    /// a failed DLEQ proof.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() as u64 <= ROLE_PACKET_MAX_BYTES,
+            "public role packet is oversized"
+        );
         let raw: RolePacketV1 =
             serde_json::from_slice(bytes).context("public role packet is malformed")?;
         ensure!(
@@ -1503,13 +1545,7 @@ fn complete_claim_from_finalized_authorization(
         activation_stage_b,
     )?;
     let result = read_finalized_xmr_effect(finalized_authorization)?;
-    let facts = owner_exact_finalized_xmr_facts(
-        &result,
-        run_id,
-        &lifecycle.binding.terms(),
-        XmrNativeEffectV3::AuthorizeClaim,
-        BridgeParticipant::Taker,
-    )?;
+    let facts = maker_tag14_facts(&result, run_id, &lifecycle.binding.terms())?;
     let partial = facts
         .instruction
         .published_claim_partial
@@ -1529,6 +1565,56 @@ fn complete_claim_from_finalized_authorization(
     )
     .context("complete Maker claim from finalized tag 14")?;
     destination.revalidate()
+}
+
+/// Completes the Maker's claim final signature from finalized Tag-14
+/// evidence, on the role material its schema-3 manifest names.
+///
+/// # Errors
+///
+/// Fails for an existing output, invalid role material or Tag-14 evidence.
+#[cfg(feature = "sessions")]
+pub fn complete_maker_claim_signature(
+    sources: &XmrMakerEffectSourcesV1,
+    finalized_authorization: &Path,
+    output_final_signature: &Path,
+) -> Result<()> {
+    complete_claim_from_finalized_authorization(
+        sources.private_root(),
+        sources.own_public_packet(),
+        sources.peer_public_packet(),
+        sources.stage_a(),
+        sources.stage_b(),
+        sources.role_journal(),
+        sources.run_id(),
+        finalized_authorization,
+        output_final_signature,
+    )
+}
+
+/// Ingests the Taker's finalized Tag-16 refund signature into the Maker's
+/// refund session, on the role material its schema-3 manifest names.
+///
+/// # Errors
+///
+/// Fails for an existing output, invalid role material or Tag-16 evidence.
+#[cfg(feature = "sessions")]
+pub fn ingest_maker_refund_signature(
+    sources: &XmrMakerEffectSourcesV1,
+    finalized_refund: &Path,
+    output_final_signature: &Path,
+) -> Result<()> {
+    ingest_finalized_refund_signature(
+        sources.private_root(),
+        sources.own_public_packet(),
+        sources.peer_public_packet(),
+        sources.stage_a(),
+        sources.stage_b(),
+        sources.role_journal(),
+        sources.run_id(),
+        finalized_refund,
+        output_final_signature,
+    )
 }
 
 #[cfg(feature = "sessions")]
@@ -1752,6 +1838,34 @@ fn discovered_finalized_xmr_facts<'result>(
     Ok(facts)
 }
 
+/// The Taker's finalized tag 14 as the Maker holds it: the Taker sidecar's
+/// exact result (the reference flow hands it over), or the Maker sidecar's
+/// own discovery by the swap's terms (the Maker Node watches for it).
+#[cfg(feature = "sessions")]
+pub(crate) fn maker_tag14_facts<'result>(
+    result: &'result ClassifyFinalizedNativeXmrEffectV3Result,
+    expected_run_id: &str,
+    expected_terms: &XmrNativeEscrowTermsV3,
+) -> Result<&'result FinalizedNativeXmrEffectFactsV3> {
+    if result.context.sidecar_role == BridgeParticipant::Maker {
+        discovered_finalized_xmr_facts(
+            result,
+            expected_run_id,
+            expected_terms,
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Maker,
+        )
+    } else {
+        owner_exact_finalized_xmr_facts(
+            result,
+            expected_run_id,
+            expected_terms,
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Taker,
+        )
+    }
+}
+
 #[cfg(feature = "sessions")]
 fn owner_exact_finalized_xmr_facts<'result>(
     result: &'result ClassifyFinalizedNativeXmrEffectV3Result,
@@ -1922,7 +2036,27 @@ fn compose_stage_b(
     let packets = StageRolePackets::read(ActorRole::Taker, own_public_packet, peer_public_packet)?;
     let material = validate_private_role(private_root, ActorRole::Taker, &packets)?;
     let agreement = read_validated_stage_a(agreement_stage_a, &packets)?;
+    let validated = compose_activation_body(&agreement, journal, &material.view)?;
+    let encoded = validated
+        .encode_unsigned_wire()
+        .context("encode unsigned Stage-B wire")?;
+    write_bounded_public_new(
+        &destination,
+        &encoded,
+        u64::try_from(MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES).unwrap_or(u64::MAX),
+        "unsigned Stage-B wire",
+    )
+}
 
+/// The unsigned Stage B the Taker composes from its completed claim and
+/// refund sessions in `journal`; it carries only a commitment to the Taker's
+/// claim partial.
+#[cfg(feature = "sessions")]
+fn compose_activation_body(
+    agreement: &XmrAgreementV1,
+    journal: &Path,
+    view: &MoneroPrivateViewKey,
+) -> Result<ValidatedXmrActivationBodyV1> {
     let claim_session = ValidatedSession::from_untweaked_context(
         agreement
             .claim_session_descriptor()
@@ -1959,17 +2093,8 @@ fn compose_stage_b(
         refund.taker_partial,
         refund.presignature,
     );
-    let validated = ValidatedXmrActivationBodyV1::validate(&agreement, body, &material.view)
-        .context("unsigned Stage-B body is invalid")?;
-    let encoded = validated
-        .encode_unsigned_wire()
-        .context("encode unsigned Stage-B wire")?;
-    write_bounded_public_new(
-        &destination,
-        &encoded,
-        u64::try_from(MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES).unwrap_or(u64::MAX),
-        "unsigned Stage-B wire",
-    )
+    ValidatedXmrActivationBodyV1::validate(agreement, body, view)
+        .context("unsigned Stage-B body is invalid")
 }
 
 #[cfg(feature = "sessions")]
@@ -2280,11 +2405,111 @@ fn provision(
         Some(path) => read_private_view_key(path)?,
         None => MoneroPrivateViewKey::generate().context("generate private Monero view key")?,
     };
-    let mut rng = fallible_seeded_rng()?;
-    let agreement = match agreement_key_file {
-        Some(path) => GeneratedSecpKey::read_private(path, "Maker agreement key")?,
-        None => GeneratedSecpKey::generate(&mut rng),
+    let agreement = agreement_key_file
+        .map(|path| GeneratedSecpKey::read_private(path, "Maker agreement key"))
+        .transpose()?;
+    let material = generate_role_material(role, lez_owner_account, view_key, agreement)?;
+
+    let (public_stage_name, public_stage_file) = create_staged_file(
+        &public_destination.parent,
+        "public",
+        &material.packet_bytes,
+        ROLE_PACKET_MAX_BYTES,
+        "public packet",
+    )?;
+    let private_result = material.publish(&private_destination);
+    if let Err(error) = private_result {
+        cleanup_staged_file(&public_destination.parent, &public_stage_name);
+        return Err(error);
+    }
+
+    let publish_result = publish_staged_file(
+        &public_destination,
+        &public_stage_name,
+        &public_stage_file,
+        ROLE_PACKET_MAX_BYTES,
+        "public packet",
+    );
+    if publish_result.is_err() {
+        cleanup_staged_file(&public_destination.parent, &public_stage_name);
+    }
+    publish_result
+}
+
+/// Writes fresh private material for one swap into a new owner-only
+/// `private_root` and returns the role's canonical public packet. The Maker
+/// imports the Taker's per-swap `view_key` and its own long-lived
+/// `agreement_key`; the Taker generates both.
+///
+/// # Errors
+///
+/// Fails for a role/import mismatch, a zero owner account, an existing or
+/// unsafe root, or unavailable entropy.
+pub fn provision_role_root(
+    role: ActorRole,
+    private_root: &Path,
+    lez_owner_account: [u8; 32],
+    view_key: Option<MoneroPrivateViewKey>,
+    agreement_key: Option<&Zeroizing<[u8; 32]>>,
+) -> Result<Vec<u8>> {
+    ensure!(
+        role != ActorRole::Maker || view_key.is_some(),
+        "Maker must import the shared view key"
+    );
+    ensure!(
+        role == ActorRole::Maker || agreement_key.is_none(),
+        "only Maker may import an agreement key"
+    );
+    let destination = SecureDestination::new(private_root, "private role root")?;
+    destination.ensure_absent("private role root")?;
+    let view_key = match view_key {
+        Some(key) => key,
+        None => MoneroPrivateViewKey::generate().context("generate private Monero view key")?,
     };
+    let agreement = agreement_key
+        .map(|key| GeneratedSecpKey::from_secret(Zeroizing::new(**key), "Maker agreement key"))
+        .transpose()?;
+    let material = generate_role_material(role, lez_owner_account, view_key, agreement)?;
+    let packet = material.packet_bytes.clone();
+    material.publish(&destination)?;
+    Ok(packet)
+}
+
+/// One role's fresh private material and its canonical public packet, not
+/// yet on disk.
+struct RoleMaterial {
+    agreement: GeneratedSecpKey,
+    claim: GeneratedSecpKey,
+    refund: GeneratedSecpKey,
+    share: CrossCurveScalar,
+    view_key: MoneroPrivateViewKey,
+    packet_bytes: Vec<u8>,
+    manifest_bytes: Vec<u8>,
+}
+
+impl RoleMaterial {
+    fn publish(self, destination: &SecureDestination) -> Result<()> {
+        publish_private_bundle(
+            destination,
+            &self.agreement,
+            &self.claim,
+            &self.refund,
+            self.share,
+            self.view_key,
+            &self.manifest_bytes,
+        )
+    }
+}
+
+fn generate_role_material(
+    role: ActorRole,
+    lez_owner_account: [u8; 32],
+    view_key: MoneroPrivateViewKey,
+    agreement: Option<GeneratedSecpKey>,
+) -> Result<RoleMaterial> {
+    ensure!(lez_owner_account != [0; 32], "LEZ owner account is invalid");
+    let mut rng = fallible_seeded_rng()?;
+    let agreement = agreement.unwrap_or_else(|| GeneratedSecpKey::generate(&mut rng));
     let claim = GeneratedSecpKey::generate(&mut rng);
     let refund = GeneratedSecpKey::generate(&mut rng);
     let share = CrossCurveScalar::generate().context("generate private Monero share")?;
@@ -2320,38 +2545,15 @@ fn provision(
     };
     let manifest_bytes = manifest.canonical_bytes()?;
 
-    let (public_stage_name, public_stage_file) = create_staged_file(
-        &public_destination.parent,
-        "public",
-        &packet_bytes,
-        ROLE_PACKET_MAX_BYTES,
-        "public packet",
-    )?;
-    let private_result = publish_private_bundle(
-        &private_destination,
-        &agreement,
-        &claim,
-        &refund,
+    Ok(RoleMaterial {
+        agreement,
+        claim,
+        refund,
         share,
         view_key,
-        &manifest_bytes,
-    );
-    if let Err(error) = private_result {
-        cleanup_staged_file(&public_destination.parent, &public_stage_name);
-        return Err(error);
-    }
-
-    let publish_result = publish_staged_file(
-        &public_destination,
-        &public_stage_name,
-        &public_stage_file,
-        ROLE_PACKET_MAX_BYTES,
-        "public packet",
-    );
-    if publish_result.is_err() {
-        cleanup_staged_file(&public_destination.parent, &public_stage_name);
-    }
-    publish_result
+        packet_bytes,
+        manifest_bytes,
+    })
 }
 
 struct StageRolePackets {
@@ -2994,7 +3196,10 @@ impl GeneratedSecpKey {
             .strip_suffix(b"\r\n")
             .or_else(|| encoded.strip_suffix(b"\n"))
             .unwrap_or(&encoded);
-        let bytes = decode_secret_exact(trimmed)?;
+        Self::from_secret(decode_secret_exact(trimmed)?, label)
+    }
+
+    fn from_secret(bytes: Zeroizing<[u8; 32]>, label: &'static str) -> Result<Self> {
         let key = SecretKey::from_slice(bytes.as_ref())
             .with_context(|| format!("private {label} is invalid"))?;
         Ok(Self { key, bytes })

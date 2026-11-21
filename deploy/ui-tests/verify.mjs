@@ -25,13 +25,18 @@ if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
 }
 const reverseDirection = uiDirection === "TakerSellsLez";
 const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
-// Zcash rows come from a prepared corridor (scripts/zec-provision.sh), one lot
-// per corridor (amounts below), in either direction. The Taker's first lock
+// Zcash rows are the Maker's offers, agreed at take time (or, in the catalog
+// tests, a corridor of tests/fixtures/zec-catalog-fixture.sh), one lot each
+// (amounts below), in either direction. The Taker's first lock
 // (the LEZ escrow, or the Zcash HTLC when it sells ZEC) is driven by the
 // Taker Node's supervisor, so a fresh Zcash swap shows no button.
+// Monero rows sell LEZ only (TakerSellsLez): the Maker publishes them from its
+// form, the Taker's LEZ lock is the Node's own, and the Taker's one press is
+// its claim.
 const uiPair = process.env.M3_UI_PAIR || "Bitcoin";
-if (!["Bitcoin", "Zcash"].includes(uiPair)) throw new Error("M3_UI_PAIR must be Bitcoin or Zcash");
+if (!["Bitcoin", "Zcash", "Monero"].includes(uiPair)) throw new Error("M3_UI_PAIR must be Bitcoin, Zcash or Monero");
 const zcash = uiPair === "Zcash";
+const monero = uiPair === "Monero";
 
 // Narration for a recording: one line per moment worth a subtitle, written
 // with the time since the recording started (NARRATION_T0, ms since epoch).
@@ -151,15 +156,31 @@ const btcText = `${Number(btcAmount).toFixed(8)} BTC`;
 const btcShort = `${btcAmount} BTC`;
 // A Zcash row shows the prepared corridor's lot: ui-e2e.sh reads it from the
 // corridor's prepared.json and passes LEZ_UI_ZEC_AMOUNT (ZEC) and
-// LEZ_UI_ZEC_LEZ_AMOUNT (LEZ units), so a price change in zec-provision.sh
+// LEZ_UI_ZEC_LEZ_AMOUNT (LEZ units), so a price change in the lot
 // cannot silently break the journey.
 const zecAmount = process.env.LEZ_UI_ZEC_AMOUNT || "1";
 const zecLezAmount = process.env.LEZ_UI_ZEC_LEZ_AMOUNT || "50000";
 const zecText = `${Number(zecAmount).toFixed(8)} ZEC`;
 const zecLezText = `${Number(zecLezAmount).toLocaleString("en-US")} LEZ`;
+// A Zcash journey publishes its offer from the Maker desk's form when
+// LEZ_UI_PUBLISH_ZEC is 1 (a take-time agreement, no corridor); otherwise its
+// offer came from a prepared corridor and nothing is published.
+const publishZec = zcash && process.env.LEZ_UI_PUBLISH_ZEC === "1";
+// A Zcash offer published on the running Maker Node (ui-e2e.sh
+// zec_publish_offers, LEZ_UI_ZEC_TAKE_TIME=1) is agreed at take time as well:
+// the Taker Node makes the swap secret, and no corridor exists.
+const zecTakeTime = publishZec || (zcash && process.env.LEZ_UI_ZEC_TAKE_TIME === "1");
+// A Monero journey's lot is node-e2e.py's (XMR_FOREIGN_UNITS, XMR_LEZ_UNITS),
+// 12 decimals; its offer always comes from the Maker desk's form.
+const xmrAmount = process.env.LEZ_UI_XMR_AMOUNT || "1";
+const xmrLezAmount = process.env.LEZ_UI_XMR_LEZ_AMOUNT || "50000";
+const xmrText = `${Number(xmrAmount).toFixed(12)} XMR`;
+const xmrLezText = `${Number(xmrLezAmount).toLocaleString("en-US")} LEZ`;
+const formPair = publishZec ? "Zcash" : monero ? "Monero" : "Bitcoin";
+const [formForeign, formLez] = publishZec ? [zecAmount, zecLezAmount] : monero ? [xmrAmount, xmrLezAmount] : [btcAmount, lezAmount];
 const makerTerms = [
-  ["makerSellAmount", reverseDirection ? btcAmount : lezAmount, "amount"],
-  ["makerReceiveAmount", reverseDirection ? lezAmount : btcAmount, "amount"],
+  ["makerSellAmount", reverseDirection ? formForeign : formLez, "amount"],
+  ["makerReceiveAmount", reverseDirection ? formLez : formForeign, "amount"],
   ["makerMinimumSats", ""],
   ["makerOfferTtl", "3600"],
 ];
@@ -405,10 +426,13 @@ async function publishOfferOnce(app, predicate) {
   if (opener.matches?.length !== 1) throw new Error("New offer button not found");
   await evaluateIn(app, opener.matches[0].id, "clicked()");
   await new Promise((r) => setTimeout(r, 600));
+  await evaluateIn(app, (await app.findByProperty("objectName", "makerSellAmount")).matches[0].id,
+    `root.offerPair = "${formPair}"`);
   for (const [field, value, property] of makerTerms) await setText(app, field, value, property);
   await new Promise((r) => setTimeout(r, 300));
   const rate = await property(app, "makerRate", "text");
-  const quotedRate = `1 BTC = ${(Number(lezAmount) * 1e8 / Math.round(Number(btcAmount) * 1e8)).toLocaleString("en-US", { maximumFractionDigits: 8 })} LEZ`;
+  const unit = monero ? 1e12 : 1e8;
+  const quotedRate = `1 ${publishZec ? "ZEC" : monero ? "XMR" : "BTC"} = ${(Number(formLez) * unit / Math.round(Number(formForeign) * unit)).toLocaleString("en-US", { maximumFractionDigits: 8 })} LEZ`;
   if (rate !== quotedRate) throw new Error(`offer form quotes ${rate} for the typed terms, expected ${quotedRate}`);
   const before = await property(app, "makerOutput", "text");
   const publish = await app.findByProperty("objectName", "makerCreateOffers");
@@ -428,14 +452,19 @@ async function publishOfferOnce(app, predicate) {
 // What the Maker desk is waiting for, in the words of the direction.
 function makerNarration(state) {
   // What the Maker locks and what it claims, by pair and direction.
-  const mine = zcash ? (reverseDirection ? "Zcash" : "LEZ") : reverseDirection ? "Bitcoin" : "LEZ";
-  const theirs = zcash ? (reverseDirection ? "LEZ" : "Zcash") : reverseDirection ? "LEZ" : "Bitcoin";
+  const mine = monero ? "Monero" : zcash ? (reverseDirection ? "Zcash" : "LEZ") : reverseDirection ? "Bitcoin" : "LEZ";
+  const theirs = monero ? "LEZ" : zcash ? (reverseDirection ? "LEZ" : "Zcash") : reverseDirection ? "LEZ" : "Bitcoin";
   switch (state) {
     case "awaiting_taker_claim":
       return `Nothing to click here: the Maker Node locks ${mine} on its own once the Taker's ${theirs} lock is final; the desk waits for "awaiting the Taker's claim"`;
     case "completed":
+      if (monero) return `The Taker authorised the claim on LEZ (it released its withheld claim signature share): the Maker Node claims the LEZ, and its claim signature lets the Taker recover the Monero spend key; the desk waits for "completed"`;
       return `The Maker Node claims ${theirs} with the secret the Taker revealed; the desk waits for "completed"`;
+    case "recovering":
+      if (monero) return `The Taker refunded its LEZ: the Maker Node learns the Taker's Monero share from the final refund and sweeps its Monero back; the desk waits for the refund sweep`;
+      return `The Maker desk waits for the swap to reach "recovering"`;
     case "refunded":
+      if (monero) return `The Maker Node sweeps its Monero back once the Taker's LEZ refund is final; the desk waits for "refunded"`;
       return `The Maker Node refunds its ${mine} lock once its deadline passes; the desk waits for "refunded"`;
     default:
       return `The Maker desk waits for the swap to reach "${state.replace(/_/g, " ")}"`;
@@ -501,15 +530,20 @@ if (role === "maker") {
     ), "Munich inventory");
     // Offers of the other direction may be open too; only this run's count.
     const pendingHere = (inventory) => (inventory ?? [])
-      .filter((offer) => offer.state === "pending" && offer.direction === wantedDirection).length;
+      .filter((offer) => offer.state === "pending" && offer.direction === wantedDirection && offer.pair === uiPair).length;
     let pending = pendingHere(munich.inventory);
     // The Node publishes one offer per click; two open offers prove the
     // inventory is indexed to this Node's identity and survives a refresh.
-    // A Zcash journey publishes nothing from the desk: its offer came from the
-    // prepared corridor, and a Bitcoin offer has no place in a ZEC recording.
-    while (!zcash && pending < 2) {
+    // A Zcash journey publishes nothing from the desk unless it is the desk-offer
+    // journey: its offer was published on the Maker Node (or came from a
+    // corridor), and a Bitcoin offer has no place in a ZEC recording.
+    while ((!zcash || publishZec) && pending < 2) {
       const target = pending + 1;
-      narrate(reverseDirection
+      narrate(monero
+        ? `New offer: the Maker sells ${xmrAmount} XMR for ${xmrLezText}; Publish sends it to the Maker Node, which signs and announces it over Delivery`
+        : publishZec
+        ? `New offer: the Maker sells ${reverseDirection ? `${zecAmount} ZEC for ${zecLezText}` : `${zecLezText} for ${zecAmount} ZEC`}; Publish sends it to the Maker Node, which signs and announces it over Delivery`
+        : reverseDirection
         ? `New offer: the Maker sells ${btcShort} for ${lezText}; Publish sends it to the Maker Node, which signs and announces it over Delivery`
         : `New offer: the Maker sells ${lezText} for ${btcShort}; Publish sends it to the Maker Node, which signs and announces it over Delivery`);
       munich = unwrap(await publishOfferOnce(
@@ -519,13 +553,15 @@ if (role === "maker") {
       pending = pendingHere(munich.inventory);
     }
     if (munich.selected_wallet_id !== "maker-munich-01" || munich.runner_ready !== true
-        || (!zcash && Number(munich.summary?.pending_offers ?? 0) < 2)) {
+        || ((!zcash || publishZec) && Number(munich.summary?.pending_offers ?? 0) < 2)) {
       throw new Error(`Node-indexed offer totals are wrong: ${JSON.stringify(munich).slice(0, 500)}`);
     }
     console.log(`  inventory: Munich Vault 01 (Maker Node) open offers=${pending} · market=${munich.summary.pending_offers}`);
-    narrate(zcash
-      ? `Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk`
-      : `Inventory: ${pending} open ${reverseDirection ? "sell-BTC" : "sell-LEZ"} offers indexed by the Maker Node`);
+    narrate(zcash && !publishZec
+      ? (zecTakeTime
+        ? `Inventory refreshed: the Maker Node indexes its offers; the Zcash offer was published on the running Maker Node, nothing is published from the desk`
+        : `Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk`)
+      : `Inventory: ${pending} open ${reverseDirection ? (monero ? "sell-XMR" : zcash ? "sell-ZEC" : "sell-BTC") : "sell-LEZ"} offers indexed by the Maker Node`);
   });
 
   // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the desk
@@ -564,7 +600,7 @@ if (role === "maker") {
     await app.expectTexts(["ACCOUNT", "My orders", "Available orders", "Zurich Wallet 01 · Taker Node"]);
     // The order book arrives with the first market snapshot after the view
     // opens; wait for the rendered rows instead of racing that request.
-    await app.waitFor(async () => app.expectTexts(zcash ? [zecText, zecLezText] : [btcText, lezText]), {
+    await app.waitFor(async () => app.expectTexts(monero ? [xmrText, xmrLezText] : zcash ? [zecText, zecLezText] : [btcText, lezText]), {
       timeout: 15000, interval: 500, description: "first market snapshot rendered",
     });
     {
@@ -635,7 +671,11 @@ if (role === "maker") {
       }, { timeout: 180000, interval: 5000, description: `${wantedDirection} ${uiPair} order-book row` });
       // The output still shows the previous step's reply: only a new one counts.
       const before = await property(app, "takerOutput", "text");
-      narrate(zcash
+      narrate(monero
+        ? "Take offer on the Monero row: the Taker Node agrees the swap with the Maker over Chat (xmr_reserve_v1 and the signing ceremony) and locks its LEZ on its own"
+        : zcash && zecTakeTime
+        ? "Take offer on the Zcash row: the Taker Node agrees the swap with the Maker over Chat (zec_reserve_v1 and the signing ceremony), makes the swap secret itself and provisions its Taker actor"
+        : zcash
         ? "Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor"
         : reverseDirection
           ? "Take offer on a sell-BTC row: the Taker Node reserves the lot, runs the signing ceremony with the Maker and activates the swap"
@@ -646,7 +686,7 @@ if (role === "maker") {
       // "Preparing the swap" (the Node answers not_activated until the actor
       // is activated there) and "LEZ lock pending" once it is; the desk only
       // follows, so either state is the taken row.
-      const firstAction = zcash ? null : (reverseDirection ? "lock_lez" : "lock_btc");
+      const firstAction = zcash || monero ? null : (reverseDirection ? "lock_lez" : "lock_btc");
       const zcashTakenStates = ["preparing", "lock_pending"];
       // Older swaps may already show the same lock button: only the swap this
       // take created counts, and the Node names it in its reply. A rejected
@@ -675,8 +715,10 @@ if (role === "maker") {
         }
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
-      console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · ${zcash ? "LEZ lock pending (actor-driven)" : "Taker lock action ready"}`);
-      narrate(zcash
+      console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · ${zcash || monero ? "LEZ lock pending (actor-driven)" : "Taker lock action ready"}`);
+      narrate(monero
+        ? `Swap ${taken.slice(0, 12)} is in "My orders"; the Taker Node locks its LEZ on its own, there is no Lock button`
+        : zcash
         ? `Swap ${taken.slice(0, 12)} is in "My orders"; its first lock (${reverseDirection ? "the LEZ escrow" : "the Zcash HTLC"}) is driven by the Taker Node's supervisor, not a desk button`
         : `Swap ${taken.slice(0, 12)} is in "My orders" and needs the Taker: its ${reverseDirection ? "LEZ" : "Bitcoin"} lock`);
     });
@@ -700,9 +742,11 @@ if (role === "maker") {
       refund_lez: ["The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached",
                    "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
       claim_zec: [`Claim ${zecText}: the revealing claim spends the Maker's Zcash HTLC on the transparent pool and discloses the hashlock secret`,
-                  "Zcash claim broadcast; once it is in a block the Maker Node uses the revealed secret to claim the LEZ escrow, which completes the swap. The claim is transparent: move the funds to a shielded address afterwards"],
+                  "Zcash claim broadcast; the Maker Node reads the revealed secret from it on first sight, mempool included, and claims the LEZ escrow, which completes the swap. The claim is transparent: move the funds to a shielded address afterwards"],
       refund_zec: ["The desk offers Refund for the Zcash HTLC; pressing it admits the refund, which the Node drives on the transparent pool once the HTLC's refund height is reached",
                    "Refund admitted; the Taker Node broadcasts the HTLC refund when the height allows and follows it to a block"],
+      claim_xmr: [`Claim ${xmrText}: the Taker authorises the Maker's LEZ claim (it releases its withheld claim signature share); the Maker's claim signature then lets the Taker recover the Monero spend key`,
+                  "Claim admitted; once the Maker claims the LEZ the Taker Node sweeps the Monero into its wallet"],
     };
     // Selling ZEC the Taker's LEZ claim is the revealing one of a hashlock, not of an adaptor signature.
     if (zcash && action === "claim_lez") {
@@ -721,7 +765,10 @@ if (role === "maker") {
   // completes the swap), and passing through it is what the press proves.
   const afterTakerLock = (claiming) => ["awaiting_maker_lock", "claim_window_closed", "claim_ready", claiming,
                                         "completed", "refund_ready", "refunding", "refunded"];
-  const takerActions = zcash && !reverseDirection
+  const takerActions = monero
+    ? { claim_xmr: [`Claim ${xmrText}`, ["claiming_xmr", "completed"], 45000],
+        refund_lez: [`Refund ${xmrLezText}`, ["refunding", "refunded"], waitTimeoutMs] }
+    : zcash && !reverseDirection
     ? { claim_lez: [`Claim ${zecLezText}`, ["claiming_lez", "claim_ready", "completed"], 45000],
         refund_zec: [`Refund ${zecText}`, ["refunding", "refunded"], waitTimeoutMs] }
     : zcash

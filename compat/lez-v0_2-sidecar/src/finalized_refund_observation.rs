@@ -507,7 +507,7 @@ impl FinalizedWitnessedRefundObserver {
             }
             _ => false,
         };
-        let (status, expected_balance) = match metadata.status {
+        let (status, minimum_balance) = match metadata.status {
             EscrowStatus::Funded => (EscrowState::Funded, terms.amount().as_u128()),
             // A claimed escrow is a valid current state of a funded escrow: the
             // depositor's lock landed and the claimant took it. It is reported
@@ -534,7 +534,9 @@ impl FinalizedWitnessedRefundObserver {
             || metadata.amount != terms.amount().as_u128()
             || metadata.refund_at != terms.refund_at_ms()
             || custody_account.program_owner.0 != transfer_program
-            || custody_account.balance != expected_balance
+            // At least: anyone can credit the custody (TM-0032), before an
+            // ending as after it.
+            || custody_account.balance < minimum_balance
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }

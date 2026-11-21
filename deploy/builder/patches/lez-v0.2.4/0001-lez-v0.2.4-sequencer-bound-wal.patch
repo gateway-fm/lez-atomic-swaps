@@ -1,0 +1,40 @@
+diff --git a/lez/storage/src/sequencer/mod.rs b/lez/storage/src/sequencer/mod.rs
+index c771ea556..e601f0d3e 100644
+--- a/lez/storage/src/sequencer/mod.rs
++++ b/lez/storage/src/sequencer/mod.rs
+@@ -83,6 +83,9 @@ pub const DB_FINAL_BLOCK_META_KEY: &str = "final_block_meta";
+ /// Name of state column family.
+ pub const CF_LEE_STATE_NAME: &str = "cf_lee_state";
+ 
++/// Bound on the live write-ahead log, four `cf_lee_state` memtables.
++pub const MAX_TOTAL_WAL_SIZE: u64 = 256 * 1024 * 1024;
++
+ /// A single key/value entry from a column family, used inside [`DbDump`].
+ #[derive(BorshSerialize, BorshDeserialize)]
+ pub struct DbDumpEntry {
+@@ -329,6 +332,16 @@ impl RocksDBIO {
+     }
+ 
+     fn open_inner(path: &Path, db_opts: &Options) -> DbResult<Self> {
++        // `cf_lee_state` takes a whole state with every block and fills a
++        // memtable in seconds, while `cf_block` and `cf_meta` take a few small
++        // writes and almost never fill one; their unflushed entries keep alive
++        // every write-ahead log file written since. RocksDB's own bound (0: four
++        // times all memtable budgets, 12.5 GiB with 16 buffers per family) lets
++        // that grow to gigabytes; past this one, the families holding the
++        // oldest log are flushed and it is dropped.
++        let mut db_opts = db_opts.clone();
++        db_opts.set_max_total_wal_size(MAX_TOTAL_WAL_SIZE);
++
+         let mut cf_opts = Options::default();
+         cf_opts.set_max_write_buffer_number(16);
+ 
+@@ -338,7 +351,7 @@ impl RocksDBIO {
+         let cfstate = ColumnFamilyDescriptor::new(CF_LEE_STATE_NAME, cf_opts.clone());
+ 
+         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+-            db_opts,
++            &db_opts,
+             path,
+             vec![cfb, cfmeta, cfstate],
+         )

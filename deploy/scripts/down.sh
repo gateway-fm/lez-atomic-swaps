@@ -22,7 +22,7 @@ docker rm -f "$LEZ_STACK_PREFIX-basecamp-ui" >/dev/null 2>&1 || true
 # stack's network (and its sequencer client) alive after the stack is gone.
 # (the heartbeat mounts the market root: start.sh's default when none is named)
 export LEZ_MARKET_ROOT="${LEZ_MARKET_ROOT:-$DEPLOY_ROOT/market}"
-compose=(docker compose --profile explorers --profile heartbeat)
+compose=(docker compose --profile explorers --profile heartbeat --profile monero)
 
 if [[ "${1:-}" == "--wipe" ]]; then
   "${compose[@]}" down -v --remove-orphans

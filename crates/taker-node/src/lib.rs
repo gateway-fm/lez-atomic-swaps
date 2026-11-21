@@ -8,6 +8,9 @@ mod taker_service_config;
 #[doc(hidden)]
 pub mod acceptance_files;
 pub mod btc_taker_accept;
+#[cfg(feature = "pair-xmr")]
+#[doc(hidden)]
+pub mod xmr_taker_accept;
 #[cfg(feature = "pair-zec")]
 #[doc(hidden)]
 pub mod zec_taker_accept;
@@ -23,10 +26,10 @@ pub use taker_facade::{
     TakerHealthRequestV1, TakerHealthV1, TakerInitiationCapabilityV1, TakerInitiationCommitV1,
     TakerLockCommitV1, TakerLockRequestV1, TakerMonitoringCapabilityV1, TakerOfferListRequestV1,
     TakerOfferListV1, TakerOfferViewV1, TakerPairCapabilityV1, TakerPrivacyGuidanceV1,
-    TakerRefundRequestV1, TakerRegisteredMethodsV1, TakerSwapInitiateRequestV1,
+    TakerRefundRequestV1, TakerRegisteredMethodsV1, TakerRouteHealthV1, TakerSwapInitiateRequestV1,
     TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1, TakerSwapStateV1,
     TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
-    taker_pair_capabilities_v1,
+    TakerWalletBalancesRequestV1, taker_pair_capabilities_v1,
 };
 pub use taker_service::{
     DEFAULT_OBSERVER_SWEEP_INTERVAL, taker_service_rpc_module, taker_service_rpc_module_with_sweep,

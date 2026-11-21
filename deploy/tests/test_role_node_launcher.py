@@ -49,6 +49,10 @@ def bashes():
 @unittest.skipUnless(shutil.which('jq'), 'the launcher renders its configuration with jq')
 class Launcher(unittest.TestCase):
     def setUp(self):
+        # The fixtures are made as an installer under umask 022 makes them;
+        # under a developer's 002 they would be group-writable and the
+        # launcher refuses them (the two umask-002 tests set theirs).
+        self.addCleanup(os.umask, os.umask(0o022))
         # A short root: macOS gives TMPDIR under /var/folders/…, and a Unix
         # socket path below it is longer than the launcher (and the kernel) allows.
         # Resolved: macOS's /tmp is a symlink, and the launcher (as the
@@ -66,9 +70,11 @@ class Launcher(unittest.TestCase):
         for role in ('maker', 'taker'):
             executable(self.payload / f'lez-{role}-node', node)
             executable(self.payload / f'lez-btc-{role}-actor', '#!/bin/sh\nexit 0\n')
+            executable(self.payload / f'lez-zec-{role}-actor', '#!/bin/sh\nexit 0\n')
         executable(self.payload / 'lez-maker-cli', f'#!/bin/sh\necho "{MAKER_KEY}"\n')
         executable(self.payload / 'lez-taker-registry-init', '#!/bin/sh\n: >"$2"\n')
         executable(self.payload / 'lez-v02-bridge-poc', '#!/bin/sh\nexit 0\n')
+        executable(self.payload / 'lez-runtime-healthcheck', '#!/bin/sh\nexit 0\n')
         # The host: only these tools, so a host without setpriv is one.
         self.tools = self.tmp / 'tools'
         self.tools.mkdir()
@@ -307,6 +313,31 @@ class Launcher(unittest.TestCase):
         # A sticky shared directory (as /tmp) is one the sidecars accept.
         shared.chmod(0o1777)
         result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(shared / 'state'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_every_directory_above_the_take_time_and_monero_state_is_checked(self):
+        # Take-time ZEC and Monero per-swap state (sidecar state included) is
+        # under btc/swaps/<swap>; the Maker's xmr-actors and both roles'
+        # monero-rpc are beside btc/ in the state directory, which the
+        # launcher makes 0700 itself. The walk from btc/swaps up to / covers
+        # each of their ancestors.
+        root = self.tmp / 'linux'
+        state = root / 'state'
+        (state / 'btc' / 'swaps').mkdir(parents=True)
+        state.chmod(0o775)
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(state))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
+        self.record.unlink()
+        for directory in (state / 'btc' / 'swaps', state / 'btc', root):
+            directory.chmod(0o775)
+            result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(state))
+            self.assertEqual(result.returncode, 78, result.stderr)
+            self.assertIn(f"{directory} is writable by its group or by others (mode 775). "
+                          f"Fix: chmod go-w '{directory}'", result.stderr)
+            self.assertFalse(self.record.exists(), 'the Node must not start')
+            directory.chmod(0o755)
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(state))
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_state_directory_below_a_symlink_is_refused_by_name(self):

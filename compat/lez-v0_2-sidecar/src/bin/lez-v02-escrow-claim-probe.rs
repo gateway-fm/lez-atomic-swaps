@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
-//! TEST-ONLY: one checked-escrow `claim_native` with a caller-chosen preimage.
+//! TEST-ONLY: one checked-escrow `claim_native` with a caller-chosen preimage,
+//! or one XMR escrow effect the Maker's own software never sends.
 //!
 //! The devnet scenario `zec-maker-early-claim` (deploy/scripts/node-e2e.py)
 //! runs this inside the Maker's container, with the Maker's claimant key, to
@@ -11,14 +12,23 @@
 //! message the sidecar would, signs it with the claimant key, submits it to
 //! the sequencer and reports what the escrow did with it.
 //!
+//! With `--effect xmr-punish` it sends `PunishNativeXmr` (tag 17) signed by
+//! the key, which must be the escrow's claimant (the Maker's owner), whatever
+//! the escrow's state and the clock: the XMR scenarios send it before the
+//! punish time, after the Taker's refund, and on a swap the Maker never
+//! funded (TM-0031). With `--effect xmr-claim` it sends `ClaimNativeXmr`
+//! (tag 15) witnessed by the key: the Maker cannot sign as the claim's
+//! aggregate authority without the Taker's claim partial (published only in
+//! tag 14), so this is the claim a Maker can send without tag 14.
+//!
 //! It holds no durable state and reserves no nonce. It is not part of any
 //! role package: the devnet Maker image carries it beside the package.
 //!
 //! The JSON evidence on stdout names the escrow state, custody balance and
 //! claimant balance before and after, the sequencer's answer to the
 //! submission, and whether the transaction was included. Exit status: 0 when
-//! the escrow kept the custody (still `Funded`, custody balance unchanged),
-//! 3 when the claim paid out, 1 on any other failure.
+//! the escrow kept its state and custody (a `claim_native` additionally only
+//! from `Funded`), 3 when the effect moved it, 1 on any other failure.
 
 use std::{
     fs,
@@ -30,7 +40,7 @@ use std::{
 
 use anyhow::{Context as _, Result, bail, ensure};
 use borsh::BorshDeserialize as _;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use common::{HashType, transaction::LeeTransaction};
 use jsonrpsee::core::ClientError;
 use lez_bridge_protocol::Hex32;
@@ -53,7 +63,19 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const NODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const EXIT_CLAIM_PAID: i32 = 3;
 
-/// Submit one `claim_native` with an arbitrary preimage (TEST-ONLY).
+/// The escrow effect the probe sends.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+enum Effect {
+    /// `claim_native` of a ZEC escrow with `--preimage-hex`.
+    ZecClaim,
+    /// `PunishNativeXmr` (tag 17) signed by the claimant's key.
+    XmrPunish,
+    /// `ClaimNativeXmr` (tag 15) witnessed by the key, not the aggregate.
+    XmrClaim,
+}
+
+/// Submit one escrow effect the Nodes never send (TEST-ONLY).
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Arguments {
@@ -69,10 +91,13 @@ struct Arguments {
     /// Owner-only file holding the escrow claimant's lowercase-hex LEZ private key.
     #[arg(long)]
     private_key_file: PathBuf,
-    /// The preimage to present, 64 hex characters. Not a secret here: the
-    /// scenario passes values that must not open the escrow.
+    /// The effect to send.
+    #[arg(long, value_enum, default_value_t = Effect::ZecClaim)]
+    effect: Effect,
+    /// The preimage to present (`zec-claim`), 64 hex characters. Not a
+    /// secret here: the scenario passes values that must not open the escrow.
     #[arg(long)]
-    preimage_hex: String,
+    preimage_hex: Option<String>,
     /// How long to look for the transaction in the sequencer's blocks.
     #[arg(long, default_value_t = 30)]
     observe_seconds: u64,
@@ -109,19 +134,23 @@ struct SubmissionEvidence {
 struct ProbeEvidence {
     schema: &'static str,
     test_only: bool,
+    effect: Effect,
     escrow_program_id: Hex32,
     swap_id: Hex32,
     metadata_account: Hex32,
     custody_account: Hex32,
     claimant_account: Hex32,
     signer_is_claimant: bool,
-    stored_secret_digest: Hex32,
-    presented_preimage: Hex32,
-    presented_preimage_sha256: Hex32,
+    stored_secret_digest: Option<Hex32>,
+    presented_preimage: Option<Hex32>,
+    presented_preimage_sha256: Option<Hex32>,
     presented_preimage_matches_digest: bool,
     amount: u128,
     refund_at_ms: u64,
     submitted_before_refund_at: bool,
+    /// An XMR escrow's punish time, and whether the effect went in before it.
+    punish_at_ms: Option<u64>,
+    submitted_before_punish_at: Option<bool>,
     transaction_id: Hex32,
     submission: SubmissionEvidence,
     included: bool,
@@ -170,7 +199,6 @@ async fn execute(arguments: Arguments) -> Result<ProbeEvidence> {
         .context("the sequencer URL must be literal-loopback HTTP with a port")?;
     let program_hex = parse_nonzero_hex(&arguments.escrow_program_id, "escrow program ID")?;
     let swap_id = parse_nonzero_hex(&arguments.swap_id, "swap ID")?;
-    let preimage = Hex32::from_hex(&arguments.preimage_hex).context("invalid preimage")?;
     let signer_key = read_private_key(&arguments.private_key_file)?;
     let signer = AccountId::from(&PublicKey::new_from_private_key(&signer_key));
     let program_id = program_id_from_hex(program_hex);
@@ -188,31 +216,86 @@ async fn execute(arguments: Arguments) -> Result<ProbeEvidence> {
         metadata.swap_id == *swap_id.as_bytes(),
         "the escrow metadata names another swap ID"
     );
-    ensure!(
-        metadata.status == EscrowStatus::Funded,
-        "the escrow is {:?}, not Funded: there is nothing to claim",
-        metadata.status
-    );
-    let ClaimAuthority::Sha256Preimage { secret_digest } = metadata.claim_authority else {
-        bail!("the escrow is not a SHA-256 preimage escrow");
-    };
     let signer_is_claimant = metadata.claimant == signer;
-    ensure!(
-        signer_is_claimant,
-        "the key is not the escrow's claimant: the probe tests the claimant's own claim"
-    );
-    let presented_sha256: [u8; 32] = Sha256::digest(preimage.as_bytes()).into();
-
-    let message = Message::try_new(
-        program_id,
-        vec![metadata_id, custody_id, signer],
-        vec![before.claimant.nonce],
-        ZecEscrowInstruction::ClaimNative {
-            swap_id: *swap_id.as_bytes(),
-            preimage: *preimage.as_bytes(),
-        },
-    )
-    .map_err(|_| anyhow::anyhow!("could not encode the ClaimNative message"))?;
+    let mut secret = None;
+    let mut punish_at_ms = None;
+    let message = match arguments.effect {
+        Effect::ZecClaim => {
+            ensure!(
+                metadata.status == EscrowStatus::Funded,
+                "the escrow is {:?}, not Funded: there is nothing to claim",
+                metadata.status
+            );
+            let ClaimAuthority::Sha256Preimage { secret_digest } = metadata.claim_authority else {
+                bail!("the escrow is not a SHA-256 preimage escrow");
+            };
+            ensure!(
+                signer_is_claimant,
+                "the key is not the escrow's claimant: the probe tests the claimant's own claim"
+            );
+            let preimage = Hex32::from_hex(
+                arguments
+                    .preimage_hex
+                    .as_deref()
+                    .context("zec-claim needs --preimage-hex")?,
+            )
+            .context("invalid preimage")?;
+            let presented: [u8; 32] = Sha256::digest(preimage.as_bytes()).into();
+            secret = Some((secret_digest, preimage, presented));
+            Message::try_new(
+                program_id,
+                vec![metadata_id, custody_id, signer],
+                vec![before.claimant.nonce],
+                ZecEscrowInstruction::ClaimNative {
+                    swap_id: *swap_id.as_bytes(),
+                    preimage: *preimage.as_bytes(),
+                },
+            )
+            .map_err(|_| anyhow::anyhow!("could not encode the ClaimNative message"))?
+        }
+        Effect::XmrPunish | Effect::XmrClaim => {
+            let ClaimAuthority::XmrDualAdaptor {
+                claim_aggregate_account_id,
+                punish_at,
+                ..
+            } = metadata.claim_authority
+            else {
+                bail!("the escrow is not an XMR escrow");
+            };
+            punish_at_ms = Some(punish_at);
+            if arguments.effect == Effect::XmrPunish {
+                ensure!(
+                    signer_is_claimant,
+                    "the key is not the escrow's claimant: tag 17 is the Maker owner's"
+                );
+                Message::try_new(
+                    program_id,
+                    vec![metadata_id, custody_id, signer],
+                    vec![before.claimant.nonce],
+                    ZecEscrowInstruction::PunishNativeXmr {
+                        swap_id: *swap_id.as_bytes(),
+                    },
+                )
+                .map_err(|_| anyhow::anyhow!("could not encode the PunishNativeXmr message"))?
+            } else {
+                let authority = account(&client, claim_aggregate_account_id).await?;
+                Message::try_new(
+                    program_id,
+                    vec![
+                        metadata_id,
+                        custody_id,
+                        metadata.claimant,
+                        claim_aggregate_account_id,
+                    ],
+                    vec![authority.nonce],
+                    ZecEscrowInstruction::ClaimNativeXmr {
+                        swap_id: *swap_id.as_bytes(),
+                    },
+                )
+                .map_err(|_| anyhow::anyhow!("could not encode the ClaimNativeXmr message"))?
+            }
+        }
+    };
     let witness = WitnessSet::for_message(&message, &[&signer_key]);
     let transaction = PublicTransaction::new(message, witness);
     let transaction_id = transaction.hash();
@@ -262,26 +345,32 @@ async fn execute(arguments: Arguments) -> Result<ProbeEvidence> {
     }
 
     let after = read_escrow(&client, program_id, metadata_id, custody_id, signer).await?;
-    let escrow_kept_custody = after.metadata.status == EscrowStatus::Funded
+    let escrow_kept_custody = after.metadata.status == metadata.status
         && after.snapshot.custody_balance == before.snapshot.custody_balance
-        && after.snapshot.custody_balance == metadata.amount;
+        && (arguments.effect != Effect::ZecClaim
+            || (after.metadata.status == EscrowStatus::Funded
+                && after.snapshot.custody_balance == metadata.amount));
 
     Ok(ProbeEvidence {
         schema: EVIDENCE_SCHEMA,
         test_only: true,
+        effect: arguments.effect,
         escrow_program_id: program_hex,
         swap_id,
         metadata_account: Hex32::from_bytes(metadata_id.into_value()),
         custody_account: Hex32::from_bytes(custody_id.into_value()),
         claimant_account: Hex32::from_bytes(metadata.claimant.into_value()),
         signer_is_claimant,
-        stored_secret_digest: Hex32::from_bytes(secret_digest),
-        presented_preimage: preimage,
-        presented_preimage_sha256: Hex32::from_bytes(presented_sha256),
-        presented_preimage_matches_digest: presented_sha256 == secret_digest,
+        stored_secret_digest: secret.map(|(digest, _, _)| Hex32::from_bytes(digest)),
+        presented_preimage: secret.map(|(_, preimage, _)| preimage),
+        presented_preimage_sha256: secret.map(|(_, _, presented)| Hex32::from_bytes(presented)),
+        presented_preimage_matches_digest: secret
+            .is_some_and(|(digest, _, presented)| digest == presented),
         amount: metadata.amount,
         refund_at_ms: metadata.refund_at,
         submitted_before_refund_at: submitted_at_ms < metadata.refund_at,
+        punish_at_ms,
+        submitted_before_punish_at: punish_at_ms.map(|punish_at| submitted_at_ms < punish_at),
         transaction_id: Hex32::from_bytes(transaction_id),
         submission,
         included: included_in_block.is_some(),

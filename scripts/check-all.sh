@@ -88,13 +88,9 @@ readonly workspaces=(
   "compat/lez-v0.2-sequencer-reproducers/guest/Cargo.toml|fmt-only"
 )
 
-# XMR is parked until M4: the rust job of ci.yml leaves these crates out of
-# its root clippy, test and doc runs.
+# Crates the rust job of ci.yml leaves out of its root clippy, test and doc
+# runs: none since the Monero crates (M4) run there.
 readonly root_excludes=(
-  lez-xmr-monero-adapter
-  lez-xmr-release-authority
-  xmr-reference-actor
-  lez-xmr-swap-sdk
 )
 
 if (( list_only )); then
@@ -242,11 +238,11 @@ lint_workspace() {
   case "$kind" in
     root)
       run "clippy ${manifest}" cargo clippy --locked --workspace --all-targets \
-        "${root_exclude_args[@]}" -- -D warnings
+        ${root_exclude_args[@]+"${root_exclude_args[@]}"} -- -D warnings
       run "clippy ${manifest} (Node pair features)" cargo clippy --locked \
         -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
       run "doc ${manifest}" rustdoc_strict cargo doc --locked --workspace --no-deps \
-        "${root_exclude_args[@]}"
+        ${root_exclude_args[@]+"${root_exclude_args[@]}"}
       ;;
     provisional-root|spel-fixture)
       run "clippy ${manifest}" in_nested_target cargo clippy --locked \
@@ -328,7 +324,7 @@ if (( ${#selected[@]} > 0 )); then
 fi
 
 root_exclude_args=()
-for crate in "${root_excludes[@]}"; do
+for crate in ${root_excludes[@]+"${root_excludes[@]}"}; do
   root_exclude_args+=(--exclude "$crate")
 done
 

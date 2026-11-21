@@ -63,6 +63,21 @@ pub struct TakerHealthRequestV1 {
     pub schema_version: u16,
 }
 
+/// Parameters of `taker_wallet_balances_v1`. With `zcash` a Taker whose Zcash
+/// role is configured also reports what it can fund Zcash from, which costs a
+/// pass over its Zebra's recent blocks; with `monero` one whose Monero role is
+/// configured also reports its Monero role wallet; without them, as before.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerWalletBalancesRequestV1 {
+    /// Request schema version; must be one.
+    pub schema_version: u16,
+    #[serde(default)]
+    pub zcash: bool,
+    #[serde(default)]
+    pub monero: bool,
+}
+
 /// Optional exact route filter for authenticated offer discovery.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -216,6 +231,7 @@ impl_request_schema_validation!(
     TakerSwapMonitorRequestV1,
     TakerClaimRequestV1,
     TakerRefundRequestV1,
+    TakerWalletBalancesRequestV1,
 );
 
 /// Secret-free authenticated offer displayed before user confirmation.
@@ -635,12 +651,13 @@ impl TakerPairCapabilityV1 {
 /// unknown values rather than assuming a closed set.
 #[must_use]
 pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 5] {
-    pair_capabilities(false, false)
+    pair_capabilities(false, false, false)
 }
 
 const fn pair_capabilities(
     zec_lifecycle_registered: bool,
     btc_lifecycle_registered: bool,
+    xmr_lifecycle_registered: bool,
 ) -> [TakerPairCapabilityV1; 5] {
     // Bitcoin: the Node runs the lifecycle only once its BTC route is
     // configured; until then the owner CLI or the demo runner does.
@@ -662,6 +679,23 @@ const fn pair_capabilities(
     } else {
         TakerMonitoringCapabilityV1::NotOnThisNode
     };
+    // Monero: once its Monero route is configured the Node takes and
+    // monitors the swap, locks LEZ, and claims (tag 14, the Maker's tag 15,
+    // the Monero sweep) or refunds (tag 16) on the owner's command; until
+    // then claim and refund stay the effect checkpoints they were.
+    let (xmr_initiation, xmr_monitoring, xmr_terminal) = if xmr_lifecycle_registered {
+        (
+            TakerInitiationCapabilityV1::PreparedPrivateMaterial,
+            TakerMonitoringCapabilityV1::ReceiptBound,
+            TakerTerminalActionCapabilityV1::FullLifecycle,
+        )
+    } else {
+        (
+            TakerInitiationCapabilityV1::OwnerCliOrDemo,
+            TakerMonitoringCapabilityV1::OwnerCliOrDemo,
+            TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
+        )
+    };
     let zec_terminal = if zec_lifecycle_registered {
         TakerTerminalActionCapabilityV1::FullLifecycle
     } else {
@@ -681,10 +715,10 @@ const fn pair_capabilities(
             pair: Pair::Monero,
             supported_direction: SwapDirection::TakerSellsLez,
             authenticated_offer_browsing: true,
-            initiation: TakerInitiationCapabilityV1::OwnerCliOrDemo,
-            monitoring: TakerMonitoringCapabilityV1::OwnerCliOrDemo,
-            claim: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
-            refund: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
+            initiation: xmr_initiation,
+            monitoring: xmr_monitoring,
+            claim: xmr_terminal,
+            refund: xmr_terminal,
         },
         TakerPairCapabilityV1 {
             pair: Pair::Zcash,
@@ -737,6 +771,22 @@ pub struct TakerHealthV1 {
     /// predate it. Additive like every optional field of schema 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lez_chain: Option<LezChainProgressV1>,
+    /// Whether each route's foreign chain answers, as the Maker reports it in
+    /// `maker_health`: only the routes `--route-health-config` names, and
+    /// absent without it. An unavailable route also sets `degraded`, and a new
+    /// take on it is refused (`chain_unavailable`). Additive like `lez_chain`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    routes: Vec<TakerRouteHealthV1>,
+}
+
+/// One route's foreign-chain availability in [`TakerHealthV1`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerRouteHealthV1 {
+    /// The pair and direction.
+    pub route: MakerRouteV1,
+    /// `available` or `unavailable`.
+    pub state: TakerDependencyStateV1,
 }
 
 impl TakerHealthV1 {
@@ -757,7 +807,24 @@ impl TakerHealthV1 {
             pair_capabilities: taker_pair_capabilities_v1(),
             registered_methods: TakerRegisteredMethodsV1::read_only(),
             lez_chain: None,
+            routes: Vec::new(),
         }
+    }
+
+    /// Adds the routes' chain availability; an unavailable one degrades the Node.
+    #[must_use]
+    pub fn with_routes(mut self, routes: Vec<TakerRouteHealthV1>) -> Self {
+        self.degraded |= routes
+            .iter()
+            .any(|route| route.state == TakerDependencyStateV1::Unavailable);
+        self.routes = routes;
+        self
+    }
+
+    /// Returns the routes' chain availability, when route health is configured.
+    #[must_use]
+    pub fn routes(&self) -> &[TakerRouteHealthV1] {
+        &self.routes
     }
 
     /// Adds the LEZ chain's progress; a degraded chain degrades the Node.
@@ -778,7 +845,11 @@ impl TakerHealthV1 {
     #[must_use]
     pub const fn with_zec_lifecycle_registered(mut self) -> Self {
         self.registered_methods = TakerRegisteredMethodsV1::full_lifecycle();
-        self.pair_capabilities = pair_capabilities(true, self.pair_capabilities[0].receipt_bound());
+        self.pair_capabilities = pair_capabilities(
+            true,
+            self.pair_capabilities[0].receipt_bound(),
+            self.pair_capabilities[1].receipt_bound(),
+        );
         self
     }
 
@@ -786,7 +857,23 @@ impl TakerHealthV1 {
     #[must_use]
     pub const fn with_btc_lifecycle_registered(mut self) -> Self {
         self.registered_methods = TakerRegisteredMethodsV1::full_lifecycle();
-        self.pair_capabilities = pair_capabilities(self.pair_capabilities[2].receipt_bound(), true);
+        self.pair_capabilities = pair_capabilities(
+            self.pair_capabilities[2].receipt_bound(),
+            true,
+            self.pair_capabilities[1].receipt_bound(),
+        );
+        self
+    }
+
+    /// Reports that the service registered the receipt-bound Monero lifecycle.
+    #[must_use]
+    pub const fn with_xmr_lifecycle_registered(mut self) -> Self {
+        self.registered_methods = TakerRegisteredMethodsV1::full_lifecycle();
+        self.pair_capabilities = pair_capabilities(
+            self.pair_capabilities[2].receipt_bound(),
+            self.pair_capabilities[0].receipt_bound(),
+            true,
+        );
         self
     }
 

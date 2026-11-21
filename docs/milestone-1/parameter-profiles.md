@@ -74,6 +74,21 @@ compared.
 The XMR row intentionally does not instantiate a fictional Monero deadline.
 Its state model is `LEZ lock -> XMR fund -> LEZ claim/XMR spend` or `LEZ refund
 -> maker key-share recovery/XMR spend`, following the reviewed COMIT direction.
+As built (2026-11-14), all three XMR windows are LEZ times: the maker's funding
+cutoff C, the LEZ refund time R and a punish time P, after which the maker can
+take the LEZ and the Monero stays locked; only regtest profiles exist, no
+public one ([protocol design](protocol-design.md#xmrlez)). The devnet derives
+them in `deploy/scripts/gen-config.sh` from the LEZ step S and stall T, the
+profile's Bitcoin maker lock cutoff B and margin M, and a maker actor drive
+counted at 80 s (measured with three devnet lanes busy): C = max(B + 20, 320),
+R = C + 2 × (20 + S + 2 × 80), P = R + S + T + M + 2 × 80. C holds a take and
+three of the maker's drives for the second of two swaps taken one after the
+other, plus 20 s for the ten Monero confirmations; each half of R − C holds
+those 20 s, a LEZ step and two of the maker's drives, since a maker that does
+not claim before R − (R − C)/2 forfeits the claim to the taker's refund. With
+the default S = 20 s and T = 40 s, the `fast` profile, which every Monero
+scenario runs on, uses C, R, P = +320, +720, +1000 s (a 280 s refund window);
+`refund` +320, +720, +955 s (235 s); `local` +1820, +2220, +2740 s (520 s).
 
 ## Margin budgets
 

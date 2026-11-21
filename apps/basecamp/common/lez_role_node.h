@@ -22,6 +22,8 @@
 // Call it after the role's signer is serving (lez_role_signer.h): the Node's
 // sidecars ask that signer for every LEZ witness.
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QString>
 
 #include <string>
@@ -50,6 +52,24 @@ void start(Payload& payload, LezSwapNode& supervisor, const QString& role)
     }
     const int started = supervisor.start_node(role, launcher, setting("LOG"), setting("HOLD"));
     if (started != 0) qWarning("lez_role_node: %s Node not started (%d)", qPrintable(role), started);
+}
+
+// A reply that never reached the Node (`endpoint_unavailable`) while the
+// role's launcher refuses to start it (issue 151): lez_swap_node's
+// node_status names the refusal in last_exit ("exit 78: <the launcher's
+// line>"), and the reply carries that line, verbatim, as its message. Any
+// other reply is returned as it is.
+template <typename LezSwapNode>
+QString withLauncherRefusal(LezSwapNode& supervisor, const QString& role, const QString& reply)
+{
+    QJsonObject envelope = QJsonDocument::fromJson(reply.toUtf8()).object();
+    if (envelope.value(QStringLiteral("code")).toString() != QLatin1String("endpoint_unavailable")) return reply;
+    const QString lastExit = QJsonDocument::fromJson(text(supervisor.node_status(role)).toUtf8())
+                                 .object().value(QStringLiteral("last_exit")).toString();
+    const QString refused = QStringLiteral("exit 78: ");
+    if (!lastExit.startsWith(refused) || lastExit.size() == refused.size()) return reply;
+    envelope.insert(QStringLiteral("message"), lastExit.mid(refused.size()));
+    return QString::fromUtf8(QJsonDocument(envelope).toJson(QJsonDocument::Compact));
 }
 
 } // namespace lez_role_node

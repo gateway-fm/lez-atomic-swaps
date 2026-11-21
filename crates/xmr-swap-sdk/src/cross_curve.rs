@@ -28,7 +28,9 @@ const MAX_WIRE_BYTES: usize = MAX_PROOF_BYTES + 256;
 // Public alternate generators used by the h4sh3d/COMIT construction. They are
 // mathematical protocol parameters, not imported source code. The archived
 // PoC documents the secp256k1 point as the Grin Pedersen generator and the
-// Ed25519 point as Monero's historical RingCT alternate generator.
+// Ed25519 point as Monero's historical RingCT alternate generator. COMIT's
+// xmr-btc-swap instead passes the standard basepoints, so its proofs are not
+// byte-compatible with these.
 const SECP256K1_ALTERNATE_GENERATOR: [u8; 33] = [
     0x02, 0x50, 0x92, 0x9b, 0x74, 0xc1, 0xa0, 0x49, 0x54, 0xb7, 0x8b, 0x4b, 0x60, 0x35, 0xe9, 0x7a,
     0x5e, 0x07, 0x8a, 0x5a, 0x0f, 0x28, 0xec, 0x96, 0xd5, 0x47, 0xbf, 0xee, 0x9a, 0xce, 0x80, 0x3a,
@@ -184,8 +186,8 @@ impl CrossCurveDleqProofV1 {
     ///
     /// # Errors
     ///
-    /// Rejects malformed points/proofs, trailing proof bytes, identity or
-    /// torsion Ed25519 points, invalid DLEQ equations, and a changed envelope
+    /// Rejects malformed points/proofs, trailing or noncanonical proof bytes,
+    /// identity or torsion Ed25519 points, invalid DLEQ equations, and a changed envelope
     /// commitment.
     pub fn verify(&self) -> Result<(), CrossCurveDleqError> {
         if self.proof_bytes.is_empty() || self.proof_bytes.len() > MAX_PROOF_BYTES {
@@ -203,8 +205,19 @@ impl CrossCurveDleqProofV1 {
         {
             return Err(CrossCurveDleqError::InvalidEd25519Point);
         }
-        let proof: CrossCurveDLEQProof = postcard::from_bytes(&self.proof_bytes)
-            .map_err(|_| CrossCurveDleqError::ProofSerialization)?;
+        let (proof, remainder): (CrossCurveDLEQProof, &[u8]) =
+            postcard::take_from_bytes(&self.proof_bytes)
+                .map_err(|_| CrossCurveDleqError::ProofSerialization)?;
+        if !remainder.is_empty() {
+            return Err(CrossCurveDleqError::ProofSerialization);
+        }
+        // postcard accepts non-minimal lengths; one proof gets one encoding,
+        // so one transcript commitment.
+        if postcard::to_allocvec(&proof).map_err(|_| CrossCurveDleqError::ProofSerialization)?
+            != self.proof_bytes
+        {
+            return Err(CrossCurveDleqError::ProofSerialization);
+        }
         if !proof_system()?.verify(&proof, (secp256k1_point, ed25519_point)) {
             return Err(CrossCurveDleqError::InvalidProof);
         }

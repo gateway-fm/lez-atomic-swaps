@@ -28,6 +28,7 @@ use lez_xmr_swap_sdk::{
 #[cfg(target_os = "linux")]
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::Serialize;
+use sha2::Digest as _;
 use xmr_reference_actor::{
     ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
     XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_STAGE_A_FD,
@@ -154,7 +155,10 @@ fn validate_inputs() -> Result<ValidatedInputs> {
     let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
         .context("Stage-B binding is invalid")?;
     let run_id = RunId::new(plan.run_id().to_owned()).context("run ID is invalid")?;
-    let prepare_request_id = RequestId::new(format!("{}-tag17-prepare-001", plan.run_id()))
+    // A request id is at most 64 characters: the run id (a Node's is
+    // `swap-` and a long reservation id) enters as its digest.
+    let run_digest = hex::encode(&sha2::Sha256::digest(plan.run_id().as_bytes())[..12]);
+    let prepare_request_id = RequestId::new(format!("m4-tag17-prepare-001-{run_digest}"))
         .context("Tag17 prepare request ID is invalid")?;
     binding
         .terms()

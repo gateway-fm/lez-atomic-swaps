@@ -1501,6 +1501,56 @@ async fn malformed_transaction_signature_or_account_order_fails_closed() {
     );
 }
 
+/// TM-0032: anyone can credit the custody, so a funded escrow holds at
+/// least the amount and is observed as it is, and an initialised escrow a
+/// stranger credited is still `Empty`.
+#[tokio::test]
+async fn funding_and_initialization_accept_a_credited_custody() {
+    let mut case = fixture();
+    let escrow_program = program_id_from_hex(case.runtime.escrow_program_id);
+    let custody = compute_custody_pda(&escrow_program, case.request.terms.swap_id().as_bytes());
+    case.accounts
+        .get_mut(&(custody.into_value(), FUNDING_BLOCK_ID))
+        .unwrap()
+        .balance += 1;
+    let observer = FinalizedWitnessedFundingObserver::new(
+        case.runtime.clone(),
+        indexer(&case, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]),
+    );
+    let result = observer.observe(&case.request).await.unwrap();
+    assert_eq!(
+        result.funding.metadata.status,
+        lez_bridge_protocol::EscrowState::Funded
+    );
+    assert_eq!(
+        result.funding.custody.balance.as_u128(),
+        case.request.terms.amount().as_u128() + 1
+    );
+
+    let mut fixture = initialization_fixture();
+    let amount = fixture.request.terms.amount().as_u128();
+    let custody = compute_custody_pda(
+        &program_id_from_hex(fixture.runtime.escrow_program_id),
+        fixture.request.terms.swap_id().as_bytes(),
+    );
+    fixture
+        .accounts
+        .get_mut(&(custody.into_value(), FUNDING_BLOCK_ID))
+        .unwrap()
+        .balance = amount;
+    let observer = FinalizedWitnessedInitializationObserver::new(
+        fixture.runtime.clone(),
+        initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]),
+    );
+    let result = observer.classify(&fixture.request).await.unwrap();
+    assert!(matches!(
+        result.outcome,
+        FinalizedWitnessedInitializationScanOutcome::Found { initialization }
+            if initialization.metadata.status == lez_bridge_protocol::EscrowState::Empty
+                && initialization.custody.balance.as_u128() == amount
+    ));
+}
+
 async fn assert_invalid_historical_state(fixture: Fixture) {
     let observer = FinalizedWitnessedFundingObserver::new(
         fixture.runtime.clone(),
@@ -1513,7 +1563,7 @@ async fn assert_invalid_historical_state(fixture: Fixture) {
 }
 
 #[tokio::test]
-async fn historical_state_must_be_funded_with_exact_custody_at_containing_block() {
+async fn historical_state_must_be_funded_with_at_least_the_amount_at_containing_block() {
     let mut case = fixture();
     mutate_metadata(&mut case, |metadata| metadata.amount += 1);
     assert_invalid_historical_state(case).await;

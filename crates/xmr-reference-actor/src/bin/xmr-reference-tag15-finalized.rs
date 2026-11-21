@@ -1,4 +1,4 @@
-//! Sealed read-only Maker observer for finalized Tag15.
+//! Sealed read-only Maker observer for finalized Tag15 and Tag17.
 
 #![forbid(unsafe_code)]
 
@@ -40,6 +40,10 @@ use zeroize::{Zeroize as _, Zeroizing};
 const ABI: &str = "lez_xmr_finalized_classifier_v1";
 const ACTIVATION_FILE: &str = "maker-claim-activation.json";
 const FINAL_EVIDENCE_FILE: &str = "tag15-finalized.json";
+const PUNISH_ACTIVATION_FILE: &str = "maker-punish-activation.json";
+const TAG17_FINAL_EVIDENCE_FILE: &str = "tag17-finalized.json";
+const TAG15_SCAN_CURSOR_FILE: &str = "tag15-scan-cursor.json";
+const TAG17_SCAN_CURSOR_FILE: &str = "tag17-scan-cursor.json";
 const MAX_SECRET_BYTES: usize = 256;
 const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
@@ -66,6 +70,43 @@ struct ActivationEvidenceV1 {
     private_material_disclosed: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PunishActivationEvidenceV1 {
+    schema: String,
+    role: String,
+    run_id: String,
+    monero_run_id: String,
+    swap_id: String,
+    selected_branch: String,
+    funding_effect_evidence_sha256: String,
+    funding_tool_plan_identity_sha256: String,
+    tag17_scan_start_height: u64,
+    prepared_step: String,
+    private_material_disclosed: bool,
+}
+
+/// Where the next run's scan resumes: the height after the last page found
+/// final without the effect. Advisory: a lost or unreadable file only
+/// rescans from the activation's height. A page without the exact
+/// transaction says nothing of another one under the same terms, so a
+/// discovery does not resume from an exact target's cursor.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ScanCursorV1 {
+    next_height: u64,
+    exact_target: bool,
+}
+
+/// One scan page's outcome.
+enum Page<T> {
+    Found(T),
+    /// Final without the effect; the scan resumes at this height.
+    Next(u64),
+    /// Nothing more is final, or history is unavailable.
+    End,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = execute().await {
@@ -74,12 +115,16 @@ async fn main() {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one observer boundary validates every sealed input before any RPC"
+)]
 async fn execute() -> Result<()> {
-    validate_args()?;
+    let step = validate_args()?;
     let plan = load_xmr_effect_child_plan_fd_for(
         ActorRole::Maker,
         XmrEffectChildModeV1::Observe,
-        XmrWorkflowStep::ClaimLezTag15,
+        step,
         ABI,
     )
     .context("load Tag15 observer child plan")?;
@@ -123,18 +168,35 @@ async fn execute() -> Result<()> {
     );
     let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
         .context("derive Tag15 observer terms")?;
-    let exact_transaction_bytes = read_sealed_fd(
-        XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
-        usize::try_from(MAX_EVIDENCE_BYTES).unwrap_or(usize::MAX),
-        "exact Tag15 transaction",
-    )?;
-    let exact_transaction: PreparedTransaction = serde_json::from_slice(&exact_transaction_bytes)
-        .context("exact Tag15 transaction is malformed")?;
-    ensure!(
-        serde_json::to_vec(&exact_transaction).context("re-encode exact Tag15 transaction")?
-            == exact_transaction_bytes,
-        "exact Tag15 transaction is noncanonical"
-    );
+    if step == XmrWorkflowStep::PunishLezTag17 {
+        return observe_tag17(&plan, &runtime, &binding.terms()).await;
+    }
+    // The parent pins the exact transaction from the tool's submission
+    // evidence; a tool stopped before it wrote that evidence leaves none, and
+    // the swap's one tag 15 (the escrow is claimed once) is discovered by its
+    // terms instead.
+    let target = if Path::new(&format!(
+        "/proc/self/fd/{XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD}"
+    ))
+    .exists()
+    {
+        let exact_transaction_bytes = read_sealed_fd(
+            XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
+            usize::try_from(MAX_EVIDENCE_BYTES).unwrap_or(usize::MAX),
+            "exact Tag15 transaction",
+        )?;
+        let exact_transaction: PreparedTransaction =
+            serde_json::from_slice(&exact_transaction_bytes)
+                .context("exact Tag15 transaction is malformed")?;
+        ensure!(
+            serde_json::to_vec(&exact_transaction).context("re-encode exact Tag15 transaction")?
+                == exact_transaction_bytes,
+            "exact Tag15 transaction is noncanonical"
+        );
+        FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction)
+    } else {
+        FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {}
+    };
     let activation_evidence = load_activation_evidence(&plan)?;
     let run_id = RunId::new(plan.run_id().to_owned()).context("invalid Tag15 observer run ID")?;
     let nonce = SystemTime::now()
@@ -156,104 +218,216 @@ async fn execute() -> Result<()> {
         &run_id,
         &runtime,
         &terms,
-        &exact_transaction,
+        (XmrNativeEffectV3::Claim, &target),
         activation_evidence.tag15_scan_start_height,
         nonce,
+        &plan.evidence_root().join(TAG15_SCAN_CURSOR_FILE),
     )
     .await?
     else {
         println!("{{\"schema_version\":1,\"step\":\"claim_lez_tag15\",\"state\":\"pending\"}}");
         return Ok(());
     };
-    let evidence_sha256 = persist_finalized_result(&result, plan.evidence_root())?
-        .context("found Tag15 result did not produce finality evidence")?;
+    let evidence_sha256 =
+        persist_finalized_result(&result, &plan.evidence_root().join(FINAL_EVIDENCE_FILE))?
+            .context("found Tag15 result did not produce finality evidence")?;
     println!(
         "{{\"schema_version\":1,\"step\":\"claim_lez_tag15\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{evidence_sha256}\"}}"
     );
     Ok(())
 }
 
+/// Scans from the activation's height, or from where an earlier run of the
+/// same scan stopped: each run is bounded by the parent's timeout, and the
+/// distance to the effect (from the claim authorization, or from the last
+/// refund scan) grows while it is not final.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the observer's sealed inputs, passed as they were validated"
+)]
 async fn classify_finalized_tag15_pages(
     client: &BridgeClient,
     run_id: &RunId,
     runtime: &RuntimeDescriptor,
     terms: &XmrNativeEscrowTermsV3,
-    exact_transaction: &PreparedTransaction,
+    (effect, target): (XmrNativeEffectV3, &FinalizedNativeXmrTransactionTargetV3),
     initial_scan_height: u64,
     nonce: u128,
+    cursor_file: &Path,
 ) -> Result<Option<ClassifyFinalizedNativeXmrEffectV3Result>> {
-    let mut scan_start_height = initial_scan_height;
-    for page_index in 0..MAX_SCAN_PAGES {
-        let clock_request_id = RequestId::new(format!(
-            "m7-tag15-clock-{nonce}-{}-{page_index}",
-            std::process::id()
-        ))
-        .context("invalid Tag15 clock request ID")?;
-        let clock_context =
-            MessageContext::new(run_id.clone(), clock_request_id, Participant::Maker);
-        let finalized_clock = client
-            .observe_finalized_clock(ObserveFinalizedClockRequest::new(
-                clock_context,
-                runtime.clone(),
+    let exact_target = matches!(target, FinalizedNativeXmrTransactionTargetV3::Exact { .. });
+    walk_finalized_pages(
+        cursor_file,
+        exact_target,
+        initial_scan_height,
+        async |page_index, scan_start_height| {
+            let clock_request_id = RequestId::new(format!(
+                "m7-tag15-clock-{nonce}-{}-{page_index}",
+                std::process::id()
             ))
-            .await
-            .context("typed finalized Tag15 clock observation failed")?
-            .clock;
-        let Some(page_blocks) = scan_page_blocks(scan_start_height, finalized_clock.height)? else {
-            break;
-        };
-        let request_id = RequestId::new(format!(
-            "m7-tag15-observe-{nonce}-{}-{page_index}",
-            std::process::id()
-        ))
-        .context("invalid Tag15 observer request ID")?;
-        let context = MessageContext::new(run_id.clone(), request_id, Participant::Maker);
-        terms
-            .validate_runtime_binding(&context, runtime)
-            .context("Tag15 terms do not bind the selected Maker runtime")?;
-        let window = DiscoveryWindow::new(scan_start_height, page_blocks)
-            .context("invalid Tag15 finalized scan window")?;
-        let result = client
-            .classify_finalized_native_xmr_effect_v3(
-                ClassifyFinalizedNativeXmrEffectV3Request::new(
-                    context,
+            .context("invalid Tag15 clock request ID")?;
+            let clock_context =
+                MessageContext::new(run_id.clone(), clock_request_id, Participant::Maker);
+            let finalized_clock = client
+                .observe_finalized_clock(ObserveFinalizedClockRequest::new(
+                    clock_context,
                     runtime.clone(),
-                    *terms,
-                    XmrNativeEffectV3::Claim,
-                    FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction.clone()),
-                    window,
-                ),
-            )
-            .await
-            .context("typed finalized Tag15 classification failed")?;
-        match &result.outcome {
-            FinalizedNativeXmrScanOutcomeV3::Found { .. } => {
-                return Ok(Some(result));
+                ))
+                .await
+                .context("typed finalized Tag15 clock observation failed")?
+                .clock;
+            let Some(page_blocks) = scan_page_blocks(scan_start_height, finalized_clock.height)?
+            else {
+                return Ok(Page::End);
+            };
+            let request_id = RequestId::new(format!(
+                "m7-tag15-observe-{nonce}-{}-{page_index}",
+                std::process::id()
+            ))
+            .context("invalid Tag15 observer request ID")?;
+            let context = MessageContext::new(run_id.clone(), request_id, Participant::Maker);
+            terms
+                .validate_runtime_binding(&context, runtime)
+                .context("Tag15 terms do not bind the selected Maker runtime")?;
+            let window = DiscoveryWindow::new(scan_start_height, page_blocks)
+                .context("invalid Tag15 finalized scan window")?;
+            let result = client
+                .classify_finalized_native_xmr_effect_v3(
+                    ClassifyFinalizedNativeXmrEffectV3Request::new(
+                        context,
+                        runtime.clone(),
+                        *terms,
+                        effect,
+                        target.clone(),
+                        window,
+                    ),
+                )
+                .await
+                .context("typed finalized Tag15 classification failed")?;
+            match &result.outcome {
+                FinalizedNativeXmrScanOutcomeV3::Found { .. } => Ok(Page::Found(result)),
+                FinalizedNativeXmrScanOutcomeV3::Absent {
+                    finalized_clock,
+                    scanned_window,
+                }
+                | FinalizedNativeXmrScanOutcomeV3::Uncertain {
+                    finalized_clock,
+                    scanned_window,
+                } => {
+                    ensure!(
+                        scanned_window.start_height() == scan_start_height
+                            && scanned_window.max_blocks() == page_blocks,
+                        "Tag15 classifier returned a different scan page"
+                    );
+                    Ok(next_scan_start_height(
+                        scan_start_height,
+                        page_blocks,
+                        finalized_clock.height,
+                    )?
+                    .map_or(Page::End, Page::Next))
+                }
+                FinalizedNativeXmrScanOutcomeV3::Unavailable { .. } => Ok(Page::End),
             }
-            FinalizedNativeXmrScanOutcomeV3::Absent {
-                finalized_clock,
-                scanned_window,
-            }
-            | FinalizedNativeXmrScanOutcomeV3::Uncertain {
-                finalized_clock,
-                scanned_window,
-            } => {
-                ensure!(
-                    scanned_window.start_height() == scan_start_height
-                        && scanned_window.max_blocks() == page_blocks,
-                    "Tag15 classifier returned a different scan page"
-                );
-                let Some(next_height) =
-                    next_scan_start_height(scan_start_height, page_blocks, finalized_clock.height)?
-                else {
-                    break;
-                };
+        },
+    )
+    .await
+}
+
+/// Walks at most `MAX_SCAN_PAGES` pages from the cursor (or `initial`),
+/// recording the cursor after every page found final without the effect.
+async fn walk_finalized_pages<T>(
+    cursor_file: &Path,
+    exact_target: bool,
+    initial: u64,
+    mut page: impl AsyncFnMut(u32, u64) -> Result<Page<T>>,
+) -> Result<Option<T>> {
+    let mut scan_start_height =
+        read_canonical_private_json::<ScanCursorV1>(cursor_file, "Tag15 scan cursor")
+            .ok()
+            .filter(|cursor| exact_target || !cursor.exact_target)
+            .map_or(initial, |cursor| cursor.next_height.max(initial));
+    for page_index in 0..MAX_SCAN_PAGES {
+        match page(page_index, scan_start_height).await? {
+            Page::Found(found) => return Ok(Some(found)),
+            Page::Next(next_height) => {
                 scan_start_height = next_height;
+                replace_private(
+                    cursor_file,
+                    &canonical_line(&ScanCursorV1 {
+                        next_height,
+                        exact_target,
+                    })?,
+                )?;
             }
-            FinalizedNativeXmrScanOutcomeV3::Unavailable { .. } => break,
+            Page::End => break,
         }
     }
     Ok(None)
+}
+
+/// The Maker's Tag-17 punishment, discovered from the terms: its exact
+/// bytes stay in the sidecar's durable reservation. Scans from the height
+/// the punish activation recorded.
+async fn observe_tag17(
+    plan: &XmrEffectChildPlanV1,
+    runtime: &RuntimeDescriptor,
+    terms: &XmrNativeEscrowTermsV3,
+) -> Result<()> {
+    let activation: PunishActivationEvidenceV1 = read_canonical_private_json(
+        &plan.evidence_root().join(PUNISH_ACTIVATION_FILE),
+        "Maker punish activation evidence",
+    )?;
+    ensure!(
+        activation.schema == "lez_v02_m7_maker_punish_activation_v1"
+            && activation.role == "maker"
+            && activation.run_id == plan.run_id()
+            && activation.swap_id == hex::encode(plan.swap_id())
+            && activation.selected_branch == "punish"
+            && activation.prepared_step == XmrWorkflowStep::PunishLezTag17.name()
+            && !activation.private_material_disclosed,
+        "Tag17 observer activation evidence differs from the exact plan"
+    );
+    let run_id = RunId::new(plan.run_id().to_owned()).context("invalid Tag17 observer run ID")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock predates the Unix epoch")?
+        .as_nanos();
+    let client = BridgeClient::connect(BridgeClientConfig::new(
+        plan.lez_sidecar_url().as_str(),
+        read_sidecar_capability_fd(XMR_EFFECT_CAPABILITY_FD)?,
+        run_id.clone(),
+        runtime.clone(),
+        REQUEST_TIMEOUT,
+    ))
+    .context("authenticated Maker sidecar client is unavailable")?;
+    let step = XmrWorkflowStep::PunishLezTag17.name();
+    let Some(result) = classify_finalized_tag15_pages(
+        &client,
+        &run_id,
+        runtime,
+        terms,
+        (
+            XmrNativeEffectV3::Punish,
+            &FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        ),
+        activation.tag17_scan_start_height,
+        nonce,
+        &plan.evidence_root().join(TAG17_SCAN_CURSOR_FILE),
+    )
+    .await?
+    else {
+        println!("{{\"schema_version\":1,\"step\":\"{step}\",\"state\":\"pending\"}}");
+        return Ok(());
+    };
+    let evidence_sha256 = persist_finalized_result(
+        &result,
+        &plan.evidence_root().join(TAG17_FINAL_EVIDENCE_FILE),
+    )?
+    .context("found Tag17 result did not produce finality evidence")?;
+    println!(
+        "{{\"schema_version\":1,\"step\":\"{step}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{evidence_sha256}\"}}"
+    );
+    Ok(())
 }
 
 fn scan_page_blocks(start_height: u64, finalized_height: u64) -> Result<Option<u32>> {
@@ -308,25 +482,29 @@ fn load_activation_evidence(plan: &XmrEffectChildPlanV1) -> Result<ActivationEvi
 
 fn persist_finalized_result(
     result: &ClassifyFinalizedNativeXmrEffectV3Result,
-    evidence_root: &Path,
+    path: &Path,
 ) -> Result<Option<String>> {
     let FinalizedNativeXmrScanOutcomeV3::Found { .. } = &result.outcome else {
         return Ok(None);
     };
     let evidence_bytes = canonical_line(result).context("encode finalized Tag15 evidence")?;
-    persist_or_validate(&evidence_root.join(FINAL_EVIDENCE_FILE), &evidence_bytes)?;
+    persist_or_validate(path, &evidence_bytes)?;
     Ok(Some(hex::encode(Sha256::digest(&evidence_bytes))))
 }
 
-fn validate_args() -> Result<()> {
+fn validate_args() -> Result<XmrWorkflowStep> {
     let args = std::env::args_os().collect::<Vec<_>>();
     ensure!(
-        args.len() == 3
-            && args[1] == "--xmr-workflow-step"
-            && args[2] == XmrWorkflowStep::ClaimLezTag15.name(),
-        "finalized classifier requires the parent-selected Tag15 step"
+        args.len() == 3 && args[1] == "--xmr-workflow-step",
+        "finalized classifier requires the parent-selected Tag15 or Tag17 step"
     );
-    Ok(())
+    [
+        XmrWorkflowStep::ClaimLezTag15,
+        XmrWorkflowStep::PunishLezTag17,
+    ]
+    .into_iter()
+    .find(|step| args[2] == step.name())
+    .context("finalized classifier requires the parent-selected Tag15 or Tag17 step")
 }
 
 fn parse_view_key(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {
@@ -460,6 +638,28 @@ fn canonical_line(value: &impl Serialize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Writes owner-private bytes atomically, replacing what is there.
+fn replace_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().context("Tag15 cursor has no parent")?;
+    let staging = path.with_extension(format!("tmp-{}", std::process::id()));
+    let _ = fs::remove_file(&staging);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&staging)
+        .context("reserve Tag15 staging cursor")?;
+    file.write_all(bytes)
+        .context("write Tag15 staging cursor")?;
+    file.sync_all().context("sync Tag15 staging cursor")?;
+    drop(file);
+    fs::rename(&staging, path).context("publish Tag15 cursor")?;
+    File::open(parent)
+        .context("open Tag15 evidence directory")?
+        .sync_all()
+        .context("sync Tag15 evidence directory")
+}
+
 fn persist_or_validate(path: &Path, bytes: &[u8]) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(_) => return validate_existing_evidence(path, bytes),
@@ -510,7 +710,92 @@ fn validate_existing_evidence(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_scan_start_height, scan_page_blocks};
+    use std::{fs, os::unix::fs::PermissionsExt as _};
+
+    use anyhow::ensure;
+
+    use super::{
+        MAX_SCAN_BLOCKS, Page, TAG17_SCAN_CURSOR_FILE, next_scan_start_height, scan_page_blocks,
+        walk_finalized_pages,
+    };
+
+    /// Runs one observer run over a fake chain whose effect lands at
+    /// `landed`; the run is cut after `pages_per_run` pages, as the parent's
+    /// timeout cuts it. Returns the heights it scanned from.
+    fn bounded_run(
+        cursor: &std::path::Path,
+        exact_target: bool,
+        initial: u64,
+        (landed, tip): (u64, u64),
+        pages_per_run: usize,
+    ) -> (anyhow::Result<Option<u64>>, Vec<u64>) {
+        let mut starts = Vec::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let outcome = runtime.block_on(walk_finalized_pages(
+            cursor,
+            exact_target,
+            initial,
+            async |_, start| {
+                ensure!(starts.len() < pages_per_run, "the run timed out");
+                starts.push(start);
+                let Some(blocks) = scan_page_blocks(start, tip)? else {
+                    return Ok(Page::End);
+                };
+                let end = start + u64::from(blocks) - 1;
+                if (start..=end).contains(&landed) {
+                    return Ok(Page::Found(landed));
+                }
+                Ok(next_scan_start_height(start, blocks, end)?.map_or(Page::End, Page::Next))
+            },
+        ));
+        (outcome, starts)
+    }
+
+    #[test]
+    fn a_scan_thousands_of_blocks_long_resumes_where_each_bounded_run_stopped() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let cursor = root.path().join(TAG17_SCAN_CURSOR_FILE);
+        let (initial, landed, pages_per_run) = (101_u64, 6_000_u64, 40_usize);
+        let mut next_start = initial;
+        let mut runs = 0;
+        let found = loop {
+            runs += 1;
+            assert!(runs <= 20, "the scan does not terminate");
+            // The chain moves on while the observer runs.
+            let tip = 7_000 + 10 * runs;
+            let (outcome, starts) =
+                bounded_run(&cursor, false, initial, (landed, tip), pages_per_run);
+            assert_eq!(starts[0], next_start, "run {runs} starts over");
+            assert!(starts.len() <= pages_per_run);
+            match outcome {
+                Ok(Some(found)) => break found,
+                Ok(None) => panic!("the effect is final below the tip"),
+                Err(_) => next_start = starts.last().unwrap() + u64::from(MAX_SCAN_BLOCKS),
+            }
+        };
+        assert_eq!(found, landed);
+        let pages = (landed - initial) / u64::from(MAX_SCAN_BLOCKS) + 1;
+        assert_eq!(runs, pages.div_ceil(pages_per_run as u64));
+    }
+
+    #[test]
+    fn a_discovery_does_not_resume_from_an_exact_targets_cursor() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let cursor = root.path().join(TAG17_SCAN_CURSOR_FILE);
+        let (_, starts) = bounded_run(&cursor, true, 101, (6_000, 7_000), 10);
+        assert_eq!(starts.len(), 10);
+        let (_, exact) = bounded_run(&cursor, true, 101, (6_000, 7_000), 1);
+        assert_eq!(exact, [261]);
+        let (_, discovery) = bounded_run(&cursor, false, 101, (6_000, 7_000), 1);
+        assert_eq!(discovery, [101]);
+        fs::write(&cursor, b"not a cursor\n").unwrap();
+        let (_, garbled) = bounded_run(&cursor, true, 101, (6_000, 7_000), 1);
+        assert_eq!(garbled, [101], "a garbled cursor only rescans");
+    }
 
     #[test]
     fn finalized_tag15_observation_scans_the_available_tail_without_waiting_for_a_full_page() {

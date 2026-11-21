@@ -7354,7 +7354,8 @@ fn validate_lez_refund_accounts(
         terms,
         state,
     );
-    let expected_balance = if state == EscrowState::Funded {
+    // At least: anyone can credit the custody (TM-0032).
+    let minimum_balance = if state == EscrowState::Funded {
         terms.amount().as_u128()
     } else {
         0
@@ -7363,7 +7364,7 @@ fn validate_lez_refund_accounts(
         || facts.custody.account_id.as_bytes() != signed.custody_account()
         || metadata != &expected_metadata
         || facts.custody.owner_program_id != terms.authenticated_transfer_program_id()
-        || facts.custody.balance.as_u128() != expected_balance
+        || facts.custody.balance.as_u128() < minimum_balance
     {
         return Err(binding_invalid("refund_accounts#1"));
     }
@@ -8695,7 +8696,6 @@ fn validate_finalized_lez_claim_binding(
         || metadata != &expected_metadata
         || custody.account_id != metadata.custody_account_id
         || custody.owner_program_id != terms.authenticated_transfer_program_id()
-        || custody.balance.as_u128() != 0
         || verify_final_signature(&context, aggregate_signature).is_err()
         || effect.is_some_and(|expected| {
             transaction.transaction_id != expected.transaction.transaction_id
@@ -9525,7 +9525,7 @@ fn validate_finalized_lez_funding_binding(
         || instruction.ordered_account_ids.as_slice() != expected_accounts
         || metadata != &expected_metadata
         || custody.owner_program_id != terms.authenticated_transfer_program_id()
-        || custody.balance != terms.amount()
+        || custody.balance < terms.amount()
         || window_start != authorized_start
         || window_end > authorized_end
         || block.block_id < window_start

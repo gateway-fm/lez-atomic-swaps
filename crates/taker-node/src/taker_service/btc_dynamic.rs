@@ -141,14 +141,38 @@ impl DynamicBtcRole {
         found
     }
 
-    fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
+    pub(super) fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
+    }
+
+    /// The role runtime (LEZ identity, signer, swaps root, sidecar recipe)
+    /// the Zcash take-time reservations share.
+    #[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
+    pub(super) const fn runtime(&self) -> &BtcRoleRuntime {
+        &self.runtime
+    }
+
+    /// The Maker's Chat socket the take's rounds go through.
+    #[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
+    pub(super) fn chat_socket(&self) -> &Path {
+        &self.chat_socket
     }
 
     /// Turns a persisted entry into a catalog entry, re-authenticating the
     /// offer against its Delivery source like the static catalog does.
     pub(crate) fn load_entry(
         &self,
+        configured: &PreparedConfigurationV1,
+    ) -> Result<crate::PreparedTakerInitiationV1> {
+        self.load_entry_as(Pair::Bitcoin, true, configured)
+    }
+
+    /// [`Self::load_entry`] for an entry of `pair`; `dynamic` marks the
+    /// Node-owned Bitcoin take.
+    pub(crate) fn load_entry_as(
+        &self,
+        pair: Pair,
+        dynamic: bool,
         configured: &PreparedConfigurationV1,
     ) -> Result<crate::PreparedTakerInitiationV1> {
         let mut bindings = BTreeMap::new();
@@ -159,17 +183,17 @@ impl DynamicBtcRole {
             subscribers.push(RunLocalDelivery::subscriber(directory.clone(), key)?);
         }
         crate::taker_service_config::prepared::load_prepared_entry(
-            Pair::Bitcoin,
+            pair,
             configured,
             &bindings,
             &subscribers,
             Some(&self.chat_socket),
-            true,
+            dynamic,
         )
         .map_err(|error| anyhow::anyhow!("prepared entry: {error}"))
     }
 
-    fn source_for(&self, maker_identity: &[u8; 33]) -> Result<(&str, &Path)> {
+    pub(super) fn source_for(&self, maker_identity: &[u8; 33]) -> Result<(&str, &Path)> {
         self.sources
             .iter()
             .find(|(_, _, maker)| maker == maker_identity)
@@ -178,7 +202,7 @@ impl DynamicBtcRole {
     }
 
     /// Authenticates the offer from the request's announcement or Delivery.
-    async fn authenticate_offer(
+    pub(super) async fn authenticate_offer(
         &self,
         offer_id: &MakerOfferId,
         route: lez_swap_store::MakerRouteV1,
@@ -914,7 +938,7 @@ pub(super) async fn execute(
 /// its lock. The gate holds the nonce the account must reach before the next
 /// preparation; a lock waits for it, bounded, and past the bound it reports
 /// the dependency unavailable so the owner retries.
-static LEZ_LOCK_GATE: tokio::sync::Mutex<u64> = tokio::sync::Mutex::const_new(0);
+pub(super) static LEZ_LOCK_GATE: tokio::sync::Mutex<u64> = tokio::sync::Mutex::const_new(0);
 
 /// The Taker's Bitcoin lock: broadcasts the exact funding transaction once.
 /// Performs this Taker's first lock and returns the chain it landed on, its

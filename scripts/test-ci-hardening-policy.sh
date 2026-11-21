@@ -157,11 +157,12 @@ require_fixed 'nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216
 require_fixed 'cargo fmt --all --check' "$ci_workflow"
 require_fixed 'cargo clippy --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo test --locked --workspace --all-targets' "$ci_workflow"
+require_fixed 'cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings' "$ci_workflow"
 require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
 readonly cargo_deny_policy='advisories bans licenses sources'
-readonly expected_cargo_deny_steps=8
+readonly expected_cargo_deny_steps=9
 cargo_deny_steps="$(rg -Fc -- "$cargo_deny_action" "$ci_workflow")"
 cargo_deny_policy_steps="$(rg -Fc -- "$cargo_deny_policy" "$ci_workflow")"
 [[ "$cargo_deny_steps" == "$expected_cargo_deny_steps" ]] \
@@ -174,7 +175,8 @@ for manifest in \
   compat/lez-v0.2-provisional/Cargo.toml \
   compat/lez-v0.2-provisional/escrow/methods/Cargo.toml \
   compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml \
-  compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml; do
+  compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+  fuzz/Cargo.toml; do
   require_fixed "manifest-path: $manifest" "$ci_workflow"
 done
 
@@ -230,6 +232,28 @@ for forbidden in \
   ! rg -F "$forbidden" .github/workflows scripts/run-ci-quality-gates.sh >/dev/null \
     || fail "out-of-scope release gate remains: $forbidden"
 done
+
+# The one fuzz job: each target for a bounded time on a schedule or on demand, through the
+# pinned-nightly container runner. A nightly toolchain never gates a pull request, so the
+# workflow has no pull_request or push trigger and ci.yml never runs the fuzzer; the stable
+# corpus replay tests are the per-change gate and the fuzz graph is audited with the others.
+readonly fuzz_workflow=".github/workflows/fuzz.yml"
+for required in \
+  'workflow_dispatch:' \
+  'schedule:' \
+  'permissions:' \
+  'contents: read' \
+  'timeout-minutes: 45' \
+  'target: [coordinator, offer_announcement, chat_frame, zec_agreement_wire, xmr_reserve_wire]' \
+  './scripts/run-fuzz.sh "${{ matrix.target }}" 120 ' \
+  'persist-credentials: false' \
+  'if: failure()'; do
+  require_fixed "$required" "$fuzz_workflow"
+done
+! rg -q -e '^  (pull_request|pull_request_target|push):' -e 'secrets\.' -e 'write' "$fuzz_workflow" \
+  || fail "$fuzz_workflow must stay scheduled, read-only and secret-free"
+! rg -Fq -e 'run-fuzz.sh' -e 'cargo fuzz' -e 'nightly' "$ci_workflow" "$quality_runner" \
+  || fail "the fuzzer must not run in the required CI workflow"
 
 trivy_fail_hard_steps="$(rg -c 'exit-code: "1"' "$ci_workflow")"
 (( trivy_fail_hard_steps >= 2 )) \
@@ -318,10 +342,10 @@ require_fixed 'export RISC0_DOCKER_CONTAINER_TAG="$risc0_guest_builder_tag"' "$p
 require_fixed 'risc0_build::embed_methods_with_options' "$provisional_methods_build"
 require_fixed 'r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be' "$provisional_methods_build"
 require_fixed '.root_dir("../..")' "$provisional_methods_build"
-require_fixed 'expected_elf_sha256="3d49502421a5705b2c386bde8d3a439914196f0727169a98794932c14b9777d4"' "$provisional_verifier"
-require_fixed 'expected_image_id="c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b"' "$provisional_verifier"
-require_fixed 'elf_sha256 = "3d49502421a5705b2c386bde8d3a439914196f0727169a98794932c14b9777d4"' "$provisional_artifact_manifest"
-require_fixed 'image_id = "c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b"' "$provisional_artifact_manifest"
+require_fixed 'expected_elf_sha256="3a016fd0059390384da2d6f86d366e6f2036b6ffdda3c8b5cd4a7d965bdc47f3"' "$provisional_verifier"
+require_fixed 'expected_image_id="ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98"' "$provisional_verifier"
+require_fixed 'elf_sha256 = "3a016fd0059390384da2d6f86d366e6f2036b6ffdda3c8b5cd4a7d965bdc47f3"' "$provisional_artifact_manifest"
+require_fixed 'image_id = "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98"' "$provisional_artifact_manifest"
 if rg -Fq 'risc0_build::embed_methods();' "$provisional_methods_build"; then
   fail "v0.2 methods must embed the canonical Docker-built guest"
 fi

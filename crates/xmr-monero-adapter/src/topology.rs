@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use super::{
     LoopbackRpcEndpoint, MoneroChainIdentity, MoneroNetwork, RPC_REQUEST_TIMEOUT,
-    VerifiedMoneroOutputObservation,
+    VerifiedMoneroOutputObservation, read_with_one_retry,
 };
 
 const RPC_ID: &str = "lez-m4-topology-v1";
@@ -79,8 +79,44 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         })
     }
 
+    /// Creates the verifier for a role with one wallet-rpc: that wallet is
+    /// both target and foreign. With no foreign credentials to replay,
+    /// [`Self::verify`] proves the daemon profile, the empty peer set, the
+    /// wallet's liveness and that the wallet refuses a wrong password for
+    /// its own user with 401, so the attestation never stands for a wallet
+    /// that does not enforce its credentials.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-Regtest profiles, an aliased daemon, or HTTP-client failures.
+    pub fn for_one_wallet_rpc(
+        run_id: RunId,
+        identity: MoneroChainIdentity,
+        daemon: &'endpoint LoopbackRpcEndpoint,
+        wallet: &'endpoint LoopbackRpcEndpoint,
+    ) -> Result<Self, MoneroTopologyError> {
+        if identity.network() != MoneroNetwork::Regtest {
+            return Err(MoneroTopologyError::RequiresRegtest);
+        }
+        if daemon.base_url == wallet.base_url {
+            return Err(MoneroTopologyError::AliasedRpcOrigins);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(RPC_REQUEST_TIMEOUT)
+            .build()
+            .map_err(|_| MoneroTopologyError::HttpClientBuild)?;
+        Ok(Self {
+            run_id,
+            identity,
+            daemon,
+            target_wallet: wallet,
+            foreign_wallet: wallet,
+            client,
+        })
+    }
+
     /// Proves the exact daemon profile, empty peer set, wallet liveness, and
-    /// cross-wallet Digest authentication rejection.
+    /// (with two wallets) cross-wallet Digest authentication rejection.
     ///
     /// # Errors
     ///
@@ -128,8 +164,21 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
             .await?;
         validate_wallet_version("foreign_wallet.get_version", &foreign_version)?;
 
+        // The credentials replayed against the target must be refused: the
+        // foreign wallet's, or with one wallet its own user with a wrong
+        // password.
+        let wrong = LoopbackRpcEndpoint {
+            base_url: self.target_wallet.base_url.clone(),
+            username: self.target_wallet.username.clone(),
+            password: format!("{}-wrong", self.target_wallet.password),
+        };
+        let replayed = if self.target_wallet.base_url == self.foreign_wallet.base_url {
+            &wrong
+        } else {
+            self.foreign_wallet
+        };
         let crossed = self
-            .send(self.target_wallet, self.foreign_wallet, GET_VERSION_REQUEST)
+            .send(self.target_wallet, replayed, GET_VERSION_REQUEST)
             .await?;
         if crossed.status() != StatusCode::UNAUTHORIZED {
             return Err(MoneroTopologyError::ForeignCredentialNotRejected {
@@ -137,12 +186,12 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
             });
         }
 
-        let genesis = self
+        let daemon = self
             .daemon
             .client()
             .map_err(|_| MoneroTopologyError::TypedDaemonClientBuild)?
-            .daemon()
-            .on_get_block_hash(0)
+            .daemon();
+        let genesis = read_with_one_retry(|| daemon.on_get_block_hash(0))
             .await
             .map_err(|_| MoneroTopologyError::GenesisRpc)?;
         if genesis.as_ref() != self.identity.genesis_hash() {
@@ -172,6 +221,30 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         credentials: &LoopbackRpcEndpoint,
         body: &'static str,
     ) -> Result<T, MoneroTopologyError> {
+        // A Digest answer sent on another pooled connection than its
+        // challenge gets a 401 (see the crate documentation): a transport
+        // failure or a 401 starts the exchange once more, with a fresh
+        // challenge. Credentials the server refuses are refused twice.
+        let bytes = match self.exchange(operation, target, credentials, body).await {
+            Err(
+                MoneroTopologyError::HttpTransport
+                | MoneroTopologyError::BodyRead { .. }
+                | MoneroTopologyError::UnexpectedHttpStatus { actual: 401, .. },
+            ) => self.exchange(operation, target, credentials, body).await?,
+            result => result?,
+        };
+        let envelope: RpcEnvelope<T> = serde_json::from_slice(&bytes)
+            .map_err(|_| MoneroTopologyError::MalformedRpcEnvelope { operation })?;
+        envelope.into_result(operation)
+    }
+
+    async fn exchange(
+        &self,
+        operation: &'static str,
+        target: &LoopbackRpcEndpoint,
+        credentials: &LoopbackRpcEndpoint,
+        body: &'static str,
+    ) -> Result<Vec<u8>, MoneroTopologyError> {
         let response = self.send(target, credentials, body).await?;
         if response.status() != StatusCode::OK {
             return Err(MoneroTopologyError::UnexpectedHttpStatus {
@@ -179,10 +252,7 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
                 actual: response.status().as_u16(),
             });
         }
-        let bytes = read_bounded(operation, response).await?;
-        let envelope: RpcEnvelope<T> = serde_json::from_slice(&bytes)
-            .map_err(|_| MoneroTopologyError::MalformedRpcEnvelope { operation })?;
-        envelope.into_result(operation)
+        read_bounded(operation, response).await
     }
 
     async fn send(
@@ -645,6 +715,12 @@ mod tests {
         version: String,
         bad_auth_status: u16,
         authorized_status: u16,
+        /// Answers the first `lost_answers` authorized requests for
+        /// `lost_method` with monero's HTML 401 page, as monero's server
+        /// does when a Digest answer arrives on another connection than its
+        /// challenge.
+        lost_method: &'static str,
+        lost_answers: usize,
     }
 
     impl RpcBehavior {
@@ -655,6 +731,8 @@ mod tests {
                 version: success(r#"{"release":true,"version":65567}"#),
                 bad_auth_status: 401,
                 authorized_status: 200,
+                lost_method: "",
+                lost_answers: 0,
             }
         }
     }
@@ -708,7 +786,21 @@ mod tests {
             .authorization
             .as_deref()
             .is_some_and(|header| verify_digest(header, username, password, &request.body));
-        let behavior = behavior.lock().await.clone();
+        let behavior = {
+            let mut shared = behavior.lock().await;
+            if authorized
+                && shared.lost_answers > 0
+                && request
+                    .body
+                    .contains(&format!(r#""method":"{}""#, shared.lost_method))
+            {
+                shared.lost_answers -= 1;
+                drop(shared);
+                let page = "<html><head><title>Unauthorized Access</title></head><body><h1>401 Unauthorized</h1></body></html>";
+                return write_response(&mut stream, 401, "Content-Type: text/html\r\n", page).await;
+            }
+            shared.clone()
+        };
         if !authorized {
             let (status, challenge) = if has_authorization {
                 (behavior.bad_auth_status, String::new())
@@ -886,6 +978,60 @@ mod tests {
         assert_eq!(attestation.foreign_wallet_version(), 65567);
     }
 
+    async fn verify_with_lost_answers(
+        method: &'static str,
+        lost_answers: usize,
+    ) -> Result<VerifiedMoneroTopologyAttestation, MoneroTopologyError> {
+        let (_daemon, target, foreign) = valid_servers().await;
+        let mut lossy = RpcBehavior::valid();
+        lossy.lost_method = method;
+        lossy.lost_answers = lost_answers;
+        let daemon = spawn_server("daemon-user", "daemon-secret", lossy).await;
+        MoneroTopologyVerifier::new(
+            run("topology-lost-answer"),
+            identity(),
+            &daemon.endpoint,
+            &target.endpoint,
+            &foreign.endpoint,
+        )
+        .expect("distinct verifier")
+        .verify()
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_digest_answer_refused_with_the_401_page_is_made_once_more() {
+        // The bounded reads start their exchange again with a fresh challenge.
+        assert!(
+            verify_with_lost_answers("get_info", 1).await.is_ok(),
+            "get_info answered on its second exchange"
+        );
+        assert!(
+            verify_with_lost_answers("get_connections", 1).await.is_ok(),
+            "get_connections answered on its second exchange"
+        );
+        // The typed genesis read decodes the page as its answer and retries.
+        assert!(
+            verify_with_lost_answers("on_get_block_hash", 1)
+                .await
+                .is_ok(),
+            "genesis answered on its second call"
+        );
+
+        // Once more only.
+        assert_eq!(
+            verify_with_lost_answers("get_info", 2).await,
+            Err(MoneroTopologyError::UnexpectedHttpStatus {
+                operation: "daemon.get_info",
+                actual: 401
+            })
+        );
+        assert_eq!(
+            verify_with_lost_answers("on_get_block_hash", 2).await,
+            Err(MoneroTopologyError::GenesisRpc)
+        );
+    }
+
     #[tokio::test]
     async fn aliases_and_foreign_origin_drift_fail_before_rpc() {
         let (daemon, target, _foreign) = valid_servers().await;
@@ -942,6 +1088,45 @@ mod tests {
             verifier.verify().await,
             Err(MoneroTopologyError::ForeignCredentialNotRejected { actual: 403 })
         ));
+    }
+
+    /// One wallet-rpc has no foreign credentials, yet its attestation was
+    /// minted without any wrong-credential probe. Now its own user with a
+    /// wrong password must finish with 401.
+    #[tokio::test]
+    async fn one_wallet_rpc_must_refuse_a_wrong_password_with_401() {
+        let (daemon, target, _foreign) = valid_servers().await;
+        let attestation = MoneroTopologyVerifier::for_one_wallet_rpc(
+            run("topology-one-wallet"),
+            identity(),
+            &daemon.endpoint,
+            &target.endpoint,
+        )
+        .expect("one-wallet verifier")
+        .verify()
+        .await
+        .expect("a wallet that refuses a wrong password");
+        assert_eq!(attestation.target_wallet_version(), 65567);
+        for status in [200, 403] {
+            let mut lax = RpcBehavior::valid();
+            lax.bad_auth_status = status;
+            let wallet = spawn_server(USER, PASSWORD, lax).await;
+            let verifier = MoneroTopologyVerifier::for_one_wallet_rpc(
+                run("topology-one-lax-wallet"),
+                identity(),
+                &daemon.endpoint,
+                &wallet.endpoint,
+            )
+            .expect("one-wallet verifier");
+            assert!(
+                matches!(
+                    verifier.verify().await,
+                    Err(MoneroTopologyError::ForeignCredentialNotRejected { actual })
+                        if actual == status
+                ),
+                "{status}"
+            );
+        }
     }
 
     #[tokio::test]

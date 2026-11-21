@@ -23,12 +23,25 @@
 //! Consequently, pre-decode body limiting is not possible without replacing its
 //! typed transport. Selected decoded collection bounds fail closed after
 //! decoding. See [`TRANSPORT_RESIDUAL`].
+//!
+//! Each Digest-authenticated call is two HTTP requests on the client's
+//! connection pool: the unauthenticated one the server challenges with a 401
+//! and a nonce, then the answer. Monero's HTTP server keeps the Digest nonce
+//! per TCP connection, so an answer that the pool sends on another
+//! connection than its challenge (when the challenged connection is not yet
+//! back in the pool) gets the server's HTML 401 page, which `monero-rpc`
+//! 0.5.1 decodes as the JSON answer ("expected value at line 1 column 1");
+//! the server ran nothing. The crate builds its own HTTP client, so this
+//! adapter cannot pin both legs to one connection: read-only calls are made
+//! once more after such a failure, the mining call a bounded number of
+//! times, and a transfer or sweep never.
 
 #![forbid(unsafe_code)]
 
 mod topology;
 mod wallet_effect;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -40,8 +53,8 @@ use monero_rpc::monero::cryptonote::subaddress::Index as SubaddressIndex;
 use monero_rpc::monero::util::address::AddressType;
 use monero_rpc::{
     BlockHeaderResponse, DaemonJsonRpcClient, DaemonRpcClient, GetBlockHeaderSelector,
-    GetTransfersCategory, GotTransfer, IncomingTransfer, RpcAuthentication, RpcClient,
-    RpcClientBuilder, Transaction, TransactionsResponse, TransferHeight, TransferType,
+    GetTransfersCategory, GetTransfersSelector, GotTransfer, IncomingTransfer, RpcAuthentication,
+    RpcClient, RpcClientBuilder, Transaction, TransactionsResponse, TransferHeight, TransferType,
     WalletClient,
 };
 use thiserror::Error;
@@ -53,7 +66,7 @@ pub use topology::{
 };
 pub use wallet_effect::{
     ConfirmedMoneroFunding, ConfirmedMoneroSweep, MoneroRegtestWalletEffects,
-    MoneroWalletEffectError, SubmittedMoneroSweep,
+    MoneroWalletEffectError, MoneroWalletRpcLock, SubmittedMoneroSweep,
 };
 
 /// Canonical Monero standard-address type used by exact output terms.
@@ -179,8 +192,18 @@ impl MoneroChainIdentityAttestor {
     /// Fails closed if the typed RPC fails or returns an all-zero placeholder.
     pub async fn discover(&self) -> Result<MoneroChainIdentity, MoneroEvidenceError> {
         let hash =
-            MoneroRpcPort::rpc("on_get_block_hash(0)", self.daemon.on_get_block_hash(0)).await?;
+            MoneroRpcPort::rpc("on_get_block_hash(0)", || self.daemon.on_get_block_hash(0)).await?;
         identity_from_observed_hash(self.network, hash_bytes(hash.as_ref()))
+    }
+
+    /// Reads the daemon's current tip height (its block count less one).
+    ///
+    /// # Errors
+    ///
+    /// Fails closed if the typed RPC fails.
+    pub async fn tip_height(&self) -> Result<u64, MoneroEvidenceError> {
+        let count = MoneroRpcPort::rpc("get_block_count", || self.daemon.get_block_count()).await?;
+        Ok(count.get() - 1)
     }
 
     /// Non-secret exact daemon origin used for discovery.
@@ -513,6 +536,74 @@ impl MoneroOutputVerifier {
     ) -> Result<VerifiedMoneroOutputObservation, MoneroEvidenceError> {
         verify_with_port(&self.rpc, self.identity, expected).await
     }
+    /// The transaction of the open wallet's first incoming output of exactly
+    /// `amount_piconero`, confirmed or not: a candidate for [`Self::verify`],
+    /// which alone decides. A party that did not send the output learns its
+    /// transaction this way.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on RPC failure or more outputs than the response bound.
+    pub async fn find_incoming(
+        &self,
+        amount_piconero: u64,
+    ) -> Result<Option<MoneroTransactionId>, MoneroEvidenceError> {
+        let response = MoneroRpcPort::rpc("incoming_transfers(all)", || {
+            self.rpc.wallet.incoming_transfers(
+                TransferType::All,
+                Some(SHARED_WALLET_ACCOUNT_INDEX),
+                None,
+            )
+        })
+        .await?;
+        let outputs = response.transfers.unwrap_or_default();
+        if outputs.len() > MAX_AVAILABLE_OUTPUTS {
+            return Err(MoneroEvidenceError::SemanticResponseBound {
+                resource: "incoming outputs",
+                maximum: MAX_AVAILABLE_OUTPUTS,
+            });
+        }
+        Ok(outputs
+            .into_iter()
+            .find(|output| output.amount.as_pico() == amount_piconero)
+            .map(|output| output.tx_hash.0))
+    }
+
+    /// The transaction of the open wallet's first incoming transfer of
+    /// exactly `amount_piconero` still in the pool, which
+    /// [`Self::find_incoming`] does not list until it is mined.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on RPC failure or more transfers than the response bound.
+    pub async fn find_incoming_in_pool(
+        &self,
+        amount_piconero: u64,
+    ) -> Result<Option<MoneroTransactionId>, MoneroEvidenceError> {
+        let mut response = MoneroRpcPort::rpc("get_transfers(pool)", || {
+            self.rpc.wallet.get_transfers(GetTransfersSelector {
+                category_selector: HashMap::from([(GetTransfersCategory::Pool, true)]),
+                account_index: Some(SHARED_WALLET_ACCOUNT_INDEX),
+                subaddr_indices: None,
+                block_height_filter: None,
+            })
+        })
+        .await?;
+        let pool = response
+            .remove(&GetTransfersCategory::Pool)
+            .unwrap_or_default();
+        if pool.len() > MAX_AVAILABLE_OUTPUTS {
+            return Err(MoneroEvidenceError::SemanticResponseBound {
+                resource: "pool transfers",
+                maximum: MAX_AVAILABLE_OUTPUTS,
+            });
+        }
+        Ok(pool
+            .into_iter()
+            .filter(|transfer| transfer.amount.as_pico() == amount_piconero)
+            .find_map(|transfer| <[u8; 32]>::try_from(transfer.txid.0.as_slice()).ok())
+            .map(MoneroTransactionId))
+    }
 }
 
 impl fmt::Debug for MoneroOutputVerifier {
@@ -679,6 +770,23 @@ pub enum MoneroEvidenceError {
     NonzeroUnlockDistance,
 }
 
+impl MoneroEvidenceError {
+    /// Whether the exact output was seen on its way to its confirmations: in
+    /// the pool, or in a block with fewer than the required confirmations
+    /// (and so not yet unlocked). Mining is what it waits for.
+    #[must_use]
+    pub const fn awaits_confirmations(&self) -> bool {
+        matches!(
+            self,
+            Self::WalletTransferInPool
+                | Self::DaemonTransactionInPool
+                | Self::NonzeroUnlockDistance
+                | Self::OutputNotUnlocked
+                | Self::InsufficientConfirmations
+        )
+    }
+}
+
 fn identity_from_observed_hash(
     network: MoneroNetwork,
     genesis_hash: [u8; 32],
@@ -693,6 +801,31 @@ fn valid_credential(value: &str, colon_allowed: bool) -> bool {
         && value
             .bytes()
             .all(|byte| (0x21..=0x7e).contains(&byte) && (colon_allowed || byte != b':'))
+}
+
+/// Makes one read-only, idempotent typed call, and makes it once more when
+/// the first failed in transport or in decoding the response (see the
+/// Digest note in the crate documentation). An error the server answered
+/// with (a JSON-RPC error) is not retried. Only reads come here: a transfer
+/// or a sweep sent twice could pay twice, and none is ever passed in.
+async fn read_with_one_retry<T, F>(call: impl Fn() -> F) -> Result<T, anyhow::Error>
+where
+    F: Future<Output = Result<T, anyhow::Error>>,
+{
+    match call().await {
+        Err(error) if failed_in_transport(&error) => call().await,
+        result => result,
+    }
+}
+
+/// Whether a typed call failed in the HTTP client (sending, timing out, or
+/// decoding the body), not in a server's JSON-RPC answer. `monero-rpc`
+/// 0.5.1's `get_block` alone turns its client's error into text ("Can not
+/// fetch block: …"), so that read is made once more on any failure.
+fn failed_in_transport(error: &anyhow::Error) -> bool {
+    error.is::<reqwest::Error>()
+        || error.is::<diqwest::error::Error>()
+        || error.to_string().starts_with("Can not fetch block: ")
 }
 
 #[derive(Clone, Debug)]
@@ -868,11 +1001,16 @@ impl MoneroRpcPort {
         })
     }
 
-    async fn rpc<T>(
+    /// One read-only typed call, made once more on a transport or decode
+    /// failure ([`read_with_one_retry`]).
+    async fn rpc<T, F>(
         operation: &'static str,
-        future: impl Future<Output = Result<T, anyhow::Error>>,
-    ) -> Result<T, MoneroEvidenceError> {
-        future
+        call: impl Fn() -> F,
+    ) -> Result<T, MoneroEvidenceError>
+    where
+        F: Future<Output = Result<T, anyhow::Error>>,
+    {
+        read_with_one_retry(call)
             .await
             .map_err(|source| MoneroEvidenceError::Rpc { operation, source })
     }
@@ -919,14 +1057,13 @@ impl MoneroRpcPort {
         let Some(transfer) = transfer else {
             return Ok(Vec::new());
         };
-        let response = Self::rpc(
-            "incoming_transfers(available)",
+        let response = Self::rpc("incoming_transfers(available)", || {
             self.wallet.incoming_transfers(
                 TransferType::Available,
                 Some(transfer.subaddress.major),
                 Some(vec![transfer.subaddress.minor]),
-            ),
-        )
+            )
+        })
         .await?;
         let outputs = response.transfers.unwrap_or_default();
         if outputs.len() > MAX_AVAILABLE_OUTPUTS {
@@ -949,15 +1086,14 @@ impl ObservationPort for MoneroRpcPort {
         expected: &ExpectedMoneroOutput,
     ) -> Result<ObservationSnapshot, MoneroEvidenceError> {
         let genesis_hash =
-            Self::rpc("on_get_block_hash(0)", self.daemon.on_get_block_hash(0)).await?;
+            Self::rpc("on_get_block_hash(0)", || self.daemon.on_get_block_hash(0)).await?;
         if hash_bytes(genesis_hash.as_ref()) != self.identity.genesis_hash() {
             return Err(MoneroEvidenceError::GenesisMismatch);
         }
-        let wallet_transfer = Self::rpc(
-            "get_transfer_by_txid",
+        let wallet_transfer = Self::rpc("get_transfer_by_txid", || {
             self.wallet
-                .get_transfer(expected.transaction_id, Some(SHARED_WALLET_ACCOUNT_INDEX)),
-        )
+                .get_transfer(expected.transaction_id, Some(SHARED_WALLET_ACCOUNT_INDEX))
+        })
         .await?
         .map(WalletTransferSnapshot::from);
         let Some(transfer) = wallet_transfer.as_ref() else {
@@ -967,20 +1103,15 @@ impl ObservationPort for MoneroRpcPort {
         if transfer.in_pool || transfer.height.is_none() {
             return Err(MoneroEvidenceError::WalletTransferInPool);
         }
-        let tip_before = Self::rpc(
-            "get_last_block_header(before)",
-            self.daemon.get_block_header(GetBlockHeaderSelector::Last),
-        )
+        let tip_before = Self::rpc("get_last_block_header(before)", || {
+            self.daemon.get_block_header(GetBlockHeaderSelector::Last)
+        })
         .await?;
         let available_outputs = self.available_outputs(wallet_transfer.as_ref()).await?;
-        let transaction_response = Self::rpc(
-            "get_transactions(pruned)",
-            self.daemon_rpc.get_transactions(
-                vec![expected.transaction_id],
-                Some(false),
-                Some(true),
-            ),
-        )
+        let transaction_response = Self::rpc("get_transactions(pruned)", || {
+            self.daemon_rpc
+                .get_transactions(vec![expected.transaction_id], Some(false), Some(true))
+        })
         .await?;
         Self::bound_transactions(&transaction_response)?;
         let containing_height = transaction_response
@@ -989,17 +1120,15 @@ impl ObservationPort for MoneroRpcPort {
             .and_then(|transactions| transactions.first())
             .and_then(|transaction| transaction.block_height);
         let containing_block = if let Some(height) = containing_height {
-            let header = Self::rpc(
-                "get_block_header_by_height",
+            let header = Self::rpc("get_block_header_by_height", || {
                 self.daemon
-                    .get_block_header(GetBlockHeaderSelector::Height(height)),
-            )
+                    .get_block_header(GetBlockHeaderSelector::Height(height))
+            })
             .await?;
-            let block = Self::rpc(
-                "get_block_by_hash",
+            let block = Self::rpc("get_block_by_hash", || {
                 self.daemon
-                    .get_block(GetBlockHeaderSelector::Hash(header.hash)),
-            )
+                    .get_block(GetBlockHeaderSelector::Hash(header.hash))
+            })
             .await?;
             if block.tx_hashes.len() > MAX_BLOCK_TRANSACTION_HASHES {
                 return Err(MoneroEvidenceError::SemanticResponseBound {
@@ -1012,10 +1141,9 @@ impl ObservationPort for MoneroRpcPort {
             None
         };
 
-        let tip_after = Self::rpc(
-            "get_last_block_header(after)",
-            self.daemon.get_block_header(GetBlockHeaderSelector::Last),
-        )
+        let tip_after = Self::rpc("get_last_block_header(after)", || {
+            self.daemon.get_block_header(GetBlockHeaderSelector::Last)
+        })
         .await?;
 
         Ok(ObservationSnapshot {

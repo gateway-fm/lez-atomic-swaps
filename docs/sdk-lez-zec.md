@@ -118,7 +118,7 @@ Who holds the secret: the per-swap preparation generates the preimage and
 gives it to the Taker's half only. `activate_with_claim_preimage` is accepted
 for the Taker and refused for the Maker in both directions; the Maker's store
 first holds the preimage when it commits the observed revealing claim, whose
-transition carries the extracted preimage checked against the digest. The prepared ZEC setup is single-operator: the preparation ceremony (`zec-provision.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner). Node-side take-time preparation, in which the Taker's Node creates the secret and each Node its own Zcash key, is tracked in issue #162 for M5.
+transition carries the extracted preimage checked against the digest. The prepared ZEC setup is single-operator: the preparation ceremony (`deploy/tests/fixtures/zec-catalog-fixture.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner); it remains as the catalog tests' fixture. Swaps are set up at take time instead (`zec_reserve_v1`, [below](#this-sdk-and-the-owner-json-rpc)): the Taker's Node creates the secret and each Node uses its own Zcash key.
 
 The Taker's revealing claim is gated. In `TakerSellsLez`, before it stages or
 submits its Zcash claim, the Taker requires the Maker's funding output to be
@@ -291,18 +291,73 @@ crate. The two map like this:
 | --- | --- |
 | `maker_offer_publish` / `maker_offer_publish_v1` | offer discovery (publish) |
 | `taker_offer_list_v1` | offer discovery (discover) |
-| `taker_swap_initiate_v1` (a `prepared_zec` catalog entry) | negotiation over the Maker's Chat socket (`zec_chat_propose_v1`, `zec_chat_complete_v1`), then actor provisioning |
+| `taker_swap_initiate_v1` (a `prepared_zec` catalog entry, or any live Zcash offer with `zec_role_config`) | negotiation over the Maker's Chat socket (`zec_reserve_v1` for a take-time agreement, then `zec_chat_propose_v1`, `zec_chat_complete_v1`), then actor provisioning |
 | the Taker actor's `drive` (no desk button; driven on the Node host) | escrow creation — first lock |
 | the Maker Node's supervisor | escrow creation — second lock, then the Maker's follow-up claim |
 | `taker_swap_claim_v1` | claim (the Taker's revealing claim: Zcash in `TakerSellsLez`, LEZ in `TakerSellsForeign`) |
 | `taker_swap_refund_v1`, `maker_actor_refund_v1` | refund (the Taker's LEZ or Zcash leg; the Maker's Zcash or LEZ leg) |
 
-A ZEC take on the Nodes is prepared, not composed: the Taker's catalog entry
-carries the signed offer envelope, the unsigned draft bound to that offer, the
-signing key and the actor template, all produced by
-`scripts/zec-provision.sh` from live chain facts. If you are building a
-strategy or an integration, the JSON-RPC is the stable surface. If you are
-embedding the protocol in your own binary, this crate is.
+A ZEC take on the Nodes is composed at take time: the Maker publishes an
+offer, the Taker takes it. (The Taker still accepts a prepared catalog entry,
+looked up first, which only the devnet test fixture
+`deploy/tests/fixtures/zec-catalog-fixture.sh` makes for the catalog tests: it
+holds both parties' keys.) With a Zcash role config on both Nodes (`--zec-role-config`
+on the Maker, `initiation.zec_role_config` on the Taker: profile, Zebra
+endpoint, the Taker's Zcash key) any live Zcash offer is taken by one more
+Chat round before the existing two:
+
+**`zec_reserve_v1`** (Taker → Maker; [`reserve.rs`](../crates/zec-reference-actor/src/reserve.rs)).
+The Taker sends the reservation id (derived from its initiation request), the
+offer id and signed envelope, the units, its Zcash public key and LEZ account,
+the SHA-256 of the claim preimage it made (in both directions: the Taker holds
+the swap secret, ADR 0216) and, when it funds Zcash (`TakerSellsForeign`), its
+funding outpoint. The Maker checks the offer is its own,
+live, on the Zcash route and the units within its bounds; the Taker's key and
+account differ from its own; in `TakerSellsForeign` the outpoint is unspent,
+pays the Taker's key, covers principal, fee and change and is mature on the
+Maker's Zebra. It then fixes the anchors at now (Zcash: its tip + 1; LEZ: its
+clock), in `TakerSellsLez` selects its own mature funding output (never one
+another live or completed reservation committed), composes the unsigned draft (`ZecAgreementDraftV1::new`) and answers with it,
+the swap id (derived from offer commitment and reservation), its LEZ account,
+the two anchors, its Zebra genesis and, in `TakerSellsLez`, its outpoint (a
+Maker that names a secret digest is refused). Each profile admits one
+direction, so a role configured with `deterministic-local-devnet-v5` (or
+`-v6`, `public-testnet-v2`, `deterministic-local-v2`) takes `TakerSellsLez`
+under its Taker-reveals-first twin `-v7` (`-v8`, `public-testnet-v3`,
+`deterministic-local-v3`), and the reverse. The Taker recomposes the whole body from the offer, its own facts and
+those few Maker facts with the same function and requires byte equality,
+after bounding them: anchor height within its own Zebra tip before and after
+the call (±3 blocks), anchor time within 120 s of its clock, the Maker's
+outpoint unspent, the Maker's, large and deep enough on its own Zebra.
+Neither side sends a private key or preimage. Each side then writes only its
+own material and actor template around the draft (the Taker at once, the Maker
+at `zec_chat_complete_v1`, which refuses a body other than the reserved one,
+as `zec_chat_propose_v1` does) and starts its own sidecar; propose and
+complete sign as for a catalog swap. The Maker checks the final agreement
+before it writes anything: it must validate now and countersign exactly the
+reserved draft, or the completion is refused with no template and no
+sidecar. A completion refused after that retires the sidecar it started.
+Either way the reservation holds its outpoint only for the rest of its
+900 s. A completed swap holds it until the agreement's LEZ refund time: by
+then the Maker has spent it in its funding or will never fund, so a Taker
+that completes and never locks cannot pin it for good. A Maker holds at
+most 16 open reservations, each for 900 s; an identical retry is answered
+from its record. Reservations carry no Taker signature, so the 16 slots are
+not bounded per peer: anyone who holds a live offer envelope can fill them
+for 900 s at a time.
+
+Before a first composed swap, pay the funder's own key: the Maker's when the
+Taker sells LEZ, the Taker's when it sells ZEC. `lez-maker-cli balances --zcash`
+and `lez-taker-cli balances --zcash` print that role's P2PKH address and the
+outputs paying it in the window the reserve searches (`funding_scan_blocks`
+below the mature tip), each with its confirmations and whether it is mature and
+already committed. A reserve without a mature output is refused with
+`no mature … funder output for <address> …` (Testnet: `no unspent funder output
+for <address> of at least … zatoshis …`), in the Maker's refusal or, for the
+Taker's own output, in the `reason` of the take's error data.
+
+If you are building a strategy or an integration, the JSON-RPC is the stable
+surface. If you are embedding the protocol in your own binary, this crate is.
 
 ## Scope
 

@@ -5,6 +5,7 @@ pub mod local_rpc;
 pub mod logos_chat_gateway;
 pub mod node_config;
 pub mod owner_rpc_server;
+pub mod route_health;
 pub mod run_local_delivery;
 pub mod secure_file;
 pub mod service_control;
@@ -14,9 +15,12 @@ mod maker_identity;
 pub use chat_contracts::{
     BtcChatCompleteRequestV1, BtcChatCompleteRequestV2, BtcChatCompleteResponseV1,
     BtcChatCompleteResponseV2, BtcChatProposalV1, BtcChatProposalV2, BtcChatProposeRequestV1,
-    BtcChatProposeRequestV2, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
-    XmrChatStageARequestV1, XmrChatStageAResponseV1, ZecChatCompleteRequestV1,
-    ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1,
+    BtcChatProposeRequestV2, XmrCeremonyNonceRequestV1, XmrCeremonyNonceResponseV1,
+    XmrCeremonyPartialRequestV1, XmrCeremonyPartialResponseV1, XmrCeremonyReserveRequestV1,
+    XmrCeremonyReserveResponseV1, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
+    XmrChatStageARequestV1, XmrChatStageAResponseV1, XmrLegPacketsV1, XmrReserveRequestV1,
+    XmrReserveResponseV1, ZecChatCompleteRequestV1, ZecChatCompleteResponseV1, ZecChatProposalV1,
+    ZecChatProposeRequestV1, ZecOutpointV1, ZecReserveRequestV1, ZecReserveResponseV1,
 };
 pub use local_rpc::{call_local_chat_gateway_rpc, call_local_chat_rpc, call_local_rpc};
 pub use logos_chat_gateway::{

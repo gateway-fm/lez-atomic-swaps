@@ -28,7 +28,23 @@
 #   maker-refund   the Taker never claims; the Maker refunds, then the Taker refunds
 #   lez-finality-stall  the LEZ sequencer stopped until both Nodes report the stall
 #                  and both desks show it, then started again (#112; not in `all`)
-#   all            every scenario in sequence (stops at the first failure)
+#   logos-happy    happy on the Logos transport (compose.logos.yaml): the Taker has no
+#                  Delivery directory and no Maker socket; the offer and every Chat
+#                  round travel through the two Basecamps' Logos Delivery and Chat
+#                  modules (Bitcoin, or Zcash TakerSellsLez from a desk-published
+#                  offer; not in `all`)
+#   zec-desk-offer the Maker desk's form publishes a Zcash offer, the Taker desk takes
+#                  it, the Nodes agree at take time (no zec-catalog-fixture.sh); TakerSellsLez
+#   xmr-happy      --pair Monero (TakerSellsLez only, LEZ_MONERO=1 stack): the Maker desk's
+#                  form publishes a Monero offer, the Taker desk takes it, the Taker Node
+#                  locks its LEZ and the Maker Node funds Monero on their own, the Taker
+#                  desk claims, both desks show the swap completed
+#   xmr-taker-refund  --pair Monero: the Maker funds, the Taker never claims; both desks
+#                  show the refund window open, then closing, the Taker desk refunds its
+#                  LEZ, the Maker desk shows its Monero refund sweep; both show refunded
+#   xmr-concurrent --pair Monero: two Monero offers from the Maker desk's form taken from
+#                  the Taker desk one after the other, both claimed, both completed
+#   all           every scenario in sequence (stops at the first failure)
 #
 # With LEZ_UI_NATIVE_RUN_ROOT set, both desks are in one Basecamp on this
 # host (its QML inspector at QML_INSPECTOR_HOST/QML_INSPECTOR_PORT, the
@@ -77,7 +93,7 @@ if [[ "$direction" == TakerSellsLez ]]; then
 else
   lock_action=lock_btc; claim_action=claim_lez; refund_action=refund_btc; lock_wallet=lez-taker
 fi
-# Zcash: a prepared corridor (scripts/zec-provision.sh --direction …) in either
+# Zcash: a prepared corridor (tests/fixtures/zec-catalog-fixture.sh --direction …) in either
 # direction, TakerSellsLez unless --direction says TakerSellsForeign. The
 # Taker's first lock (the LEZ escrow, or the Zcash HTLC when it sells ZEC) has
 # no desk button; the Taker Node drives its actor itself, and node-e2e.py
@@ -98,7 +114,12 @@ case "$pair" in
     lock_action=""; lock_wallet=lez-maker
     if [[ "$direction" == TakerSellsLez ]]; then claim_action=claim_zec; refund_action=refund_lez
     else claim_action=claim_lez; refund_action=refund_zec; fi ;;
-  *) echo "--pair must be Bitcoin or Zcash" >&2; exit 64 ;;
+  # Monero: the Taker sells LEZ only; its LEZ lock is the Node's (no desk
+  # button), it claims Monero and refunds LEZ.
+  Monero)
+    [[ "$direction" == TakerSellsLez || "$zec_direction_given" == 0 ]] || { echo "Monero swaps have the Taker sell LEZ only" >&2; exit 64; }
+    direction=TakerSellsLez; lock_action=""; lock_wallet=lez-maker; claim_action=claim_xmr; refund_action=refund_lez ;;
+  *) echo "--pair must be Bitcoin, Zcash or Monero" >&2; exit 64 ;;
 esac
 
 log() { printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -106,9 +127,10 @@ fail() { log "FAILED: $*"; exit 1; }
 # A scenario that stops a party's Basecamp registers it here, and one that
 # holds the Nodes down sets nodes_held; either is undone however the scenario
 # ends.
-stopped_node=""; nodes_held=0
+stopped_node=""; nodes_held=0; logos_on=0
 trap '[[ -z "$stopped_node" ]] || docker start "$stopped_node" >/dev/null 2>&1
-  [[ "$nodes_held" == 0 ]] || bash scripts/node-hold.sh release maker taker >/dev/null 2>&1' EXIT
+  [[ "$nodes_held" == 0 ]] || bash scripts/node-hold.sh release maker taker >/dev/null 2>&1
+  [[ "$logos_on" == 0 ]] || { chat_log; transport local; }' EXIT
 stop_node() { stopped_node="$1"; docker stop "$1" >/dev/null; }
 start_node() { # start_node <container>: the party's Basecamp again, its Node healthy and its desk open
   local role="${1#"$container_prefix"-}"; role="${role%-node}"
@@ -135,6 +157,7 @@ ui() { # ui <role> [ENV=VALUE...]: one step on the desk the role's own Basecamp 
   [[ -z "${LEZ_UI_BTC_AMOUNT:-}" ]] || envs+=(-e "LEZ_UI_BTC_AMOUNT=$LEZ_UI_BTC_AMOUNT")
   [[ -z "${LEZ_UI_ZEC_AMOUNT:-}" ]] || envs+=(-e "LEZ_UI_ZEC_AMOUNT=$LEZ_UI_ZEC_AMOUNT")
   [[ -z "${LEZ_UI_ZEC_LEZ_AMOUNT:-}" ]] || envs+=(-e "LEZ_UI_ZEC_LEZ_AMOUNT=$LEZ_UI_ZEC_LEZ_AMOUNT")
+  [[ -z "${LEZ_UI_ZEC_TAKE_TIME:-}" ]] || envs+=(-e "LEZ_UI_ZEC_TAKE_TIME=$LEZ_UI_ZEC_TAKE_TIME")
   # How long a desk waits for the Node to reach the next state. verify.mjs defaults to
   # 30 minutes, which is barely 1.5 testnet4 block intervals and does time out on the
   # public networks, so docs/testnet-run.md tells the operator to raise it. That only
@@ -321,6 +344,8 @@ export_evidence() { # export_evidence <swap_id>
   [[ -z "$native_run" ]] || { log "evidence export skipped: native Nodes"; return 0; }
   if [[ "$pair" == Bitcoin ]]; then
     python3 scripts/export-node-evidence.py --swap "$1" || fail "evidence export"
+  elif [[ "$pair" == Monero ]]; then
+    log "evidence export skipped: a Monero swap's record is node-e2e.py's (node:xmr tests)"
   else
     # export-node-evidence.py reads the Bitcoin swap stores; a ZEC swap's record
     # is the corridor, both Nodes' views, the Taker actor's status and the zebra
@@ -334,23 +359,44 @@ export_evidence() { # export_evidence <swap_id>
 # selling LEZ the Taker-reveals-first -v8, selling ZEC -v6.
 if [[ "$direction" == TakerSellsLez ]]; then zec_refund_profile=deterministic-local-devnet-v8
 else zec_refund_profile=deterministic-local-devnet-v6; fi
-zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-provision.sh step 8)
-  log "provisioning a ZEC corridor with ${1:-1} prepared swap(s)${2:+ under $2} (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
-  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" ${2:+--profile "$2"} 2>&1 | tail -4 | sed 's/^/   /'
-  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh"
+zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-catalog-fixture.sh step 8)
+  if zec_take_time "${2:-}"; then zec_publish_offers --swaps "${1:-1}"; return; fi
+  log "provisioning a ZEC corridor with ${1:-1} prepared swap(s)${2:+ under $2} (zec-catalog-fixture.sh: offer, draft, catalog, Nodes recreated)"
+  bash tests/fixtures/zec-catalog-fixture.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" ${2:+--profile "$2"} 2>&1 | tail -4 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-catalog-fixture.sh"
   wait_healthy "$maker_node"; wait_healthy "$taker_node"; wait_desk maker; wait_desk taker
   # The desk shows the corridor's lot; verify.mjs asserts the amounts it is given.
   local prepared; prepared="$LEZ_LANE_RUNTIME/zec/$(cat "$LEZ_LANE_RUNTIME/zec/current")/prepared.json"
   LEZ_UI_ZEC_AMOUNT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["foreign_units"] / 1e8)' "$prepared")"
   LEZ_UI_ZEC_LEZ_AMOUNT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["lez_units"])' "$prepared")"
-  export LEZ_UI_ZEC_AMOUNT LEZ_UI_ZEC_LEZ_AMOUNT
+  export LEZ_UI_ZEC_AMOUNT LEZ_UI_ZEC_LEZ_AMOUNT LEZ_UI_ZEC_TAKE_TIME=0
   log "corridor lot: $LEZ_UI_ZEC_AMOUNT ZEC for $LEZ_UI_ZEC_LEZ_AMOUNT LEZ units"
 }
 zec_provision_add() { # a second corridor beside the live one (its own Zcash anchor); recreates both Nodes with both
-  log "adding a second ZEC corridor beside the live one (zec-provision.sh --add: offer, draft, catalog of both, Nodes recreated)"
-  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --add 2>&1 | tail -4 | sed 's/^/   /'
-  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh --add"
+  if zec_take_time ""; then zec_publish_offers --swaps 1 --add; return; fi
+  log "adding a second ZEC corridor beside the live one (zec-catalog-fixture.sh --add: offer, draft, catalog of both, Nodes recreated)"
+  bash tests/fixtures/zec-catalog-fixture.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --add 2>&1 | tail -4 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-catalog-fixture.sh --add"
   wait_healthy "$maker_node"; wait_healthy "$taker_node"; wait_desk maker; wait_desk taker
+}
+# LEZ_ZEC_AGREEMENT=take-time (node-e2e.py): the Maker publishes the offers on
+# its running Node and the Nodes agree when the desk takes one; a corridor of
+# another profile than the Nodes take under stays the dealer's. Selling LEZ
+# the Nodes take under their profile's Taker-reveals-first twin (-v5 -> -v7,
+# -v6 -> -v8; node-e2e.py zec_dynamic_profile).
+zec_take_time() {
+  local nodes="${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}"
+  if [[ "$direction" == TakerSellsLez ]]; then
+    case "$nodes" in deterministic-local-devnet-v5) nodes=deterministic-local-devnet-v7 ;; deterministic-local-devnet-v6) nodes=deterministic-local-devnet-v8 ;; esac
+  fi
+  [[ "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time && "${1:-$nodes}" == "$nodes" ]]
+}
+zec_publish_offers() { # zec_publish_offers <node-e2e.py zec-publish arguments>
+  log "publishing Zcash offer(s) on the running Maker Node (take-time agreement: no corridor, no Node recreated)"
+  python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-publish "$@" 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-publish"
+  export LEZ_UI_ZEC_AMOUNT=1.0 LEZ_UI_ZEC_LEZ_AMOUNT=50000  # node-e2e.py ZEC_FOREIGN_UNITS / 1e8, ZEC_LEZ_UNITS
+  export LEZ_UI_ZEC_TAKE_TIME=1  # verify.mjs narrates the take-time agreement, not a corridor
 }
 zec_wait() { # zec_wait <swap_id> <taker state> [timeout]: wait (the Taker Node drives its actor; zebra is mined on demand) until the Node reports that state
   log "driving the Taker's ZEC actor on the Node until ${1:0:12} shows $2"
@@ -363,7 +409,10 @@ zec_wait_both() { # zec_wait_both <swap_a> <swap_b> <taker state> [timeout]: wai
   python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-wait --swap-id "$1" --swap-id "$2" --until "$3" --timeout "${4:-3000}" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait (both) to $3"
 }
-zec_offer_ids() { python3 -c 'import json,sys; print("\n".join(e["offer_id"] for e in json.load(open(sys.argv[1]))))' "$LEZ_LANE_RUNTIME/zec/$(cat "$LEZ_LANE_RUNTIME/zec/current")/prepared.json"; }
+zec_offer_ids() {
+  if zec_take_time ""; then cat "$LEZ_LANE_RUNTIME/zec/take-time-offers"; return; fi
+  python3 -c 'import json,sys; print("\n".join(e["offer_id"] for e in json.load(open(sys.argv[1]))))' "$LEZ_LANE_RUNTIME/zec/$(cat "$LEZ_LANE_RUNTIME/zec/current")/prepared.json";
+}
 zec_wait_phase() { # zec_wait_phase <swap_id> <Taker actor phases, '|'-separated> [timeout]: zebra mined for a reason
   python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-wait --swap-id "$1" --until-phase "$2" --timeout "${3:-2400}" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to phase $2"
@@ -545,7 +594,7 @@ scenario_zec_happy() {
   wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
   taker_act "$claim_action" "$swap"
   if [[ "$direction" == TakerSellsLez ]]; then
-    note "The Taker's Zcash claim revealed the secret; once it is in a zebra block the Maker Node claims LEZ with it, and both desks watch the swap complete"
+    note "The Taker's Zcash claim revealed the secret; the Maker Node reads it from that claim on first sight, mempool included, and claims LEZ with it, and both desks watch the swap complete"
   else
     note "The Taker's LEZ claim revealed the secret; the Maker Node's Zcash claim waits for a zebra block, and both desks watch the swap complete"
   fi
@@ -573,7 +622,11 @@ scenario_zec_concurrent() {
   mapfile -t offers < <(zec_offer_ids)
   [[ "${#offers[@]}" == 2 ]] || fail "the corridor run lists ${#offers[@]} offers, not 2"
   take swap_a "${offers[0]}"
-  note "A second Zcash row is on the book: the Taker takes it too, and the Taker Node runs a second prepared ceremony with the Maker"
+  if zec_take_time ""; then
+    note "A second Zcash row is on the book: the Taker takes it too, and the Taker Node agrees a second swap with the Maker at take time"
+  else
+    note "A second Zcash row is on the book: the Taker takes it too, and the Taker Node runs a second prepared ceremony with the Maker"
+  fi
   take swap_b "${offers[1]}"
   note "The Taker Node drives both LEZ locks on its own, their steps interleaving on one account; the Maker Node funds Zcash for each from its own coinbase output while the Maker desk watches both rows"
   # One driver on the Maker desk at a time: two at once press its buttons
@@ -586,7 +639,7 @@ scenario_zec_concurrent() {
   maker_wait awaiting_taker_claim "$swap_b"
   taker_act "$claim_action" "$swap_a"
   taker_act "$claim_action" "$swap_b"
-  note "Both Zcash claims revealed their secrets; once each is in a zebra block the Maker Node claims LEZ with it, and both desks watch the two swaps complete"
+  note "Both Zcash claims revealed their secrets; the Maker Node reads each from its claim on first sight, mempool included, and claims LEZ with it, and both desks watch the two swaps complete"
   maker_wait_bg maker_a completed "$swap_a"
   taker_wait_bg taker_a completed "$swap_a"
   desk_head_start
@@ -627,9 +680,17 @@ scenario_zec_concurrent_staggered() {
   zec_provision_add
   mapfile -t offers < <(zec_offer_ids)
   [[ "${#offers[@]}" == 2 ]] || fail "the catalog lists ${#offers[@]} offers after --add, not 2"
-  note "A second corridor is live beside the first: a new Zcash row is on the book while the first swap waits for its Zcash claim; the Taker takes it too"
+  if zec_take_time ""; then
+    note "A second Zcash offer is published beside the first: a new Zcash row is on the book while the first swap waits for its Zcash claim; the Taker takes it too"
+  else
+    note "A second corridor is live beside the first: a new Zcash row is on the book while the first swap waits for its Zcash claim; the Taker takes it too"
+  fi
   take swap_b "${offers[1]}"
-  note "The second swap follows the same path from its own corridor: its LEZ lock, the Maker's Zcash funding from a second coinbase output; the first row stays open beside it"
+  if zec_take_time ""; then
+    note "The second swap follows the same path from its own take-time agreement: its LEZ lock, the Maker's Zcash funding from a second coinbase output; the first row stays open beside it"
+  else
+    note "The second swap follows the same path from its own corridor: its LEZ lock, the Maker's Zcash funding from a second coinbase output; the first row stays open beside it"
+  fi
   maker_wait_bg maker_b awaiting_taker_claim "$swap_b"
   desk_head_start
   zec_wait "$swap_b" claim_available
@@ -672,7 +733,7 @@ scenario_zec_maker_refund() {
   note "The Taker never claims. Once its claim window closes, zebra reaches the refund height and the Maker Node refunds its Zcash first"
   zec_step "$swap" maker-zcash-refund 1800
   # The stamp is its second in ten digits; lanes other than the first append
-  # their two-digit lane number (zec-provision.sh), which is not part of the time.
+  # their two-digit lane number (zec-catalog-fixture.sh), which is not part of the time.
   opens=$(( $(sed 's/.*-//' "$LEZ_LANE_RUNTIME/zec/current" | cut -c1-10) + $(zec_refund_delay) + 15 ))
   wait_until_unix "$opens" "for the agreement's LEZ refund time (the profile's delay after provisioning)"
   note "The Maker's Zcash is back and the LEZ refund time has passed; the Taker desk offers Refund and the Maker desk watches the swap end refunded"
@@ -833,6 +894,213 @@ scenario_maker_refund() {
   maker_wait refunded "$swap"
 }
 
+# ---- the Logos transport (compose.logos.yaml, node-entrypoint.sh) ----------------
+chat_log() { # both Basecamps' Chat module lines (UTC): conversations, every message sent and received with its size
+  local role
+  for role in maker taker; do
+    log "$role Chat module:"
+    docker exec "$container_prefix-$role-node" sh -c "cat /var/lez/basecamp-$role-user/module_data/chat_module/*/chat_module_*.log" 2>/dev/null |
+      grep -E 'created|sent|received|failed|online' | sed 's/^/   /'
+  done
+  log "the Taker Node's last lines:"
+  docker exec "$taker_node" tail -n 15 /run/lez/taker/node.log 2>/dev/null | cut -c1-400 | sed 's/^/   /'
+}
+transport() { # transport <logos|local>: both Basecamps recreated on that transport, the Maker's first (as up.sh)
+  local args=("${stack_compose[@]}")
+  if [[ "$1" == logos ]]; then
+    [[ " ${args[*]} " == *" -f "* ]] || args+=(-f compose.yaml)
+    args+=(-f compose.logos.yaml)
+    # What a Taker on another host is told: the Maker's public Delivery identity.
+    LEZ_MAKER_DELIVERY_IDENTITY="$(docker exec "$maker_node" cat /delivery/maker-delivery-identity.pub)" ||
+      fail "the Maker's Delivery identity is unavailable"
+    export LEZ_MAKER_DELIVERY_IDENTITY
+  fi
+  logos_on=1
+  log "both Basecamps recreated on the $1 transport"
+  docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps maker-node </dev/null >/dev/null 2>&1 ||
+    fail "recreating the Maker's Basecamp on the $1 transport"
+  if [[ "$1" == logos ]]; then
+    # The Taker's Delivery node dials the Maker's: its libp2p address, by the
+    # Maker container's IP on the Docker network (the Delivery node's own DNS
+    # resolver does not ask Docker's), with the peer id its node logs.
+    local peer=""
+    for _ in $(seq 1 60); do
+      peer="$(docker logs "$maker_node" 2>&1 | sed -n 's/.*Started libp2p node.*(peerId: \([0-9A-Za-z]*\).*/\1/p' | tail -1)"
+      [[ -n "$peer" ]] && break
+      sleep 2
+    done
+    [[ -n "$peer" ]] || fail "the Maker's Delivery node did not start"
+    LEZ_MAKER_DELIVERY_PEER="/ip4/$(docker exec "$maker_node" hostname -i | awk '{print $1}')/tcp/60000/p2p/$peer"
+    export LEZ_MAKER_DELIVERY_PEER
+    log "the Taker's Delivery node dials the Maker's at $LEZ_MAKER_DELIVERY_PEER"
+  fi
+  docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps taker-node </dev/null >/dev/null 2>&1 ||
+    fail "recreating the Taker's Basecamp on the $1 transport"
+  wait_healthy "$maker_node"; wait_healthy "$taker_node"; wait_desk maker; wait_desk taker
+  [[ "$1" == logos ]] || logos_on=0
+}
+gateway() { # gateway <role> <method> <params>: the role's Chat gateway answers on its control socket
+  docker exec "$container_prefix-$1-node" curl -sS --max-time 10 --unix-socket "/run/lez/$1/logos-chat-control.sock" \
+    -H 'content-type: application/json' \
+    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null
+}
+# A Zcash offer published from the Maker desk's form and agreed at take time
+# (zec_reserve_v1): no zec-catalog-fixture.sh, no corridor, no Node recreated.
+# Selling ZEC the Taker funds from its own key: node-e2e.py zec-fund pays it
+# (and renews a worn Zebra) before the desk publishes.
+zec_publish() {
+  python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-fund 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-fund"
+  step "Maker desk publishes $direction Zcash offers from its form until two are pending" maker LEZ_UI_PUBLISH_ZEC=1
+}
+scenario_zec_desk_offer() {
+  local swap; zec_publish; take swap
+  zec_claim_and_complete "$swap"
+}
+# A Monero offer published from the Maker desk's form, taken from the Taker
+# desk (xmr_reserve_v1 at take time). The Nodes drive the rest themselves (the
+# Taker's LEZ lock, the Maker's Monero funding and its confirmations, the
+# Maker's LEZ claim, the Taker's sweep); the one press after the take is the
+# Taker's Claim. node-e2e.py xmr-fund funds the Maker's Monero wallet first.
+xmr_publish() {
+  python3 scripts/node-e2e.py --pair Monero xmr-fund 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "xmr-fund"
+  step "Maker desk publishes TakerSellsLez Monero offers from its form until two are pending" maker
+}
+# The Maker's funded row lasts only until the Taker's claim is final: the
+# claim and the Maker's own LEZ claim count as past it.
+xmr_maker_funded_bg() { # xmr_maker_funded_bg <pid-var> <swap_id>
+  step_bg "$1" "Maker desk shows ${2:0:12} funded" maker INTERACTIVE_ACTION=wait \
+    "INTERACTIVE_STATE=awaiting_taker_claim|claiming_lez|completed" "INTERACTIVE_SWAP_ID=$2"
+}
+xmr_wait() { # xmr_wait <swap_id> <Taker Node state> <timeout s>: the Nodes drive the swap, the host only reads the Taker's view
+  local deadline=$(( $(date -u +%s) + $3 )) state
+  log "waiting for the Taker Node to read ${1:0:12} $2 (the Nodes drive the swap themselves)"
+  while :; do
+    state="$(taker_swaps | awk -v s="$1" '$1 == s {print $2}')"
+    [[ "$state" == "$2" ]] && return 0
+    [[ "$state" != completed && "$state" != refunded ]] || fail "${1:0:12} ended $state while waiting for $2"
+    (( $(date -u +%s) < deadline )) || fail "${1:0:12} reads ${state:-nothing}, not $2, after $3 s"
+    sleep 5
+  done
+}
+scenario_xmr_happy() {
+  local swap maker_pid taker_pid
+  xmr_publish
+  take swap
+  note "The Taker Node locks its LEZ on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Monero"
+  xmr_maker_funded_bg maker_pid "$swap"
+  taker_act "$claim_action" "$swap"
+  wait "$maker_pid" || fail "Maker desk: Monero funded"
+  note "The Maker Node claims the LEZ; its claim signature lets the Taker recover the Monero spend key, the Taker Node sweeps the Monero, and both desks watch the swap complete"
+  maker_wait_bg maker_pid completed "$swap"
+  taker_wait_bg taker_pid completed "$swap"
+  wait "$maker_pid" || fail "Maker desk: completed"
+  wait "$taker_pid" || fail "Taker desk: completed"
+  export_evidence "$swap"
+}
+# The Maker funds the Monero and the Taker never claims it. From the
+# agreement's refund time R (LEZ_XMR_REFUND_SECONDS after the take) the Taker
+# desk offers Refund; halfway to the punish time P it warns that the window is
+# closing. The Taker presses Refund once (tag 16, before P); the Maker Node
+# learns the Taker's Monero share from the final refund and sweeps its Monero
+# back, which its desk shows; both desks end refunded. The waits up to R and
+# up to the warning are the host's, so the recording holds no idle minutes.
+scenario_xmr_taker_refund() {
+  local swap maker_pid taker_pid
+  require_fast
+  xmr_publish
+  take swap
+  note "The Taker Node locks its LEZ on its own and the Maker Node funds Monero; the Taker will not claim it"
+  xmr_maker_funded_bg maker_pid "$swap"
+  step "Taker desk shows ${swap:0:12} claimable (not pressed)" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=claim_ready \
+    "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Your Monero claim is ready"
+  wait "$maker_pid" || fail "Maker desk: Monero funded"
+  xmr_wait "$swap" refund_available "$(( LEZ_XMR_REFUND_SECONDS + 120 ))"
+  note "The Taker never claimed: the refund time (${LEZ_XMR_REFUND_SECONDS} s after the take) has passed, the Maker can no longer claim and the Taker desk offers Refund"
+  step "Taker desk shows ${swap:0:12} with its refund window open" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=refund_ready \
+    "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Refund window open"
+  xmr_wait "$swap" attention_required "$(( (LEZ_XMR_PUNISH_SECONDS - LEZ_XMR_REFUND_SECONDS) / 2 + 60 ))"
+  note "Halfway to the punish time (${LEZ_XMR_PUNISH_SECONDS} s after the take) with no refund, the Taker desk warns that its refund window is closing"
+  step "Taker desk warns that ${swap:0:12}'s refund window is closing" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=attention_required \
+    "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Refund window closing"
+  # recovering is also the punish row's state: the label names the refund sweep
+  step_bg maker_pid "Maker desk shows ${swap:0:12} sweeping its Monero back" maker INTERACTIVE_ACTION=wait \
+    INTERACTIVE_STATE=recovering "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Refund sweep: recovering your Monero"
+  taker_act "$refund_action" "$swap"
+  wait "$maker_pid" || fail "Maker desk: Monero refund sweep"
+  note "The Taker's LEZ refund is final; the Maker Node has swept its Monero back, and both desks show the swap refunded"
+  maker_wait_bg maker_pid refunded "$swap"
+  taker_wait_bg taker_pid refunded "$swap"
+  wait "$maker_pid" || fail "Maker desk: refunded"
+  wait "$taker_pid" || fail "Taker desk: refunded"
+  export_evidence "$swap"
+}
+# Two Monero swaps at once: both offers from the Maker desk's form, both taken
+# from the Taker desk one after the other (the second while the first's LEZ
+# lock and Monero funding run), both claimed, both completed on both desks.
+# The two LEZ legs share the Taker's owner account (its Node sends one owner
+# transaction at a time) and the two Monero legs each party's one wallet-rpc.
+scenario_xmr_concurrent() {
+  local swap_a swap_b maker_pid taker_pid
+  xmr_publish
+  take swap_a
+  note "A second Monero row is on the book: the Taker takes it too while the first swap's LEZ lock runs"
+  take swap_b
+  note "The Taker Node locks both swaps' LEZ on its own, one owner transaction at a time; the Maker Node funds Monero for each while the Maker desk watches the rows"
+  # One driver on the Maker desk at a time (as zec-concurrent).
+  xmr_maker_funded_bg maker_pid "$swap_a"
+  taker_act "$claim_action" "$swap_a"
+  wait "$maker_pid" || fail "Maker desk: Monero funded ($swap_a)"
+  xmr_maker_funded_bg maker_pid "$swap_b"
+  taker_act "$claim_action" "$swap_b"
+  wait "$maker_pid" || fail "Maker desk: Monero funded ($swap_b)"
+  note "Both claims are authorised: the Maker Node claims both LEZ legs, the Taker Node sweeps both Monero outputs, and both desks watch the two swaps complete"
+  maker_wait_bg maker_pid completed "$swap_a"
+  taker_wait_bg taker_pid completed "$swap_a"
+  wait "$maker_pid" || fail "Maker desk: completed ($swap_a)"
+  wait "$taker_pid" || fail "Taker desk: completed ($swap_a)"
+  maker_wait completed "$swap_b"
+  taker_wait completed "$swap_b"
+  export_evidence "$swap_a"
+  export_evidence "$swap_b"
+}
+scenario_logos_happy() {
+  local swap started route node
+  transport logos
+  log "the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket"
+  docker exec "$taker_node" sh -c 'id -u; ! grep -q " /delivery " /proc/self/mountinfo && [ -z "$(ls -A /delivery)" ] &&
+    ! test -e /run/lez/maker && jq -c "{delivery_sources, chat_socket}" /var/lib/lez/taker/role.json' 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "the Taker still sees the Maker's Delivery directory or socket"
+  if [[ "$pair" == Zcash ]]; then zec_publish; else publish; fi
+  started="$(date -u +%s)"; take swap
+  log "taken over Logos Delivery and Chat in $(( $(date -u +%s) - started )) s (discovery, conversation, reservation, ceremony)"
+  if [[ "$pair" == Zcash ]]; then
+    zec_claim_and_complete "$swap"
+  else
+    taker_act "$lock_action" "$swap"
+    maker_wait awaiting_taker_claim "$swap"
+    taker_act "$claim_action" "$swap"
+    finish "$swap"
+  fi
+  # What carried it: the Taker gateway holds the Maker's announcement from
+  # Delivery and one bound Chat session; the Maker gateway binds a session only
+  # from a Chat message's authenticated sender.
+  route="{\"pair\":\"$pair\",\"direction\":\"$direction\"}"
+  log "Chat gateways: Taker $(gateway taker logos_chat_status_v1 '{"schema_version":1}'); Maker $(gateway maker logos_chat_status_v1 '{"schema_version":1}')"
+  log "Taker gateway offers from Delivery: $(gateway taker logos_offer_list_v1 "{\"schema_version\":1,\"route\":$route}" |
+    python3 -c 'import json,sys; o=json.load(sys.stdin)["result"]["offers"]; print(len(o), "offer(s) of", len({e["maker_identity"] for e in o}), "Maker(s):", sorted({e["maker_identity"][:12] for e in o}))')"
+  gateway taker logos_chat_status_v1 '{"schema_version":1}' | grep -q '"session_bound":true' || fail "the Taker gateway has no bound Chat session"
+  gateway maker logos_chat_status_v1 '{"schema_version":1}' | grep -q '"session_count":[1-9]' || fail "the Maker gateway never received a Chat message"
+  gateway taker logos_offer_list_v1 "{\"schema_version\":1,\"route\":$route}" | grep -q "\"$LEZ_MAKER_DELIVERY_IDENTITY\"" ||
+    log "(the Maker's offers are no longer listed: its pending offers were taken or withdrawn)"
+  for node in "$maker_node" "$taker_node"; do
+    docker logs --since "$started" "$node" 2>&1 | grep -q 'Chat gateway exited' && log "the Chat gateway in $node restarted during the swap"
+  done
+  chat_log
+  transport local
+}
+
 run_one() {
   local name="$1" started; started="$(date -u +%s)"
   log "=== $name ($direction)"
@@ -843,6 +1111,13 @@ run_one() {
     esac
   fi
   if [[ "${LEZ_REPAIR_INDEXER:-1}" == 1 ]]; then bash scripts/repair-indexer.sh >/dev/null || fail "repair-indexer.sh"; fi
+  # A recording starts from no open offers: they outlive reset-swaps.sh and a
+  # new LEZ chain, and leftover rows push the journey's own out of view.
+  if [[ "$record" == 1 ]]; then
+    log "withdrawing the Maker Node's open offers for the recording (maker_offer_withdraw, as the desk's Withdraw)"
+    python3 scripts/node-e2e.py withdraw-offers 2>&1 | sed 's/^/   /'
+    [[ "${PIPESTATUS[0]}" == 0 ]] || fail "withdraw-offers"
+  fi
   case "$name" in
     happy) scenario_happy ;;
     restart-taker) scenario_restart taker ;;
@@ -853,6 +1128,8 @@ run_one() {
     maker-refund) scenario_maker_refund ;;
     node-offline) scenario_node_offline ;;
     lez-finality-stall) scenario_lez_finality_stall ;;
+    logos-happy) scenario_logos_happy ;;
+    zec-desk-offer) [[ "$pair" == Zcash ]] || fail "zec-desk-offer needs --pair Zcash"; scenario_zec_desk_offer ;;
     zec-happy) [[ "$pair" == Zcash ]] || fail "zec-happy needs --pair Zcash"; scenario_zec_happy ;;
     zec-maker-refund) [[ "$pair" == Zcash ]] || fail "zec-maker-refund needs --pair Zcash"; scenario_zec_maker_refund ;;
     zec-concurrent) [[ "$pair" == Zcash ]] || fail "zec-concurrent needs --pair Zcash"; scenario_zec_concurrent ;;
@@ -863,6 +1140,9 @@ run_one() {
     zec-survivor) [[ "$pair" == Zcash ]] || fail "zec-survivor needs --pair Zcash"; scenario_zec_survivor ;;
     zec-node-offline) [[ "$pair" == Zcash ]] || fail "zec-node-offline needs --pair Zcash"; scenario_zec_node_offline ;;
     zec-stale-window) [[ "$pair" == Zcash ]] || fail "zec-stale-window needs --pair Zcash"; scenario_zec_stale_window ;;
+    xmr-happy) [[ "$pair" == Monero ]] || fail "xmr-happy needs --pair Monero"; scenario_xmr_happy ;;
+    xmr-taker-refund) [[ "$pair" == Monero ]] || fail "xmr-taker-refund needs --pair Monero"; scenario_xmr_taker_refund ;;
+    xmr-concurrent) [[ "$pair" == Monero ]] || fail "xmr-concurrent needs --pair Monero"; scenario_xmr_concurrent ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video
@@ -871,6 +1151,6 @@ run_one() {
 all=(happy restart-taker restart-maker survivor concurrent taker-refund maker-refund node-offline)
 case "$scenario" in
   all) for name in "${all[@]}"; do run_one "$name"; done ;;
-  "") echo "usage: scripts/ui-e2e.sh <scenario|all> [--direction TakerSellsForeign|TakerSellsLez] [--pair Bitcoin|Zcash] [--record]" >&2; exit 64 ;;
+  "") echo "usage: scripts/ui-e2e.sh <scenario|all> [--direction TakerSellsForeign|TakerSellsLez] [--pair Bitcoin|Zcash|Monero] [--record]" >&2; exit 64 ;;
   *) run_one "$scenario" ;;
 esac

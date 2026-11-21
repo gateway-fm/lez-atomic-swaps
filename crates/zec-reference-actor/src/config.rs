@@ -1022,10 +1022,16 @@ impl ActorConfig {
     }
 
     fn load_zcash_key(&self) -> Result<Zeroizing<[u8; ZCASH_KEY_BYTES]>, ActorConfigError> {
-        let material = self.read_exact_private::<ZCASH_KEY_BYTES>(
+        // The role's own key file, which a take-time template names in place:
+        // 32 raw bytes, or the same key as 64 hex digits and a line ending.
+        let mut bytes = self.read_command_file(
             &self.zcash_key_file,
+            ZCASH_KEY_BYTES * 2 + 2,
+            FilePrivacy::OwnerPrivate,
             &self.bindings.zcash_key,
         )?;
+        let material =
+            parse_zcash_key(&mut bytes).ok_or(ActorConfigError::InvalidCommandMaterial)?;
         let mut parsed = SecretKey::from_slice(material.as_ref())
             .map_err(|_| ActorConfigError::InvalidCommandMaterial)?;
         parsed.non_secure_erase();
@@ -1151,7 +1157,7 @@ impl ActorConfig {
         ];
         let unsafe_mutable_location =
             mutable_locations.iter().any(|(mutable, expected_mutable)| {
-                !expected_mutable.unchanged(mutable)
+                !expected_mutable.same_file(mutable)
                     || current.aliases(mutable)
                     || self
                         .bindings
@@ -1509,6 +1515,20 @@ fn contains_location(locations: &[&FileLocation], candidate: &FileLocation) -> b
     locations.iter().any(|location| location.aliases(candidate))
 }
 
+/// A Zcash key file's 32-byte secret: raw, or hexadecimal with an optional
+/// line ending.
+fn parse_zcash_key(bytes: &mut Vec<u8>) -> Option<Zeroizing<[u8; ZCASH_KEY_BYTES]>> {
+    let mut key = Zeroizing::new([0_u8; ZCASH_KEY_BYTES]);
+    if bytes.len() == ZCASH_KEY_BYTES {
+        key.copy_from_slice(bytes);
+        return Some(key);
+    }
+    trim_line_ending(bytes);
+    (bytes.len() == ZCASH_KEY_BYTES * 2
+        && hex::decode_to_slice(bytes.as_slice(), key.as_mut()).is_ok())
+    .then_some(key)
+}
+
 fn trim_line_ending(bytes: &mut Vec<u8>) {
     if bytes.ends_with(&[13, 10]) {
         bytes.truncate(bytes.len() - 2);
@@ -1533,6 +1553,18 @@ fn map_command_location_error(error: SecureFileError) -> ActorConfigError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_zcash_key_file_loads_the_same_secret_raw_or_hex() {
+        let secret = [0x5a_u8; 32];
+        let raw = super::parse_zcash_key(&mut secret.to_vec()).unwrap();
+        let hex_form =
+            super::parse_zcash_key(&mut format!("{}\n", hex::encode(secret)).into_bytes()).unwrap();
+        assert_eq!(*raw, secret);
+        assert_eq!(*hex_form, secret);
+        assert!(super::parse_zcash_key(&mut vec![0x5a; 31]).is_none());
+        assert!(super::parse_zcash_key(&mut b"zz".repeat(32)).is_none());
+    }
+
     use std::path::PathBuf;
 
     use lez_bridge_protocol::{

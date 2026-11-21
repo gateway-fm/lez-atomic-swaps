@@ -3,10 +3,14 @@ use std::{
     io::Write as _,
     os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _},
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
+use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
-    ExactTransactionBytes, Participant as BridgeParticipant, PreparedTransaction, RequestId, RunId,
+    ChainClock, ExactTransactionBytes, Hex32, METHOD_OBSERVE_FINALIZED_CLOCK,
+    ObserveFinalizedClockRequest, ObserveFinalizedClockResult, Participant as BridgeParticipant,
+    PreparedTransaction, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
     SubmissionOutcome, TransactionId,
 };
 use lez_swap_core::Participant;
@@ -242,15 +246,21 @@ fn provision_maker_recovery(
     } else {
         "test ! -e /proc/self/fd/225"
     };
-    let publish_tag15_evidence = if kind == MakerRecoveryKind::Claim {
-        format!(
+    // A sweep whose tool recorded no submission is driven again, never
+    // observed: the stub records one, as the tool does before it sends.
+    let publish_tag15_evidence = match kind {
+        MakerRecoveryKind::Claim => format!(
             "mv '{}' '{}/tag15-claim-submission.json'; chmod 0600 '{}/tag15-claim-submission.json'",
             tag15_staged_evidence.display(),
             evidence_root.display(),
             evidence_root.display(),
-        )
-    } else {
-        ":".to_owned()
+        ),
+        MakerRecoveryKind::Refund => format!(
+            "printf 'stub-sweep-submission\\n' > '{}/monero-refund-submission.json'; chmod 0600 '{}/monero-refund-submission.json'",
+            evidence_root.display(),
+            evidence_root.display(),
+        ),
+        MakerRecoveryKind::Tag17 => ":".to_owned(),
     };
     let step_name = kind.step_name();
     let worker_script = format!(
@@ -269,10 +279,24 @@ fn provision_maker_recovery(
     let unused = effect_root.join("unused-worker");
     write(&unused, b"#!/bin/sh\nexit 97\n", 0o700);
 
+    // The actor reads the finalized clock through the swap's sidecar before
+    // a LEZ effect's one invocation: a real runtime, a capability of the
+    // sidecar's grammar and a fake sidecar answering that read.
     let runtime = effect_root.join("runtime.json");
-    write(&runtime, b"{\"role\":\"maker\"}\n", 0o600);
+    let mut runtime_bytes = serde_json::to_vec(&RuntimeDescriptor::new(
+        BridgeParticipant::Maker,
+        RuntimeCompatibility::LeeV0_2_0,
+        Hex32::from_bytes([99; 32]),
+        Hex32::from_bytes([17; 32]),
+        Hex32::from_bytes([18; 32]),
+        Hex32::from_bytes([15; 32]),
+        Hex32::from_bytes([10; 32]),
+    ))
+    .unwrap();
+    runtime_bytes.push(b'\n');
+    write(&runtime, &runtime_bytes, 0o600);
     let capability = effect_root.join("lez.capability");
-    write(&capability, b"local-test-capability\n", 0o600);
+    write(&capability, b"local-test-capability-of-32-bytes\n", 0o600);
     let secrets = [
         "daemon.username",
         "daemon.password",
@@ -336,7 +360,7 @@ fn provision_maker_recovery(
         adaptor_journal: fixture.maker_actor_state.clone(),
         evidence_root,
         lez: Lez {
-            sidecar_url: "http://127.0.0.1:32972/".to_owned(),
+            sidecar_url: fake_sidecar_url().to_owned(),
             runtime_sha256: hex::encode(Sha256::digest(fs::read(&runtime).unwrap())),
             runtime_file: runtime,
             capability_file: capability,
@@ -411,6 +435,39 @@ fn provision_maker_recovery(
         workflow,
         effect_log,
     }
+}
+
+/// A loopback swap sidecar answering only the finalized clock, as the one in
+/// `xmr_reserve_fixture.rs` answers nothing; it lives as long as the test
+/// process.
+fn fake_sidecar_url() -> &'static str {
+    static URL: OnceLock<String> = OnceLock::new();
+    URL.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async move {
+                let mut module = RpcModule::new(());
+                module
+                    .register_method(METHOD_OBSERVE_FINALIZED_CLOCK, |params, (), _| {
+                        let request: ObserveFinalizedClockRequest = params.one()?;
+                        Ok::<_, ErrorObjectOwned>(ObserveFinalizedClockResult::new(
+                            request.context,
+                            request.runtime,
+                            ChainClock::new(Hex32::from_bytes([70; 32]), 70, 1_850_000_000_070),
+                        ))
+                    })
+                    .unwrap();
+                let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+                sender
+                    .send(format!("http://{}/", server.local_addr().unwrap()))
+                    .unwrap();
+                let _handle = server.start(module);
+                std::future::pending::<()>().await;
+            });
+        });
+        receiver.recv().unwrap()
+    })
 }
 
 fn write(path: &Path, bytes: &[u8], mode: u32) {

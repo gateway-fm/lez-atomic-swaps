@@ -10,9 +10,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cargo build --locked -p lez-maker-node --bins
+cargo build --locked -p lez-maker-node --features pair-zec,pair-xmr --bins
+cargo build --locked -p xmr-reference-actor --bin xmr-reference-monero-fund --bin xmr-reference-tag15 \
+  --bin xmr-reference-tag15-finalized --bin xmr-reference-monero-refund --bin xmr-reference-monero-verify \
+  --bin xmr-reference-tag17
 cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor
-SOURCE_BIN_DIR="${SOURCE_BIN_DIR:-target/debug}" \
+cargo build --locked -p lez-logos-price-c-api --bin lez-logos-price-worker
+cargo build --locked -p btc-reference-actor --bin lez-btc-maker-actor
+cargo build --locked -p lez-runtime-healthcheck
+readonly source_bin_dir="${SOURCE_BIN_DIR:-target/debug}"
+# The LEZ sidecar and, for a build with the Monero role, the Monero Stage-A planner come from
+# the builder image; the staged install is only verified, never run.
+builder_programs=(lez-v02-bridge-poc)
+[[ -e "$source_bin_dir/lez-xmr-maker-actor" ]] && builder_programs+=(lez-v02-xmr-stage-a-plan)
+for builder_program in "${builder_programs[@]}"; do
+  printf '#!/bin/sh\nexit 1\n' >"$stage/$builder_program"
+  chmod 0755 "$stage/$builder_program"
+done
+SOURCE_BIN_DIR="$source_bin_dir" \
+SIDECAR_PROGRAM="${SIDECAR_PROGRAM:-$stage/lez-v02-bridge-poc}" \
 DESTDIR="$stage" \
   ./scripts/install-maker-node-service.sh
 
@@ -31,14 +47,25 @@ readonly verified_unit="$stage/lez-maker-node-verify.service"
 sed \
   -e "s#^User=lez-swap#User=$(id -un)#" \
   -e "s#^Group=lez-swap#Group=$(id -gn)#" \
-  -e "s#^ExecStart=/usr/bin/lez-maker-node#ExecStart=$stage/usr/bin/lez-maker-node#" \
+  -e "s#^ExecStart=/usr/bin/#ExecStart=$stage/usr/bin/#" \
   "$installed_unit" >"$verified_unit"
 systemd-analyze verify "$verified_unit"
+# ... and, where the Monero role was installed, with its drop-in, as an operator who enables it.
+if [[ -e "$stage/etc/lez/maker/monero.conf.example" ]]; then
+  install -D -m 0644 "$stage/etc/lez/maker/monero.conf.example" "$verified_unit.d/monero.conf"
+  systemd-analyze verify "$verified_unit"
+  test "$(stat -c '%a' "$stage/usr/bin/lez-xmr-maker-actor")" = 755
+  test "$(stat -c '%a' "$stage/usr/bin/xmr-reference-tag17")" = 755
+  test "$(stat -c '%a' "$stage/usr/bin/lez-v02-xmr-stage-a-plan")" = 755
+else
+  test ! -e "$stage/usr/bin/lez-xmr-maker-actor" && test ! -e "$stage/usr/bin/lez-v02-xmr-stage-a-plan"
+fi
 
 test "$(stat -c '%a' "$stage/usr/bin/lez-maker-node")" = 755
 test "$(stat -c '%a' "$stage/usr/bin/lez-maker-cli")" = 755
 test "$(stat -c '%a' "$stage/usr/lib/systemd/system/lez-maker-node.service")" = 644
 test "$(stat -c '%a' "$stage/usr/bin/lez-zec-maker-actor")" = 755
+test "$(stat -c '%a' "$stage/usr/bin/lez-logos-price-worker")" = 755
 test "$(stat -c '%a' "$stage/etc/lez/maker/credentials")" = 700
 test "$(stat -c '%a' "$stage/etc/lez/maker/node.json.example")" = 600
 

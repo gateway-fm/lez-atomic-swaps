@@ -17,14 +17,17 @@ Status vocabulary:
 
 ## Milestone phase register
 
+The `m*-complete` tags named here are not in this repository, which carries only
+`v0.x` release tags; `docs/submission.md` gives the commits of the imported ones.
+
 | Milestone | Active phase | Phase status | Completion tag | Owner transition |
 |---|---|---|---|---|
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
 | M3 | Progressive local PoC closure | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | None | Owner entered M3 on 2026-07-14 and directed completion. Closure-evidence push, remote CI, and the annotated tag remain; cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
 | M4 | Not active | Awaiting owner transition | None | Not requested |
-| M5 | Not active | Awaiting owner transition | None | Not requested |
-| M6 | Not active | Awaiting owner transition | None | Not requested |
+| M5 | Gap work in progress | Not complete; see `docs/submission.md` | None | Gap work directed; completion not requested |
+| M6 | Local-functional PoC | Implemented 2026-08-04 (ADR 0128) | `m6-poc-complete` | Owner approved the prototype on 2026-08-04 |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
 ## M3 PoC scorecard

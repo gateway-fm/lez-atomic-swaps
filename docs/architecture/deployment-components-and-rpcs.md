@@ -215,7 +215,7 @@ and the ZEC actors, which reach Zebra on a fourth loopback forwarder
 | LEZ Network desk (`apps/basecamp/network`), `blockchain_module`, `lez_indexer_module` (patched) | network | the LEZ devnet's block producer and its indexer; Re-index rebuilds the indexer's database | the container's Basecamp; the desk starts both modules when the container starts |
 | `lez-btc-maker-actor` / `lez-btc-taker-actor` | node images | the role's durable swap state machine: observes both chains, projects transitions, signs and broadcasts effects, answers `status` | Maker: child process per drive; Taker: linked in-process with the program hash pinned in every persisted swap |
 | `lez-v02-bridge-poc` | node images | LEZ v0.2 sidecar: prepares escrow initialization, funding, claims and refunds, has the role's wallet sign them over the signer socket, submits them; one durable reservation per state directory, hence one per swap | spawned per swap, respawned on restart |
-| `lez-maker-cli` / `lez-taker-cli` | node images | operator CLI over the Node socket | on demand |
+| `lez-maker-cli` / `lez-taker-cli` | node images | operator CLI over the Node socket (the Taker CLI's top-level `monitor`/`claim`/`refund` with `--actor-config` or `--receipt` run the actor in-process) | on demand |
 | `lez-taker-registry-init` | taker-node | creates the Taker registry schema | once, from the entrypoint |
 | `lez-maker-chat-gateway` / `lez-taker-chat-gateway` | node images | Logos Chat relay gateways for non-local peers | packaged, not started on the local path |
 | `lez-runtime-healthcheck` | node images, zebra, sequencer | JSON-RPC probe for Compose health checks | every 10–15 s |
@@ -282,12 +282,20 @@ leaves the container.
                                           draft, agreement key and actor config
 ```
 
+The Taker chooses the reservation id, so it names the swap directory only if
+it is 8 to 64 characters from `[A-Za-z0-9_-]`; both Nodes refuse any other id
+when they decode a Chat round and when they make a swap directory. A Maker
+composes an XMR or ZEC reservation in `swaps/.stage/<reservation id>.<pair>`
+and publishes it with one rename. No reservation id contains a `.`, so no
+swap directory is ever a stage, and clearing a stale stage never deletes a
+swap.
+
 With `LEZ_WALLET_SIGNER_SOCKET` set (compose.yaml sets it for both roles)
 `node-entrypoint.sh` removes any `btc/lez-signer.key` from the state volume
 and waits up to 120 s for the signer socket. The desk still reads the key
 file from the bind mount once, to import it into `lez_core`
-(`apps/basecamp/common/lez_role_signer.h`). On the ZEC devnet corridor the
-provisioner (`scripts/zec-provision.sh`) copies each role's key into the
+(`apps/basecamp/common/lez_role_signer.h`). On a ZEC catalog corridor the
+catalog tests' devnet fixture (`tests/fixtures/zec-catalog-fixture.sh`) copies each role's key into the
 corridor material; the corridor's sidecar signs through the same socket when
 it is up and falls back to that file only without it.
 

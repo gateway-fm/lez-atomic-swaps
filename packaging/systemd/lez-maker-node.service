@@ -20,7 +20,11 @@ WorkingDirectory=/var/lib/lez/maker
 LoadCredentialEncrypted=delivery-signing.key:/etc/lez/maker/credentials/delivery-signing.key.cred
 LoadCredentialEncrypted=maker-claim-recovery.key:/etc/lez/maker/credentials/maker-claim-recovery.key.cred
 LoadCredentialEncrypted=maker-claim-preimage.key:/etc/lez/maker/credentials/maker-claim-preimage.key.cred
-ExecStart=/usr/bin/lez-maker-node --config /etc/lez/maker/node.json
+LoadCredentialEncrypted=lez-signer.key:/etc/lez/maker/credentials/lez-signer.key.cred
+# The role launcher (modules/lez-role-node/node-entrypoint.sh) renders the Node's
+# configuration from this file's inputs and execs the Node, which stays the main process.
+EnvironmentFile=/etc/lez/maker/env
+ExecStart=/usr/bin/lez-role-node-launcher maker
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=30s
@@ -44,7 +48,10 @@ ProcSubset=pid
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=yes
 RestrictRealtime=yes
-RestrictSUIDSGID=yes
+# No RestrictSUIDSGID=: it makes openat2() fail with ENOSYS, and the Node opens every
+# state and key file with openat2(RESOLVE_NO_SYMLINKS), so it cannot start under it.
+# It can write only its mode-0700 state and runtime directories and a private /tmp, so a
+# set-ID file it made would be out of every other user's reach.
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 CapabilityBoundingSet=

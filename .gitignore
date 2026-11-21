@@ -29,6 +29,7 @@ __pycache__/
 # Image payloads staged by deploy/scripts/stage-assets.sh
 /deploy/images/*/lez-*
 /deploy/images/taker-node/zec-local-poc-*
+/deploy/images/maker-node/xmr-reference-*
 /deploy/images/lez-services/sequencer_service
 /deploy/images/lez-services/r0vm
 /deploy/images/lez-network-module/r0vm
@@ -36,6 +37,7 @@ __pycache__/
 /deploy/images/lez-wallet-module/*.lgx
 /deploy/images/*-node/lez_*_node.lgx
 /deploy/images/bitcoin-core/bin/
+/deploy/images/monerod/
 /deploy/images/basecamp-ui/assets/
 
 # Source receipts for locally built evidence payloads

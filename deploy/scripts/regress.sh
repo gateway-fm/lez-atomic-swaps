@@ -8,7 +8,7 @@
 #   scripts/regress.sh list <tier>       print the tier's tests, one per line
 #   scripts/regress.sh run <test>...     the named tests, e.g.  ui:btc:happy:TakerSellsLez
 #
-# A test is <node|ui>:<btc|zec>:<scenario>:<direction>. Each one runs on a chain
+# A test is <node|ui>:<btc|zec|xmr>:<scenario>:<direction>. Each one runs on a chain
 # that is finalizing (a new one is made when it is not), after reset-swaps.sh.
 # While it runs, the finalized height is read every 30 s; when it has stood
 # still for LEZ_REGRESS_FLAT_SECONDS (60; it moves every ~2 s) the chain is frozen, the test is
@@ -19,7 +19,9 @@
 # chain before it can freeze.
 #
 # Results go to LEZ_REGRESS_OUT (runtime/regress/<UTC stamp>): results.tsv (one
-# line per try), logs/ (each try's output), e2e/ and zec/ (the evidence the
+# line per try), logs/ (each try's output; for a try that failed, timed out or
+# was not exercised also logs/<try>.nodes/: both Nodes' container, Node and
+# Basecamp logs, bounded and redacted, and their health), e2e/ and zec/ (the evidence the
 # scenarios export), chain.tsv (the finalized height and the sequencer's tip at
 # every finality sample, at most every 30 s, with the test that was running), and
 # regress.log, whose start and verdict lines of each try carry both as well.
@@ -30,7 +32,9 @@
 # `refund`, every other Bitcoin test on `fast` (gen-config.sh); before a test
 # that wants the other one, up.sh switches the profile (runtime.env, both Nodes
 # and the miner recreated, the chain kept). A ZEC test runs on either: its
-# windows come from the corridor's agreement.
+# windows come from the corridor's agreement. A Monero test runs on `fast`, and
+# only on a stack with Monero (LEZ_MONERO=1 in runtime.env); elsewhere it is
+# left out with a line that says so.
 #
 # A test that exits 98 could not produce the situation it tests (node-e2e.py,
 # NotExercised: zec-claim-collision's provoked nonce race went the other way).
@@ -49,7 +53,8 @@
 # frozen every lane's test is void: all are stopped, put back first in line,
 # and one new chain serves every lane. A worn chain is replaced, and the timing
 # profile switched, once every lane is idle. The zec-balance-refusal tests need
-# a chain of their own and run last, on lane 1 alone. results.tsv gains the
+# a chain of their own and run last, both at once on lanes 1 and 2 of one chain
+# (one after the other on lane 1 when that cannot be). results.tsv gains the
 # lane and the chain each try ran on. Unset or 1: one test at a time, as above.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -71,9 +76,9 @@ tier_tests() { # tier_tests <tier>
       echo "ui:btc:happy:TakerSellsLez"; echo "ui:zec:zec-happy:TakerSellsForeign" ;;
     refunds)
       for d in "${directions[@]}"; do
-        for s in zec-taker-refund zec-maker-refund zec-refund-then-maker-lock; do echo "node:zec:$s:$d"; done
+        for s in zec-taker-refund zec-taker-refund-offline zec-maker-refund zec-refund-then-maker-lock; do echo "node:zec:$s:$d"; done
         echo "ui:zec:zec-taker-refund:$d"
-        for s in taker-refund maker-refund refund-then-maker-lock; do echo "node:btc:$s:$d"; done
+        for s in taker-refund taker-refund-offline maker-refund refund-then-maker-lock; do echo "node:btc:$s:$d"; done
         for s in taker-refund maker-refund; do echo "ui:btc:$s:$d"; done
       done
       echo "ui:zec:zec-maker-refund:TakerSellsLez"; echo "ui:zec:zec-maker-refund:TakerSellsForeign"
@@ -81,24 +86,46 @@ tier_tests() { # tier_tests <tier>
     full)
       tier_tests refunds
       for d in "${directions[@]}"; do
-        for s in zec-happy zec-replay zec-wrong-inputs zec-restart-taker zec-restart-maker zec-survivor \
-          zec-concurrent zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock; do
+        for s in zec-happy zec-dynamic-happy zec-replay zec-wrong-inputs zec-restart-taker zec-restart-maker zec-kill-taker zec-kill-maker \
+          zec-survivor zec-concurrent zec-concurrent-kill-maker zec-corrupt-state zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock \
+          zec-offline-after-second-lock zec-offline-after-claim zec-bitcoin-down; do
           echo "node:zec:$s:$d"
         done
         for s in zec-happy zec-concurrent zec-restart-taker zec-restart-maker zec-survivor zec-node-offline; do
           echo "ui:zec:$s:$d"
         done
-        for s in happy replay wrong-inputs restart-taker restart-maker survivor late-claim-confirms \
-          late-claim-unmined concurrent early-lock offline-after-lock regenerated-config tampered-config; do
+        for s in happy replay wrong-inputs restart-taker restart-maker kill-taker kill-maker survivor late-claim-confirms \
+          late-claim-unmined concurrent concurrent-kill-maker mixed-pair early-lock offline-after-lock offline-after-second-lock offline-after-claim \
+          regenerated-config tampered-config zebra-down; do
           echo "node:btc:$s:$d"
         done
         for s in happy restart-taker restart-maker survivor concurrent node-offline; do echo "ui:btc:$s:$d"; done
       done
+      echo "node:btc:maker-cli:TakerSellsForeign"; echo "node:btc:maker-price-module:TakerSellsForeign"
+      echo "node:btc:taker-cli:TakerSellsForeign"; echo "node:btc:taker-cli-refund:TakerSellsForeign"
+      echo "node:zec:zec-taker-cli:TakerSellsLez"
+      echo "node:btc:outage-before-take:TakerSellsForeign"; echo "node:zec:zec-outage-before-take:TakerSellsLez"
       echo "node:zec:zec-claim-collision:TakerSellsForeign"
       # selling LEZ only: the Maker's claim on the Taker's LEZ with what it holds (TM-0030)
       echo "node:zec:zec-maker-early-claim:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
+      # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
+      echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"
+      # a Zcash offer from the Maker desk's form, taken from the Taker desk (no corridor)
+      echo "ui:zec:zec-desk-offer:TakerSellsLez"; echo "ui:zec:zec-desk-offer:TakerSellsForeign"
       # last: each makes its own chain, one no other test can run on
+      # a stranger's credit to a funded escrow's custody (TM-0032): the swap still settles,
+      # the ending's recipient gets the lot and the credit; refunds refund the Taker's LEZ
+      for d in "${directions[@]}"; do echo "node:btc:btc-custody-credit:$d"; echo "node:zec:zec-custody-credit:$d"; done
+      echo "node:btc:btc-custody-credit-refund:TakerSellsLez"; echo "node:zec:zec-custody-credit-refund:TakerSellsLez"
+      for s in xmr-custody-credit xmr-custody-credit-refund; do echo "node:xmr:$s:TakerSellsLez"; done
+      # the Monero swaps through the two Nodes (only where LEZ_MONERO=1)
+      for s in xmr-happy xmr-taker-refund xmr-maker-never-funds xmr-punish xmr-concurrent xmr-kill-taker xmr-kill-maker xmr-taker-refund-kill \
+        xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock mixed-three-pair \
+        xmr-taker-clock-ahead xmr-punish-replans xmr-maker-claim-without-authorization xmr-maker-early-punish \
+        xmr-unfunded-punish xmr-taker-cheats; do echo "node:xmr:$s:TakerSellsLez"; done
+      # Monero offers from the Maker desk's form, taken on the Taker desk: claimed, refunded, two at once
+      for s in xmr-happy xmr-taker-refund xmr-concurrent; do echo "ui:xmr:$s:TakerSellsLez"; done
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
     *) echo "unknown tier: $1 (smoke, refunds, full)" >&2; return 64 ;;
   esac
@@ -121,7 +148,7 @@ race_tries="${LEZ_REGRESS_RACE_TRIES:-8}"
 lane_count="${LEZ_LANES:-1}"
 [[ "$lane_count" =~ ^[1-9]$ ]] || { echo "LEZ_LANES must be 1 to 9" >&2; exit 64; }
 poll="${LEZ_REGRESS_POLL_SECONDS:-5}"
-# The runner owns the chain: a ZEC desk test's zec-provision.sh must not
+# The runner owns the chain: a ZEC desk test's zec-catalog-fixture.sh must not
 # recreate it from inside a test (ensure-chain.sh) behind the runner's back.
 export LEZ_ZEC_SKIP_CHAIN_CHECK=1
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$out/regress.log"; }
@@ -205,24 +232,38 @@ watched() {
 profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile the test needs, empty for either
   local kind pair scenario direction
   IFS=: read -r kind pair scenario direction <<<"$1"
+  # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile (selling
+  # LEZ its Taker-reveals-first twin): the refund journeys' (-v6, -v8) is group
+  # zec-v6, every other ZEC test runs on -v5 (-v7) in `fast`.
+  if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
+    case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window|zec-custody-credit-refund) echo zec-v6 ;; *) echo fast ;; esac
+    return 0
+  fi
+  [[ "$pair" != xmr ]] || { echo fast; return 0; }
   [[ "$pair" == btc ]] || return 0
-  case "$scenario" in taker-refund|maker-refund|refund-then-maker-lock) echo refund ;; *) echo fast ;; esac
+  case "$scenario" in taker-refund|taker-refund-offline|maker-refund|refund-then-maker-lock|btc-custody-credit-refund) echo refund ;; *) echo fast ;; esac
 }
 switches=0
 use_profile() { # use_profile <profile>: switch the standing stack to it unless it runs on it already
-  [[ -n "$1" && "$1" != "$LEZ_TIMING_PROFILE" ]] || return 0
-  switches=$((switches + 1))
-  log "    timing profile $LEZ_TIMING_PROFILE -> $1 (logs/profile-$switches.log)"
-  if ! LEZ_TIMING_PROFILE="$1" SKIP_UI_VERIFY=1 LEZ_NO_BANNER=1 bash scripts/up.sh >"$out/logs/profile-$switches.log" 2>&1 </dev/null; then
+  # zec-v6 keeps the timing profile and moves the Nodes' take-time ZEC profile
+  # (LEZ_ZEC_PROFILE, exported: up.sh recreates the Nodes of every lane with it)
+  local timing="$1" zec=deterministic-local-devnet-v5
+  [[ "$1" != zec-v6 ]] || { timing="$LEZ_TIMING_PROFILE"; zec=deterministic-local-devnet-v6; }
+  [[ "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]] || zec="${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}"
+  [[ -n "$timing" ]] || return 0
+  [[ "$timing" != "$LEZ_TIMING_PROFILE" || "$zec" != "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" ]] || return 0
+  switches=$((switches + 1)); export LEZ_ZEC_PROFILE="$zec"
+  log "    timing profile $LEZ_TIMING_PROFILE -> $timing, ZEC profile $zec (logs/profile-$switches.log)"
+  if ! LEZ_TIMING_PROFILE="$timing" SKIP_UI_VERIFY=1 LEZ_NO_BANNER=1 bash scripts/up.sh >"$out/logs/profile-$switches.log" 2>&1 </dev/null; then
     # up.sh on a frozen chain cannot finish; a new chain takes the profile too
-    log "    up.sh did not switch the profile; a new chain on $1"
-    fresh_chain LEZ_TIMING_PROFILE="$1" || return 1
+    log "    up.sh did not switch the profile; a new chain on $timing"
+    fresh_chain LEZ_TIMING_PROFILE="$timing" || return 1
   fi
   load_env
-  [[ "$LEZ_TIMING_PROFILE" == "$1" ]] || { log "    runtime.env still names profile $LEZ_TIMING_PROFILE"; return 1; }
+  [[ "$LEZ_TIMING_PROFILE" == "$timing" ]] || { log "    runtime.env still names profile $LEZ_TIMING_PROFILE"; return 1; }
 }
 command_of() { # command_of <kind> <pair> <scenario> <direction>
-  local pair=() record=(); [[ "$2" == zec ]] && pair=(--pair Zcash)
+  local pair=() record=(); [[ "$2" == zec ]] && pair=(--pair Zcash); [[ "$2" == xmr ]] && pair=(--pair Monero)
   [[ "${LEZ_REGRESS_RECORD:-0}" != 1 ]] || record=(--record)
   if [[ "$1" == node ]]; then echo python3 scripts/node-e2e.py "${pair[@]}" --direction "$4" "$3"
   else echo bash scripts/ui-e2e.sh "$3" "${pair[@]}" --direction "$4" "${record[@]}"; fi
@@ -239,12 +280,19 @@ keep_video() {
   mkdir -p "$out/videos" && cp "$video" "$out/videos/$name.mp4"
 }
 keep() { cp runtime/e2e/*.json "$out/e2e/" 2>/dev/null; cp runtime/evidence/zec/*.json "$out/zec/" 2>/dev/null; true; }
+# keep_node_logs <verdict> <try's log>: a try that failed, timed out or was not
+# exercised leaves both of its lane's Nodes' logs and health answers in
+# logs/<try>.nodes/ before the next reset or chain recreates the containers.
+keep_node_logs() {
+  [[ "$1" =~ ^(FAILED|TIMEOUT|NOT-EXERCISED)$ ]] || return 0
+  python3 scripts/node-e2e.py node-logs --out "${2%.log}.nodes" >>"$2" 2>&1 </dev/null || true
+}
 
 run_test() { # run_test <kind:pair:scenario:direction>
   local kind pair scenario direction try rc prepared started logfile verdict price
   IFS=: read -r kind pair scenario direction <<<"$1"
-  [[ "$kind" =~ ^(node|ui)$ && "$pair" =~ ^(btc|zec)$ && -n "$scenario" && "$direction" =~ ^TakerSells(Lez|Foreign)$ ]] ||
-    { log "=== $1: not a test (<node|ui>:<btc|zec>:<scenario>:<direction>)"; return 64; }
+  [[ "$kind" =~ ^(node|ui)$ && "$pair" =~ ^(btc|zec|xmr)$ && -n "$scenario" && "$direction" =~ ^TakerSells(Lez|Foreign)$ ]] ||
+    { log "=== $1: not a test (<node|ui>:<btc|zec|xmr>:<scenario>:<direction>)"; return 64; }
   use_profile "$(profile_of "$1")" || return 2
   for (( try = 1; try <= (tries > race_tries ? tries : race_tries); try++ )); do
     fresh=0; prepared="$(date +%s)"
@@ -275,6 +323,7 @@ run_test() { # run_test <kind:pair:scenario:direction>
       $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
     case "$rc" in 0) verdict=PASSED ;; 99) verdict=FROZEN ;; 98) verdict=NOT-EXERCISED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
     if [[ "$verdict" == FAILED || "$verdict" == TIMEOUT ]] && ! moving 30; then verdict=FROZEN; fi
+    keep_node_logs "$verdict" "$logfile"
     # what the harness spent before the scenario started (finality probe, a new
     # chain, reset-swaps.sh) apart from the scenario itself (its preflights included)
     log "=== $1 (try $try): $verdict in $(( $(date +%s) - started )) s (+$(( started - prepared )) s before it$([[ "$fresh" == 0 ]] || echo ', a new chain among them')); $(chain_state)"
@@ -305,7 +354,25 @@ expected_seconds() { # expected_seconds <test>
   fi
   if [[ -z "$seconds" ]]; then
     case "$1" in
-      *late-claim-unmined*) seconds=1800 ;;
+      *late-claim-unmined*|*:kill-taker:*|*:kill-maker:*) seconds=1800 ;;
+      *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
+      node:xmr:xmr-kill-*) seconds=2700 ;;
+      node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
+      # waits for the agreement's punish time P (+1000 s on fast), or its refund time R (+720 s)
+      node:xmr:xmr-punish:*) seconds=1340 ;;
+      # P, then six taken nonces, each a Maker drive or two
+      node:xmr:xmr-punish-replans:*) seconds=2100 ;;
+      node:xmr:xmr-maker-early-punish:*) seconds=1400 ;;
+      # two swaps, each to P
+      node:xmr:xmr-unfunded-punish:*) seconds=2700 ;;
+      # a refunded swap, then a completed one waited past its R
+      node:xmr:xmr-taker-cheats:*) seconds=2100 ;;
+      node:xmr:xmr-taker-clock-ahead:*|node:xmr:xmr-maker-claim-without-authorization:*) seconds=1100 ;;
+      node:xmr:xmr-wallet-restart:*|node:xmr:xmr-taker-refund*|node:xmr:xmr-custody-credit-refund:*|node:xmr:xmr-maker-never-funds:*|ui:xmr:xmr-taker-refund:*) seconds=1020 ;;
+      node:xmr:*|ui:xmr:*) seconds=600 ;;
+      # ~2 min a try, and its provoked race may need several (NOT-EXERCISED):
+      # started early, its tries do not hold one lane while the others idle
+      *:zec-claim-collision:*) seconds=600 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;
       *) seconds=250 ;;
@@ -372,6 +439,7 @@ lane_job() {
   case "$rc" in 0) verdict=PASSED ;; 98) verdict=NOT-EXERCISED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
   if [[ -e "$dir/void" ]]; then verdict=FROZEN
   elif [[ "$verdict" != PASSED && "$verdict" != NOT-EXERCISED ]] && ! moving "${LEZ_REGRESS_MOVING_WINDOW:-30}"; then verdict=FROZEN; fi
+  keep_node_logs "$verdict" "$logfile"
   [[ "$kind" != ui ]] || keep_video "$scenario" "$direction" "$try" "$verdict" "$started"
   printf '%s\t%s\n' "$verdict" "$(( $(date +%s) - started ))" >"$dir/verdict"
 }
@@ -494,6 +562,52 @@ lanes_main() {
   done
   kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
   (( ${#serial[@]} > 0 )) || return 0
+  # The two zec-balance-refusal tests at once, on one chain that defers the
+  # vault claim of lane 1's Taker wallet and of lane 2's Maker wallet: each
+  # test's own bootstrap-market.sh run keeps the other's deferred. What does
+  # not pass that way (a frozen chain) runs alone below, as before.
+  if (( lane_count >= 2 )) && [[ "${serial[*]}" == "node:zec:zec-balance-refusal:TakerSellsLez node:zec:zec-balance-refusal:TakerSellsForeign" ]]; then
+    local wallets taker_1 maker_2
+    wallets="$(for k in 1 2; do LEZ_LANE="$k" bash -c 'source scripts/lane.sh && echo "$LEZ_LANE_MAKER_WALLET $LEZ_LANE_TAKER_WALLET"'; done)"
+    read -r _ taker_1 maker_2 _ <<<"$(tr '\n' ' ' <<<"$wallets")"
+    log "lanes: ${#serial[@]} tests on one chain of their own, lanes 1 and 2 ($taker_1 and $maker_2 unfunded)"
+    bash scripts/lanes.sh stop "$lane_count" >"$out/logs/lanes-stop.log" 2>&1 || log "    lanes.sh stop failed (logs/lanes-stop.log)"
+    export LEZ_LANES=2
+    if ! use_profile fast || ! fresh_chain LEZ_BOOTSTRAP_DEFER_CLAIM="$taker_1 $maker_2"; then
+      log "no LEZ chain could be started; stopping"; failed+=("${serial[@]}"); return 2
+    fi
+    deferred_chain=1
+    for k in 1 2; do
+      t="${serial[k - 1]}"; try=1; tries_of[$t]=1
+      rm -f "$out/lanes/$k/verdict" "$out/lanes/$k/void" "$out/lanes/$k/pgid"
+      log "    [lane $k] $t (try $try) starts: $(chain_state)"
+      if (( k == 1 )); then LEZ_BOOTSTRAP_DEFER_CLAIM="$maker_2" lane_job "$k" "$t" "$try" 1 &
+      else LEZ_BOOTSTRAP_DEFER_CLAIM="$taker_1" lane_job "$k" "$t" "$try" 1 &
+      fi
+      busy[$k]=$!; busy_test[$k]="$t"; busy_try[$k]="$try"
+    done
+    chain_watch & watcher=$!
+    while (( ${#busy[@]} > 0 )); do
+      wait -n -p done_pid
+      if [[ "$done_pid" == "$watcher" ]]; then
+        for k in "${!busy[@]}"; do
+          touch "$out/lanes/$k/void"
+          [[ ! -s "$out/lanes/$k/pgid" ]] || kill -TERM -- "-$(cat "$out/lanes/$k/pgid")" 2>/dev/null
+        done
+        sleep "${LEZ_REGRESS_KILL_GRACE:-20}"
+        for k in "${!busy[@]}"; do
+          [[ ! -s "$out/lanes/$k/pgid" ]] || kill -KILL -- "-$(cat "$out/lanes/$k/pgid")" 2>/dev/null
+          kill -KILL "${busy[$k]}" 2>/dev/null; wait "${busy[$k]}" 2>/dev/null
+          finish_try "$k"
+        done
+        break
+      fi
+      for k in "${!busy[@]}"; do [[ "${busy[$k]}" != "$done_pid" ]] || finish_try "$k"; done
+    done
+    kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+    serial=(${requeue[@]+"${requeue[@]}"}); requeue=()
+    (( ${#serial[@]} > 0 )) || return 0
+  fi
   # the tests that need a chain of their own: lane 1 alone, one after another
   log "lanes: ${#serial[@]} test(s) on a chain of their own, lane 1 alone"
   bash scripts/lanes.sh stop "$lane_count" >"$out/logs/lanes-stop.log" 2>&1 || log "    lanes.sh stop failed (logs/lanes-stop.log)"
@@ -506,6 +620,14 @@ lanes_main() {
 }
 
 load_env
+if [[ "${LEZ_MONERO:-0}" != 1 ]]; then
+  kept=()
+  for t in "${tests[@]}"; do
+    if [[ "$t" == *:xmr:* ]]; then log "=== $t: not run (Monero is off on this stack; LEZ_MONERO=1 scripts/up.sh starts it)"
+    else kept+=("$t"); fi
+  done
+  tests=(${kept[@]+"${kept[@]}"})
+fi
 [[ "${LEZ_TIMING_PROFILE:-local}" =~ ^(fast|refund)$ ]] || { echo "the regression needs the fast or the refund timing profile: LEZ_TIMING_PROFILE=fast scripts/up.sh" >&2; exit 1; }
 began="$(date +%s)"; failed=()
 log "regression ${mode}: ${#tests[@]} tests at $(git rev-parse --short HEAD 2>/dev/null || echo '?') (tree dirty: $(git status --short 2>/dev/null | wc -l)), results in $out"
