@@ -148,7 +148,55 @@ do not re-encode identically (`postcard` alone accepts a non-minimal length). Th
 (`crates/node-common/src/chat_contracts.rs`) bound them again as Base64: role
 packets at 270 KiB, ceremony packets at 8 KiB.
 
-## A runnable example
+## The full-lifecycle example
+
+[`crates/xmr-reference-actor/examples/full-lifecycle.rs`](../crates/xmr-reference-actor/examples/full-lifecycle.rs)
+walks two swaps through the whole lifecycle for both roles in one process, on
+the types the Nodes run (this SDK, `xmr-reference-actor`,
+`lez-adaptor-role-runner` and `lez-xmr-monero-adapter`). It lives in
+`xmr-reference-actor` because that crate already holds every one of them.
+
+| Stage | What the example does |
+| --- | --- |
+| Offer and negotiation | Each role makes its share, DLEQ proof and (the Taker) the view key from a seed; both proofs are verified; Stage A is composed by each role, compared byte for byte and countersigned. Chat is a function call |
+| Escrow creation | Both MuSig2 adaptor sessions (rounds R3 to R6) run on the role runner's seats with each role's SQLite adaptor journal, the Taker's claim partial withheld (asserted absent from every byte sent) and committed in Stage B; tag 13 locks the LEZ; the lock candidate passes `validate_lez_lock_candidate` before C |
+| Monero lock | The shared address is funded from the lane's funding wallet, ten blocks are mined, and the Taker's view-only wallet checks the exact output with `MoneroOutputVerifier` |
+| Claim (swap 1) | Tag 14 publishes the Taker's partial, checked against its commitment; the Maker completes tag 15 with its share; the Taker extracts the Maker's share and sweeps the Monero with `ReconstructedMoneroSpendKey`. Ends `Completed` |
+| Refund (swap 2) | The Taker completes tag 16 with its share in [R, P); the Maker extracts the Taker's share and sweeps its Monero back. Ends `Refunded` |
+| Partial information loss | Before it recovers, the recovering role drops its session state and deletes its adaptor journal, keeping only its share, the view key and the Stage A and Stage B bytes. From those and the public escrow it rebuilds the claim pre-signature (Stage B's Maker partial and nonces plus the tag-14 partial) or takes Stage B's refund pre-signature, extracts the other share and rebuilds the spend key; that key is the one that sweeps |
+
+The escrow also refuses a wrong tag-14 partial, tag 16 before R and after
+the claim, and tag 17 before P and after the refund.
+
+The Monero leg is live, against the devnet's Monero regtest (lane 1 by
+default). The LEZ escrow is modelled in memory: the sidecars run inside the
+Node containers and are not reachable from the host. The model enforces the
+guest's states, windows (the `fast` profile, on a model LEZ clock), the tag-14
+commitment check and the BIP-340 check of tags 15 and 16 under the swap's
+aggregate keys; LEZ accounts, program ids and message hashes are fixed
+stand-ins.
+
+```sh
+(cd deploy && LEZ_MONERO=1 bash scripts/up.sh)
+python3 deploy/scripts/monero-lane.py fund --role maker   # once on a new stack
+cargo run -p xmr-reference-actor --example full-lifecycle
+```
+
+The example's header lists its environment (endpoints, the Digest login
+directory, the funding wallet, the seed); `LEZ_XMR_EXAMPLE_MONERO=off` runs it
+without Monero and says so at each Monero step. Keys and addresses follow the
+seed; the MuSig2 nonces do not, so Stage B and the signatures differ between
+runs. It prints public values only. CI compiles it (`--all-targets`) but does
+not run it; no run of it is recorded in the repository.
+
+What the public API does not cover, and the example does by hand: recovery
+after the adaptor journal is lost uses the raw `lez-adaptor-signature`
+primitives on the context of `claim_session_descriptor()`, since the Nodes'
+extraction reads the journal; and the actor's own Stage A and Stage B
+composition takes no seeded keys, so the example builds both stages on the
+public SDK types the way `reserve.rs` and `ceremony.rs` do.
+
+## The DLEQ example
 
 [`examples/dleq-spike.rs`](../crates/xmr-swap-sdk/examples/dleq-spike.rs)
 uses only public API: two parties' shares (fixed scalars 1 and 2), a DLEQ
@@ -175,9 +223,9 @@ take-time Chat rounds and their Monero actors directly on
 `xmr-reference-actor`, which uses the agreement, DLEQ and recovery types
 above. [`examples/lifecycle-wiring.rs`](../crates/xmr-swap-sdk/examples/lifecycle-wiring.rs)
 is a **type-checked skeleton**, not a runnable lifecycle: its actor port's
-`activate` and `drive` are `unreachable!()`. Unlike the Bitcoin and Zcash
-SDKs, this one has no example that walks offer, negotiation, lock, claim and
-refund.
+`activate` and `drive` are `unreachable!()`. The runnable lifecycle is
+[the full-lifecycle example](#the-full-lifecycle-example), which uses the
+types the Nodes use and not this facade.
 
 ## How the Nodes use it
 

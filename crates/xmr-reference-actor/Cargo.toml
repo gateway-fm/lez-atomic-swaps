@@ -51,6 +51,11 @@ tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread"] }
 url = "=2.5.8"
 zeroize = "=1.9.0"
 
+[[example]]
+name = "full-lifecycle"
+path = "examples/full-lifecycle.rs"
+required-features = ["sessions"]
+
 [[bin]]
 name = "xmr-reference-tag15"
 path = "src/bin/xmr-reference-tag15.rs"
