@@ -76,6 +76,34 @@ pub use monero_rpc::monero::cryptonote::hash::Hash as MoneroTransactionId;
 
 /// Exact confirmation policy committed by the M4 LEZ/XMR agreement.
 pub const REQUIRED_MONERO_CONFIRMATIONS: u64 = 10;
+/// Height-zero block hash of Monero Stagenet, the network
+/// [`MoneroNetwork::Stagenet`] names. A Stagenet identity is admitted only
+/// with this genesis.
+pub const MONERO_STAGENET_GENESIS_HASH: [u8; 32] =
+    hex_literal("76ee3cc98646292206cd3e86f74d88b4dcc1d937088645e9b0cbca84b7ce74eb");
+/// Height-zero block hash of Monero Testnet, which no profile admits.
+const MONERO_TESTNET_GENESIS_HASH: [u8; 32] =
+    hex_literal("48ca7cd3c8de5b6a4d53d2861fbdaedca141553559f9be9520068053cda8430b");
+
+const fn hex_literal(text: &str) -> [u8; 32] {
+    const fn nibble(byte: u8) -> u8 {
+        match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            _ => panic!("lowercase hex only"),
+        }
+    }
+    let bytes = text.as_bytes();
+    assert!(bytes.len() == 64, "32-byte hex literal");
+    let mut out = [0_u8; 32];
+    let mut index = 0;
+    while index < 32 {
+        out[index] = (nibble(bytes[2 * index]) << 4) | nibble(bytes[2 * index + 1]);
+        index += 1;
+    }
+    out
+}
+
 /// Fixed deadline applied by `monero-rpc` to every daemon and wallet request.
 pub const RPC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum decoded available-output entries accepted from wallet RPC.
@@ -157,6 +185,7 @@ pub struct MoneroChainIdentityAttestor {
     network: MoneroNetwork,
     daemon: DaemonJsonRpcClient,
     daemon_origin: String,
+    endpoint: LoopbackRpcEndpoint,
 }
 
 impl MoneroChainIdentityAttestor {
@@ -182,18 +211,51 @@ impl MoneroChainIdentityAttestor {
             network,
             daemon: client,
             daemon_origin: daemon.base_url.clone(),
+            endpoint: LoopbackRpcEndpoint {
+                base_url: daemon.base_url.clone(),
+                username: daemon.username.clone(),
+                password: daemon.password.clone(),
+            },
         })
     }
 
     /// Discovers the exact nonzero block hash at height zero.
     ///
+    /// A Stagenet attestor admits only the Stagenet genesis; a Regtest one
+    /// refuses the Stagenet and Testnet genesis.
+    ///
     /// # Errors
     ///
-    /// Fails closed if the typed RPC fails or returns an all-zero placeholder.
+    /// Fails closed if the typed RPC fails, returns an all-zero placeholder or
+    /// the genesis of another network.
     pub async fn discover(&self) -> Result<MoneroChainIdentity, MoneroEvidenceError> {
         let hash =
             MoneroRpcPort::rpc("on_get_block_hash(0)", || self.daemon.on_get_block_hash(0)).await?;
         identity_from_observed_hash(self.network, hash_bytes(hash.as_ref()))
+    }
+
+    /// Proves from the daemon's `get_info` that it runs the attestor's
+    /// network: `fakechain` for Regtest, `stagenet` for Stagenet. A mainnet
+    /// or testnet daemon is refused whatever the configured network; the
+    /// Regtest genesis equals the mainnet one, so only this read tells them
+    /// apart.
+    ///
+    /// # Errors
+    ///
+    /// [`MoneroEvidenceError::DaemonNetworkMismatch`] for a daemon of another
+    /// network or an untrusted answer; [`MoneroEvidenceError::Rpc`] when the
+    /// bounded read fails.
+    pub async fn verify_network(&self) -> Result<(), MoneroEvidenceError> {
+        match topology::verify_daemon_network(&self.endpoint, self.network).await {
+            Ok(()) => Ok(()),
+            Err(MoneroTopologyError::DaemonNetworkMismatch) => {
+                Err(MoneroEvidenceError::DaemonNetworkMismatch)
+            }
+            Err(error) => Err(MoneroEvidenceError::Rpc {
+                operation: "get_info",
+                source: error.into(),
+            }),
+        }
     }
 
     /// Reads the daemon's current tip height (its block count less one).
@@ -682,6 +744,15 @@ pub enum MoneroEvidenceError {
     /// The actual daemon returned an unusable all-zero height-zero identity.
     #[error("Monero daemon returned an all-zero height-zero hash")]
     ZeroObservedGenesisHash,
+    /// The daemon's height-zero hash is the genesis of another network.
+    #[error("Monero daemon genesis belongs to another network than {network:?}")]
+    GenesisOfAnotherNetwork {
+        /// The configured network.
+        network: MoneroNetwork,
+    },
+    /// The daemon's `get_info` names another network than the configured one.
+    #[error("Monero daemon does not serve the configured network")]
+    DaemonNetworkMismatch,
     /// A decoded collection exceeded its post-decode `PoC` bound.
     #[error("decoded Monero `{resource}` exceeded the semantic bound {maximum}")]
     SemanticResponseBound {
@@ -791,8 +862,19 @@ fn identity_from_observed_hash(
     network: MoneroNetwork,
     genesis_hash: [u8; 32],
 ) -> Result<MoneroChainIdentity, MoneroEvidenceError> {
-    MoneroChainIdentity::new(network, genesis_hash)
-        .map_err(|_| MoneroEvidenceError::ZeroObservedGenesisHash)
+    let foreign = match network {
+        MoneroNetwork::Stagenet => genesis_hash != MONERO_STAGENET_GENESIS_HASH,
+        MoneroNetwork::Regtest => {
+            genesis_hash == MONERO_STAGENET_GENESIS_HASH
+                || genesis_hash == MONERO_TESTNET_GENESIS_HASH
+        }
+    };
+    let identity = MoneroChainIdentity::new(network, genesis_hash)
+        .map_err(|_| MoneroEvidenceError::ZeroObservedGenesisHash)?;
+    if foreign {
+        return Err(MoneroEvidenceError::GenesisOfAnotherNetwork { network });
+    }
+    Ok(identity)
 }
 
 fn valid_credential(value: &str, colon_allowed: bool) -> bool {
@@ -1784,6 +1866,27 @@ mod tests {
         assert_eq!(identity.genesis_hash(), [7; 32]);
         assert!(matches!(
             identity_from_observed_hash(MoneroNetwork::Regtest, [0; 32]),
+            Err(MoneroEvidenceError::ZeroObservedGenesisHash)
+        ));
+
+        let stagenet =
+            identity_from_observed_hash(MoneroNetwork::Stagenet, MONERO_STAGENET_GENESIS_HASH)
+                .expect("the Stagenet genesis");
+        assert_eq!(stagenet.network(), MoneroNetwork::Stagenet);
+        for (network, foreign) in [
+            (MoneroNetwork::Stagenet, [7; 32]),
+            (MoneroNetwork::Stagenet, MONERO_TESTNET_GENESIS_HASH),
+            (MoneroNetwork::Regtest, MONERO_STAGENET_GENESIS_HASH),
+            (MoneroNetwork::Regtest, MONERO_TESTNET_GENESIS_HASH),
+        ] {
+            assert!(matches!(
+                identity_from_observed_hash(network, foreign),
+                Err(MoneroEvidenceError::GenesisOfAnotherNetwork { network: refused })
+                    if refused == network
+            ));
+        }
+        assert!(matches!(
+            identity_from_observed_hash(MoneroNetwork::Stagenet, [0; 32]),
             Err(MoneroEvidenceError::ZeroObservedGenesisHash)
         ));
 

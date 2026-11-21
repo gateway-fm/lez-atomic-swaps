@@ -521,3 +521,45 @@ jobs:
             --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
           test -z "$(docker volume ls --quiet \
             --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+
+  monero-stagenet:
+    name: self-hosted Monero 0.18.5.1 Stagenet daemon and wallet-rpc, adapter and SDK Stagenet checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      RUN_ID: github-xmr-stagenet-${{ github.run_id }}-${{ github.run_attempt }}
+      MONERO_STAGENET_KEEP_RUNNING: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.96.0
+      - name: Verify the release, start monerod and wallet-rpc on Stagenet, run the Stagenet tests and a bounded sync
+        run: ./scripts/run-monero-stagenet-ci.sh
+      # Report-only, like the other upstream-owned images: the binaries are
+      # the signed Monero release, not ours to rebuild.
+      - name: Report exact Monero Stagenet image high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: lez-atomic-swaps-monero-stagenet:github-xmr-stagenet-${{ github.run_id }}-${{ github.run_attempt }}
+          format: table
+          exit-code: "0"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Remove only the exact Monero Stagenet CI resources
+        if: always()
+        run: |
+          set -euo pipefail
+          prefix="lez-atomic-swaps-monero-stagenet-${RUN_ID}"
+          docker container rm --force "${prefix}-monerod" "${prefix}-wallet-rpc" >/dev/null 2>&1 || true
+          docker network rm "${prefix}" >/dev/null 2>&1 || true
+          docker image rm "lez-atomic-swaps-monero-stagenet:${RUN_ID}" >/dev/null 2>&1 || true
+          test -z "$(docker container ls --all --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+          test -z "$(docker network ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"

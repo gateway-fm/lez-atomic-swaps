@@ -245,14 +245,7 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         credentials: &LoopbackRpcEndpoint,
         body: &'static str,
     ) -> Result<Vec<u8>, MoneroTopologyError> {
-        let response = self.send(target, credentials, body).await?;
-        if response.status() != StatusCode::OK {
-            return Err(MoneroTopologyError::UnexpectedHttpStatus {
-                operation,
-                actual: response.status().as_u16(),
-            });
-        }
-        read_bounded(operation, response).await
+        exchange(&self.client, operation, target, credentials, body).await
     }
 
     async fn send(
@@ -261,14 +254,72 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         credentials: &LoopbackRpcEndpoint,
         body: &'static str,
     ) -> Result<Response, MoneroTopologyError> {
-        self.client
-            .post(format!("{}{JSON_RPC_PATH}", target.base_url))
-            .header(CONTENT_TYPE, "application/json")
-            .body(body)
-            .send_with_digest_auth(&credentials.username, &credentials.password)
-            .await
-            .map_err(|_| MoneroTopologyError::HttpTransport)
+        send(&self.client, target, credentials, body).await
     }
+}
+
+async fn exchange(
+    client: &reqwest::Client,
+    operation: &'static str,
+    target: &LoopbackRpcEndpoint,
+    credentials: &LoopbackRpcEndpoint,
+    body: &'static str,
+) -> Result<Vec<u8>, MoneroTopologyError> {
+    let response = send(client, target, credentials, body).await?;
+    if response.status() != StatusCode::OK {
+        return Err(MoneroTopologyError::UnexpectedHttpStatus {
+            operation,
+            actual: response.status().as_u16(),
+        });
+    }
+    read_bounded(operation, response).await
+}
+
+async fn send(
+    client: &reqwest::Client,
+    target: &LoopbackRpcEndpoint,
+    credentials: &LoopbackRpcEndpoint,
+    body: &'static str,
+) -> Result<Response, MoneroTopologyError> {
+    client
+        .post(format!("{}{JSON_RPC_PATH}", target.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .body(body)
+        .send_with_digest_auth(&credentials.username, &credentials.password)
+        .await
+        .map_err(|_| MoneroTopologyError::HttpTransport)
+}
+
+/// Proves from the daemon's bounded `get_info` that it serves `network`:
+/// `nettype` `fakechain` for Regtest, `stagenet` with the stagenet flag for
+/// Stagenet. A mainnet or testnet daemon is refused for every network, and
+/// so is an answer the daemon marks untrusted. Unlike
+/// [`MoneroTopologyVerifier::verify`] it asks nothing of the peer set, so it
+/// also holds for a Stagenet daemon that syncs from the public network.
+pub(crate) async fn verify_daemon_network(
+    daemon: &LoopbackRpcEndpoint,
+    network: MoneroNetwork,
+) -> Result<(), MoneroTopologyError> {
+    const OPERATION: &str = "daemon.get_info";
+    let client = reqwest::Client::builder()
+        .timeout(RPC_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|_| MoneroTopologyError::HttpClientBuild)?;
+    // A Digest answer on another pooled connection than its challenge gets a
+    // 401 (see the crate documentation): start the exchange once more.
+    let bytes = match exchange(&client, OPERATION, daemon, daemon, GET_INFO_REQUEST).await {
+        Err(
+            MoneroTopologyError::HttpTransport
+            | MoneroTopologyError::BodyRead { .. }
+            | MoneroTopologyError::UnexpectedHttpStatus { actual: 401, .. },
+        ) => exchange(&client, OPERATION, daemon, daemon, GET_INFO_REQUEST).await?,
+        result => result?,
+    };
+    let envelope: RpcEnvelope<GetInfoResult> =
+        serde_json::from_slice(&bytes).map_err(|_| MoneroTopologyError::MalformedRpcEnvelope {
+            operation: OPERATION,
+        })?;
+    validate_network_info(&envelope.into_result(OPERATION)?, network)
 }
 
 impl fmt::Debug for MoneroTopologyVerifier<'_> {
@@ -423,6 +474,9 @@ pub enum MoneroTopologyError {
     /// The isolation capability is deliberately local-Regtest-only.
     #[error("Monero topology attestation requires the Regtest profile")]
     RequiresRegtest,
+    /// The daemon's `get_info` names another network than the configured one.
+    #[error("Monero daemon does not serve the configured network")]
+    DaemonNetworkMismatch,
     /// Every trust/auth role must have its own process origin.
     #[error("Monero daemon, target wallet, and foreign wallet origins must be distinct")]
     AliasedRpcOrigins,
@@ -630,6 +684,26 @@ fn validate_info(info: &GetInfoResult) -> Result<(), MoneroTopologyError> {
     Ok(())
 }
 
+fn validate_network_info(
+    info: &GetInfoResult,
+    network: MoneroNetwork,
+) -> Result<(), MoneroTopologyError> {
+    let (nettype, stagenet) = match network {
+        MoneroNetwork::Regtest => ("fakechain", false),
+        MoneroNetwork::Stagenet => ("stagenet", true),
+    };
+    if info.status != "OK"
+        || info.untrusted
+        || info.nettype != nettype
+        || info.mainnet
+        || info.testnet
+        || info.stagenet != stagenet
+    {
+        return Err(MoneroTopologyError::DaemonNetworkMismatch);
+    }
+    Ok(())
+}
+
 fn validate_connections(connections: &GetConnectionsResult) -> Result<(), MoneroTopologyError> {
     if connections.status != "OK" || connections.untrusted {
         return Err(MoneroTopologyError::ConnectionsPresent);
@@ -707,6 +781,71 @@ mod tests {
     const FOREIGN_USER: &str = "foreign-user";
     const FOREIGN_PASSWORD: &str = "foreign-secret";
     const CHALLENGE: &str = "Digest realm=\"monero-rpc\", qop=\"auth\", algorithm=MD5, nonce=\"fixed-test-nonce\", opaque=\"fixed-test-opaque\"";
+
+    /// `get_info` of the pinned monerod 0.18.5.1 on Stagenet while it syncs,
+    /// as the daemon printed it (fields this crate does not read included).
+    const STAGENET_GET_INFO: &str = r#"{"adjusted_time":1522906619,"alt_blocks_count":0,"block_size_limit":600000,"block_size_median":300000,"block_weight_limit":600000,"block_weight_median":300000,"bootstrap_daemon_address":"","busy_syncing":true,"credits":0,"cumulative_difficulty":56672896,"cumulative_difficulty_top64":0,"database_size":70955008,"difficulty":5226,"difficulty_top64":0,"free_space":22355439616,"grey_peerlist_size":1262,"height":48557,"height_without_bootstrap":48557,"incoming_connections_count":0,"mainnet":false,"nettype":"stagenet","offline":false,"outgoing_connections_count":8,"restricted":false,"rpc_connections_count":1,"stagenet":true,"start_time":1795270425,"status":"OK","synchronized":false,"target":120,"target_height":2255223,"testnet":false,"top_block_hash":"dc0a4320bf1ab8eebd2130ad2de06b8f06ce903ea8ec17b379022c91ba19189e","top_hash":"","tx_count":70,"tx_pool_size":0,"untrusted":false,"update_available":false,"version":"0.18.5.1-release","was_bootstrap_ever_used":false,"white_peerlist_size":16,"wide_cumulative_difficulty":"0x360c280","wide_difficulty":"0x146a"}"#;
+
+    fn info_with(replacements: &[(&str, &str)]) -> GetInfoResult {
+        let mut text = STAGENET_GET_INFO.to_owned();
+        for (from, to) in replacements {
+            assert!(text.contains(from), "fixture holds {from}");
+            text = text.replace(from, to);
+        }
+        serde_json::from_str(&text).expect("get_info fixture")
+    }
+
+    #[test]
+    fn daemon_network_check_admits_only_the_configured_network() {
+        let stagenet = info_with(&[]);
+        assert_eq!(
+            validate_network_info(&stagenet, MoneroNetwork::Stagenet),
+            Ok(())
+        );
+        assert_eq!(
+            validate_network_info(&stagenet, MoneroNetwork::Regtest),
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+        // The isolated Regtest profile refuses a Stagenet daemon too.
+        assert_eq!(
+            validate_info(&stagenet),
+            Err(MoneroTopologyError::DaemonProfileMismatch)
+        );
+
+        let fakechain = info_with(&[
+            (r#""nettype":"stagenet""#, r#""nettype":"fakechain""#),
+            (r#""stagenet":true"#, r#""stagenet":false"#),
+        ]);
+        assert_eq!(
+            validate_network_info(&fakechain, MoneroNetwork::Regtest),
+            Ok(())
+        );
+        assert_eq!(
+            validate_network_info(&fakechain, MoneroNetwork::Stagenet),
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+
+        let mainnet = info_with(&[
+            (r#""nettype":"stagenet""#, r#""nettype":"mainnet""#),
+            (r#""stagenet":true"#, r#""stagenet":false"#),
+            (r#""mainnet":false"#, r#""mainnet":true"#),
+        ]);
+        let testnet = info_with(&[
+            (r#""nettype":"stagenet""#, r#""nettype":"testnet""#),
+            (r#""stagenet":true"#, r#""stagenet":false"#),
+            (r#""testnet":false"#, r#""testnet":true"#),
+        ]);
+        let untrusted = info_with(&[(r#""untrusted":false"#, r#""untrusted":true"#)]);
+        let mislabelled = info_with(&[(r#""mainnet":false"#, r#""mainnet":true"#)]);
+        for refused in [&mainnet, &testnet, &untrusted, &mislabelled] {
+            for network in [MoneroNetwork::Regtest, MoneroNetwork::Stagenet] {
+                assert_eq!(
+                    validate_network_info(refused, network),
+                    Err(MoneroTopologyError::DaemonNetworkMismatch)
+                );
+            }
+        }
+    }
 
     #[derive(Clone)]
     struct RpcBehavior {

@@ -67,8 +67,8 @@ pub const XMR_STAGE_B_FILE: &str = "stage-b.wire";
 /// The role's adaptor journal holding both the claim and the refund session.
 pub const XMR_ADAPTOR_JOURNAL_FILE: &str = "adaptor.sqlite3";
 
-/// The only Monero profile a role takes swaps under (public Stagenet is out of
-/// scope).
+/// The only Monero profile a role takes swaps under. A role has no Stagenet
+/// route: `docs/monero-stagenet-guide.md` says what it lacks.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 enum XmrProfileName {
