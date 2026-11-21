@@ -1,8 +1,9 @@
 # Milestone-to-artifact map
 
-Snapshot date: 2026-08-26. The upstream issues are open and all listed
-checkboxes are currently unchecked. `Included` below means the artifact is in
-this submission branch; it does not mean Logos has accepted the deliverable.
+First written on 2026-08-26; the M2 and M4 sections were added with their
+milestones. Logos accepted M3 at `v0.2.6`; the other upstream issues are open
+and their checkboxes unchecked. `Included` below means the artifact is in the
+repository; it does not mean Logos has accepted the deliverable.
 
 ## M1 — design, threat model, primitives, and SDK surface
 
@@ -69,6 +70,28 @@ Later full runs of the same suite with the #103 scenarios added (97 tests):
 (`af3ac978`, 93 of 93). Each set's `PROVENANCE.md` names its commits. The
 release record is the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
 
+
+## M4 — XMR/LEZ leg
+
+Upstream: [logos-co/rfp#124](https://github.com/logos-co/rfp/issues/124).
+Version 0.4.0. One direction, the Taker sells LEZ, on Monero 0.18.5.1 regtest
+and the private LEZ devnet only; why the pair keeps its own order, and where
+it departs from RFP-003 F5 and F6, is
+[ADR 0217](../docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md).
+Each deliverable with its proof and its limits:
+[`docs/m4-acceptance-checklist.md`](../docs/m4-acceptance-checklist.md).
+
+| Official deliverable | Submission artifact | Status |
+|---|---|---|
+| LEZ escrow program update for the XMR cross-curve DLEQ claim path | Escrow tags 13–17 in [`compat/lez-v0.2-provisional/escrow/src/lib.rs`](../compat/lez-v0.2-provisional/escrow/src/lib.rs) (ImageID `ca66e0dc…`, with the custody-credit fix of TM-0032), [protocol design](../docs/milestone-1/protocol-design.md#xmrlez), [compute units](../docs/lez-compute-units.md) | Included, devnet only. The escrow checks BIP-340 signatures of two-party MuSig2 keys; the DLEQ proofs are checked off chain by each party |
+| LEZ/XMR SDK with full lifecycle coverage, including the spend-key-share recovery path under partial information loss | [`lez-xmr-swap-sdk`](../docs/sdk-lez-xmr.md), each area mapped to its public API and tests; [`examples/full-lifecycle.rs`](../crates/xmr-reference-actor/examples/full-lifecycle.rs) in `xmr-reference-actor`, the layer the Nodes run: a completed and a refunded swap, each recovering role rebuilding the spend key after losing its session state, Monero regtest live | Included; the example models the LEZ escrow in memory and has no recorded run |
+| DLEQ test-vector conformance against `comit-network/cross-curve-dleq` | [Erratum GW-M4-001](../docs/proposal-acceptance-errata.md): COMIT publishes no vectors and proves differently; the generators and the keys of a scalar are checked against COMIT's crate instead; self-generated vectors in [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs) | **Qualified deviation**, as GW-M3-001 was for M3; no Logos decision |
+| XMR demo set per D1 | `TakerSellsLez-xmr-happy.mp4`, `TakerSellsLez-xmr-taker-refund.mp4`, `TakerSellsLez-xmr-concurrent.mp4` in [`docs/evidence/regression-m4-desks-2026-11-20/videos/`](../docs/evidence/regression-m4-desks-2026-11-20/videos/), each a by-product of a desk journey that passed while being recorded | Included; regtest, the one direction |
+
+The regression evidence set is
+[`regression-m4-2026-11-21`](../docs/evidence/regression-m4-2026-11-21/README.md):
+the full tier at `d4475300`, 160 of 160, each on its first try, one operator
+running both parties on one host.
 
 ## M3 — BTC/LEZ leg
 
