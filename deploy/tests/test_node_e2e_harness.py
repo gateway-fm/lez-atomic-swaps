@@ -734,5 +734,156 @@ class MakerEarlyClaim(unittest.TestCase):
             self.assertNotIn(PROBE, (SCRIPTS / packager).read_text())
 
 
+XMR_NEW_SCENARIOS = ('xmr-taker-clock-ahead', 'xmr-punish-replans', 'xmr-maker-claim-without-authorization',
+                     'xmr-maker-early-punish', 'xmr-unfunded-punish', 'xmr-taker-cheats')
+
+
+def xmr_probe_evidence(**changes):
+    snapshot = {'sequencer_tip': 10, 'tip_timestamp_ms': 1_000, 'status': 'Funded', 'custody_balance': 50_000,
+                'claimant_balance': 7, 'claimant_nonce': 1}
+    evidence = {'schema': 'lez_v02_escrow_claim_probe_v1', 'test_only': True, 'effect': 'xmr-punish',
+                'stored_secret_digest': None, 'presented_preimage_matches_digest': False,
+                'submitted_before_refund_at': True, 'punish_at_ms': 5_000, 'submitted_before_punish_at': True,
+                'transaction_id': 'ee' * 32, 'included': False, 'included_in_block': None, 'observed_seconds': 30,
+                'submission': {'decision': 'accepted', 'error_code': None, 'error_message': None},
+                'before': dict(snapshot), 'after': dict(snapshot), 'escrow_kept_custody': True}
+    evidence.update(changes)
+    return evidence
+
+
+class XmrOwnRefundAndAdversaries(unittest.TestCase):
+    """The Node's own refund, the devnet test hooks and the XMR adversarial
+    scenarios: what can be checked without a stack."""
+
+    def run_commands(self, returncode=0, stdout=''):
+        ran = []
+
+        def fake_run(command, **_):
+            ran.append(command)
+            return unittest.mock.Mock(returncode=returncode, stdout=stdout, stderr='')
+
+        return ran, fake_run
+
+    def test_the_scenarios_are_registered_and_need_the_containers(self):
+        for name in XMR_NEW_SCENARIOS:
+            self.assertIn(name, e2e.XMR_SCENARIOS)
+            self.assertIn(name, e2e.NATIVE_REFUSED)
+        for name in ('xmr-taker-refund', 'xmr-taker-refund-kill'):
+            self.assertIn(name, e2e.NATIVE_REFUSED)
+
+    def test_a_hook_is_written_whole_in_the_roles_state_and_cleared(self):
+        ran, fake_run = self.run_commands()
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'log', lambda *_: None):
+            e2e.xmr_hook('taker', 'clock-offset-ms', '60000')
+            e2e.xmr_hook('maker', 'punish-nonce-thefts', None)
+        self.assertEqual(ran[0][:5], ['docker', 'exec', 'lez-taker-node', 'sh', '-c'])
+        self.assertEqual(ran[0][-4:], ['hook', '/var/lib/lez/taker/test-hooks', 'clock-offset-ms', '60000'])
+        self.assertEqual(ran[1][-4:], ['hook', '/var/lib/lez/maker/test-hooks', 'punish-nonce-thefts', ''])
+        with tempfile.TemporaryDirectory() as root:
+            for value in ('60000', ''):
+                subprocess.run(['sh', '-c', e2e.XMR_HOOK_SCRIPT, 'hook', f'{root}/hooks', 'clock-offset-ms', value],
+                               check=True)
+                path = pathlib.Path(root, 'hooks', 'clock-offset-ms')
+                self.assertEqual(path.read_text() if path.exists() else None, '60000\n' if value else None)
+            self.assertEqual(oct(pathlib.Path(root, 'hooks').stat().st_mode & 0o777), '0o700')
+
+    def test_the_switch_is_written_where_the_entrypoint_reads_it_and_the_taker_restarted(self):
+        ran, fake_run = self.run_commands()
+        restarted = []
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'node_restart', restarted.append), patch.object(e2e, 'wait_healthy', lambda _: None), \
+                patch.object(e2e, 'log', lambda *_: None):
+            with e2e.xmr_owner_refund_only():
+                self.assertEqual(ran[-1][-2:], ['/var/lib/lez/taker/xmr-automatic-refund', 'false'])
+            self.assertEqual(ran[-1][-2:], ['/var/lib/lez/taker/xmr-automatic-refund', 'true'])
+        self.assertEqual(restarted, ['taker', 'taker'])
+        entrypoint = (REPO / 'modules/lez-role-node/node-entrypoint.sh').read_text()
+        self.assertIn('"$state/xmr-automatic-refund"', entrypoint)
+        self.assertIn('xmr_automatic_refund:$automatic', entrypoint)
+        self.assertIn('export LEZ_TEST_HOOKS_DIR="$state/test-hooks"', entrypoint)
+        self.assertEqual(e2e.XMR_NODE_STATE, {'maker': '/var/lib/lez/maker', 'taker': '/var/lib/lez/taker'})
+
+    def test_the_owner_commanded_refunds_switch_the_nodes_own_refund_off(self):
+        source = inspect.getsource(e2e.scenario_xmr_taker_refund)
+        self.assertIn('with xmr_owner_refund_only():', source)
+        never = inspect.getsource(e2e.scenario_xmr_maker_never_funds)
+        self.assertNotIn('taker_swap_refund_v1', never)
+        self.assertIn('own refund from R', never)
+
+    def probe(self, evidence, returncode=0, expect_moved=False):
+        ran, fake_run = self.run_commands(returncode, json.dumps(evidence) + '\n')
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'xmr_escrow_program_id', lambda: 'bb' * 32), \
+                patch.object(e2e, 'log', lambda *_: None):
+            return e2e.xmr_escrow_probe('xmr-punish', 'aa' * 32, expect_moved, 'before P'), ran
+
+    def test_the_xmr_effect_is_the_makers_owner_through_its_own_sequencer_route(self):
+        evidence, ran = self.probe(xmr_probe_evidence())
+        self.assertTrue(evidence['escrow_kept_custody'])
+        self.assertEqual(ran[0][:4], ['docker', 'exec', 'lez-maker-node', 'install'])
+        command = ran[1]
+        self.assertEqual(command[:4], ['docker', 'exec', 'lez-maker-node', f'/usr/local/bin/{PROBE}'])
+        self.assertEqual(command[command.index('--effect') + 1], 'xmr-punish')
+        self.assertEqual(command[command.index('--swap-id') + 1], 'aa' * 32)
+        self.assertEqual(command[command.index('--private-key-file') + 1], e2e.XMR_PROBE_SIGNER)
+        self.assertEqual(command[command.index('--sequencer-url') + 1], 'http://127.0.0.1:3040/')
+
+    def test_an_escrow_that_moved_or_stayed_against_the_expectation_fails(self):
+        moved = xmr_probe_evidence(escrow_kept_custody=False, included=True, included_in_block=11,
+                                   after={'status': 'Claimed', 'custody_balance': 0, 'claimant_balance': 50_007,
+                                          'sequencer_tip': 11, 'tip_timestamp_ms': 6_000, 'claimant_nonce': 2})
+        with self.assertRaisesRegex(e2e.Failure, 'expected it to stay'):
+            self.probe(moved, returncode=3)
+        self.probe(moved, returncode=3, expect_moved=True)
+        with self.assertRaisesRegex(e2e.Failure, 'expected it to move'):
+            self.probe(xmr_probe_evidence(), expect_moved=True)
+        with self.assertRaisesRegex(e2e.Failure, 'failed: exit 1'):
+            self.probe(xmr_probe_evidence(), returncode=1)
+
+    def test_the_probe_sends_the_xmr_effects_the_nodes_never_send(self):
+        probe = (REPO / f'compat/lez-v0_2-sidecar/src/bin/{PROBE}.rs').read_text()
+        for text in ('XmrPunish', 'XmrClaim', 'ZecEscrowInstruction::PunishNativeXmr',
+                     'ZecEscrowInstruction::ClaimNativeXmr', 'TEST-ONLY'):
+            self.assertIn(text, probe)
+
+    def test_the_devnet_build_has_the_test_hooks_and_no_release_build_does(self):
+        from_scratch = (SCRIPTS / 'from-scratch.sh').read_text()
+        self.assertIn('lez-taker-node/test-hooks', from_scratch)
+        self.assertIn('--features test-hooks --bin lez-v02-bridge-poc', from_scratch)
+        self.assertIn('test-hooks = ["pair-xmr"]', (REPO / 'crates/taker-node/Cargo.toml').read_text())
+        self.assertIn('test-hooks = []', (REPO / 'compat/lez-v0_2-sidecar/Cargo.toml').read_text())
+        for release in ('.github/workflows/release-images.yml', 'deploy/scripts/package-role-node.sh'):
+            self.assertNotIn('test-hooks', (REPO / release).read_text(), release)
+
+    def test_the_stolen_units_are_counted_against_the_lot(self):
+        source = inspect.getsource(e2e.scenario_xmr_punish_replans)
+        self.assertIn('XMR_PUNISH_NONCE_THEFTS', source)
+        self.assertEqual(e2e.XMR_PUNISH_NONCE_THEFTS, 6)
+        with tempfile.TemporaryDirectory() as root:
+            slots = pathlib.Path(root, 'btc', 'swaps', 'x', 'sidecar', 'planner')
+            slots.mkdir(parents=True)
+            for index in (1, 6, 7):
+                (slots / f'xmr-native-punish-supersession.{index}.v3.json').write_text('{}')
+            (slots / 'xmr-native-punish-reservation.v3.json').write_text('{}')
+            found = subprocess.run([sys.executable, '-c', e2e.XMR_SUPERSESSION_FINDER, root], capture_output=True,
+                                   text=True, check=True)
+        self.assertEqual(found.stdout.strip(), '3')
+
+    def test_the_swap_record_reader_finds_the_swap_by_its_facts(self):
+        with tempfile.TemporaryDirectory() as root:
+            for name, swap in (('one', 'aa' * 32), ('two', 'bb' * 32)):
+                directory = pathlib.Path(root, 'btc', 'swaps', name)
+                directory.mkdir(parents=True)
+                (directory / 'xmr-swap.json').write_text(json.dumps({'swap_id': swap, 'refund_at_ms': 7}))
+            (pathlib.Path(root, 'btc', 'swaps', 'two') / 'xmr-taker-progress.json').write_text('{"refund_submitted": "16"}')
+            read = lambda *argv: subprocess.run([sys.executable, '-c', e2e.XMR_SWAP_RECORD_READER, *argv, root],
+                                                capture_output=True, text=True, check=False)
+            self.assertEqual(json.loads(read('bb' * 32, 'xmr-taker-progress.json').stdout), {'refund_submitted': '16'})
+            self.assertIsNone(json.loads(read('aa' * 32, 'xmr-taker-progress.json').stdout))
+            self.assertEqual(json.loads(read('aa' * 32, 'xmr-swap.json').stdout)['refund_at_ms'], 7)
+            self.assertEqual(read('cc' * 32, 'xmr-swap.json').returncode, 3)
+
+
 if __name__ == '__main__':
     unittest.main()

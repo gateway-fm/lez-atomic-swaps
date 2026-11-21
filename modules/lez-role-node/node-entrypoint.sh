@@ -722,6 +722,8 @@ case "$role" in
     fi
     [[ "$transport" != logos ]] || start_chat_gateway --maker-chat-socket "$run/chat.sock"
     node_log_file
+    # As the Taker's: the devnet sidecar's test hooks (feature test-hooks).
+    export LEZ_TEST_HOOKS_DIR="$state/test-hooks"
     exec "$bin/lez-maker-node" "${args[@]}"
     ;;
   taker)
@@ -792,7 +794,18 @@ PY
       # ... and the Monero role where the role has its Monero logins.
       xmr_role_field='{}'
       if [[ -s "$xmr_role_config" ]]; then
-        xmr_role_field="$(jq -n --arg config "$xmr_role_config" '{xmr_role_config:$config}')"
+        # The Node refunds a Monero swap's LEZ by itself from R unless told
+        # not to: LEZ_XMR_AUTOMATIC_REFUND=false, or the word false in
+        # $state/xmr-automatic-refund (read at each start, so it can be
+        # changed without recreating the container).
+        xmr_automatic_refund="${LEZ_XMR_AUTOMATIC_REFUND:-true}"
+        if [[ -f "$state/xmr-automatic-refund" ]]; then
+          xmr_automatic_refund="$(tr -d '[:space:]' <"$state/xmr-automatic-refund")"
+        fi
+        [[ "$xmr_automatic_refund" == true || "$xmr_automatic_refund" == false ]] \
+          || { echo "taker: xmr-automatic-refund must be true or false, not $xmr_automatic_refund" >&2; exit 2; }
+        xmr_role_field="$(jq -n --arg config "$xmr_role_config" --argjson automatic "$xmr_automatic_refund" \
+          '{xmr_role_config:$config, xmr_automatic_refund:$automatic}')"
       fi
       jq -n --arg identity "$maker_identity" --arg registry "$state/registry.sqlite3" --arg role_config "$btc_state/btc-role.json" \
         --arg delivery "$delivery" --arg chat_socket "$chat_socket" --argjson prepared "$zec_catalog" \
@@ -818,6 +831,9 @@ PY
     # As the Maker: how long LEZ finality may stand still before taker_health says so.
     [[ -z "${LEZ_NODE_FINALITY_STALL_SECONDS:-}" ]] || args+=(--lez-finality-stall-seconds "$LEZ_NODE_FINALITY_STALL_SECONDS")
     node_log_file
+    # Where a Node built with the devnet's test hooks (feature test-hooks)
+    # reads them; a release build ignores it.
+    export LEZ_TEST_HOOKS_DIR="$state/test-hooks"
     exec "$bin/lez-taker-node" "${args[@]}"
     ;;
   *) echo "unknown role $role" >&2; exit 2 ;;

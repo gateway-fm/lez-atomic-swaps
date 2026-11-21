@@ -607,7 +607,9 @@ swaps at once spaces each swap's drives further apart and needs wider windows.
 their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over
 its owner RPC); `regress.sh` runs them as `node:xmr:<scenario>:TakerSellsLez`,
 on `fast`, and leaves them out with a line on a stack without `LEZ_MONERO=1`.
-All thirteen are in the `full` tier, none in `smoke`. A lot is 1 XMR for 50 000
+All nineteen are in the `full` tier, none in `smoke`. The six added with the
+Node's own refund (`xmr-taker-clock-ahead` to `xmr-taker-cheats` below) have
+not run yet: they were written while the devnet was being rebuilt for arm64. A lot is 1 XMR for 50 000
 LEZ units.
 
 ```sh
@@ -618,9 +620,9 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 | Scenario | What it asserts |
 |---|---|
 | `xmr-happy` | take over Chat, the Taker's LEZ lock, the Maker's Monero funding at depth, the Taker's claim, the Maker's LEZ claim, the Taker's sweep; LEZ to the unit, the Taker's one received transfer the lot less at most 0.01 XMR of fee, both Nodes completed |
-| `xmr-taker-refund` | the Maker funds, the Taker does not claim and refunds from R; the Maker sweeps its Monero back; the Taker's owner signs nothing for the refund |
+| `xmr-taker-refund` | the Maker funds, the Taker does not claim and its owner refunds from R (the Node's own refund switched off for the scenario: `xmr-automatic-refund`, below); the Maker sweeps its Monero back; the Taker's owner signs nothing for the refund |
 | `xmr-taker-refund-kill` | as `xmr-taker-refund`, the Taker's container killed with SIGKILL right after the refund's admission; started again it submits the refund |
-| `xmr-maker-never-funds` | the Maker Node is stopped right after the take and kept down until the Taker refunded from R; back up, the Maker ends `expired`; no Monero moved |
+| `xmr-maker-never-funds` | the Maker Node is stopped right after the take and kept down until the Taker Node refunded from R by itself, with no refund commanded; back up, the Maker ends `expired`; no Monero moved |
 | `xmr-punish` | the Maker funds, the Taker Node is stopped once it has verified the Monero; from P the Maker sends tag 17 at a live owner nonce other than 0 and ends `punished`; the LEZ moves to the Maker, the Monero stays at the shared address, the Taker back up reads `attention_required` (`xmr_refund_window_closed`) |
 | `xmr-concurrent` | two swaps of the same Nodes at once, one offer each; both complete; two fundings, two sweeps |
 | `xmr-kill-taker` | the Taker killed with SIGKILL at each of 7 steps (after the take, lock in flight, locked, Monero verified, claim authorised, waiting for the Maker's claim, sweeping), one fresh swap each; each completes with the owner accounts' LEZ transaction counts and the Monero moved once |
@@ -630,6 +632,25 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 | `xmr-outage-before-take` | Logos Chat and Delivery cut before a take: both Nodes degraded, the take refused, no swap on either Node; restored, the same request takes the offer and the swap completes |
 | `xmr-cut-after-lock` | Chat and Delivery cut once the Taker's LEZ lock is out, until the swap completes under the cut |
 | `mixed-three-pair` | a Monero, a Bitcoin and a Zcash swap of the same Nodes at once, all TakerSellsLez; all three complete |
+| `xmr-taker-clock-ahead` | the Taker Node's clock 60 s ahead of LEZ time (test hook `clock-offset-ms`), its own refund off: the owner refunds as soon as the swap offers it, 60 s before LEZ time reaches R; no refund is recorded as sent before the finalized LEZ time reaches R, then it lands and the Maker sweeps back |
+| `xmr-punish-replans` | as `xmr-punish`, with the punishment's nonce taken six times (the Maker sidecar's test hook `punish-nonce-thefts` sends one LEZ unit from the Maker's owner to the Taker at that nonce instead of the punishment); the Maker re-plans past five and ends `punished`; the lot moves to the Maker less the six units |
+| `xmr-maker-claim-without-authorization` | a cheating Maker (the test-only probe, `--effect xmr-claim`) sends tag 15 with no tag 14 and no Monero (its wallet-rpc stopped): refused, the escrow stays `Funded`; the Taker Node refunds by itself; the Maker ends `expired`. The Maker can witness tag 15 only with its own key, since the claim authority is the two parties' MuSig2 key |
+| `xmr-maker-early-punish` | a cheating Maker sends tag 17 before P: refused, the escrow stays `Funded`; the Taker Node refunds from R; past P tag 17 again: refused, the escrow is `Refunded`; the Maker sweeps back |
+| `xmr-unfunded-punish` | TM-0031: an unfunded swap (the Maker's wallet-rpc stopped), the Taker Node stopped through [R, P): tag 17 from P pays the Maker the LEZ; then the same with the Taker Node running: it refunds by itself from R and tag 17 from P is refused |
+| `xmr-taker-cheats` | a cheating Taker (test hooks `cheat-refund-before-r`, `cheat-refund-after-claim`): tag 16 before R is dropped and the escrow keeps the LEZ, then the same refund lands from R; on a completed swap tag 16 from R is refused and no LEZ moves |
+
+**The Taker's own refund and the test hooks.** The Taker Node refunds a
+Monero swap's LEZ by itself from R (finalized LEZ time). Its entrypoint turns
+that off with `LEZ_XMR_AUTOMATIC_REFUND=false` or the word `false` in
+`<state>/xmr-automatic-refund` (read at each start); `node-e2e.py` writes the
+file and restarts the Node. The devnet's build (`from-scratch.sh`) compiles
+the Taker Node with the feature `test-hooks` and the LEZ sidecar with its own
+`test-hooks`; both read files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`,
+set by the entrypoint): `clock-offset-ms` (the Taker supervisor's clock
+offset), `cheat-refund-before-r` and `cheat-refund-after-claim` (a cheating
+Taker), `punish-nonce-thefts` (a count, in the Maker's sidecar). No release
+build has either feature. A stack staged by another script must build the
+Nodes and the sidecar with the same features for these scenarios.
 
 In the full regression of 2026-11-15 they ran across lanes 1 to 3
 (`docs/evidence/regression-m4-2026-11-15/`). Footprint, measured on 2026-11-13: after 190 blocks a lane's

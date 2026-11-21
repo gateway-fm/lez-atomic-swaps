@@ -116,7 +116,9 @@ tier_tests() { # tier_tests <tier>
       # last: each makes its own chain, one no other test can run on
       # the Monero swaps through the two Nodes (only where LEZ_MONERO=1)
       for s in xmr-happy xmr-taker-refund xmr-maker-never-funds xmr-punish xmr-concurrent xmr-kill-taker xmr-kill-maker xmr-taker-refund-kill \
-        xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock mixed-three-pair; do echo "node:xmr:$s:TakerSellsLez"; done
+        xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock mixed-three-pair \
+        xmr-taker-clock-ahead xmr-punish-replans xmr-maker-claim-without-authorization xmr-maker-early-punish \
+        xmr-unfunded-punish xmr-taker-cheats; do echo "node:xmr:$s:TakerSellsLez"; done
       # Monero offers from the Maker desk's form, taken on the Taker desk: claimed, refunded, two at once
       for s in xmr-happy xmr-taker-refund xmr-concurrent; do echo "ui:xmr:$s:TakerSellsLez"; done
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
@@ -353,6 +355,14 @@ expected_seconds() { # expected_seconds <test>
       node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
       # waits for the agreement's punish time P (+1000 s on fast), or its refund time R (+720 s)
       node:xmr:xmr-punish:*) seconds=1340 ;;
+      # P, then six taken nonces, each a Maker drive or two
+      node:xmr:xmr-punish-replans:*) seconds=2100 ;;
+      node:xmr:xmr-maker-early-punish:*) seconds=1400 ;;
+      # two swaps, each to P
+      node:xmr:xmr-unfunded-punish:*) seconds=2700 ;;
+      # a refunded swap, then a completed one waited past its R
+      node:xmr:xmr-taker-cheats:*) seconds=2100 ;;
+      node:xmr:xmr-taker-clock-ahead:*|node:xmr:xmr-maker-claim-without-authorization:*) seconds=1100 ;;
       node:xmr:xmr-wallet-restart:*|node:xmr:xmr-taker-refund*|node:xmr:xmr-maker-never-funds:*|ui:xmr:xmr-taker-refund:*) seconds=1020 ;;
       node:xmr:*|ui:xmr:*) seconds=600 ;;
       # ~2 min a try, and its provoked race may need several (NOT-EXERCISED):

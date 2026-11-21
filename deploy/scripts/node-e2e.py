@@ -123,6 +123,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import datetime
 import hashlib
 import io
@@ -208,7 +209,12 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 # container: a native Node reaches the chains directly, with nothing to cut.
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
-                  "zec-offline-after-lock", "zec-maker-early-claim"}
+                  "zec-offline-after-lock", "zec-maker-early-claim",
+                  # the XMR scenarios that write a Node's test hooks or switch,
+                  # stop a wallet-rpc container or run the Maker's probe
+                  "xmr-taker-refund", "xmr-taker-refund-kill", "xmr-taker-clock-ahead", "xmr-punish-replans",
+                  "xmr-maker-claim-without-authorization", "xmr-maker-early-punish", "xmr-unfunded-punish",
+                  "xmr-taker-cheats"}
 HEALTH = {"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
 MINER = f"{PREFIX}-btc-miner"
 # The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
@@ -6756,7 +6762,14 @@ def scenario_xmr_taker_refund(stamp: str, kill: bool = False) -> dict:
     received by the Taker, both Nodes refunded. With `kill`
     (xmr-taker-refund-kill) the Taker's container is killed with SIGKILL
     right after the refund is admitted, before its supervisor submits it;
-    started again, it submits the refund, and its owner signs nothing more."""
+    started again, it submits the refund, and its owner signs nothing more.
+    The owner commands this refund: the Taker Node's own refund is off for the
+    scenario (xmr-maker-never-funds shows it), so the admission is not raced."""
+    with xmr_owner_refund_only():
+        return xmr_taker_refund_commanded(stamp, kill)
+
+
+def xmr_taker_refund_commanded(stamp: str, kill: bool) -> dict:
     before = xmr_before()
     offer_id = f"offer-e2e-xmr-{stamp}"
     swap_id, windows = xmr_take(stamp, offer_id)
@@ -6794,23 +6807,21 @@ def scenario_xmr_taker_refund(stamp: str, kill: bool = False) -> dict:
 def scenario_xmr_maker_never_funds(stamp: str) -> dict:
     """The Maker never funds the Monero: its Node is stopped as soon as the
     take is agreed, before it can see the Taker's LEZ lock final, and stays
-    down until the Taker has refunded its LEZ (tag 16) from the agreement's
-    refund time. Back up, the Maker's actor, past the funding cutoff with
-    nothing funded, ends expired. Asserted: LEZ unchanged to the unit, no
-    Monero sent by the Maker nor received by the Taker."""
+    down until the Taker Node has refunded its LEZ (tag 16) from the
+    agreement's refund time by itself: nobody commands the refund. Back up,
+    the Maker's actor, past the funding cutoff with nothing funded, ends
+    expired. Asserted: the Taker refunded with no refund admitted, LEZ
+    unchanged to the unit, no Monero sent by the Maker nor received by the
+    Taker."""
     before = xmr_before()
     offer_id = f"offer-e2e-xmr-{stamp}"
     swap_id, windows = xmr_take(stamp, offer_id)
     log("  stopping the Maker Node before its Monero funding (it needs the Taker's LEZ lock final first)")
     node_stop("maker")
     try:
-        view = xmr_wait_until(swap_id, {"refund_available"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
-                              describe="(Taker LEZ lock, no Monero, the agreement's refund time)")
-        result = call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
-                                                        "swap_id": swap_id, "expected_generation": view["progress_generation"]},
-                      timeout=300)
-        log(f"  Taker refund admitted with the Maker down (replay={result.get('was_replay')})")
-        xmr_wait_until(swap_id, {"refunded"}, timeout=300, describe="(tag 16 final)")
+        xmr_wait_until(swap_id, {"refunded"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 300,
+                       describe="(Taker LEZ lock, no Monero, the Taker Node's own refund from R)")
+        log("  the Taker Node refunded by itself: no refund was commanded")
     finally:
         node_start("maker")
     wait_healthy("maker")
@@ -6894,6 +6905,453 @@ def scenario_xmr_punish(stamp: str) -> dict:
             "lez_deltas": deltas, "maker_terminal_phase": phase, "maker_owner_nonce_before": nonce,
             "maker_owner_nonce_after": punished_nonce, "maker_monero_funding": funded[0],
             "taker_state": view["state"], "taker_attention_reason": view["attention_reason"]}
+
+
+# ---- the Node's own refund, its switch, and the devnet test hooks -------------------
+# The Taker Node refunds a Monero swap's LEZ by itself from R (finalized LEZ
+# time). The entrypoint reads the switch from <state>/xmr-automatic-refund at
+# each start; the Nodes of the devnet build (from-scratch.sh, feature
+# test-hooks) read their test hooks from <state>/test-hooks.
+XMR_NODE_STATE = {"maker": "/var/lib/lez/maker", "taker": "/var/lib/lez/taker"}
+XMR_HOOK_SCRIPT = ('set -eu; mkdir -p "$1"; chmod 0700 "$1"; '
+                   'if [ -n "$3" ]; then printf "%s\\n" "$3" > "$1/$2.tmp"; mv "$1/$2.tmp" "$1/$2"; '
+                   'else rm -f "$1/$2"; fi')
+
+
+def xmr_hook(role: str, name: str, value: str | None) -> None:
+    """Sets (`value`) or clears (None) one test hook of the role's Node, read on
+    its next use (no restart): a clock offset, a cheat flag, a count."""
+    node_run(role, "sh", "-c", XMR_HOOK_SCRIPT, "hook", f"{XMR_NODE_STATE[role]}/test-hooks", name, value or "")
+    log(f"  {role} test hook {name}: {value if value is not None else 'cleared'}")
+
+
+def xmr_set_automatic_refund(enabled: bool) -> None:
+    """The Taker Node's switch for its own refund (on by default), written where
+    the entrypoint reads it at start; the Node is restarted to take it."""
+    word = "true" if enabled else "false"
+    node_run("taker", "sh", "-c", 'printf "%s\\n" "$2" > "$1.tmp" && mv "$1.tmp" "$1"', "switch",
+             f"{XMR_NODE_STATE['taker']}/xmr-automatic-refund", word)
+    node_restart("taker")
+    wait_healthy("taker")
+    log(f"  the Taker Node refunds by itself: {word}")
+
+
+@contextlib.contextmanager
+def xmr_owner_refund_only():
+    """A scenario whose refund the owner commands: the Taker Node's own refund
+    off for its length, on again after it."""
+    xmr_set_automatic_refund(False)
+    try:
+        yield
+    finally:
+        xmr_set_automatic_refund(True)
+
+
+XMR_SWAP_RECORD_READER = r"""
+import json, os, sys
+swap_id, name = sys.argv[1], sys.argv[2]
+for root, _, files in os.walk(sys.argv[3]):
+    if "xmr-swap.json" in files:
+        try:
+            facts = json.load(open(os.path.join(root, "xmr-swap.json")))
+        except (OSError, ValueError):
+            continue
+        if facts.get("swap_id") == swap_id:
+            path = os.path.join(root, name)
+            print(open(path).read() if os.path.exists(path) else "null")
+            sys.exit(0)
+sys.exit(3)
+"""
+
+
+def xmr_taker_record(swap_id: str, name: str = "xmr-taker-progress.json") -> dict | None:
+    """One of the Taker's files for the swap (its facts xmr-swap.json, its
+    progress record), read inside its Node; None while it does not exist."""
+    result = subprocess.run(node_command("taker", ["python3", "-c", XMR_SWAP_RECORD_READER, swap_id, name,
+                                                   XMR_NODE_STATE["taker"]]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"the Taker's {name} for {swap_id[:12]} is unreadable: {result.stderr.strip()[-200:]}")
+    return json.loads(result.stdout)
+
+
+def lez_finalized_time_ms() -> int:
+    """The finalized LEZ block's consensus time, ms (the clock the Taker's
+    refund and the Maker's punishment run on)."""
+    height = lez_rpc_number(STACK_INDEXER_URL, "getLastFinalizedBlockId")
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getBlock", "params": [height]}).encode()
+    request = urllib.request.Request(STACK_SEQUENCER_URL, data=body, headers={"content-type": "application/json"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return int(json.load(response)["result"]["header"]["timestamp"])
+
+
+def wait_lez_time(at_ms: int, why: str, timeout: int) -> None:
+    """Until the finalized LEZ time reaches `at_ms`."""
+    wait = Wait(f"the finalized LEZ time to reach {why}", timeout)
+    while wait.running():
+        now = lez_finalized_time_ms()
+        wait.note(now >= at_ms, lambda: f"{(at_ms - now) / 1000:.0f} s to go")
+        if now >= at_ms:
+            return
+        time.sleep(3)
+    raise wait.failure()
+
+
+def xmr_escrow_program_id() -> str:
+    """The escrow program both Nodes' sidecars name (the market manifest's)."""
+    for line in (LANE_RUNTIME / "market-bootstrap.env").read_text().splitlines():
+        if line.startswith("M3_POC_LEZ_ESCROW_PROGRAM_ID="):
+            return line.split("=", 1)[1].strip()
+    raise Failure("the market manifest names no LEZ escrow program")
+
+
+XMR_PROBE_SIGNER = "/tmp/xmr-probe-lez-signer.key"
+
+
+def xmr_escrow_probe(effect: str, swap_id: str, expect_moved: bool, why: str) -> dict:
+    """One XMR escrow effect the Maker's software never sends (`xmr-punish`,
+    `xmr-claim`), signed with the Maker owner's key (a copy of the lane
+    identity's, owner-private) and submitted from inside the Maker's container
+    by the test-only probe. The swap id of an XMR swap is its escrow's on-chain
+    id. Fails unless the escrow moved exactly when `expect_moved`."""
+    node_run("maker", "install", "-m", "0600", "/run-lez-identity/lez-signer.key", XMR_PROBE_SIGNER)
+    argv = [ZEC_ESCROW_CLAIM_PROBE, "--effect", effect, "--sequencer-url", "http://127.0.0.1:3040/",
+            "--escrow-program-id", xmr_escrow_program_id(), "--swap-id", swap_id,
+            "--private-key-file", XMR_PROBE_SIGNER, "--observe-seconds", "30"]
+    log(f"  {effect} as the Maker, {why}: {' '.join(argv)}")
+    result = subprocess.run(node_command("maker", argv), capture_output=True, text=True, check=False,
+                            stdin=subprocess.DEVNULL, timeout=300)
+    for line in result.stderr.strip().splitlines():
+        log(f"    probe stderr: {line}")
+    if not result.stdout.strip():
+        raise Failure(f"the escrow probe ({effect}, {why}) gave no evidence: exit {result.returncode}")
+    evidence = json.loads(result.stdout.strip().splitlines()[-1])
+    for line in json.dumps(evidence, indent=2, sort_keys=True).splitlines():
+        log(f"    {line}")
+    before, after = evidence["before"], evidence["after"]
+    log(f"  {effect} {why}: sequencer {evidence['submission']['decision']}, "
+        f"{'included in block ' + str(evidence['included_in_block']) if evidence['included'] else 'not included'}; "
+        f"escrow {before['status']} → {after['status']}, custody {before['custody_balance']} → "
+        f"{after['custody_balance']}")
+    moved = not evidence["escrow_kept_custody"]
+    if result.returncode not in (0, 3) or moved != (result.returncode == 3):
+        raise Failure(f"the escrow probe ({effect}, {why}) failed: exit {result.returncode}")
+    if moved != expect_moved:
+        raise Failure(f"{effect} {why} {'moved' if moved else 'left'} the escrow "
+                      f"({before['status']} → {after['status']}); expected it to "
+                      f"{'move' if expect_moved else 'stay'}")
+    return evidence
+
+
+def xmr_maker_wallet(running: bool) -> None:
+    """The Maker's Monero wallet-rpc stopped (its funding then fails before it
+    sends anything and the Maker's actor ends expired) or started again."""
+    container = f"{PREFIX}-maker-xmr-wallet"
+    subprocess.run(["docker", "start" if running else "stop", container], check=True, capture_output=True)
+    log(f"  the Maker's Monero wallet-rpc {'started' if running else 'stopped'}")
+
+
+def xmr_take_unfunded(stamp: str, offer_id: str) -> tuple[str, dict]:
+    """A take the Maker never funds: its wallet-rpc is stopped right after the
+    take, before the Taker's LEZ lock is final (the Maker funds only after
+    it), and the Taker's lock is waited for."""
+    swap_id, windows = xmr_take(stamp, offer_id)
+    # stopped after the take (a Maker whose wallet is down offers nothing), and
+    # before the Taker's lock is final
+    xmr_maker_wallet(False)
+    xmr_wait_until(swap_id, {"awaiting_second_lock"}, timeout=windows["LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS"],
+                   describe="(the Taker's LEZ lock final, no Monero)")
+    return swap_id, windows
+
+
+def xmr_windows_ms(swap_id: str) -> dict:
+    """The swap's own C, R and P (the Taker's facts), Unix ms."""
+    facts = xmr_taker_record(swap_id, "xmr-swap.json")
+    return {"C": facts["maker_xmr_funding_cutoff_ms"], "R": facts["refund_at_ms"], "P": facts["punish_at_ms"]}
+
+
+def scenario_xmr_taker_clock_ahead(stamp: str) -> dict:
+    """A Taker Node whose clock runs 60 s ahead of LEZ time (the test hook
+    clock-offset-ms of the devnet build: the supervisor's clock only), its own
+    refund off: the swap offers the refund 60 s early by that clock and the
+    owner refunds at once. The refund (tag 16) is not sent before the
+    finalized LEZ time reaches R (a refund the sequencer admits and drops at
+    block building would otherwise be lost), then lands, and the Maker sweeps
+    its Monero back. Asserted: no refund recorded as sent while the finalized
+    LEZ time is before R, the Taker refunded, the Maker refunded."""
+    offset_ms = 60_000
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    with xmr_owner_refund_only():
+        xmr_hook("taker", "clock-offset-ms", str(offset_ms))
+        try:
+            swap_id, windows = xmr_take(stamp, offer_id)
+            xmr_wait_funded(swap_id, windows)
+            view = xmr_wait_until(swap_id, {"refund_available"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
+                                  describe="(R by the Taker's clock, 60 s ahead)")
+            refund_at = xmr_windows_ms(swap_id)["R"]
+            early = refund_at - lez_finalized_time_ms()
+            log(f"  the Taker offers the refund {early / 1000:.0f} s before the finalized LEZ time reaches R")
+            if early <= 0:
+                raise Failure("the Taker offered the refund only once LEZ time had reached R: its clock is not ahead")
+            call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+                                                   "swap_id": swap_id,
+                                                   "expected_generation": view["progress_generation"]}, timeout=300)
+            wait = Wait("the finalized LEZ time to reach R with no refund sent", windows["LEZ_XMR_REFUND_SECONDS"])
+            while wait.running():
+                lez_now = lez_finalized_time_ms()
+                sent = (xmr_taker_record(swap_id) or {}).get("refund_submitted")
+                wait.note((lez_now >= refund_at, bool(sent)), lambda: f"LEZ {(refund_at - lez_now) / 1000:.0f} s "
+                                                                      f"before R, refund sent: {bool(sent)}")
+                if sent and lez_now < refund_at:
+                    raise Failure(f"the Taker sent its refund {(refund_at - lez_now) / 1000:.0f} s before the "
+                                  "finalized LEZ time reached R")
+                if lez_now >= refund_at:
+                    break
+                time.sleep(2)
+            else:
+                raise wait.failure()
+            log("  no refund went out before the finalized LEZ time reached R")
+            xmr_wait_until(swap_id, {"refunded"}, timeout=300, describe="(tag 16 final)")
+        finally:
+            xmr_hook("taker", "clock-offset-ms", None)
+    phase = wait_maker_terminal(swap_id, timeout=600, describe="(the Maker's Monero refund sweep)")
+    if phase != "refunded":
+        raise Failure(f"the Maker ended in {phase}, not refunded")
+    lez = assert_lez_settled(before["lez"], "refunded", phase)
+    swept = xmr_assert_swept("maker", before, "a refunded swap")
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, "taker_clock_offset_ms": offset_ms,
+            "refund_offered_early_ms": early, **lez, "maker_terminal_phase": phase,
+            "maker_monero_refund_sweep": swept}
+
+
+# How many times the Maker's sidecar test hook takes the punishment's nonce
+# before it lets it land (the sidecar re-planned at most five times before).
+XMR_PUNISH_NONCE_THEFTS = 6
+XMR_SUPERSESSION_FINDER = ("import glob, sys; "
+                           "print(len(glob.glob(sys.argv[1] + '/**/xmr-native-punish-supersession.*.v3.json', "
+                           "recursive=True)))")
+
+
+def xmr_punish_supersessions() -> int:
+    """The tag-17 re-plan slots the Maker's sidecars have reserved, all swaps."""
+    result = subprocess.run(node_command("maker", ["python3", "-c", XMR_SUPERSESSION_FINDER, XMR_NODE_STATE["maker"]]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"the Maker's punish re-plan slots are unreadable: {result.stderr.strip()[-200:]}")
+    return int(result.stdout.strip())
+
+
+def scenario_xmr_punish_replans(stamp: str) -> dict:
+    """xmr-punish, with the punishment's nonce taken six times: the Maker's
+    sidecar test hook (punish-nonce-thefts, devnet build) sends another
+    transaction of the Maker's owner, one LEZ unit to the Taker, at the
+    punishment's nonce each time it would send it, so the punishment can never
+    land as planned and is re-planned at the live nonce, past the five re-plans
+    the sidecar once allowed. Asserted: the Maker punished; at least six more
+    re-plan slots; the Maker's owner nonce moved by the six thefts and the
+    punishment; LEZ moved the lot to the Maker less the six units."""
+    maker_owner = lez_owner_account("maker")
+    before = xmr_before()
+    slots_before = xmr_punish_supersessions()
+    nonce = lez_account_nonce(maker_owner)
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    xmr_wait_funded(swap_id, windows)
+    log("  the Taker has verified the Maker's Monero; stopping the Taker Node: it neither claims nor refunds")
+    node_stop("taker")
+    xmr_hook("maker", "punish-nonce-thefts", str(XMR_PUNISH_NONCE_THEFTS))
+    try:
+        phase = wait_maker_terminal(swap_id, timeout=windows["LEZ_XMR_PUNISH_SECONDS"] + 900,
+                                    describe="(the punish time, six taken nonces, then the Maker's tag 17)")
+    finally:
+        xmr_hook("maker", "punish-nonce-thefts", None)
+        node_start("taker")
+    if phase != "punished":
+        raise Failure(f"the Maker ended in {phase}, not punished")
+    wait_healthy("taker")
+    slots = xmr_punish_supersessions() - slots_before
+    moved = lez_account_nonce(maker_owner) - nonce
+    log(f"  {slots} punish re-plan slots reserved; the Maker's owner signed {moved} transactions")
+    if slots < XMR_PUNISH_NONCE_THEFTS:
+        raise Failure(f"the punishment was re-planned {slots} times, at least {XMR_PUNISH_NONCE_THEFTS} expected")
+    if moved < XMR_PUNISH_NONCE_THEFTS + 1:
+        raise Failure(f"the Maker's owner signed {moved} transactions, the thefts and the punishment expected")
+    deltas = {role: balance - before["lez"][role] for role, balance in lez_balances().items()}
+    lot = {role: amounts["lez_units"] for role, amounts in
+           expected_settlement("completed", REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
+    want = {role: lot[role] + (XMR_PUNISH_NONCE_THEFTS if lot[role] < 0 else -XMR_PUNISH_NONCE_THEFTS)
+            for role in lot}
+    if deltas != want:
+        raise Failure(f"the LEZ balances moved {deltas}; the lot to the Maker less the "
+                      f"{XMR_PUNISH_NONCE_THEFTS} stolen units expected: {want}")
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, "maker_terminal_phase": phase,
+            "punish_replans": slots, "maker_owner_transactions": moved, "lez_deltas": deltas}
+
+
+def scenario_xmr_maker_claim_without_authorization(stamp: str) -> dict:
+    """A cheating Maker sends its LEZ claim (tag 15) with no tag 14 from the
+    Taker and no Monero funded (its wallet-rpc stopped, so it cannot fund):
+    the claim's witness can only be the Maker's own key, since the claim
+    authority is the two parties' MuSig2 key and the Taker's partial is
+    published only in tag 14. Refused: the escrow stays Funded with its
+    custody. The Taker Node then refunds by itself from R; the Maker ends
+    expired. TM-0030 does not carry over (ADR 0217)."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    try:
+        swap_id, windows = xmr_take_unfunded(stamp, offer_id)
+        claim = xmr_escrow_probe("xmr-claim", swap_id, expect_moved=False, why="without tag 14 or Monero")
+        if claim["before"]["status"] != "Funded":
+            raise Failure(f"the escrow was {claim['before']['status']} before the claim, not Funded")
+        xmr_wait_until(swap_id, {"refunded"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 300,
+                       describe="(the Taker Node's own refund from R)")
+    finally:
+        xmr_maker_wallet(True)
+    phase = wait_maker_terminal(swap_id, timeout=600, describe="(past the funding cutoff with nothing funded)")
+    if phase != "expired":
+        raise Failure(f"the Maker ended in {phase}, not expired")
+    lez = assert_lez_settled(before["lez"], "refunded", phase)
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, "claim_probe": claim, **lez,
+            "maker_terminal_phase": phase}
+
+
+def scenario_xmr_maker_early_punish(stamp: str) -> dict:
+    """A cheating Maker sends its punishment (tag 17) before P, on a swap it
+    funded and the Taker has not refunded: refused (tag 17 is valid only from
+    P), the escrow stays Funded. The Taker Node refunds by itself from R, and
+    once the finalized LEZ time has passed P the Maker sends tag 17 again:
+    refused, the escrow is Refunded. The Maker sweeps its Monero back."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    xmr_wait_funded(swap_id, windows)
+    early = xmr_escrow_probe("xmr-punish", swap_id, expect_moved=False, why="before P")
+    if early["submitted_before_punish_at"] is not True:
+        raise Failure("the early punishment went in at or after P: its refusal proves nothing")
+    xmr_wait_until(swap_id, {"refunded"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 300,
+                   describe="(the Taker Node's own refund from R)")
+    wait_lez_time(xmr_windows_ms(swap_id)["P"], "P", timeout=windows["LEZ_XMR_PUNISH_SECONDS"] + 120)
+    late = xmr_escrow_probe("xmr-punish", swap_id, expect_moved=False, why="after the Taker's refund, past P")
+    if late["before"]["status"] != "Refunded":
+        raise Failure(f"the escrow was {late['before']['status']}, not Refunded, when tag 17 went in after the refund")
+    phase = wait_maker_terminal(swap_id, timeout=600, describe="(the Maker's Monero refund sweep)")
+    if phase != "refunded":
+        raise Failure(f"the Maker ended in {phase}, not refunded")
+    lez = assert_lez_settled(before["lez"], "refunded", phase)
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, "early_punish": early,
+            "punish_after_refund": late, **lez, "maker_terminal_phase": phase}
+
+
+def scenario_xmr_unfunded_punish(stamp: str) -> dict:
+    """TM-0031 as the threat model states it. A Maker running other software
+    punishes from P a swap whose Monero it never funded (its wallet-rpc
+    stopped): with the Taker Node stopped through [R, P) the punishment pays
+    the Maker the LEZ, and the Taker, back up, reads its refund window
+    closed. Then the same with the Taker Node running: it refunds by itself
+    from R, and the punishment from P is refused (the escrow is Refunded)."""
+    before = xmr_before()
+    first, second = f"offer-e2e-xmr-{stamp}-a", f"offer-e2e-xmr-{stamp}-b"
+    try:
+        swap_id, windows = xmr_take_unfunded(stamp, first)
+        punish_at = xmr_windows_ms(swap_id)["P"]
+        log("  stopping the Taker Node through [R, P)")
+        node_stop("taker")
+        try:
+            wait_lez_time(punish_at, "P", timeout=windows["LEZ_XMR_PUNISH_SECONDS"] + 120)
+            paid = xmr_escrow_probe("xmr-punish", swap_id, expect_moved=True, why="from P, unfunded, Taker away")
+        finally:
+            node_start("taker")
+        wait_healthy("taker")
+        view = taker_view(swap_id)
+        log(f"  the Taker, back up, reads {view['state']} ({view.get('attention_reason')})")
+        punished = {role: balance - before["lez"][role] for role, balance in lez_balances().items()}
+        want = {role: amounts["lez_units"] for role, amounts in
+                expected_settlement("completed", REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
+        if punished != want:
+            raise Failure(f"the unfunded punishment moved LEZ {punished}, the lot to the Maker expected: {want}")
+        between = lez_balances()
+        running, _ = xmr_take_unfunded(stamp, second)
+        xmr_wait_until(running, {"refunded"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 300,
+                       describe="(the Taker Node's own refund from R)")
+        wait_lez_time(xmr_windows_ms(running)["P"], "P", timeout=windows["LEZ_XMR_PUNISH_SECONDS"] + 120)
+        refused = xmr_escrow_probe("xmr-punish", running, expect_moved=False, why="from P, after the Node's refund")
+        after = {role: balance - between[role] for role, balance in lez_balances().items()}
+        if any(after.values()):
+            raise Failure(f"LEZ moved {after} in the swap the Taker Node refunded")
+    finally:
+        xmr_maker_wallet(True)
+    return {"punished_swap": swap_id, "refunded_swap": running, "windows": windows, "lez_punished": punished,
+            "unfunded_punish": paid, "punish_after_refund": refused, "taker_after_punish": view["state"]}
+
+
+def scenario_xmr_taker_cheats(stamp: str) -> dict:
+    """A cheating Taker (the devnet build's test hooks). (i) It sends its
+    refund (tag 16) before R, once the Maker's Monero is in
+    (cheat-refund-before-r): the sequencer drops it, the escrow stays Funded;
+    the flag cleared, the same refund is sent again and lands from R, and the
+    Maker sweeps back. (ii) On a completed swap it sends tag 16 from R although
+    the Maker's claim (tag 15) took the LEZ (cheat-refund-after-claim):
+    refused, the escrow stays Claimed and no LEZ moves."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}-a"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    xmr_hook("taker", "cheat-refund-before-r", "1")
+    try:
+        xmr_wait_funded(swap_id, windows)
+        refund_at = xmr_windows_ms(swap_id)["R"]
+        wait = Wait("the cheating Taker's refund before R", 300)
+        while wait.running():
+            sent = (xmr_taker_record(swap_id) or {}).get("refund_submitted")
+            wait.note(bool(sent), lambda: f"refund sent: {bool(sent)}")
+            if sent:
+                break
+            time.sleep(2)
+        else:
+            raise wait.failure()
+        if lez_finalized_time_ms() >= refund_at:
+            raise Failure("the cheating refund went out only after R: it proves nothing")
+        time.sleep(30)
+        if taker_view(swap_id)["state"] == "refunded" or lez_finalized_time_ms() >= refund_at:
+            raise Failure("the refund sent before R landed, or R came before it could be seen dropped")
+        log("  the refund sent before R did not land; the escrow still holds the LEZ")
+    finally:
+        xmr_hook("taker", "cheat-refund-before-r", None)
+    xmr_wait_until(swap_id, {"refunded"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 300,
+                   describe="(the same refund sent again from R)")
+    phase = wait_maker_terminal(swap_id, timeout=600, describe="(the Maker's Monero refund sweep)")
+    if phase != "refunded":
+        raise Failure(f"the Maker ended in {phase}, not refunded")
+    assert_lez_settled(before["lez"], "refunded", phase)
+
+    second = xmr_before()
+    completed, windows = xmr_take(stamp, f"offer-e2e-xmr-{stamp}-b")
+    xmr_claim_and_complete(stamp, completed, windows)
+    settled = xmr_assert_completed(second, completed)
+    lez_completed = lez_balances()
+    xmr_hook("taker", "cheat-refund-after-claim", "1")
+    try:
+        wait_lez_time(xmr_windows_ms(completed)["R"], "R", timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120)
+        wait = Wait("the cheating Taker's refund after the Maker's claim", 120)
+        while wait.running():
+            sent = (xmr_taker_record(completed) or {}).get("refund_submitted")
+            wait.note(bool(sent), lambda: f"refund sent: {bool(sent)}")
+            if sent:
+                break
+            time.sleep(2)
+        else:
+            raise wait.failure()
+        time.sleep(30)
+    finally:
+        xmr_hook("taker", "cheat-refund-after-claim", None)
+    lez_after = {role: balance - lez_completed[role] for role, balance in lez_balances().items()}
+    if any(lez_after.values()):
+        raise Failure(f"LEZ moved {lez_after} after the cheating refund of a completed swap")
+    if (xmr_taker_record(completed) or {}).get("refunded"):
+        raise Failure("the refund sent after the Maker's claim landed")
+    log("  the refund sent after the Maker's claim was refused: the escrow stays Claimed")
+    return {"refunded_swap": swap_id, "completed_swap": completed, "windows": windows,
+            "completed_settlement": settled}
 
 
 def scenario_xmr_concurrent(stamp: str) -> dict:
@@ -7543,6 +8001,12 @@ XMR_SCENARIOS = {
     "xmr-wallet-restart": scenario_xmr_wallet_restart,
     "xmr-outage-before-take": scenario_xmr_outage_before_take,
     "xmr-cut-after-lock": scenario_xmr_cut_after_lock,
+    "xmr-taker-clock-ahead": scenario_xmr_taker_clock_ahead,
+    "xmr-punish-replans": scenario_xmr_punish_replans,
+    "xmr-maker-claim-without-authorization": scenario_xmr_maker_claim_without_authorization,
+    "xmr-maker-early-punish": scenario_xmr_maker_early_punish,
+    "xmr-unfunded-punish": scenario_xmr_unfunded_punish,
+    "xmr-taker-cheats": scenario_xmr_taker_cheats,
     "mixed-three-pair": scenario_mixed_three_pair,
 }
 
