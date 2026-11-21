@@ -26,8 +26,8 @@ use lez_xmr_swap_sdk::{MoneroPrivateViewKey, MoneroSharedAddressV1, Reconstructe
 use monero_rpc::monero::util::address::AddressType;
 use monero_rpc::monero::{Address, Amount, PrivateKey};
 use monero_rpc::{
-    GenerateFromKeysArgs, RegtestDaemonJsonRpcClient, SweepAllArgs, TransferOptions,
-    TransferPriority, WalletClient,
+    GenerateFromKeysArgs, RegtestDaemonJsonRpcClient, TransferOptions, TransferPriority,
+    TransferType, WalletClient,
 };
 use thiserror::Error;
 
@@ -38,7 +38,6 @@ use super::{
 
 const WALLET_ACCOUNT_INDEX: u32 = 0;
 const MAX_WALLET_FILENAME_BYTES: usize = 96;
-const MAX_SWEEP_TRANSACTIONS: usize = 16;
 /// Goes at `generateblocks`: one call can fail in the client although the
 /// daemon is healthy (2026-11-15, a non-JSON body decoded as the answer), and
 /// on Regtest nothing else mines. Blocks a failed call did mine are harmless:
@@ -197,9 +196,64 @@ struct RoleWallet {
 pub struct MoneroRegtestWalletEffects {
     daemon: RegtestDaemonJsonRpcClient,
     wallet: WalletClient,
+    /// `sweep_single`, which the typed client does not offer, goes through
+    /// this client to the same wallet-rpc with the same Digest login.
+    raw_wallet: RawWalletRpc,
     daemon_origin: String,
     wallet_origin: String,
     role_wallet: Option<RoleWallet>,
+}
+
+/// A bare JSON-RPC route to the wallet-rpc for the methods the typed client
+/// lacks.
+struct RawWalletRpc {
+    client: reqwest::Client,
+    url: String,
+    username: String,
+    password: String,
+}
+
+impl RawWalletRpc {
+    fn new(endpoint: &LoopbackRpcEndpoint) -> Result<Self, MoneroWalletEffectError> {
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(super::RPC_REQUEST_TIMEOUT)
+                .build()
+                .map_err(|_| MoneroWalletEffectError::RpcClientBuild)?,
+            url: format!("{}/json_rpc", endpoint.base_url),
+            username: endpoint.username.clone(),
+            password: endpoint.password.clone(),
+        })
+    }
+
+    /// One call, never retried: the caller decides what an error means.
+    async fn call(
+        &self,
+        method: &'static str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, anyhow::Error> {
+        use diqwest::WithDigestAuth as _;
+        let body = serde_json::json!({
+            "jsonrpc": "2.0", "id": "0", "method": method, "params": params,
+        });
+        let response = self
+            .client
+            .post(&self.url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_string())
+            .send_with_digest_auth(&self.username, &self.password)
+            .await?;
+        anyhow::ensure!(
+            response.status() == reqwest::StatusCode::OK,
+            "HTTP {}",
+            response.status().as_u16()
+        );
+        let mut reply: serde_json::Value = serde_json::from_slice(&response.bytes().await?)?;
+        if let Some(error) = reply.get("error") {
+            anyhow::bail!("wallet-rpc error: {error}");
+        }
+        Ok(reply["result"].take())
+    }
 }
 
 impl MoneroRegtestWalletEffects {
@@ -227,6 +281,7 @@ impl MoneroRegtestWalletEffects {
         Ok(Self {
             daemon: daemon_client,
             wallet: wallet_client,
+            raw_wallet: RawWalletRpc::new(wallet)?,
             daemon_origin: daemon.base_url.clone(),
             wallet_origin: wallet.base_url.clone(),
             role_wallet: None,
@@ -476,7 +531,8 @@ impl MoneroRegtestWalletEffects {
     /// # Errors
     ///
     /// Fails closed on an unsafe wallet filename/password, address or key
-    /// mismatch, non-exact balance, typed RPC failure, or a split/empty sweep.
+    /// mismatch, no unspent output of the exact principal, typed RPC failure,
+    /// or sweep accounting that does not partition the principal.
     #[allow(clippy::too_many_arguments)]
     pub async fn restore_shared_and_sweep(
         &self,
@@ -516,8 +572,8 @@ impl MoneroRegtestWalletEffects {
     /// Restores the shared wallet from its keys, or reopens the file of the
     /// same name a stopped earlier run restored (a sweep driven again); returns
     /// the wallet's primary address. What the stopped run sent, if anything,
-    /// spent the one output: the exact-balance check after it, or the
-    /// daemon's key-image check, refuses a second spend of it.
+    /// spent the one output: the sweep finds no unspent output of the amount
+    /// after it, and the daemon's key-image check refuses a second spend.
     async fn generate_or_reopen_shared(
         &self,
         arguments: GenerateFromKeysArgs,
@@ -553,7 +609,8 @@ impl MoneroRegtestWalletEffects {
     /// # Errors
     ///
     /// Fails closed on an unsafe wallet filename/password, address or key
-    /// mismatch, non-exact balance, typed RPC failure, or a split/empty sweep.
+    /// mismatch, no unspent output of the exact principal, typed RPC failure,
+    /// or sweep accounting that does not partition the principal.
     #[allow(clippy::too_many_arguments)]
     pub async fn restore_shared_and_sweep_once(
         &self,
@@ -603,53 +660,90 @@ impl MoneroRegtestWalletEffects {
             return Err(MoneroWalletEffectError::RestoredAddressMismatch);
         }
 
+        self.sweep_exact_output(restore_height, expected_amount, destination)
+            .await
+    }
+
+    /// Sweeps the swap's one output out of the open shared wallet.
+    ///
+    /// The shared address is known to the counterparty, so anyone who learns
+    /// it can send it more outputs. They are left where they are: the sweep
+    /// spends exactly one unspent output of the expected amount at the
+    /// primary address (`sweep_single` by its key image), so an extra output,
+    /// confirmed or not, of any amount, neither blocks the sweep nor adds an
+    /// input, a fee or a second transaction. Among outputs of the expected
+    /// amount the earliest confirmed is taken: the swap's, which was
+    /// verified with its confirmations before any sweep. A later output of
+    /// the same amount can only be taken once the swap's is spent, and then
+    /// pays the same amount to the same destination.
+    async fn sweep_exact_output(
+        &self,
+        restore_height: u64,
+        expected_amount: NonZeroU64,
+        destination: Address,
+    ) -> Result<SubmittedMoneroSweep, MoneroWalletEffectError> {
         read_with_one_retry(|| self.wallet.refresh(Some(restore_height)))
             .await
             .map_err(rpc_error("refresh restored wallet"))?;
-        let balance =
-            read_with_one_retry(|| self.wallet.get_balance(WALLET_ACCOUNT_INDEX, Some(vec![0])))
-                .await
-                .map_err(rpc_error("read restored wallet balance"))?;
-        if balance.balance.as_pico() != expected_amount.get()
-            || balance.unlocked_balance.as_pico() != expected_amount.get()
-        {
-            return Err(MoneroWalletEffectError::RestoredBalanceMismatch);
-        }
-
-        let sweep = self
-            .wallet
-            .sweep_all(SweepAllArgs {
-                address: destination,
-                account_index: WALLET_ACCOUNT_INDEX,
-                subaddr_indices: Some(vec![0]),
-                priority: TransferPriority::Default,
-                mixin: 0,
-                ring_size: 0,
-                unlock_time: 0,
-                get_tx_keys: None,
-                below_amount: None,
-                do_not_relay: Some(false),
-                get_tx_hex: None,
-                get_tx_metadata: None,
+        let transfers = read_with_one_retry(|| {
+            self.wallet.incoming_transfers(
+                TransferType::Available,
+                Some(WALLET_ACCOUNT_INDEX),
+                Some(vec![0]),
+            )
+        })
+        .await
+        .map_err(rpc_error("read restored wallet outputs"))?;
+        let output = transfers
+            .transfers
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|transfer| {
+                !transfer.spent
+                    && transfer.subaddr_index.major == WALLET_ACCOUNT_INDEX
+                    && transfer.subaddr_index.minor == 0
+                    && transfer.amount.as_pico() == expected_amount.get()
+                    && transfer.block_height.is_some()
             })
+            .min_by_key(|transfer| (transfer.block_height, transfer.global_index))
+            .ok_or(MoneroWalletEffectError::RestoredBalanceMismatch)?;
+        let key_image = output
+            .key_image
+            .filter(|image| image.len() == 64 && image.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or(MoneroWalletEffectError::RestoredBalanceMismatch)?;
+        let sweep = self
+            .raw_wallet
+            .call(
+                "sweep_single",
+                serde_json::json!({
+                    "address": destination.to_string(),
+                    "key_image": key_image,
+                    "priority": 0,
+                    "ring_size": 0,
+                    "unlock_time": 0,
+                    "do_not_relay": false,
+                }),
+            )
             .await
             .map_err(rpc_error("sweep reconstructed wallet"))?;
-        if sweep.tx_hash_list.is_empty() || sweep.tx_hash_list.len() > MAX_SWEEP_TRANSACTIONS {
-            return Err(MoneroWalletEffectError::InvalidSweepTransactionCount);
-        }
-        if sweep.tx_hash_list.len() != 1 {
-            return Err(MoneroWalletEffectError::SplitSweepUnsupported);
-        }
-        let (received_amount_piconero, fee_piconero) =
-            validate_sweep_accounting(&sweep.amount_list, &sweep.fee_list, expected_amount.get())?;
-        let transaction_id = sweep
-            .tx_hash_list
-            .into_iter()
-            .next()
-            .ok_or(MoneroWalletEffectError::InvalidSweepTransactionCount)?
-            .0;
+        let transaction_id: [u8; 32] = sweep["tx_hash"]
+            .as_str()
+            .and_then(|hash| hex::decode(hash).ok())
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(MoneroWalletEffectError::InvalidSweepTransactionCount)?;
+        let amount = sweep["amount"]
+            .as_u64()
+            .ok_or(MoneroWalletEffectError::InvalidSweepAccountingCount)?;
+        let fee = sweep["fee"]
+            .as_u64()
+            .ok_or(MoneroWalletEffectError::InvalidSweepAccountingCount)?;
+        let (received_amount_piconero, fee_piconero) = validate_sweep_accounting(
+            &[Amount::from_pico(amount)],
+            &[Amount::from_pico(fee)],
+            expected_amount.get(),
+        )?;
         Ok(SubmittedMoneroSweep {
-            transaction_id,
+            transaction_id: transaction_id.into(),
             funded_amount_piconero: expected_amount.get(),
             received_amount_piconero,
             fee_piconero,
@@ -750,8 +844,9 @@ pub enum MoneroWalletEffectError {
     /// Official wallet returned an address different from the agreed address.
     #[error("restored Monero wallet address differs from the agreed shared address")]
     RestoredAddressMismatch,
-    /// Restored wallet did not contain exactly the expected unlocked principal.
-    #[error("restored Monero wallet balance differs from the exact expected principal")]
+    /// Restored wallet holds no unspent confirmed output of the exact
+    /// expected principal: nothing was sent.
+    #[error("restored Monero wallet holds no unspent output of the exact expected principal")]
     RestoredBalanceMismatch,
     /// Local daemon did not return the fixed number of generated blocks.
     #[error("Monero Regtest confirmation block count mismatch")]
@@ -1184,6 +1279,101 @@ mod tests {
 
     fn effects(daemon: &FakeRpc, wallet: &FakeRpc) -> MoneroRegtestWalletEffects {
         MoneroRegtestWalletEffects::new(&daemon.endpoint, &wallet.endpoint).expect("effects")
+    }
+
+    const SWAP_PICONERO: u64 = 1_000_000;
+
+    fn incoming(amount: u64, height: Option<u64>, image: &str, index: u64) -> serde_json::Value {
+        serde_json::json!({
+            "amount": amount, "global_index": index, "key_image": image.repeat(32),
+            "spent": false, "subaddr_index": {"major": 0, "minor": 0},
+            "tx_hash": format!("{index:064x}"), "tx_size": 1_500, "block_height": height,
+        })
+    }
+
+    /// The shared wallet as anyone who knows its address can leave it after
+    /// the swap's output was verified: dust, a larger gift, a second output
+    /// of the swap's amount, and an output not confirmed yet.
+    fn shared_wallet_with_extra_outputs(method: &str) -> serde_json::Value {
+        match method {
+            "refresh" => {
+                serde_json::json!({ "result": { "blocks_fetched": 0, "received_money": false } })
+            }
+            "incoming_transfers" => serde_json::json!({ "result": { "transfers": [
+                incoming(1, Some(130), "bb", 2),
+                incoming(SWAP_PICONERO, Some(140), "cc", 3),
+                incoming(SWAP_PICONERO, None, "ee", 5),
+                incoming(SWAP_PICONERO, Some(100), "aa", 1),
+                incoming(5 * SWAP_PICONERO, Some(150), "dd", 4),
+            ]}}),
+            "get_balance" => serde_json::json!({ "result": {
+                "balance": 8 * SWAP_PICONERO + 1, "unlocked_balance": 2 * SWAP_PICONERO + 1,
+                "multisig_import_needed": false,
+            }}),
+            "sweep_single" => serde_json::json!({ "result": {
+                "tx_hash": "07".repeat(32), "amount": SWAP_PICONERO - 1_000, "fee": 1_000,
+            }}),
+            _ => serde_json::json!({ "error": { "code": -1, "message": "unexpected" } }),
+        }
+    }
+
+    fn shared_wallet_with_only_dust(method: &str) -> serde_json::Value {
+        if method == "incoming_transfers" {
+            return serde_json::json!({ "result": { "transfers": [
+                incoming(1, Some(130), "bb", 2),
+                incoming(SWAP_PICONERO, None, "ee", 5),
+            ]}});
+        }
+        shared_wallet_with_extra_outputs(method)
+    }
+
+    /// One piconero sent to the shared address after verification used to
+    /// make the exact-balance check fail on every sweep. Extra outputs,
+    /// confirmed or not, are now left in place: the sweep spends the swap's
+    /// verified output alone, with one input's fee.
+    #[tokio::test]
+    async fn extra_outputs_at_the_shared_address_do_not_block_the_sweep() {
+        let daemon = FakeRpc::spawn(daemon_answer).await;
+        let wallet = FakeRpc::spawn(shared_wallet_with_extra_outputs).await;
+        let swept = effects(&daemon, &wallet)
+            .sweep_exact_output(
+                0,
+                NonZeroU64::new(SWAP_PICONERO).unwrap(),
+                address(AddressType::Standard),
+            )
+            .await
+            .expect("the swap's output is swept");
+        assert_eq!(swept.transaction_id(), [7_u8; 32].into());
+        assert_eq!(swept.received_amount_piconero(), SWAP_PICONERO - 1_000);
+        assert_eq!(swept.fee_piconero(), 1_000);
+        assert_eq!(
+            wallet.methods(),
+            ["refresh", "incoming_transfers", "sweep_single"]
+        );
+        let sweep = wallet.request(2);
+        assert_eq!(sweep["params"]["key_image"], "aa".repeat(32));
+        assert_eq!(
+            sweep["params"]["address"],
+            address(AddressType::Standard).to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn no_confirmed_output_of_the_swap_amount_sends_nothing() {
+        let daemon = FakeRpc::spawn(daemon_answer).await;
+        let wallet = FakeRpc::spawn(shared_wallet_with_only_dust).await;
+        let refused = effects(&daemon, &wallet)
+            .sweep_exact_output(
+                0,
+                NonZeroU64::new(SWAP_PICONERO).unwrap(),
+                address(AddressType::Standard),
+            )
+            .await;
+        assert_eq!(
+            refused.map(|swept| swept.fee_piconero()),
+            Err(MoneroWalletEffectError::RestoredBalanceMismatch)
+        );
+        assert_eq!(wallet.methods(), ["refresh", "incoming_transfers"]);
     }
 
     #[tokio::test]
