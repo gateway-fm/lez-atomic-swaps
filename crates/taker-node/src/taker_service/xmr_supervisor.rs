@@ -2123,8 +2123,10 @@ impl XmrClaimChains for LiveClaim {
 /// Whether the swap has a LEZ transaction of the Taker's owner account
 /// prepared and not yet final while it can still land: tag 13 (its
 /// initialisation and funding are prepared together) until the funding is
-/// final, tag 14, tag 16. Each is planned at the account's nonce when it is
+/// final, and tag 14. Each is planned at the account's nonce when it is
 /// prepared, so another swap's prepare meanwhile would take the same nonce.
+/// Tag 16 is not one: the swap's own refund authority signs it, at that
+/// account's nonce, which no other transaction uses.
 fn lez_in_flight(progress: &XmrTakerProgressV1, windows: XmrWindows, now_ms: u64) -> bool {
     (progress.scan_from.is_some()
         && progress.funded.is_none()
@@ -2132,9 +2134,6 @@ fn lez_in_flight(progress: &XmrTakerProgressV1, windows: XmrWindows, now_ms: u64
         || (progress.claim_authorization.is_some()
             && progress.claim_authorized.is_none()
             && now_ms < windows.refund_ms)
-        || (progress.refund_submitted.is_some()
-            && progress.refunded.is_none()
-            && now_ms < windows.punish_ms)
 }
 
 /// One supervision step of one swap, by its status. While another of the
@@ -2196,14 +2195,13 @@ async fn tick_swap(
 /// final). By itself it runs on every funded row, also before the host's R:
 /// the refund step sends nothing before the finalized LEZ time reaches R. So
 /// a Taker Node that runs keeps its LEZ whether or not the Maker funded and
-/// whether or not its owner acts (TM-0031). While another swap has an owner
-/// transaction in flight a refund not yet sent waits.
+/// whether or not its owner acts (TM-0031). It never waits for another
+/// swap's owner transaction: the swap's own refund authority signs it.
 fn refund_runs(
     progress: &XmrTakerProgressV1,
     revision: u64,
     refund_admitted: bool,
     automatic: bool,
-    owner_busy: bool,
 ) -> bool {
     let row = if automatic {
         matches!(revision, 2..=8 | 10)
@@ -2214,7 +2212,6 @@ fn refund_runs(
         && progress.maker_claim.is_none()
         && progress.refunded.is_none()
         && (automatic || refund_admitted || progress.refund_submitted.is_some())
-        && !(owner_busy && progress.refund_submitted.is_none())
 }
 
 /// The claim and the refund of one tick, by the swap's status row. Tag 14
@@ -2251,7 +2248,6 @@ async fn settle_step<CC: XmrClaimChains, RC: XmrRefundChains>(
         revision,
         admitted == Some(TakerFacadeActionV1::Refund),
         automatic,
-        owner_busy,
     ) {
         return claimed;
     }
@@ -2482,10 +2478,8 @@ mod tests {
         progress.claim_authorized = effect(30_000);
         assert!(!lez_in_flight(&progress, WINDOWS, 1));
         let mut progress = locked();
+        // The refund is the swap's own refund authority's, not the owner's.
         progress.refund_submitted = Some("01".repeat(32));
-        assert!(lez_in_flight(&progress, WINDOWS, WINDOWS.refund_ms));
-        assert!(!lez_in_flight(&progress, WINDOWS, WINDOWS.punish_ms));
-        progress.refunded = effect(WINDOWS.refund_ms);
         assert!(!lez_in_flight(&progress, WINDOWS, WINDOWS.refund_ms));
     }
 
@@ -3824,6 +3818,35 @@ mod tests {
     fn is_owner_private(path: &Path) -> bool {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777 == 0o600
+    }
+
+    /// The refund (tag 16) is signed by the swap's own refund authority, not
+    /// the owner account, so another swap's owner transaction in flight (a
+    /// lock stuck until its cutoff, say) never holds it back, and a refund
+    /// in flight never holds back another swap's owner transaction.
+    #[tokio::test]
+    async fn the_refund_never_waits_behind_another_swaps_owner_transaction() {
+        for (automatic, admitted) in [(true, None), (false, Some(TakerFacadeActionV1::Refund))] {
+            let (_directory, files) = swap(&locked());
+            let (claim, refund) = (StubChains::default(), StubRefund::at(WINDOWS.refund_ms));
+            let owner_busy = true;
+            settle_step(
+                &claim,
+                &refund,
+                &files,
+                WINDOWS,
+                WINDOWS.refund_ms,
+                admitted,
+                automatic,
+                owner_busy,
+            )
+            .await
+            .unwrap();
+            assert_eq!(refund.calls("submit"), 1);
+        }
+        let mut progress = locked();
+        progress.refund_submitted = Some("16".repeat(32));
+        assert!(!lez_in_flight(&progress, WINDOWS, WINDOWS.refund_ms));
     }
 
     #[test]
