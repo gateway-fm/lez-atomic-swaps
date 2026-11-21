@@ -1155,6 +1155,10 @@ async fn taker_prepares_completes_and_submits_exact_tag_16() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one tag-16 journey keeps the unknown answer, the resends, the restart and the landing joined"
+)]
 async fn tag16_not_included_is_sent_again_until_it_lands() {
     let (depositor, depositor_key) = account(31);
     let (claimant, _) = account(32);
@@ -1574,6 +1578,10 @@ async fn xmr_punish_binds_the_committed_message_except_the_claimant_nonce() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one tag-17 journey keeps the binding, the resends, the restart and the landing joined"
+)]
 async fn durable_xmr_punish_is_transaction_bound_sent_until_it_lands_and_restart_stable() {
     let (depositor, _) = account(31);
     let (claimant, claimant_key) = account(32);

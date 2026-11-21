@@ -2754,6 +2754,10 @@ async fn maker_classifies_its_own_tag_17_at_a_live_nonce_and_nothing_else() {
 /// metadata the terms bind (none while it is not initialized), and metadata
 /// the terms do not bind is refused.
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one tip read per escrow state and the refused foreign metadata stay joined"
+)]
 async fn the_escrow_is_read_at_the_sequencer_tip() {
     let directory = TempDir::new().expect("state root");
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).expect("private root");
