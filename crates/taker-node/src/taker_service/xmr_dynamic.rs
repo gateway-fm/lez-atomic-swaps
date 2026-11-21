@@ -21,7 +21,7 @@ use anyhow::{Context as _, Result, ensure};
 use lez_bridge_protocol::RequestId;
 use lez_btc_role_lifecycle::{
     SwapLayout, SwapSidecar,
-    layout::{read_private, write_private_exact},
+    layout::{read_private, replace_private, write_private_exact},
 };
 use lez_node_common::{
     XmrCeremonyNonceRequestV1, XmrCeremonyNonceResponseV1, XmrCeremonyPartialResponseV1,
@@ -374,14 +374,7 @@ pub(super) struct XmrNegotiation<'a> {
 }
 
 fn store_record(swap_root: &Path, record: &TakerXmrReserveRecordV1) -> Result<()> {
-    let path = swap_root.join(RESERVE_FILE);
-    let bytes = serde_json::to_vec(record)?;
-    if path.exists() {
-        fs::write(&path, &bytes)?;
-    } else {
-        write_private_exact(&path, &bytes)?;
-    }
-    Ok(())
+    replace_private(&swap_root.join(RESERVE_FILE), &serde_json::to_vec(record)?)
 }
 
 /// R1–R5 and the Stage-B activation in the swap's role root; returns the

@@ -1110,6 +1110,9 @@ fn xmr_offer_words(offer: &lez_swap_store::MakerOfferV1) -> Option<String> {
 fn xmr_phase_words(phase: &str) -> Option<&'static str> {
     Some(match phase {
         "lez_locking" => "the Node is locking your LEZ (automatic, no `swap lock`)",
+        "progress_unreadable" => {
+            "the Node cannot read this swap's progress record and does not drive it"
+        }
         "lez_lock_unconfirmed" => {
             "the funding cutoff passed before your LEZ lock was seen final: the Node keeps \
              looking for it, and refunds it from the refund time if it landed"
@@ -1150,6 +1153,10 @@ fn xmr_phase_words(phase: &str) -> Option<&'static str> {
 fn xmr_attention_words(reason: &str) -> Option<&'static str> {
     Some(match reason {
         "xmr_lez_lock_window_closed" => "the LEZ lock window closed before your LEZ was locked",
+        "xmr_progress_unreadable" => {
+            "the swap's progress record cannot be read: repair it from the file named in the \
+             detail; a locked LEZ still needs its refund before the punish time"
+        }
         "xmr_lez_lock_unconfirmed" => {
             "your LEZ lock may have landed after the window closed: the Node keeps looking"
         }

@@ -49,7 +49,7 @@ use lez_bridge_protocol::{
 };
 use lez_btc_role_lifecycle::{
     SwapSidecar,
-    layout::{read_private, write_private_exact},
+    layout::{read_private, replace_private},
 };
 use lez_swap_core::{Phase, SwapId};
 use lez_swap_store::TakerFacadeActionV1;
@@ -538,6 +538,12 @@ pub(super) fn overlay_view(view: &mut crate::TakerSwapViewV1, files: &XmrSwapFil
                     "the claim was authorised on LEZ (tag 14) and the Maker did not claim before the refund time, so it no longer can: refund (tag 16) before the punish time, or the Maker takes the LEZ and the Monero stays locked".to_owned(),
                 );
             }
+            Some("xmr_progress_unreadable") => {
+                view.status_detail = Some(format!(
+                    "the swap's progress record {} cannot be read, so the Node does not drive this swap; it is kept as it is for repair. If LEZ is locked, its refund (tag 16) is still due before the punish time",
+                    files.swap_root.join(PROGRESS_FILE).display()
+                ));
+            }
             Some("xmr_refund_not_final_by_punish_time") => {
                 view.status_detail = Some(
                     "the refund (tag 16) was sent and not seen final by the punish time: one that landed before it is recorded once seen final; otherwise it can no longer land, and the Maker can punish (tag 17) and take the LEZ".to_owned(),
@@ -589,13 +595,10 @@ impl XmrSwapFiles {
             .map_err(|_| anyhow::anyhow!("progress lock poisoned"))?;
         let mut progress = self.progress()?;
         edit(&mut progress);
-        let path = self.swap_root.join(PROGRESS_FILE);
-        let bytes = serde_json::to_vec_pretty(&progress)?;
-        if path.exists() {
-            std::fs::write(&path, &bytes)?;
-        } else {
-            write_private_exact(&path, &bytes)?;
-        }
+        replace_private(
+            &self.swap_root.join(PROGRESS_FILE),
+            &serde_json::to_vec_pretty(&progress)?,
+        )?;
         Ok(progress)
     }
 
@@ -623,13 +626,23 @@ impl XmrSwapFiles {
         Ok((agreement, activation, view_bytes))
     }
 
-    /// The status a monitor answers: no chain is read.
+    /// The status a monitor answers: no chain is read. A progress record
+    /// that cannot be read (cut short, say) is a row of its own: the
+    /// supervisor cannot drive the swap until it is repaired, and the owner
+    /// is told so rather than meeting a tick that fails in silence.
     pub(super) fn status(&self) -> Result<XmrTakerView> {
-        Ok(xmr_taker_view(
-            &self.progress()?,
-            XmrWindows::of(&self.facts()?),
-            now_ms(),
-        ))
+        let windows = XmrWindows::of(&self.facts()?);
+        Ok(match self.progress() {
+            Ok(progress) => xmr_taker_view(&progress, windows, now_ms()),
+            Err(_) => view(
+                Phase::Offered,
+                0,
+                TakerSwapStateV1::AttentionRequired,
+                None,
+                Some("xmr_progress_unreadable"),
+                "progress_unreadable",
+            ),
+        })
     }
 }
 
@@ -3758,6 +3771,59 @@ mod tests {
         // A take that never prepared a pair reads closed past C at once.
         let (_directory, files) = swap(&record());
         assert_eq!(actor_phase(&files, after_c), "lez_lock_window_closed");
+    }
+
+    /// A progress record cut short (a crash mid-write on an older Node, a
+    /// full disk) is reported on the swap's row, not left as a tick that
+    /// fails in silence; the record is kept for repair. Records are written
+    /// whole: a temporary file, synced, renamed over the record.
+    #[test]
+    fn a_torn_progress_record_is_reported_and_records_are_written_whole() {
+        let (_directory, files) = swap(&locked());
+        let facts = XmrTakerSwapFactsV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("xmr-torn-swap".to_owned()).unwrap(),
+            reservation_id: RequestId::new("xmr-torn-reservation").unwrap(),
+            monero_restore_height: 1,
+            lez_anchor_unix_seconds: 1,
+            maker_xmr_funding_cutoff_ms: WINDOWS.funding_cutoff_ms,
+            refund_at_ms: WINDOWS.refund_ms,
+            punish_at_ms: WINDOWS.punish_ms,
+        };
+        let facts_file = files.swap_root.join(SWAP_FACTS_FILE);
+        replace_private(&facts_file, &serde_json::to_vec(&facts).unwrap()).unwrap();
+        let path = files.swap_root.join(PROGRESS_FILE);
+        let whole = std::fs::read(&path).unwrap();
+        std::fs::write(&path, &whole[..whole.len() / 2]).unwrap();
+        let status = files.status().expect("a row, not an error");
+        assert_eq!(status.state, TakerSwapStateV1::AttentionRequired);
+        assert_eq!(status.attention_reason, Some("xmr_progress_unreadable"));
+        assert_eq!(status.available_action, None);
+        assert_eq!(std::fs::read(&path).unwrap(), &whole[..whole.len() / 2]);
+
+        std::fs::write(&path, &whole).unwrap();
+        files
+            .update(|record| record.monero_funding_transaction = None)
+            .unwrap();
+        let names: Vec<_> = std::fs::read_dir(&files.swap_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        let mut names = names;
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                std::ffi::OsString::from(SWAP_FACTS_FILE),
+                std::ffi::OsString::from(PROGRESS_FILE)
+            ]
+        );
+        assert!(crate::taker_service::xmr_supervisor::tests::is_owner_private(&path));
+    }
+
+    fn is_owner_private(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777 == 0o600
     }
 
     #[test]

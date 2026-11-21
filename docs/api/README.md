@@ -567,6 +567,7 @@ when the owner is needed (`crates/taker-node/src/taker_service/xmr_supervisor.rs
 | `actor_phase` | `state` | `available_action` | Meaning |
 |---|---|---|---|
 | `lez_locking` | `awaiting_first_lock` | — | the Node is locking the LEZ |
+| `progress_unreadable` | `attention_required` (`xmr_progress_unreadable`) | — | the swap's progress record (`xmr-taker-progress.json`, named in `status_detail`) cannot be read; the Node does not drive the swap until it is repaired. The Node writes it whole (a temporary file, synced and renamed), so its own crash cannot cut it short |
 | `lez_lock_unconfirmed` | `attention_required` (`xmr_lez_lock_unconfirmed`) | — | C passed with a lock prepared and not seen final: the Node sends nothing more and keeps looking for it on chain; a lock found (final before or after C) turns the row locked, and is refunded from R |
 | `lez_lock_window_closed` | `attention_required` (`xmr_lez_lock_window_closed`) | — | no lock was prepared by C, or the finalized LEZ time reached R with nothing in the escrow: nothing is locked, the take is over |
 | `taker_lock_confirmed` | `awaiting_second_lock` | — | LEZ locked; waiting for the Maker's Monero at 10 confirmations |

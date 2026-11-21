@@ -245,18 +245,81 @@ pub fn write_private_exact(path: &Path, bytes: &[u8]) -> Result<bool> {
             Ok(true)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(path)
-                .with_context(|| format!("create {}", path.display()))?;
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            Ok(false)
+            // Written whole, then published by a link that fails if the
+            // name exists: a crash leaves no file or the whole one.
+            let staging = staging_path(path)?;
+            let _ = fs::remove_file(&staging);
+            let written = (|| -> Result<()> {
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&staging)
+                    .with_context(|| format!("create {}", staging.display()))?;
+                file.write_all(bytes)?;
+                file.sync_all()?;
+                drop(file);
+                fs::hard_link(&staging, path)
+                    .with_context(|| format!("create {}", path.display()))?;
+                sync_parent(path)
+            })();
+            let _ = fs::remove_file(&staging);
+            written.map(|()| false)
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// Replaces the owner-private file at `path` with `bytes` as one step: the
+/// bytes go to a temporary file in the same directory, which is synced and
+/// renamed over `path`, and the directory is synced. A crash leaves the old
+/// file or the new one, never a torn one.
+///
+/// # Errors
+///
+/// Fails when the temporary file cannot be written, synced or renamed.
+pub fn replace_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let staging = staging_path(path)?;
+    let _ = fs::remove_file(&staging);
+    let written = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&staging)
+            .with_context(|| format!("create {}", staging.display()))?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&staging, path).with_context(|| format!("replace {}", path.display()))?;
+        sync_parent(path)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&staging);
+    }
+    written
+}
+
+/// The temporary name beside `path` a whole write goes through.
+fn staging_path(path: &Path) -> Result<PathBuf> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("{} has no directory", path.display()))?;
+    let name = path
+        .file_name()
+        .with_context(|| format!("{} has no file name", path.display()))?;
+    let mut staging = std::ffi::OsString::from(".");
+    staging.push(name);
+    staging.push(format!(".tmp-{}", std::process::id()));
+    Ok(parent.join(staging))
+}
+
+fn sync_parent(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("{} has no directory", path.display()))?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 /// Rejects a configured path that is not absolute or that walks the tree.
@@ -366,7 +429,34 @@ mod tests {
 
     use lez_bridge_protocol::RequestId;
 
-    use super::{STAGE_DIRECTORY, SwapLayout, read_private};
+    use super::{STAGE_DIRECTORY, SwapLayout, read_private, replace_private};
+
+    /// A replaced file holds the new bytes, stays owner-private, and leaves
+    /// no temporary file beside it, also over a stale one from a crash.
+    #[test]
+    fn a_file_is_replaced_whole_and_private() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let root = directory.path().join("swap");
+        private_dir(&root);
+        let path = root.join("record.json");
+        replace_private(&path, b"first").unwrap();
+        fs::write(
+            root.join(format!(".record.json.tmp-{}", std::process::id())),
+            b"torn",
+        )
+        .unwrap();
+        replace_private(&path, b"second").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"second");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let names: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [std::ffi::OsString::from("record.json")]);
+    }
 
     fn private_dir(path: &Path) {
         fs::create_dir(path).unwrap();

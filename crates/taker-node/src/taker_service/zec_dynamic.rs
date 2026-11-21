@@ -20,7 +20,7 @@ use anyhow::{Context as _, Result, ensure};
 use lez_bridge_protocol::{DiscoveryWindow, Hex32, RequestId};
 use lez_btc_role_lifecycle::{
     SwapLayout, SwapSidecar,
-    layout::{read_private, write_private_exact},
+    layout::{read_private, replace_private, write_private_exact},
 };
 use lez_node_common::{
     ZecOutpointV1, ZecReserveRequestV1, ZecReserveResponseV1, local_rpc::call_local_chat_rpc,
@@ -195,14 +195,10 @@ impl DynamicZecRole {
 }
 
 fn store_record(layout: &SwapLayout, record: &TakerReserveRecordV1) -> Result<()> {
-    let path = layout.root().join(RESERVE_FILE);
-    let bytes = serde_json::to_vec_pretty(record)?;
-    if path.exists() {
-        fs::write(&path, &bytes)?;
-    } else {
-        write_private_exact(&path, &bytes)?;
-    }
-    Ok(())
+    replace_private(
+        &layout.root().join(RESERVE_FILE),
+        &serde_json::to_vec_pretty(record)?,
+    )
 }
 
 /// Reserves with the Maker, checks its draft, writes the Taker's own template
