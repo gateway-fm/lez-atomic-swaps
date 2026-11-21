@@ -323,7 +323,19 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 160)
+        self.assertEqual(len(full), 168)
+
+    def test_full_has_the_custody_credit_scenarios_once_each(self):
+        full = self.tier('full')
+        credited = sorted(test for test in full if '-custody-credit' in test)
+        self.assertEqual(credited, sorted([
+            'node:btc:btc-custody-credit:TakerSellsLez', 'node:btc:btc-custody-credit:TakerSellsForeign',
+            'node:btc:btc-custody-credit-refund:TakerSellsLez',
+            'node:zec:zec-custody-credit:TakerSellsLez', 'node:zec:zec-custody-credit:TakerSellsForeign',
+            'node:zec:zec-custody-credit-refund:TakerSellsLez',
+            'node:xmr:xmr-custody-credit:TakerSellsLez', 'node:xmr:xmr-custody-credit-refund:TakerSellsLez']))
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if '-custody-credit' in test], tier)
 
     def test_smoke_is_unchanged(self):
         self.assertEqual(self.tier('smoke'), [

@@ -2,8 +2,14 @@
 //!
 //! Each state transition and its authenticated-transfer chained call are one
 //! [`SpelOutput`]. LEZ validates the complete recursive execution before
-//! committing it, so metadata cannot become terminal unless the exact custody
+//! committing it, so metadata cannot become terminal unless the custody
 //! transfer also succeeds.
+//!
+//! LEZ lets anyone credit any initialised account, so a custody account can
+//! hold more than the escrowed amount (TM-0032). Funding therefore accepts a
+//! custody that already holds a balance, and every ending requires at least
+//! the amount and pays the whole custody balance to that ending's recipient,
+//! leaving the custody empty.
 
 #![allow(dead_code)]
 
@@ -468,7 +474,7 @@ fn validated_native_claim_state(
         || state.custody != custody.account_id
         || claimant.account.program_owner != state.asset_program
         || custody.account.program_owner != state.asset_program
-        || custody.account.balance != state.amount
+        || custody.account.balance < state.amount
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -521,7 +527,7 @@ fn validated_xmr_native_witness_state(
         || state.custody != custody.account_id
         || recipient.account.program_owner != state.asset_program
         || custody.account.program_owner != state.asset_program
-        || custody.account.balance != state.amount
+        || custody.account.balance < state.amount
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -593,7 +599,7 @@ fn validated_xmr_native_punish_state(
         || state.custody != custody.account_id
         || claimant.account.program_owner != state.asset_program
         || custody.account.program_owner != state.asset_program
-        || custody.account.balance != state.amount
+        || custody.account.balance < state.amount
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -685,7 +691,7 @@ fn validated_token_claim_state(
         || custody.account.program_owner != state.asset_program
         || token_definition(claimant_asset)?.into_value() != state.asset_definition
         || token_definition(custody)?.into_value() != state.asset_definition
-        || fungible_balance(custody)? != state.amount
+        || fungible_balance(custody)? < state.amount
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -881,7 +887,6 @@ mod zec_escrow {
             || state.custody != custody.account_id
             || depositor.account.program_owner != state.asset_program
             || custody.account.program_owner != state.asset_program
-            || custody.account.balance != 0
             || depositor.account.balance < state.amount
         {
             return Err(custom_error(
@@ -927,7 +932,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             claimant.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -960,7 +965,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             claimant.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -998,7 +1003,7 @@ mod zec_escrow {
             || state.custody != custody.account_id
             || depositor.account.program_owner != state.asset_program
             || custody.account.program_owner != state.asset_program
-            || custody.account.balance != state.amount
+            || custody.account.balance < state.amount
         {
             return Err(custom_error(
                 ERROR_ACCOUNT_BINDING,
@@ -1010,7 +1015,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             depositor.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -1081,7 +1086,10 @@ mod zec_escrow {
                     metadata.account_id,
                     token_definition.account_id,
                 )
-            || custody.account != Account::default()
+            || !(custody.account == Account::default()
+                || (custody.account.program_owner == state.asset_program
+                    && token_holding(&custody)?.definition_id().into_value()
+                        == state.asset_definition))
         {
             return Err(custom_error(
                 ERROR_ACCOUNT_BINDING,
@@ -1127,7 +1135,6 @@ mod zec_escrow {
             || token_definition(&depositor_asset)?.into_value() != state.asset_definition
             || token_definition(&custody)?.into_value() != state.asset_definition
             || fungible_balance(&depositor_asset)? < state.amount
-            || fungible_balance(&custody)? != 0
         {
             return Err(custom_error(
                 ERROR_ACCOUNT_BINDING,
@@ -1178,7 +1185,7 @@ mod zec_escrow {
             metadata.clone(),
             custody.clone(),
             claimant_asset.clone(),
-            state.amount,
+            fungible_balance(&custody)?,
             true,
             &swap_id,
         );
@@ -1208,7 +1215,7 @@ mod zec_escrow {
             || custody.account.program_owner != state.asset_program
             || token_definition(&depositor_asset)?.into_value() != state.asset_definition
             || token_definition(&custody)?.into_value() != state.asset_definition
-            || fungible_balance(&custody)? != state.amount
+            || fungible_balance(&custody)? < state.amount
         {
             return Err(custom_error(
                 ERROR_ACCOUNT_BINDING,
@@ -1223,7 +1230,7 @@ mod zec_escrow {
             metadata.clone(),
             custody.clone(),
             depositor_asset.clone(),
-            state.amount,
+            fungible_balance(&custody)?,
             true,
             &swap_id,
         );
@@ -1310,7 +1317,7 @@ mod zec_escrow {
             metadata.clone(),
             custody.clone(),
             claimant_asset.clone(),
-            state.amount,
+            fungible_balance(&custody)?,
             true,
             &swap_id,
         );
@@ -1429,7 +1436,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             claimant.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -1464,7 +1471,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             depositor.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -1498,7 +1505,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             claimant.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -2689,7 +2696,7 @@ mod tests {
     }
 
     #[test]
-    fn token_paths_reject_wrong_definition_partial_custody_and_prefunding() {
+    fn token_paths_reject_wrong_definition_and_partial_custody() {
         let definition = AccountId::new([41; 32]);
         let other_definition = AccountId::new([42; 32]);
         let initialized = token_initialized(definition);
@@ -2716,18 +2723,6 @@ mod tests {
             )
             .is_err()
         );
-        assert!(
-            zec_escrow::fund_token(
-                context(),
-                committed_metadata(&initialized),
-                actor([1; 32], true),
-                holding(state.depositor_asset, definition, 500),
-                holding(state.custody, definition, 1),
-                SWAP_ID,
-            )
-            .is_err(),
-            "pre-funded custody would violate exact escrow accounting"
-        );
 
         let funded = token_funded(definition);
         let funded_state = metadata_from(&funded);
@@ -2743,6 +2738,219 @@ mod tests {
             )
             .is_err(),
             "partial custody can never become terminal metadata"
+        );
+    }
+
+    /// The instruction words of the output's one custody transfer.
+    fn custody_transfer(output: &SpelOutput) -> Vec<u32> {
+        output.chained_calls[0].instruction_data.clone()
+    }
+
+    fn native_transfer_of(amount: u128) -> Vec<u32> {
+        ChainedCall::new(
+            AUTHENTICATED_TRANSFER,
+            vec![],
+            &AuthenticatedTransferInstruction::Transfer { amount },
+        )
+        .instruction_data
+    }
+
+    fn token_transfer_of(amount: u128) -> Vec<u32> {
+        ChainedCall::new(
+            ATA_PROGRAM,
+            vec![],
+            &ata_core::Instruction::Transfer {
+                ata_program_id: ATA_PROGRAM,
+                amount,
+            },
+        )
+        .instruction_data
+    }
+
+    fn credited_custody() -> AccountWithMetadata {
+        account(
+            custody_id().into_value(),
+            AUTHENTICATED_TRANSFER,
+            AMOUNT + 1,
+            false,
+        )
+    }
+
+    /// TM-0032: anyone can credit a custody account, so every ending accepts a
+    /// custody holding more than the amount and pays out the whole balance.
+    #[test]
+    fn native_endings_of_every_pair_sweep_a_credited_custody() {
+        let swept = native_transfer_of(AMOUNT + 1);
+
+        let claim = zec_escrow::claim_native(
+            context(),
+            funded_metadata(),
+            credited_custody(),
+            account([2; 32], AUTHENTICATED_TRANSFER, 10, true),
+            SWAP_ID,
+            PREIMAGE,
+        )
+        .expect("the preimage claim accepts a credited custody");
+        assert_eq!(custody_transfer(&claim), swept);
+
+        let refund = zec_escrow::refund_native(
+            context(),
+            funded_metadata(),
+            credited_custody(),
+            account([1; 32], AUTHENTICATED_TRANSFER, 125, false),
+            SWAP_ID,
+        )
+        .expect("the refund accepts a credited custody");
+        assert_eq!(custody_transfer(&refund), swept);
+
+        let witnessed = witnessed_initialized();
+        let witnessed_funded = zec_escrow::fund_native(
+            context(),
+            committed_metadata(&witnessed),
+            account(custody_id().into_value(), AUTHENTICATED_TRANSFER, 0, false),
+            account([1; 32], AUTHENTICATED_TRANSFER, 200, true),
+            SWAP_ID,
+        )
+        .expect("witnessed escrow funds");
+        let aggregate_authority = witnessed_account_id(&XMR_CLAIM_KEY);
+        let claim = zec_escrow::claim_native_witnessed(
+            context(),
+            committed_metadata(&witnessed_funded),
+            credited_custody(),
+            account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+            actor(aggregate_authority.into_value(), true),
+            SWAP_ID,
+        )
+        .expect("the aggregate claim accepts a credited custody");
+        assert_eq!(custody_transfer(&claim), swept);
+
+        let authorization = zec_escrow::authorize_native_xmr_claim(
+            context(),
+            committed_metadata(&xmr_funded()),
+            account([1; 32], AUTHENTICATED_TRANSFER, 125, true),
+            SWAP_ID,
+            XMR_CLAIM_PARTIAL,
+        )
+        .expect("tag 14");
+        let claim = zec_escrow::claim_native_xmr(
+            context(),
+            committed_metadata(&authorization),
+            credited_custody(),
+            account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+            actor(witnessed_account_id(&XMR_CLAIM_KEY).into_value(), true),
+            SWAP_ID,
+        )
+        .expect("tag 15 accepts a credited custody");
+        assert_eq!(custody_transfer(&claim), swept);
+        let refund = zec_escrow::refund_native_xmr(
+            context(),
+            committed_metadata(&xmr_funded()),
+            credited_custody(),
+            account([1; 32], AUTHENTICATED_TRANSFER, 125, false),
+            actor(witnessed_account_id(&XMR_REFUND_KEY).into_value(), true),
+            SWAP_ID,
+        )
+        .expect("tag 16 accepts a credited custody");
+        assert_eq!(custody_transfer(&refund), swept);
+        let punish = zec_escrow::punish_native_xmr(
+            context(),
+            committed_metadata(&xmr_funded()),
+            credited_custody(),
+            account([2; 32], AUTHENTICATED_TRANSFER, 10, true),
+            SWAP_ID,
+        )
+        .expect("tag 17 accepts a credited custody");
+        assert_eq!(custody_transfer(&punish), swept);
+    }
+
+    #[test]
+    fn native_funding_accepts_a_custody_credited_after_initialization() {
+        let funded = zec_escrow::fund_native(
+            context(),
+            committed_metadata(&initialized()),
+            account(custody_id().into_value(), AUTHENTICATED_TRANSFER, 1, false),
+            account([1; 32], AUTHENTICATED_TRANSFER, 200, true),
+            SWAP_ID,
+        )
+        .expect("a stranger's credit cannot block funding");
+        assert_eq!(metadata_from(&funded).status, EscrowStatus::Funded);
+        assert_eq!(custody_transfer(&funded), native_transfer_of(AMOUNT));
+    }
+
+    #[test]
+    fn token_endings_sweep_a_credited_custody_and_custody_creation_is_idempotent() {
+        let definition = AccountId::new([41; 32]);
+        let swept = token_transfer_of(AMOUNT + 1);
+        let funded = token_funded(definition);
+        let state = metadata_from(&funded);
+        let claim = zec_escrow::claim_token(
+            context(),
+            committed_metadata(&funded),
+            holding(state.custody, definition, AMOUNT + 1),
+            actor([2; 32], true),
+            holding(state.claimant_asset, definition, 0),
+            SWAP_ID,
+            PREIMAGE,
+        )
+        .expect("the token claim accepts a credited custody");
+        assert_eq!(claim.chained_calls[0].instruction_data, swept);
+        let refund = zec_escrow::refund_token(
+            context(),
+            committed_metadata(&funded),
+            holding(state.custody, definition, AMOUNT + 1),
+            holding(state.depositor_asset, definition, 425),
+            SWAP_ID,
+        )
+        .expect("the token refund accepts a credited custody");
+        assert_eq!(refund.chained_calls[0].instruction_data, swept);
+
+        let witnessed = token_funded_witnessed(definition, XMR_CLAIM_KEY);
+        let witnessed_state = metadata_from(&witnessed);
+        let claim = zec_escrow::claim_token_witnessed(
+            context(),
+            committed_metadata(&witnessed),
+            holding(witnessed_state.custody, definition, AMOUNT + 1),
+            actor([2; 32], false),
+            holding(witnessed_state.claimant_asset, definition, 0),
+            actor(witnessed_account_id(&XMR_CLAIM_KEY).into_value(), true),
+            SWAP_ID,
+        )
+        .expect("the witnessed token claim accepts a credited custody");
+        assert_eq!(claim.chained_calls[0].instruction_data, swept);
+
+        let initialized = token_initialized(definition);
+        let state = metadata_from(&initialized);
+        zec_escrow::create_token_custody(
+            context(),
+            committed_metadata(&initialized),
+            definition_account(definition),
+            holding(state.custody, definition, 1),
+            SWAP_ID,
+        )
+        .expect("the exact ATA a stranger created and credited is accepted");
+        assert!(
+            zec_escrow::create_token_custody(
+                context(),
+                committed_metadata(&initialized),
+                definition_account(definition),
+                holding(state.custody, AccountId::new([42; 32]), 0),
+                SWAP_ID,
+            )
+            .is_err(),
+            "a custody holding of another definition is still refused"
+        );
+        let funded = zec_escrow::fund_token(
+            context(),
+            committed_metadata(&initialized),
+            actor([1; 32], true),
+            holding(state.depositor_asset, definition, 500),
+            holding(state.custody, definition, 1),
+            SWAP_ID,
+        )
+        .expect("a stranger's credit cannot block token funding");
+        assert_eq!(
+            funded.chained_calls[0].instruction_data,
+            token_transfer_of(AMOUNT)
         );
     }
 }

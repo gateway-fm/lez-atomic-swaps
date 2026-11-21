@@ -186,7 +186,7 @@ impl FinalizedXmrLezInitializationEvidenceV3 {
         self.scanned_window
     }
 
-    /// Validated canonical transaction, metadata, and zero-custody facts.
+    /// Validated canonical transaction, metadata, and custody facts.
     pub const fn facts(&self) -> &FinalizedNativeXmrEffectFactsV3 {
         &self.facts
     }

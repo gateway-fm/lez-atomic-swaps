@@ -588,16 +588,18 @@ sidecar_tree_stamp() {
   if git -C "$REPO_ROOT" diff --quiet HEAD -- compat/lez-v0_2-sidecar; then echo "$tree"; else echo "$tree-dirty-$dirty"; fi
 }
 
-# lez-v02-escrow-claim-probe is a test-only tool: the devnet Maker image
-# carries it beside the Node package (images/maker-node/Dockerfile) for the
-# zec-maker-early-claim scenario; no role package contains it.
+# lez-v02-escrow-claim-probe and lez-v02-custody-credit-probe are test-only
+# tools: the devnet Maker image carries them beside the Node package
+# (images/maker-node/Dockerfile) for the zec-maker-early-claim and
+# *-custody-credit scenarios; no role package contains them.
 build_sidecar() {
-  log "building the LEZ sidecar, the identity tool and the escrow claim probe"
+  log "building the LEZ sidecar, the identity tool and the escrow claim and custody credit probes"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan --bin lez-v02-escrow-claim-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
+      --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan --bin lez-v02-escrow-claim-probe --bin lez-v02-custody-credit-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc \
       /cache/target/sidecar/debug/lez-v02-xmr-stage-a-plan \
       /cache/target/sidecar/debug/lez-v02-escrow-claim-probe \
+      /cache/target/sidecar/debug/lez-v02-custody-credit-probe \
       /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
@@ -691,8 +693,9 @@ phase_stage() {
     # the sidecar, and the Monero Stage-A planner both Nodes run (one-shot, chain-free)
     install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$PROVISION/sidecar/lez-v02-xmr-stage-a-plan" "$DEPLOY_ROOT/images/$role-node/"
   done
-  # test-only, outside the Maker's package: the zec-maker-early-claim scenario
+  # test-only, outside the Maker's package: the zec-maker-early-claim and *-custody-credit scenarios
   install -m 0755 "$PROVISION/sidecar/lez-v02-escrow-claim-probe" "$DEPLOY_ROOT/images/maker-node/"
+  install -m 0755 "$PROVISION/sidecar/lez-v02-custody-credit-probe" "$DEPLOY_ROOT/images/maker-node/"
   for role in maker taker; do
     cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
     cp "$PROVISION/sidecar/source-tree.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-tree.txt"

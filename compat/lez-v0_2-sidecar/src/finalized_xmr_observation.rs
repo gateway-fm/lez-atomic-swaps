@@ -793,7 +793,7 @@ impl FinalizedNativeXmrEffectObserver {
                 BridgeRuntimeError::InvalidObservation,
             ));
         };
-        let (expected_state, expected_balance) = match effect {
+        let (expected_state, minimum_balance) = match effect {
             XmrNativeEffectV3::Initialize => (XmrNativeEscrowStateV3::Empty, 0),
             XmrNativeEffectV3::Fund => (XmrNativeEscrowStateV3::Funded, input.amount),
             XmrNativeEffectV3::AuthorizeClaim => {
@@ -810,13 +810,13 @@ impl FinalizedNativeXmrEffectObserver {
                 BridgeRuntimeError::InvalidObservation,
             ));
         }
-        validate_custody(terms, &custody, expected_balance)?;
+        validate_custody(terms, &custody, minimum_balance)?;
         Ok((
             XmrNativeEscrowMetadataFactsV3::from_terms(*terms, state),
             NativeCustodyFacts::new(
                 input.custody_account_id,
                 input.authenticated_transfer_program_id,
-                expected_balance,
+                custody.balance,
             ),
         ))
     }
@@ -960,11 +960,13 @@ pub(crate) fn xmr_metadata_state(
 fn validate_custody(
     terms: &XmrNativeEscrowTermsV3,
     account: &indexer_service_protocol::Account,
-    expected_balance: u128,
+    minimum_balance: u128,
 ) -> Classified<()> {
     let input = terms.to_input();
+    // At least: anyone can credit the custody (TM-0032), before an ending as
+    // after it, and the escrow pays the whole balance out.
     if account.program_owner.0 != program_id_from_hex(input.authenticated_transfer_program_id)
-        || account.balance != expected_balance
+        || account.balance < minimum_balance
     {
         return Err(ClassifiedFailure::Runtime(
             BridgeRuntimeError::InvalidObservation,
