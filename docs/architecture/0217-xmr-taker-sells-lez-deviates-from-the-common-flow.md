@@ -1,6 +1,6 @@
 # ADR 0217 — XMR selling LEZ keeps its own order, an exception to the common flow
 
-Status: Proposed, 2026-11-20. Relates to issue #161 (the XMR leg, RFP-003 M4)
+Status: Accepted, 2026-11-21 (proposed 2026-11-20). Relates to issue #161 (the XMR leg, RFP-003 M4)
 and to [ADR 0216](0216-zec-taker-reveals-first-in-both-directions.md), which
 fixes the common flow for BTC and ZEC and leaves XMR as it is. It changes no
 code, no escrow instruction and no profile. Threat-model delta: TM-0031, the
@@ -26,8 +26,10 @@ AGENTS.md, "Protocol design": for a given direction, who locks first, who
 holds the secret, who claims first and which refund matures first are the same
 for every pair; a pair may differ only in the mechanism that carries the
 secret; a pair that cannot follow the common flow in a direction does not offer
-that direction. It also says that XMR does not follow the rule yet and that
-aligning it, or withdrawing the direction, is part of issue #161.
+that direction. Before this ADR it also said that XMR did not follow the rule
+and that aligning it, or withdrawing the direction, was part of issue #161.
+This ADR settles that: AGENTS.md now names XMR `TakerSellsLez` as the one
+accepted exception and points here.
 
 ### The common flow for "Taker sells LEZ"
 
@@ -202,10 +204,19 @@ Every abort point, from the code above:
 | Taker Node down through [R, P), Maker funded | loses its LEZ | takes the LEZ with tag 17, re-planned past any number of taken nonces; its Monero stays locked | `xmr-punish`; re-plans and resends: unit test `a_punishment_replanned_more_than_five_times_still_lands` (sidecar); devnet: `xmr-punish-replans`, written and not run yet |
 
 Crash and restart at each step are covered by `xmr-kill-taker`,
-`xmr-kill-maker` (6 kill points) and `xmr-taker-refund-kill`; all of the
-scenarios named here passed in the full regression at `9a15d94b`
-([regression-m4-2026-11-19](../evidence/regression-m4-2026-11-19/results.tsv)),
-on the Docker devnet against Monero regtest.
+`xmr-kill-maker` (6 kill points) and `xmr-taker-refund-kill`. The scenarios
+named here that are not marked "not run yet" passed in the full regression at
+`d4475300`
+([regression-m4-2026-11-21](../evidence/regression-m4-2026-11-21/results.tsv)),
+on the Docker devnet against Monero regtest. That run predates the Taker
+Node's own refund from R and its re-sent refund (`21fbc900`, `071f907e`), so
+in it every Taker refund was the owner's. The devnet scenarios that check the
+rules of this ADR against a cheating party, `xmr-maker-claim-without-authorization`
+(tag 15 with no tag 14 and no Monero: refused), `xmr-maker-early-punish`
+(tag 17 before P, and after the Taker's refund: refused),
+`xmr-unfunded-punish` (TM-0031 with the Taker Node stopped and running) and
+`xmr-taker-cheats` (tag 16 before R, and after tag 15: refused), are in the
+full tier and have not run yet.
 
 ### TM-0030 does not carry over
 
@@ -314,11 +325,48 @@ The other direction is already refused at every entry:
 
 ### Relation to RFP-003
 
-This ADR departs from the repository's own rule, not from an RFP requirement.
+This ADR departs from the repository's common-flow rule and, in two points,
+from RFP-003 itself. Both RFP departures are those of the COMIT protocol
+(h4sh3d's design, which F3 names): a Monero output has no time lock, so the
+only way to keep a Taker that disappears from holding the Maker's Monero
+locked at no cost is a deadline on the Taker's refund and a punishment after
+it.
+
+- **F5, "funds are refunded to the depositor after the timelock expires".**
+  The Taker's LEZ refund (tag 16) is open only in [R, P), not from R onwards
+  without end. From P the escrow takes no refund; a Taker that has not
+  refunded by P cannot get its LEZ back. The Taker Node sends the refund by
+  itself from R (`initiation.xmr_automatic_refund`, on by default) and sends it
+  again until it is final or the finalized LEZ time reaches P, where the swap
+  reads `xmr_refund_not_final_by_punish_time`.
+- **F6, "either both complete or both refund. No state exists where one party
+  receives funds and the other does not".** The punishment (tag 17, from P)
+  is such a state by design: the Maker takes the Taker's LEZ, the Taker gets
+  nothing, and the Monero stays at the shared address for good, spendable by
+  neither. It is reached only when the Taker has neither authorised a claim
+  that the Maker took nor refunded in [R, P).
+
+Two threats sit on these departures, and this ADR leaves both open:
+
+- **TM-0031, the unfunded punishment.** The escrow accepts tag 17 from
+  `Funded` without any condition on Monero, so a Maker running other software
+  can take the LEZ of a swap it never funded. What the Taker has against it is
+  its own refund in [R, P), which its Node sends by itself; the reference Maker
+  punishes only a swap whose funding it invoked. A Taker Node down through all
+  of [R, P) loses the LEZ, funded or not.
+- **TM-0019, the withheld or invalid claim partial.** The escrow stores only a
+  commitment to the Taker's claim partial; it proves neither that the partial
+  is valid nor that the Taker will publish it. A Taker can lock, let the Maker
+  fund and never authorise. The Maker then gets its Monero back only if the
+  Taker refunds, and otherwise takes the LEZ by tag 17 and loses the Monero.
+  The Maker bears this in exchange for the Taker's LEZ having been locked
+  first.
+
 Row F3 of the [traceability matrix](../requirements-traceability.md) states its
 test as "LEZ-first COMIT/DLEQ vectors … XMR-first rejected", which is the flow
 kept here. The departure from F3's wording "Ed25519 adaptor signatures" is a
-separate one, recorded in the protocol design and in F3.
+separate one, recorded in the protocol design and in F3; F5 and F6 of the
+matrix name the two departures above.
 
 ## Alternatives considered
 
@@ -375,22 +423,10 @@ rest of this flow, and TM-0006 names XMR punishment economics as open.
 
 ## Evidence
 
-The full regression at `9a15d94b` on the Docker devnet, Monero regtest, `fast`
-profile, three lanes: 159 of 159, among them every XMR scenario named above
-([`results.tsv`](../evidence/regression-m4-2026-11-19/results.tsv),
-[README](../evidence/regression-m4-2026-11-19/README.md)). No XMR swap has run
-on a public Monero network.
-
-## Wording for AGENTS.md
-
-AGENTS.md is the owner's rule and this ADR does not change it. If the owner
-accepts this ADR, the sentence "XMR does not follow this rule yet; aligning it,
-or withdrawing the direction, is part of the XMR work (issue #161)." in
-"Protocol design" could read:
-
-> XMR `TakerSellsLez` is the one accepted exception
-> ([ADR 0217](docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md)):
-> a Monero output has no hash lock and no time lock, so there the Taker
-> authorises, the Maker claims LEZ first and reveals its Monero share, and the
-> Taker's LEZ refund is the only refund; XMR offers no `TakerSellsForeign`. No
-> other pair or direction may deviate without its own accepted ADR.
+The full regression at `d4475300` on the Docker devnet, Monero regtest, `fast`
+profile, three lanes: 160 of 160, each on its first try, among them the 16
+Monero tests of that tier
+([`results.tsv`](../evidence/regression-m4-2026-11-21/results.tsv),
+[README](../evidence/regression-m4-2026-11-21/README.md)). The scenarios this
+ADR marks "not run yet" were added to the full tier after that run. No XMR swap
+has run on a public Monero network.
