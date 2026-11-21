@@ -36,6 +36,7 @@ the same file unless stated otherwise; they run in CI under
 | The LEZ lock check | `XmrLezInitializePlanV1`, `XmrLezLockCandidateV1`, `XmrValidatedLezLockCandidateV1` | `agreement_v1.rs` | `canonical_stage_b_activation_enables_lez_init_and_candidate_validation`, `lez_lock_candidate_checks_exact_terms_finality_and_funding_cutoff` |
 | Cross-curve DLEQ | `CrossCurveScalar::{generate, from_monero_little_endian, adaptor_scalar_big_endian, monero_public_key}`, `CrossCurveDleqProofV1::{prove, verify, verify_scalar, to_wire_bytes, from_wire_bytes}` | `cross_curve.rs` | [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs): `dleq_vectors_reproduce_and_verify_from_fixed_bytes`, `tampered_proof_and_commitment_are_rejected`, `wrong_point_on_either_curve_is_rejected`, `truncated_and_over_long_encodings_are_rejected`, `trailing_proof_bytes_are_rejected`, `non_minimal_inner_proof_encoding_is_rejected`, `alternate_generators_are_the_published_nums_points`, `proofs_interoperate_with_the_eigenwallet_parameters`, `archived_xmr_btc_swap_basepoint_parameters_are_refused` |
 | Shared address and key-share recovery | `MoneroPrivateViewKey`, `MoneroSharedAddressV1::{derive, derive_from_public_view_key}`, `ReconstructedMoneroSpendKey::reconstruct`, `MoneroAddressNetworkV1` | `shared_spend.rs` | `claim_and_signed_refund_reveal_orders_reconstruct_the_same_spend_key`, `unrelated_extracted_or_retained_share_cannot_open_the_funded_address`; `tests/cross_curve_vectors.rs`: `recovery_vector_reconstructs_the_same_key_on_both_paths`, `share_that_does_not_match_is_rejected` |
+| Recovery without the adaptor journal | `XmrActivatedAgreementV1::{recover_claim_spend_key, recover_refund_spend_key}` | `agreement_v1.rs` | `a_role_without_its_journal_recovers_the_spend_key_from_public_data` |
 | A lifecycle facade | `XmrPairSdk`, `ActiveXmrSwap`, `XmrRoleActorPort`, `XmrNegotiationEnvelopeV1`, `XmrLifecyclePhaseV1` | `sdk.rs` | `lifecycle_transition_graph_accepts_claim_refund_and_exact_replay`, `negotiation_envelope_rejects_empty_trailing_and_unknown_schema`; see [the facade](#the-facade-is-not-what-the-nodes-run) |
 
 ### The agreement stages
@@ -171,7 +172,7 @@ the types the Nodes run (this SDK, `xmr-reference-actor`,
 | Monero lock | The shared address is funded from the lane's funding wallet, ten blocks are mined, and the Taker's view-only wallet checks the exact output with `MoneroOutputVerifier` |
 | Claim (swap 1) | Tag 14 publishes the Taker's partial, checked against its commitment; the Maker completes tag 15 with its share; the Taker extracts the Maker's share and sweeps the Monero with `ReconstructedMoneroSpendKey`. Ends `Completed` |
 | Refund (swap 2) | The Taker completes tag 16 with its share in [R, P); the Maker extracts the Taker's share and sweeps its Monero back. Ends `Refunded` |
-| Partial information loss | Before it recovers, the recovering role drops its session state and deletes its adaptor journal, keeping only its share, the view key and the Stage A and Stage B bytes. From those and the public escrow it rebuilds the claim pre-signature (Stage B's Maker partial and nonces plus the tag-14 partial) or takes Stage B's refund pre-signature, extracts the other share and rebuilds the spend key; that key is the one that sweeps |
+| Partial information loss | Before it recovers, the recovering role drops its session state and deletes its adaptor journal, keeping only its share, the view key and the Stage A and Stage B bytes. From those and the public escrow, through `recover_claim_spend_key` (Stage B's Maker partial and nonces plus the tag-14 partial, then tag 15) or `recover_refund_spend_key` (Stage B's refund pre-signature and tag 16), it extracts the other share and rebuilds the spend key; that key is the one that sweeps |
 
 The escrow also refuses a wrong tag-14 partial, tag 16 before R and after
 the claim, and tag 17 before P and after the refund.
@@ -197,12 +198,15 @@ seed; the MuSig2 nonces do not, so Stage B and the signatures differ between
 runs. It prints public values only. CI compiles it (`--all-targets`) but does
 not run it; no run of it is recorded in the repository.
 
-What the public API does not cover, and the example does by hand: recovery
-after the adaptor journal is lost uses the raw `lez-adaptor-signature`
-primitives on the context of `claim_session_descriptor()`, since the Nodes'
-extraction reads the journal; and the actor's own Stage A and Stage B
-composition takes no seeded keys, so the example builds both stages on the
-public SDK types the way `reserve.rs` and `ceremony.rs` do.
+Recovery after the adaptor journal is lost goes through the public API:
+`XmrActivatedAgreementV1::recover_claim_spend_key` for the Taker after the
+claim (Stage B's Maker partial and nonces plus the partial tag 14 published,
+checked against Stage B's commitment, then the share tag 15 reveals) and
+`recover_refund_spend_key` for the Maker after the refund (Stage B's refund
+pre-signature and tag 16). What the example still does by hand: the actor's
+own Stage A and Stage B composition takes no seeded keys, so the example
+builds both stages on the public SDK types the way `reserve.rs` and
+`ceremony.rs` do.
 
 ## The DLEQ example
 
