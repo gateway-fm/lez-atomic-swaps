@@ -138,6 +138,18 @@ Maker's claimant key to show the escrow refuses a claim made with what the
 Maker holds in ZEC `TakerSellsLez` (ADR 0216, threat TM-0030). The devnet
 Maker image carries it beside the Node package; no role package contains it.
 
+`lez-v02-custody-credit-probe` is a test-only tool too. With a key that is
+neither party's, it sends units to the custody account of a funded escrow
+with a plain authenticated-transfer `Transfer`, which LEZ allows anyone to
+make, and reports the custody and sender balances before and after, the
+sequencer's answer and the including block. It finds the escrow by its
+on-chain swap ID or by following new blocks for an escrow transaction that
+names a given depositor, and waits until the escrow is `Funded`. The devnet
+scenarios `btc-custody-credit`, `zec-custody-credit`, `xmr-custody-credit`
+and their `-refund` variants run it in the Maker's container (threat TM-0032).
+The devnet Maker image carries it beside the claim probe; no role package
+contains it.
+
 The crate now also contains the exact source-complete PoC bridge process,
 `lez-v02-bridge-poc`. It accepts only an explicitly provisioned nonzero
 literal-loopback listener, official sequencer and indexer loopback URLs, and
