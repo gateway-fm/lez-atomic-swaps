@@ -11,7 +11,8 @@
 //! again. A completed swap's template is in the actor registry and its sidecar
 //! is kept running, also across a Node restart. The completion record in the
 //! swap directory (`zec-completion.json`), not the template, decides how long
-//! the reservation holds its outpoint.
+//! the reservation holds its outpoint: a completed swap's until the agreement's
+//! LEZ refund time.
 
 use std::{
     fs,
@@ -124,7 +125,7 @@ enum CompletionState {
     /// sidecar is retired, and the outpoint is held only inside the grace.
     Refused,
     /// The Maker provisioned its actor (the store commit follows): the
-    /// outpoint stays committed.
+    /// outpoint is held until the agreement's LEZ refund time.
     Completed,
 }
 
@@ -133,6 +134,10 @@ enum CompletionState {
 struct ZecCompletionRecordV1 {
     schema_version: u16,
     state: CompletionState,
+    /// The LEZ refund time of the agreement, in Unix seconds. Past it the
+    /// Maker no longer funds: its outpoint was spent by the funding or will
+    /// never be.
+    release_at_unix_seconds: u64,
 }
 
 impl ZecCompletionRecordV1 {
@@ -158,8 +163,10 @@ impl ZecCompletionRecordV1 {
 ///
 /// A completion that the Maker refused, or that never got past its template,
 /// holds the outpoint only inside the reservation's grace. A completed one
-/// keeps it. A template with no completion record is a swap completed before
-/// the record existed: it keeps its outpoint, as it did then.
+/// holds it until the agreement's LEZ refund time, so a Taker that completes
+/// and never funds cannot pin it for good. A template with no completion
+/// record is a swap completed before the record existed: it keeps its
+/// outpoint, as it did then.
 fn holds_outpoint(
     expires_at_unix_seconds: u64,
     completion: Option<ZecCompletionRecordV1>,
@@ -167,11 +174,12 @@ fn holds_outpoint(
     now: u64,
 ) -> (bool, bool) {
     let in_grace = now < expires_at_unix_seconds;
-    match completion.map(|record| record.state) {
-        Some(CompletionState::Completed) => (true, false),
-        Some(CompletionState::Pending | CompletionState::Refused) => (in_grace, in_grace),
+    match completion.map(|record| (record.state, record.release_at_unix_seconds)) {
+        Some((CompletionState::Completed, release)) => (now < release, false),
         None if template => (true, false),
-        None => (in_grace, in_grace),
+        Some((CompletionState::Pending | CompletionState::Refused, _)) | None => {
+            (in_grace, in_grace)
+        }
     }
 }
 
@@ -184,6 +192,18 @@ pub(super) enum Materialized {
     Open,
     /// A take-time reservation already completed (a replay).
     Completed,
+}
+
+/// The LEZ refund time of a countersigned agreement, in Unix seconds.
+fn release_time(final_agreement_wire: &[u8]) -> Result<u64, ErrorObjectOwned> {
+    let accepted = AcceptedZecAgreementV1::accept_wire_at(
+        final_agreement_wire,
+        lez_swap_core::UnixSeconds::new(0),
+        Participant::Maker,
+        0,
+    )
+    .map_err(invalid_request)?;
+    Ok(accepted.agreement().lez_refund_at_ms().div_ceil(1_000))
 }
 
 impl ZecMakerReservations {
@@ -270,7 +290,11 @@ impl ZecMakerReservations {
     }
 
     /// Records the completion before the store commit that follows it.
-    pub(super) fn mark_completed(&self, reservation_id: &RequestId) -> RpcResult<()> {
+    pub(super) fn mark_completed(
+        &self,
+        reservation_id: &RequestId,
+        final_agreement_wire: &[u8],
+    ) -> RpcResult<()> {
         let layout = self.layout(reservation_id);
         if ZecReservationRecordV1::load(layout.root()).is_err() {
             return Ok(());
@@ -278,6 +302,7 @@ impl ZecMakerReservations {
         ZecCompletionRecordV1 {
             schema_version: 1,
             state: CompletionState::Completed,
+            release_at_unix_seconds: release_time(final_agreement_wire)?,
         }
         .store(&layout)
         .map_err(|error| internal(&error))
@@ -295,6 +320,7 @@ impl ZecMakerReservations {
         if let Err(error) = (ZecCompletionRecordV1 {
             schema_version: 1,
             state: CompletionState::Refused,
+            release_at_unix_seconds: 0,
         })
         .store(&layout)
         {
@@ -397,6 +423,7 @@ impl ZecMakerReservations {
             ZecCompletionRecordV1 {
                 schema_version: 1,
                 state: CompletionState::Pending,
+                release_at_unix_seconds: 0,
             }
             .store(&layout)
             .map_err(|error| internal(&error))?;
@@ -638,12 +665,14 @@ mod completion_tests {
     use super::{CompletionState, ZecCompletionRecordV1, holds_outpoint};
 
     const EXPIRES: u64 = 1_000;
+    const RELEASE: u64 = 5_000;
 
-    fn record(state: CompletionState) -> Option<ZecCompletionRecordV1> {
-        Some(ZecCompletionRecordV1 {
+    const fn record(state: CompletionState) -> ZecCompletionRecordV1 {
+        ZecCompletionRecordV1 {
             schema_version: 1,
             state,
-        })
+            release_at_unix_seconds: RELEASE,
+        }
     }
 
     /// A completion the Maker refused, or one that stopped at its template,
@@ -653,21 +682,44 @@ mod completion_tests {
     #[test]
     fn a_refused_or_unfinished_completion_holds_the_outpoint_only_in_its_grace() {
         for state in [CompletionState::Pending, CompletionState::Refused] {
-            assert_eq!(holds_outpoint(EXPIRES, record(state), true, 10), (true, true));
             assert_eq!(
-                holds_outpoint(EXPIRES, record(state), true, EXPIRES),
+                holds_outpoint(EXPIRES, Some(record(state)), true, 10),
+                (true, true)
+            );
+            assert_eq!(
+                holds_outpoint(EXPIRES, Some(record(state)), true, EXPIRES),
                 (false, false),
                 "{state:?}"
             );
         }
-        let completed = record(CompletionState::Completed);
-        assert_eq!(holds_outpoint(EXPIRES, completed, true, EXPIRES), (true, false));
+    }
+
+    /// Audit C7: a Taker that completes and never funds pins the outpoint
+    /// until the agreement's LEZ refund time, not forever.
+    #[test]
+    fn a_completed_swap_releases_its_outpoint_at_the_refund_time() {
+        let completed = Some(record(CompletionState::Completed));
+        assert_eq!(
+            holds_outpoint(EXPIRES, completed, true, EXPIRES),
+            (true, false)
+        );
+        assert_eq!(
+            holds_outpoint(EXPIRES, completed, true, RELEASE - 1),
+            (true, false)
+        );
+        assert_eq!(
+            holds_outpoint(EXPIRES, completed, true, RELEASE),
+            (false, false)
+        );
     }
 
     #[test]
     fn a_reservation_without_a_completion_holds_its_outpoint_in_its_grace() {
         assert_eq!(holds_outpoint(EXPIRES, None, false, 10), (true, true));
-        assert_eq!(holds_outpoint(EXPIRES, None, false, EXPIRES), (false, false));
+        assert_eq!(
+            holds_outpoint(EXPIRES, None, false, EXPIRES),
+            (false, false)
+        );
         // A swap completed before the completion record existed.
         assert_eq!(holds_outpoint(EXPIRES, None, true, u64::MAX), (true, false));
     }

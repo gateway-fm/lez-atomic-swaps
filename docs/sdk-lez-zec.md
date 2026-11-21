@@ -338,8 +338,13 @@ before it writes anything: it must validate now and countersign exactly the
 reserved draft, or the completion is refused with no template and no
 sidecar. A completion refused after that retires the sidecar it started.
 Either way the reservation holds its outpoint only for the rest of its
-900 s. A Maker holds at most 16 open reservations, each for 900 s; an
-identical retry is answered from its record.
+900 s. A completed swap holds it until the agreement's LEZ refund time: by
+then the Maker has spent it in its funding or will never fund, so a Taker
+that completes and never locks cannot pin it for good. A Maker holds at
+most 16 open reservations, each for 900 s; an identical retry is answered
+from its record. Reservations carry no Taker signature, so the 16 slots are
+not bounded per peer: anyone who holds a live offer envelope can fill them
+for 900 s at a time.
 
 Before a first composed swap, pay the funder's own key: the Maker's when the
 Taker sells LEZ, the Taker's when it sells ZEC. `lez-maker-cli balances --zcash`

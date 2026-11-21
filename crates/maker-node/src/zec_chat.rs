@@ -230,7 +230,7 @@ fn complete_materialized_zec_chat(
         .map_err(application_store_error)?
     {
         if take_time && let Some(reservations) = &context.zec_reservations {
-            reservations.mark_completed(&request.reservation_id)?;
+            reservations.mark_completed(&request.reservation_id, &request.final_agreement_wire)?;
         }
         return Ok(ZecChatCompleteResponseV1 {
             schema_version: 1,
@@ -250,10 +250,10 @@ fn complete_materialized_zec_chat(
         .provision(&request.final_agreement_wire, now_unix_seconds)
         .map_err(|_| rpc_error(INTERNAL_ERROR, "maker actor provisioning failed"))?;
     let swap_id: Box<str> = accepted.agreement().coordinator().id().as_str().into();
-    // Recorded before the commit: a crash between the two keeps the outpoint
-    // committed, never frees it under a completed swap.
+    // Recorded before the commit: a crash between the two holds the outpoint
+    // until the refund time, never frees it under a completed swap.
     if take_time && let Some(reservations) = &context.zec_reservations {
-        reservations.mark_completed(&request.reservation_id)?;
+        reservations.mark_completed(&request.reservation_id, &request.final_agreement_wire)?;
     }
     let commit = completion_store
         .complete_maker_zec_negotiation_and_register_actor_within_capacity(
