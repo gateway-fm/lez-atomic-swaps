@@ -31,7 +31,7 @@ the same file unless stated otherwise; they run in CI under
 | The two adaptor sessions | `XmrAgreementV1::{claim_session_descriptor, refund_session_descriptor, claim_partial_context_binding, commit_taker_claim_partial}`, `XmrAdaptorSessionDescriptorV1`, `XmrSessionTranscriptV1` | `agreement_v1.rs` | `adaptor_session_descriptors_reconstruct_exact_contexts_and_fail_closed` |
 | Stage B, the activation | `ValidatedXmrActivationBodyV1::from_unsigned_wire`, `XmrActivatedAgreementV1`, `XmrActivationRecordV1` | `agreement_v1.rs` | `unsigned_stage_b_requires_validated_stage_a_and_view_key_before_countersigning`, `unsigned_stage_b_wire_is_the_checked_signed_prefix_and_fails_closed`, `stage_b_activation_and_private_view_key_mutations_fail_closed` |
 | The LEZ lock check | `XmrLezInitializePlanV1`, `XmrLezLockCandidateV1`, `XmrValidatedLezLockCandidateV1` | `agreement_v1.rs` | `canonical_stage_b_activation_enables_lez_init_and_candidate_validation`, `lez_lock_candidate_checks_exact_terms_finality_and_funding_cutoff` |
-| Cross-curve DLEQ | `CrossCurveScalar::{generate, from_monero_little_endian, adaptor_scalar_big_endian, monero_public_key}`, `CrossCurveDleqProofV1::{prove, verify, verify_scalar, to_wire_bytes, from_wire_bytes}` | `cross_curve.rs` | [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs): `dleq_vectors_reproduce_and_verify_from_fixed_bytes`, `tampered_proof_and_commitment_are_rejected`, `wrong_point_on_either_curve_is_rejected`, `truncated_and_over_long_encodings_are_rejected`, `trailing_proof_bytes_are_rejected`, `alternate_generators_are_the_published_nums_points`, `proofs_interoperate_with_the_eigenwallet_parameters`, `archived_xmr_btc_swap_basepoint_parameters_are_refused` |
+| Cross-curve DLEQ | `CrossCurveScalar::{generate, from_monero_little_endian, adaptor_scalar_big_endian, monero_public_key}`, `CrossCurveDleqProofV1::{prove, verify, verify_scalar, to_wire_bytes, from_wire_bytes}` | `cross_curve.rs` | [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs): `dleq_vectors_reproduce_and_verify_from_fixed_bytes`, `tampered_proof_and_commitment_are_rejected`, `wrong_point_on_either_curve_is_rejected`, `truncated_and_over_long_encodings_are_rejected`, `trailing_proof_bytes_are_rejected`, `non_minimal_inner_proof_encoding_is_rejected`, `alternate_generators_are_the_published_nums_points`, `proofs_interoperate_with_the_eigenwallet_parameters`, `archived_xmr_btc_swap_basepoint_parameters_are_refused` |
 | Shared address and key-share recovery | `MoneroPrivateViewKey`, `MoneroSharedAddressV1::{derive, derive_from_public_view_key}`, `ReconstructedMoneroSpendKey::reconstruct`, `MoneroAddressNetworkV1` | `shared_spend.rs` | `claim_and_signed_refund_reveal_orders_reconstruct_the_same_spend_key`, `unrelated_extracted_or_retained_share_cannot_open_the_funded_address`; `tests/cross_curve_vectors.rs`: `recovery_vector_reconstructs_the_same_key_on_both_paths`, `share_that_does_not_match_is_rejected` |
 | A lifecycle facade | `XmrPairSdk`, `ActiveXmrSwap`, `XmrRoleActorPort`, `XmrNegotiationEnvelopeV1`, `XmrLifecyclePhaseV1` | `sdk.rs` | `lifecycle_transition_graph_accepts_claim_refund_and_exact_replay`, `negotiation_envelope_rejects_empty_trailing_and_unknown_schema`; see [the facade](#the-facade-is-not-what-the-nodes-run) |
 
@@ -66,8 +66,9 @@ A share is a `CrossCurveScalar`: nonzero, below 2^252, so one integer is
 canonical on secp256k1 and on Ed25519 without reduction. `prove` creates and
 self-verifies a proof that the secp256k1 point (the adaptor point) and the
 Ed25519 point (the Monero public spend share) have the same discrete
-logarithm; `verify` rejects malformed or torsion points, trailing proof bytes
-and a changed transcript commitment. A proof exists only verified (`prove` and
+logarithm; `verify` rejects malformed or torsion points, trailing proof bytes,
+proof bytes that do not re-encode identically and a changed transcript
+commitment. A proof exists only verified (`prove` and
 `from_wire_bytes` both verify it), so `MoneroSharedAddressV1::derive` does not
 verify the two proofs again; it adds their Ed25519 shares into the address's
 spend key.
@@ -112,6 +113,24 @@ keys, both generators, all 252 commitment pairs) under `sigma_fun`'s protocol
 name; this SDK's domain string is in the envelope's transcript commitment, not
 in the challenge.
 
+### What `verify` checks
+
+| Check | Where |
+| --- | --- |
+| The scalar is nonzero and below 2^252, so below both group orders | the prover: `CrossCurveScalar`; the verifier: exactly 252 bit commitments, each to 0 or 2^i (`sigma_fun`), and a non-identity secp256k1 key |
+| The secp256k1 key is on the curve and not the identity (cofactor 1, so no subgroup check) | `musig2` and `secp256kfun` decoding |
+| The Ed25519 key is on the curve, not the identity and torsion-free | `verify`, and again in `sigma_fun` |
+| The challenge binds both keys, both generators and every commitment | `sigma_fun`'s Fiat-Shamir transcript, tagged with its protocol name |
+| One encoding per proof | the bound, no trailing bytes, the proof and the envelope each re-encoded and compared, fixed key widths |
+| The envelope's commitment, with this SDK's domain string | `verify` recomputes it |
+
+Two things are not checked, for reasons rather than by tests: the commitment
+points inside the proof are not checked for torsion (the claimed Ed25519 key
+is, and a torsion part in a commitment does not change the prime-order
+relation the proof shows), and an Ed25519 key is not re-compressed to check
+its encoding (only points with y below 19 have a second encoding, and nobody
+knows a discrete logarithm for one).
+
 ### Wire limits
 
 | Constant | Bound |
@@ -124,7 +143,8 @@ in the challenge.
 
 The agreement and activation decoders refuse input over their bound, unknown
 schema versions and any bytes that do not re-encode identically; the DLEQ
-envelope also refuses empty input and trailing proof bytes. The Chat contracts that carry these bytes
+envelope also refuses empty input, trailing proof bytes and proof bytes that
+do not re-encode identically (`postcard` alone accepts a non-minimal length). The Chat contracts that carry these bytes
 (`crates/node-common/src/chat_contracts.rs`) bound them again as Base64: role
 packets at 270 KiB, ceremony packets at 8 KiB.
 
