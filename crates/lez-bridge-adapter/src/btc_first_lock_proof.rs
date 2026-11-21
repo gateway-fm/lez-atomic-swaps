@@ -404,7 +404,6 @@ fn validate_finalized_funding<E: std::error::Error + 'static>(
     funding: &lez_bridge_protocol::FinalizedWitnessedFundingFacts,
 ) -> Result<(), BtcLezFirstLockProofError<E>> {
     let expected_metadata = expected_metadata(runtime, agreement, terms);
-    let expected_custody = expected_custody(agreement, terms);
     let block = funding.containing_block;
     let position = funding.transaction.position;
     if !position_in_window(position, window, finalized_clock.height)
@@ -421,7 +420,7 @@ fn validate_finalized_funding<E: std::error::Error + 'static>(
             &funding.instruction,
         )
         || funding.metadata != expected_metadata
-        || funding.custody != expected_custody
+        || !funded_custody_holds(agreement, terms, &funding.custody)
         || funding.metadata.account_id.as_bytes() != agreement.lez_terms().metadata_account()
         || funding.custody.account_id.as_bytes() != agreement.lez_terms().custody_account()
     {
@@ -466,10 +465,9 @@ fn validate_current_pair<E: std::error::Error + 'static>(
         return Err(BtcLezFirstLockProofError::PairOrderMismatch);
     }
     let metadata = expected_metadata(runtime, agreement, terms);
-    let custody = expected_custody(agreement, terms);
     if initialization.metadata != metadata
         || funding.metadata != metadata
-        || funding.custody != custody
+        || !funded_custody_holds(agreement, terms, &funding.custody)
     {
         return Err(BtcLezFirstLockProofError::CurrentFundedEscrowMismatch);
     }
@@ -530,15 +528,17 @@ fn expected_metadata(
     )
 }
 
-fn expected_custody(
+/// The signed custody account, owned by the transfer program, holding at
+/// least the amount: anyone can credit it (TM-0032), so a funded custody may
+/// hold more, and less is never a lock.
+fn funded_custody_holds(
     agreement: &BtcAgreementV1,
     terms: &WitnessedNativeEscrowTerms,
-) -> NativeCustodyFacts {
-    NativeCustodyFacts::new(
-        Hex32::from_bytes(*agreement.lez_terms().custody_account()),
-        terms.authenticated_transfer_program_id(),
-        terms.amount().as_u128(),
-    )
+    custody: &NativeCustodyFacts,
+) -> bool {
+    custody.account_id.as_bytes() == agreement.lez_terms().custody_account()
+        && custody.owner_program_id == terms.authenticated_transfer_program_id()
+        && custody.balance >= terms.amount()
 }
 
 fn position_in_window(position: ChainPosition, window: DiscoveryWindow, tip_height: u64) -> bool {

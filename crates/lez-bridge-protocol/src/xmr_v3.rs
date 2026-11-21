@@ -1576,7 +1576,9 @@ fn validate_finalized_facts(
         )?,
     }
 
-    let (expected_state, expected_balance) = match effect {
+    // The custody holds at least this: anyone can credit it (TM-0032), and an
+    // ending pays out the whole balance.
+    let (expected_state, minimum_balance) = match effect {
         XmrNativeEffectV3::Initialize => (XmrNativeEscrowStateV3::Empty, 0),
         XmrNativeEffectV3::Fund => (XmrNativeEscrowStateV3::Funded, terms.0.amount.as_u128()),
         XmrNativeEffectV3::AuthorizeClaim => (
@@ -1593,12 +1595,9 @@ fn validate_finalized_facts(
         "version-3 metadata",
     )?;
     ensure_fact(
-        facts.custody
-            == NativeCustodyFacts::new(
-                terms.0.custody_account_id,
-                terms.0.authenticated_transfer_program_id,
-                expected_balance,
-            ),
+        facts.custody.account_id == terms.0.custody_account_id
+            && facts.custody.owner_program_id == terms.0.authenticated_transfer_program_id
+            && facts.custody.balance.as_u128() >= minimum_balance,
         "native custody",
     )
 }

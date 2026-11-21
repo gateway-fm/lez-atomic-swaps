@@ -923,7 +923,6 @@ impl FinalizedWitnessedClaimObserver {
             || metadata.refund_at != request.terms.refund_at_ms()
             || metadata.status != EscrowStatus::Claimed
             || custody_account.program_owner.0 != transfer_program
-            || custody_account.balance != 0
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
@@ -1274,7 +1273,6 @@ impl FinalizedWitnessedInitializationObserver {
             || metadata.refund_at != request.terms.refund_at_ms()
             || metadata.status != EscrowStatus::Empty
             || custody_account.program_owner.0 != transfer_program
-            || custody_account.balance != 0
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
@@ -1638,7 +1636,7 @@ impl FinalizedWitnessedFundingObserver {
             || metadata.refund_at != request.terms.refund_at_ms()
             || metadata.status != EscrowStatus::Funded
             || custody_account.program_owner.0 != transfer_program
-            || custody_account.balance != request.terms.amount().as_u128()
+            || custody_account.balance < request.terms.amount().as_u128()
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
