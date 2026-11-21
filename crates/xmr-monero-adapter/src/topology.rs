@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use super::{
     LoopbackRpcEndpoint, MoneroChainIdentity, MoneroNetwork, RPC_REQUEST_TIMEOUT,
-    VerifiedMoneroOutputObservation, read_with_one_retry,
+    VerifiedMoneroOutputObservation, read_with_retries,
 };
 
 const RPC_ID: &str = "lez-m4-topology-v1";
@@ -214,7 +214,7 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
             .client()
             .map_err(|_| MoneroTopologyError::TypedDaemonClientBuild)?
             .daemon();
-        let genesis = read_with_one_retry(|| daemon.on_get_block_hash(0))
+        let genesis = read_with_retries(|| daemon.on_get_block_hash(0))
             .await
             .map_err(|_| MoneroTopologyError::GenesisRpc)?;
         if genesis.as_ref() != self.identity.genesis_hash() {
@@ -1297,7 +1297,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_digest_answer_refused_with_the_401_page_is_made_once_more() {
+    async fn a_digest_answer_refused_with_the_401_page_is_made_again() {
         // The bounded reads start their exchange again with a fresh challenge.
         assert!(
             verify_with_lost_answers("get_info", 1).await.is_ok(),
@@ -1307,15 +1307,16 @@ mod tests {
             verify_with_lost_answers("get_connections", 1).await.is_ok(),
             "get_connections answered on its second exchange"
         );
-        // The typed genesis read decodes the page as its answer and retries.
+        // The typed genesis read decodes the page as its answer and retries,
+        // up to READ_ATTEMPTS calls.
         assert!(
-            verify_with_lost_answers("on_get_block_hash", 1)
+            verify_with_lost_answers("on_get_block_hash", 2)
                 .await
                 .is_ok(),
-            "genesis answered on its second call"
+            "genesis answered on its third call"
         );
 
-        // Once more only.
+        // The bounded reads once more only, the typed read READ_ATTEMPTS times.
         assert_eq!(
             verify_with_lost_answers("get_info", 2).await,
             Err(MoneroTopologyError::UnexpectedHttpStatus {
@@ -1324,7 +1325,7 @@ mod tests {
             })
         );
         assert_eq!(
-            verify_with_lost_answers("on_get_block_hash", 2).await,
+            verify_with_lost_answers("on_get_block_hash", 3).await,
             Err(MoneroTopologyError::GenesisRpc)
         );
     }

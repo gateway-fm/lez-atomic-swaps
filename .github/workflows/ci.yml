@@ -231,8 +231,15 @@ jobs:
         with:
           persist-credentials: false
       - name: Run both role packages in the official Basecamp test harness
+        env:
+          # The per-role catalog flakes carry no lock file, so Nix resolves
+          # the pinned Chat release through the GitHub API; anonymous lookups
+          # fail once the runner's shared address has spent its hourly
+          # allowance. The workflow's token is read-only.
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: >-
           docker run --rm
+          --env NIX_CONFIG
           --volume "${GITHUB_WORKSPACE}:/repo:ro"
           --workdir /repo
           nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21
@@ -409,7 +416,13 @@ jobs:
           components: clippy, rustfmt
       - name: Install the smart-card library the LEZ v0.2.4 wallet crate links
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libpcsclite-dev
-      - run: ./scripts/verify-lez-v02-provisional.sh
+      - name: Verify the provisional LEZ v0.2 graph, guest and compatibility test
+        env:
+          # For rzup's two GitHub API lookups only (the script passes it to
+          # nothing else); anonymous ones fail once the runner's shared
+          # address has spent its hourly allowance.
+          RZUP_GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-lez-v02-provisional.sh
 
   bitcoin-core-regtest:
     name: isolated Bitcoin Core 31.1 Regtest MuSig2 adaptor P2TR spend

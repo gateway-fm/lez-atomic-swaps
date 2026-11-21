@@ -52,6 +52,10 @@ readonly image="lez-atomic-swaps-monero-stagenet:${run_id}"
 readonly network="lez-atomic-swaps-monero-stagenet-${run_id}"
 readonly daemon_container="lez-atomic-swaps-monero-stagenet-${run_id}-monerod"
 readonly wallet_container="lez-atomic-swaps-monero-stagenet-${run_id}-wallet-rpc"
+# The wallet-rpc reaches monerod by this alias on the run's own network. The
+# container name is no hostname: with a GitHub RUN_ID it is longer than the
+# 63 characters a DNS label may have, and it does not resolve.
+readonly daemon_alias="monerod"
 repo_root="$(pwd)"
 readonly repo_root
 readonly run_dir="${repo_root}/.e2e/${run_id}/monero-stagenet"
@@ -146,7 +150,7 @@ write_config "${config_dir}/wallet.conf" \
   'confirm-external-bind=1' \
   "rpc-login=operator:${wallet_secret}" \
   'rpc-ssl=disabled' \
-  "daemon-address=${daemon_container}:38081" \
+  "daemon-address=${daemon_alias}:38081" \
   "daemon-login=daemon:${daemon_secret}" \
   'daemon-ssl=disabled' \
   'trusted-daemon=1' \
@@ -183,6 +187,16 @@ cleanup() {
       failed=1
     fi
   done
+  # A failed run shows the end of both logs in the job output: nothing else
+  # keeps them once the runner is gone. Only logs free of the secrets.
+  if [[ "$status" != "0" && "$failed" == "0" ]]; then
+    for name in monerod wallet-rpc; do
+      if [[ -f "${logs_dir}/${name}.log" ]]; then
+        echo "--- last lines of the Stagenet ${name} log ---" >&2
+        tail -n 40 "${logs_dir}/${name}.log" >&2
+      fi
+    done
+  fi
   if [[ -d "$build_context" && ! -L "$build_context" ]]; then
     rm -rf -- "$build_context" || failed=1
   fi
@@ -268,7 +282,8 @@ hardening=(
   --security-opt no-new-privileges:true --tmpfs '/tmp:rw,noexec,nosuid,size=64m'
 )
 
-docker run --detach --name "$daemon_container" --network "$network" "${labels[@]}" \
+docker run --detach --name "$daemon_container" --network "$network" \
+  --network-alias "$daemon_alias" "${labels[@]}" \
   "${hardening[@]}" --pids-limit 256 --cpus 2 --memory 2g \
   --tmpfs /var/lib/monero:rw,noexec,nosuid,size=2g,mode=1777 \
   --volume "${config_dir}/monerod.conf:/run-config/monerod.conf:ro" \
