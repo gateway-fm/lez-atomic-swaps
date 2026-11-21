@@ -29,19 +29,28 @@ if [[ ! -x images/bitcoin-core/bin/bitcoind ]] \
 fi
 
 # ---- monerod/bin: the pinned Monero release, LEZ_MONERO=1 only ---------------
-# tests/e2e/monero/provenance.env pins it (0.18.5.1, linux-x64 only);
+# tests/e2e/monero/provenance.env pins it (0.18.5.1: linux-x64 and
+# linux-armv8); like Bitcoin Core above, the archive of this host's
+# architecture, the one its images are built for.
 # scripts/verify-monero-release.sh checks the signed hash manifest against the
 # pinned signer, the archive's sha256 and size and the source tag, extracts
 # monerod and monero-wallet-rpc and runs their --version: in a throwaway
 # container, as upstream binaries never run on the host. The archive stays in
-# the lez-build-monero-cache volume, the evidence in images/monerod/provenance.json.
+# the lez-build-monero-cache volume, the evidence in images/monerod/provenance.json
+# (consumed_archive.architecture: a binary staged for another architecture is
+# staged again).
+case "$(uname -m)" in
+    x86_64 | amd64) monero_arch=x86_64 ;;
+    *) monero_arch=aarch64 ;;
+esac
 if [[ "${LEZ_MONERO:-0}" == 1 ]] &&
-   [[ ! -x images/monerod/bin/monerod || ! -x images/monerod/bin/monero-wallet-rpc ]]; then
-    [[ "$(uname -m)" == x86_64 ]] || { echo "the pinned Monero release is linux-x64 only" >&2; exit 1; }
-    log "fetching and verifying Monero (tests/e2e/monero/provenance.env)"
+   { [[ ! -x images/monerod/bin/monerod || ! -x images/monerod/bin/monero-wallet-rpc ]] ||
+     ! grep -qF "\"architecture\": \"$monero_arch\"" images/monerod/provenance.json 2>/dev/null; }; then
+    log "fetching and verifying Monero $monero_arch (tests/e2e/monero/provenance.env)"
     rm -rf images/monerod/bin images/monerod/verified images/monerod/provenance.json
     mkdir -p images/monerod
-    docker run --rm -v "$PWD/..:/workspace:ro" -v "$PWD/images/monerod:/out" -v lez-build-monero-cache:/cache \
+    docker run --rm --platform "linux/$([[ $monero_arch == x86_64 ]] && echo amd64 || echo arm64)" -e MONERO_ARCH="$monero_arch" \
+        -v "$PWD/..:/workspace:ro" -v "$PWD/images/monerod:/out" -v lez-build-monero-cache:/cache \
         debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 bash -c '
         set -euo pipefail
         apt-get update -qq && apt-get install -qq -y --no-install-recommends \
@@ -56,6 +65,9 @@ if [[ "${LEZ_MONERO:-0}" == 1 ]] &&
         mv /out/verified/bin /out/bin && rmdir /out/verified
         chown -R "$(stat -c %u:%g /out)" /out/bin /out/provenance.json'
 fi
+# the image's Dockerfile, the isolated lane's, inside the build context
+# (compose.yaml, monerod; up.sh refreshes it before each build)
+[[ "${LEZ_MONERO:-0}" != 1 ]] || install -m 0644 ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile
 
 # ---- lez-services: pinned logos-execution-zone v0.2.0 (a58fbce) ------------
 # Native arm64 release build with rust 1.94.0 and the Logos rapidsnark fork's

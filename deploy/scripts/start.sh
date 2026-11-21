@@ -8,6 +8,8 @@
 #   ./scripts/start.sh           pull → identities → config → stack → bootstrap → desk suites
 #   ./scripts/start.sh --quick   the same without the desk suites
 #   ./scripts/start.sh --swap    … then one full BTC → LEZ swap through the two desks
+#   LEZ_MONERO=1 ./scripts/start.sh   … with Monero regtest as well (off by default;
+#                                the release's monerod image, deploy/README.md "Monero")
 #
 # The image names come from release.env next to compose.yaml (written into
 # the bundle by scripts/package-dist.sh) or from the environment:
@@ -35,7 +37,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --quick) QUICK=1; shift ;;
     --swap) RUN_SWAP=1; shift ;;
-    -h|--help) sed -n 2,23p "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n 2,25p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -99,7 +101,13 @@ else
   # The explorers' images too: verify-all.sh starts them, and on a bundle it
   # builds nothing.
   log "pulling ${LEZ_IMAGE_PREFIX}-*:${LEZ_IMAGE_TAG}"
-  docker compose --profile tools --profile explorers pull --quiet
+  # Monero's image as well when the stack runs it (LEZ_MONERO=1, here or as
+  # runtime.env recorded it).
+  monero_profile=()
+  if [[ "${LEZ_MONERO:-$(sed -n 's/^LEZ_MONERO=//p' runtime/runtime.env 2>/dev/null | head -1)}" == 1 ]]; then
+    monero_profile=(--profile monero)
+  fi
+  docker compose --profile tools --profile explorers ${monero_profile[@]+"${monero_profile[@]}"} pull --quiet
 fi
 for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   [[ -f "$LEZ_WALLET_IDENTITIES/$wallet/identity.json" ]] && continue

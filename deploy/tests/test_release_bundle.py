@@ -161,6 +161,9 @@ class BundleStartBuildsNothing(unittest.TestCase):
             for line in pulls:
                 for profile in ('tools', 'explorers'):
                     self.assertIn(f'--profile {profile}', line, f'{name}: {line.strip()}')
+                # and Monero's image when the stack runs it (LEZ_MONERO=1)
+                self.assertIn('${monero_profile[@]+"${monero_profile[@]}"}', line, f'{name}: {line.strip()}')
+            self.assertIn('monero_profile=(--profile monero)', '\n'.join(code_lines(name)), name)
 
     def run_verify_all(self, release_env, checkout=False, **env):
         deploy = ReleaseBundle.deploy_dir(self, release_env)

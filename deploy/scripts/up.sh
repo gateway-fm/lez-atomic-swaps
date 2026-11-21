@@ -186,7 +186,8 @@ env_after="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
 load_env
 # Monero's services (LEZ_MONERO, as runtime.env now records it); none when off.
 monero_services=()
-[[ "${LEZ_MONERO:-0}" != 1 ]] || monero_services=(monerod xmr-funding-wallet maker-xmr-wallet taker-xmr-wallet)
+monero_profile=()
+[[ "${LEZ_MONERO:-0}" != 1 ]] || { monero_services=(monerod xmr-funding-wallet maker-xmr-wallet taker-xmr-wallet); monero_profile=(--profile monero); }
 
 stage "images"
 echo "[2/6] images…"
@@ -223,17 +224,21 @@ case "${LEZ_IMAGES:-build}" in
     if (( ${#monero_services[@]} )) &&
        { [[ "$BUILD" == 1 ]] || ! docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1; }; then
       [[ -x images/monerod/bin/monerod ]] || { echo "Monero is not staged: LEZ_MONERO=1 scripts/stage-assets.sh" >&2; exit 1; }
+      # (the isolated lane's Dockerfile, copied into the context: compose.yaml)
+      cmp -s ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile ||
+        install -m 0644 ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile
       docker compose --profile monero build monerod
     fi
     ;;
   pull)
     echo "  pulling ${LEZ_IMAGE_PREFIX:-lez}-*:${LEZ_IMAGE_TAG:-local}…"
-    docker compose --profile tools --profile explorers pull --quiet
+    # (Monero's image too when it is on: a release publishes it, lez-monerod)
+    docker compose --profile tools --profile explorers ${monero_profile[@]+"${monero_profile[@]}"} pull --quiet
     ;;
   present)
     # A developer's bundle run on images built locally (tag `local`): nothing is
     # pulled; every image the compose file names must already exist.
-    for image in $(docker compose config --images 2>/dev/null | sort -u); do
+    for image in $(docker compose ${monero_profile[@]+"${monero_profile[@]}"} config --images 2>/dev/null | sort -u); do
       docker image inspect "$image" >/dev/null 2>&1 || { echo "image $image is not present locally" >&2; exit 1; }
     done
     ;;

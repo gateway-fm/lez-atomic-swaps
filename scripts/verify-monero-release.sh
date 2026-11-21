@@ -39,6 +39,27 @@ fi
 # shellcheck source=/dev/null
 source "$provenance_file"
 
+# The release archive of the Linux architecture the binaries will run on:
+# MONERO_ARCH (x86_64 or aarch64, also as amd64 or arm64), by default the
+# architecture this script runs on. Each has its own pins in the contract.
+monero_arch="${MONERO_ARCH:-$(uname -m)}"
+case "$monero_arch" in
+  x86_64 | amd64) monero_arch=x86_64 arch_suffix=X86_64 ;;
+  aarch64 | arm64) monero_arch=aarch64 arch_suffix=AARCH64 ;;
+  *)
+    echo "no pinned Monero release archive for architecture ${monero_arch} (x86_64 or aarch64)" >&2
+    exit 1
+    ;;
+esac
+for field in NAME URL SHA256 SIZE ROOT; do
+  arch_variable="MONERO_ARCHIVE_${field}_${arch_suffix}"
+  if [[ -z "${!arch_variable:-}" ]]; then
+    echo "Monero provenance contract is missing ${arch_variable}" >&2
+    exit 1
+  fi
+  printf -v "MONERO_ARCHIVE_${field}" '%s' "${!arch_variable}"
+done
+
 required_variables=(
   MONERO_VERSION
   MONERO_TAG
@@ -49,6 +70,7 @@ required_variables=(
   MONERO_ARCHIVE_URL
   MONERO_ARCHIVE_SHA256
   MONERO_ARCHIVE_SIZE
+  MONERO_ARCHIVE_ROOT
   MONERO_HASHES_URL
   MONERO_HASHES_SHA256
   MONERO_HASHES_SNAPSHOT
@@ -63,6 +85,12 @@ for variable in "${required_variables[@]}"; do
     exit 1
   fi
 done
+
+if [[ "${MONERO_ARCHIVE_URL##*/}" != "$MONERO_ARCHIVE_NAME" ||
+      "$MONERO_ARCHIVE_ROOT" != "monero-${monero_arch}-linux-gnu-v${MONERO_VERSION}" ]]; then
+  echo "Monero ${monero_arch} archive pins disagree on its name, URL or root" >&2
+  exit 1
+fi
 
 : "${MONERO_CACHE_DIR:?MONERO_CACHE_DIR is required}"
 : "${MONERO_BUILD_CONTEXT:?MONERO_BUILD_CONTEXT is required}"
@@ -208,8 +236,8 @@ if [[ "$actual_tag_object" != "$MONERO_SOURCE_TAG_OBJECT" || "$actual_source_com
   exit 1
 fi
 
-archive_root="monero-x86_64-linux-gnu-v${MONERO_VERSION}"
-archive_members="${MONERO_CACHE_DIR}/archive-members-${MONERO_VERSION}.txt"
+archive_root="$MONERO_ARCHIVE_ROOT"
+archive_members="${MONERO_CACHE_DIR}/archive-members-${MONERO_ARCHIVE_NAME%.tar.bz2}.txt"
 tar -tjf "$archive" >"$archive_members"
 for binary in monerod monero-wallet-rpc; do
   if ! rg -Fxq "${archive_root}/${binary}" "$archive_members"; then
@@ -240,6 +268,7 @@ evidence_partial="${MONERO_PROVENANCE_EVIDENCE}.partial"
 jq -n \
   --arg verified_at "$verified_at" \
   --arg version "$MONERO_VERSION" \
+  --arg architecture "$monero_arch" \
   --arg archive_name "$MONERO_ARCHIVE_NAME" \
   --arg archive_url "$MONERO_ARCHIVE_URL" \
   --arg archive_sha256 "$MONERO_ARCHIVE_SHA256" \
@@ -269,6 +298,7 @@ jq -n \
       source_commit: $source_commit
     },
     consumed_archive: {
+      architecture: $architecture,
       name: $archive_name,
       url: $archive_url,
       sha256: $archive_sha256,
@@ -294,5 +324,5 @@ jq -n \
 chmod 0600 "$evidence_partial"
 mv "$evidence_partial" "$MONERO_PROVENANCE_EVIDENCE"
 
-printf 'Monero %s release provenance verified: %s\n' \
-  "$MONERO_VERSION" "$MONERO_PROVENANCE_EVIDENCE"
+printf 'Monero %s (%s) release provenance verified: %s\n' \
+  "$MONERO_VERSION" "$monero_arch" "$MONERO_PROVENANCE_EVIDENCE"
