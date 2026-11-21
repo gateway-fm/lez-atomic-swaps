@@ -827,6 +827,45 @@ impl BridgeRuntime {
             .map_err(Into::into)
     }
 
+    /// Reads one XMR-native escrow's metadata state at the sequencer tip, under
+    /// one unchanged tip (read again, a bounded number of times, when it
+    /// moved). The tip is not finalized: this is what the sequencer holds
+    /// now, which a refund must not race. It performs no submission.
+    ///
+    /// # Errors
+    ///
+    /// `MovingTip` when the tip moved under every read, `Unavailable` for node
+    /// facts, `InvalidObservation` for metadata the terms do not bind.
+    pub async fn observe_native_xmr_escrow_tip_v3(
+        &self,
+        request: &lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Request,
+    ) -> Result<lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Result, BridgeRuntimeError> {
+        let metadata_id = AccountId::new(*request.terms.to_input().metadata_account_id.as_bytes());
+        for _ in 0..3 {
+            let before = self.node.sequencer_tip().await?;
+            let account = self.node.native_account(metadata_id).await?;
+            if self.node.sequencer_tip().await? != before {
+                continue;
+            }
+            let state = if account == Account::default() {
+                None
+            } else {
+                Some(crate::finalized_xmr_observation::xmr_metadata_state(
+                    &request.terms,
+                    account.program_owner,
+                    account.data.as_ref(),
+                )?)
+            };
+            return Ok(lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Result::new(
+                request.context.clone(),
+                request.terms,
+                before,
+                state,
+            ));
+        }
+        Err(BridgeRuntimeError::MovingTip)
+    }
+
     /// Classifies one exact persisted XMR-native Fund in stable finalized history.
     ///
     /// # Errors

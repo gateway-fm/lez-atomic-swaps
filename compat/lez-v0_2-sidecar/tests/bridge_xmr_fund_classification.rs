@@ -29,12 +29,12 @@ use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Result, CompleteNativeXmrClaimV3Request,
     CompleteNativeXmrRefundV3Request, DiscoveryWindow, ErrorCode, FinalizedNativeXmrScanOutcomeV3,
     FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3, Hex32,
-    MessageContext, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
-    PrepareNativeXmrClaimV3Request, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrPunishV3Request, PrepareNativeXmrRefundV3Request, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, XmrClaimPartialV3, XmrNativeEffectV3,
-    XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3, XmrNativeEscrowTermsV3,
-    XmrNativeEscrowTermsV3Input,
+    MessageContext, ObserveNativeXmrEscrowTipV3Request, Participant,
+    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimV3Request,
+    PrepareNativeXmrEscrowV3Request, PrepareNativeXmrPunishV3Request,
+    PrepareNativeXmrRefundV3Request, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
+    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -942,6 +942,40 @@ async fn start_node() -> (String, jsonrpsee::server::ServerHandle, Arc<AtomicUsi
     })
     .expect("send method");
     (format!("http://{address}"), server.start(rpc), sends)
+}
+
+/// A node whose sequencer tip is block 77 and whose escrow metadata account
+/// is what `metadata` holds (the default account while it is `None`).
+async fn start_tip_node(
+    metadata: Arc<Mutex<Option<nssa::Account>>>,
+) -> (String, jsonrpsee::server::ServerHandle) {
+    let server = ServerBuilder::default()
+        .build("127.0.0.1:0")
+        .await
+        .expect("node binds");
+    let address = server.local_addr().expect("node address");
+    let mut rpc = RpcModule::new(metadata);
+    rpc.register_method("checkHealth", |_, _, _| Ok::<_, ErrorObjectOwned>(()))
+        .expect("health method");
+    rpc.register_method("getChannelId", |_, _, _| {
+        Ok::<_, ErrorObjectOwned>(hex::encode([41_u8; 32]))
+    })
+    .expect("channel method");
+    rpc.register_method("getLastBlockId", |_, _, _| {
+        Ok::<_, ErrorObjectOwned>(77_u64)
+    })
+    .expect("tip method");
+    rpc.register_method("getAccount", |_, metadata, _| {
+        Ok::<_, ErrorObjectOwned>(
+            metadata
+                .lock()
+                .expect("metadata lock")
+                .clone()
+                .unwrap_or_default(),
+        )
+    })
+    .expect("account method");
+    (format!("http://{address}"), server.start(rpc))
 }
 
 async fn start_classifier_sidecar(
@@ -2713,4 +2747,118 @@ async fn maker_classifies_its_own_tag_17_at_a_live_nonce_and_nothing_else() {
             "{id} must not classify as the Maker's tag 17: {result:?}"
         );
     }
+}
+
+/// Before its refund reveals its share the Taker reads the escrow at the
+/// sequencer tip, beyond what is final: the state there is answered from the
+/// metadata the terms bind (none while it is not initialized), and metadata
+/// the terms do not bind is refused.
+#[tokio::test]
+async fn the_escrow_is_read_at_the_sequencer_tip() {
+    let directory = TempDir::new().expect("state root");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).expect("private root");
+    let planner_directory = directory.path().join("planner");
+    fs::create_dir(&planner_directory).expect("planner directory");
+    fs::set_permissions(&planner_directory, fs::Permissions::from_mode(0o700))
+        .expect("private planner directory");
+    let (depositor, depositor_key, _) = account(21);
+    let (claimant, _, _) = account(22);
+    let descriptor = runtime(depositor);
+    let xmr_terms = terms(depositor, claimant);
+    let planner = Arc::new(
+        NativeEscrowPlanner::new_durable(
+            Participant::Taker,
+            depositor_key,
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            descriptor.clone(),
+            Arc::new(CountingNonce {
+                value: 41,
+                calls: AtomicUsize::new(0),
+            }),
+            &planner_directory,
+        )
+        .expect("planner"),
+    );
+    let metadata_account = Arc::new(Mutex::new(None));
+    let (node_endpoint, node) = start_tip_node(Arc::clone(&metadata_account)).await;
+    let (client, bridge) = start_classifier_sidecar(
+        directory.path(),
+        "tip-idempotency.json",
+        descriptor.clone(),
+        planner,
+        &node_endpoint,
+        absent_state_indexer(&xmr_terms),
+    )
+    .await;
+    let ask = |request_id: &str| {
+        ObserveNativeXmrEscrowTipV3Request::new(
+            MessageContext::new(
+                RunId::new(RUN_ID).expect("run id"),
+                RequestId::new(request_id).expect("request id"),
+                Participant::Taker,
+            ),
+            descriptor.clone(),
+            xmr_terms,
+        )
+    };
+    let at = |escrow: &EscrowMetadata| nssa::Account {
+        program_owner: ESCROW_PROGRAM,
+        data: to_vec(escrow)
+            .expect("metadata encoding")
+            .try_into()
+            .expect("bounded data"),
+        ..nssa::Account::default()
+    };
+
+    let absent = client
+        .observe_native_xmr_escrow_tip_v3(ask("xmr-tip-absent"))
+        .await
+        .expect("an escrow not initialized at the tip");
+    assert_eq!((absent.tip_height, absent.state), (77, None));
+    assert_eq!(absent.terms, xmr_terms);
+    for (request_id, status, expected) in [
+        (
+            "xmr-tip-funded",
+            EscrowStatus::Funded,
+            XmrNativeEscrowStateV3::Funded,
+        ),
+        (
+            "xmr-tip-authorized",
+            EscrowStatus::XmrClaimAuthorized,
+            XmrNativeEscrowStateV3::ClaimAuthorized,
+        ),
+        (
+            "xmr-tip-claimed",
+            EscrowStatus::Claimed,
+            XmrNativeEscrowStateV3::Claimed,
+        ),
+        (
+            "xmr-tip-refunded",
+            EscrowStatus::Refunded,
+            XmrNativeEscrowStateV3::Refunded,
+        ),
+    ] {
+        *metadata_account.lock().expect("metadata lock") = Some(at(&metadata(&xmr_terms, status)));
+        let observed = client
+            .observe_native_xmr_escrow_tip_v3(ask(request_id))
+            .await
+            .expect("the state at the tip");
+        assert_eq!(observed.state, Some(expected), "{request_id}");
+    }
+
+    let mut foreign = metadata(&xmr_terms, EscrowStatus::Funded);
+    foreign.amount += 1;
+    *metadata_account.lock().expect("metadata lock") = Some(at(&foreign));
+    assert_remote_code(
+        client
+            .observe_native_xmr_escrow_tip_v3(ask("xmr-tip-foreign"))
+            .await
+            .expect_err("metadata the terms do not bind"),
+        ErrorCode::InvalidTransaction,
+    );
+
+    bridge.stop().await.expect("sidecar stops");
+    node.stop().expect("node stop");
+    node.stopped().await;
 }

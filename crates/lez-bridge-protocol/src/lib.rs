@@ -131,6 +131,10 @@ pub const METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3: &str =
 /// Additive v3 method for conservatively classifying one finalized XMR effect.
 pub const METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3: &str =
     "lez_bridge.v3.classify_finalized_native_xmr_effect";
+/// Additive v3 method for reading one XMR-native escrow's state at the
+/// sequencer tip (not finalized), before a refund reveals the Taker's share.
+pub const METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3: &str =
+    "lez_bridge.v3.observe_native_xmr_escrow_tip";
 
 /// HTTP header binding a connection to one composed run.
 pub const RUN_ID_HEADER: &str = "x-lez-bridge-run-id";
@@ -211,7 +215,8 @@ pub use xmr_v3::{
     CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result,
     CurrentProfileClockAccountSnapshot, FinalizedNativeXmrEffectFactsV3,
     FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    FinalizedNativeXmrUnavailableReasonV3, PrepareCurrentProfileClockRequest,
+    FinalizedNativeXmrUnavailableReasonV3, ObserveNativeXmrEscrowTipV3Request,
+    ObserveNativeXmrEscrowTipV3Result, PrepareCurrentProfileClockRequest,
     PrepareCurrentProfileClockResult, PrepareNativeXmrClaimAuthorizationV3Request,
     PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
     PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,

@@ -13,9 +13,10 @@ use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
     METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3, METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
-    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
-    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
+    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, ObserveNativeXmrEscrowTipV3Request,
     XmrNativeEscrowTermsV3,
 };
 use lez_bridge_protocol::{
@@ -2038,6 +2039,34 @@ fn register_xmr_v3_methods(
                 .await
         },
     )?;
+    module.register_async_method(
+        METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+        |params, state, _| async move {
+            let request: ObserveNativeXmrEscrowTipV3Request = params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                request.context.sidecar_role,
+            )?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .observe_native_xmr_escrow_tip_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
     Ok(())
 }
 
@@ -2377,5 +2406,6 @@ fn valid_method(method: &str) -> bool {
             | METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3
+            | METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3
     )
 }

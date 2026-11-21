@@ -41,10 +41,11 @@ use lez_bridge_protocol::{
     AggregateBip340Signature, ClassifyFinalizedNativeXmrEffectV3Request,
     CompleteNativeXmrRefundV3Request, DiscoveryWindow, FinalizedNativeXmrEffectFactsV3,
     FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3, MessageContext,
-    Participant, PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrRefundV3Request, PreparedTransaction, RequestId, RuntimeDescriptor,
-    SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest, XmrClaimPartialV3,
-    XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    ObserveNativeXmrEscrowTipV3Request, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrEscrowV3Request, PrepareNativeXmrRefundV3Request, PreparedTransaction,
+    RequestId, RuntimeDescriptor, SubmitNativeXmrClaimAuthorizationV3Request,
+    SubmitTransactionRequest, XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowStateV3,
+    XmrNativeEscrowTermsV3,
 };
 use lez_btc_role_lifecycle::{
     SwapSidecar,
@@ -1176,6 +1177,9 @@ pub(super) trait XmrRefundChains: Sync {
     /// The finalized LEZ consensus time, ms (the latest finalized block's
     /// timestamp).
     async fn lez_time_ms(&self) -> Result<u64>;
+    /// The escrow's state at the sequencer tip, not finalized (`None` while
+    /// it is not initialized there).
+    async fn escrow_state_at_tip(&self) -> Result<Option<XmrNativeEscrowStateV3>>;
     /// The completed refund as the sidecar holds it: prepared and completed
     /// once, then replayed (the same bytes on every call).
     async fn complete_refund(&self) -> Result<Self::Refund>;
@@ -1215,6 +1219,36 @@ pub(super) async fn refund_step<C: XmrRefundChains>(
     {
         return Ok(());
     }
+    // The completed refund signature reveals the Taker's Monero share. Sent
+    // after the Maker's claim (tag 15) landed it fails on chain, but hands
+    // the Maker the Taker's share while it holds its own: both would hold
+    // the shared spend key and race for the Monero. So the escrow is read at
+    // the sequencer tip, beyond what is final, before the refund is completed
+    // or sent: a claim there (Claimed; from P also the punishment) holds the
+    // refund back for good, and the claim's watch sweeps the Monero once the
+    // claim is final. Our own refund there is followed, not sent again.
+    //
+    // What this cannot see is a tag 15 in the sequencer's mempool. It can no
+    // longer land: tag 15 is valid only in blocks before R, and the refund
+    // goes out only once the finalized LEZ time is at or past R, so every
+    // block still to come is later. That holds while the one sequencer
+    // stamps its blocks in order and keeps what it finalized; a sequencer
+    // that does not (its operator, in collusion with the Maker) could include
+    // a backdated tag 15 after it saw the refund in its mempool, and the
+    // Maker would then race the Taker for the Monero. The same operator sees
+    // the share of every refund it drops.
+    let tip = chains.escrow_state_at_tip().await?;
+    match tip {
+        Some(XmrNativeEscrowStateV3::Claimed) => return Ok(()),
+        Some(
+            XmrNativeEscrowStateV3::Funded
+            | XmrNativeEscrowStateV3::ClaimAuthorized
+            | XmrNativeEscrowStateV3::Refunded,
+        ) => {}
+        Some(XmrNativeEscrowStateV3::Empty) | None => {
+            anyhow::bail!("the LEZ escrow is not funded at the sequencer tip")
+        }
+    }
     let refund = chains.complete_refund().await?;
     let id = C::refund_id(&refund);
     match &progress.refund_submitted {
@@ -1225,7 +1259,7 @@ pub(super) async fn refund_step<C: XmrRefundChains>(
         Some(recorded) => ensure!(*recorded == id, "the sidecar completed another refund"),
     }
     // A failed send does not stop the look for an earlier one.
-    let sent = if lez_ms < windows.punish_ms {
+    let sent = if lez_ms < windows.punish_ms && tip != Some(XmrNativeEscrowStateV3::Refunded) {
         chains.submit_refund(&refund).await
     } else {
         Ok(())
@@ -1277,6 +1311,28 @@ impl XmrRefundChains for LiveRefund {
 
     async fn lez_time_ms(&self) -> Result<u64> {
         Ok(self.lez.finalized_clock().await?.timestamp_ms)
+    }
+
+    async fn escrow_state_at_tip(&self) -> Result<Option<XmrNativeEscrowStateV3>> {
+        let request_id = RequestId::new(hex::encode(Sha256::digest(
+            format!(
+                "xmr-taker-escrow-tip/{}/{}",
+                self.facts.swap_id.as_str(),
+                now_ms()
+            )
+            .as_bytes(),
+        )))?;
+        Ok(self
+            .lez
+            .client
+            .observe_native_xmr_escrow_tip_v3(ObserveNativeXmrEscrowTipV3Request::new(
+                self.lez.context(request_id),
+                self.lez.runtime.clone(),
+                self.terms,
+            ))
+            .await
+            .context("read the LEZ escrow at the sequencer tip")?
+            .state)
     }
 
     async fn complete_refund(&self) -> Result<PreparedTransaction> {
@@ -2901,6 +2957,7 @@ mod tests {
         calls: Mutex<std::collections::BTreeMap<&'static str, u32>>,
         lez_ms: Mutex<u64>,
         final_at: Mutex<Option<u64>>,
+        tip: Mutex<Option<XmrNativeEscrowStateV3>>,
     }
 
     impl StubRefund {
@@ -2909,6 +2966,7 @@ mod tests {
                 calls: Mutex::default(),
                 lez_ms: Mutex::new(lez_ms),
                 final_at: Mutex::new(None),
+                tip: Mutex::new(Some(XmrNativeEscrowStateV3::Funded)),
             }
         }
 
@@ -2927,6 +2985,11 @@ mod tests {
 
         async fn lez_time_ms(&self) -> Result<u64> {
             Ok(*self.lez_ms.lock().unwrap())
+        }
+
+        async fn escrow_state_at_tip(&self) -> Result<Option<XmrNativeEscrowStateV3>> {
+            self.called("tip");
+            Ok(*self.tip.lock().unwrap())
         }
 
         async fn complete_refund(&self) -> Result<String> {
@@ -3166,6 +3229,48 @@ mod tests {
             assert_eq!((refund.calls("complete"), refund.calls("submit")), (0, 0));
             assert_eq!(files.progress().unwrap().refund_submitted, None);
         }
+    }
+
+    /// The Maker's claim (tag 15) is at the sequencer tip and not yet final:
+    /// the refund is not completed and not sent, by itself or on the owner's
+    /// command (its signature would hand the Maker the Taker's share while
+    /// the Maker holds its own); once the claim is final the Monero is swept.
+    /// Our own refund at the tip is followed, not sent again.
+    #[tokio::test]
+    async fn a_maker_claim_at_the_tip_holds_the_refund_back() {
+        let mut progress = locked();
+        progress.claim_authorization = Some("ab".repeat(32));
+        progress.claim_authorized = effect(110_000);
+        let (_directory, files) = swap(&progress);
+        let claim = StubChains::default();
+        let refund = StubRefund::at(WINDOWS.refund_ms);
+        *refund.tip.lock().unwrap() = Some(XmrNativeEscrowStateV3::Claimed);
+        for admitted in [None, Some(TakerFacadeActionV1::Refund)] {
+            settle(&claim, &refund, &files, WINDOWS.refund_ms, admitted, true)
+                .await
+                .unwrap();
+        }
+        assert_eq!((refund.calls("complete"), refund.calls("submit")), (0, 0));
+        assert_eq!(files.progress().unwrap().refund_submitted, None);
+        *claim.maker_claim.lock().unwrap() = Some(Some([0x11; 64]));
+        for _ in 0..2 {
+            settle(&claim, &refund, &files, WINDOWS.refund_ms, None, true)
+                .await
+                .unwrap();
+        }
+        assert_eq!(claim.calls("sweep"), 1);
+        assert_eq!(refund.calls("submit"), 0);
+
+        // Our refund at the tip: followed to finality, not sent again.
+        let mut progress = locked();
+        progress.refund_submitted = Some("16".repeat(32));
+        let (_directory, files) = swap(&progress);
+        let refund = StubRefund::at(WINDOWS.refund_ms);
+        *refund.tip.lock().unwrap() = Some(XmrNativeEscrowStateV3::Refunded);
+        refund_tick(&refund, &files, WINDOWS.refund_ms)
+            .await
+            .unwrap();
+        assert_eq!((refund.calls("submit"), refund.calls("find")), (0, 1));
     }
 
     #[test]

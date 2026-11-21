@@ -1264,6 +1264,71 @@ impl FinalizedNativeXmrScanOutcomeV3 {
     }
 }
 
+/// Requests one XMR-native escrow's metadata state at the sequencer tip.
+///
+/// The tip is not finalized: the answer says what the sequencer holds now,
+/// which is what a refund must not race (a Maker's claim included and not yet
+/// final). It is no proof of finality.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveNativeXmrEscrowTipV3Request {
+    /// Version, run, request, and dedicated sidecar-role binding.
+    pub context: MessageContext,
+    /// Exact expected runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Complete standalone agreement and guest binding.
+    pub terms: XmrNativeEscrowTermsV3,
+}
+
+impl ObserveNativeXmrEscrowTipV3Request {
+    /// Creates one tip-state request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: XmrNativeEscrowTermsV3,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+        }
+    }
+}
+
+/// One XMR-native escrow's metadata state at one unchanged sequencer tip.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveNativeXmrEscrowTipV3Result {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Echoed standalone agreement and guest binding.
+    pub terms: XmrNativeEscrowTermsV3,
+    /// The sequencer's last block id the state was read at.
+    pub tip_height: u64,
+    /// The escrow's state there; `None` while its metadata account is not
+    /// initialized.
+    pub state: Option<XmrNativeEscrowStateV3>,
+}
+
+impl ObserveNativeXmrEscrowTipV3Result {
+    /// Creates one tip-state answer.
+    pub const fn new(
+        context: MessageContext,
+        terms: XmrNativeEscrowTermsV3,
+        tip_height: u64,
+        state: Option<XmrNativeEscrowStateV3>,
+    ) -> Self {
+        Self {
+            context,
+            terms,
+            tip_height,
+            state,
+        }
+    }
+}
+
 /// Requests conservative finalized classification of one XMR-native effect.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
