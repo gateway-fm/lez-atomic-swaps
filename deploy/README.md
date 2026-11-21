@@ -512,15 +512,16 @@ when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
 ### Monero (LEZ_MONERO=1)
 
 Monero swaps run on this devnet only: an offline Monero **regtest** chain on
-each lane, on **x86_64 hosts only** (the pinned release is `linux-x64`;
-`stage-assets.sh` refuses another architecture). No Monero stagenet, testnet or
-mainnet route exists: the Nodes' Monero role accepts only the
+each lane, on x86_64 and arm64 hosts alike (the pinned release has an archive
+for each, `linux-x64` and `linux-armv8`; `stage-assets.sh` takes the host's).
+No Monero stagenet, testnet or mainnet route exists: the Nodes' Monero role accepts only the
 `accelerated-regtest` profile. The protocol, its windows and the punish branch
 are in [protocol-design.md](../docs/milestone-1/protocol-design.md#xmrlez).
 
 Monero is off by default: a Bitcoin/Zcash run starts and waits for nothing of
-it, and a release bundle, which publishes no Monero image, never pulls one.
-`LEZ_MONERO=1` turns it on for the stack and every lane (Compose profile
+it, and a release bundle pulls its image (`lez-monerod`, which the release
+publishes for linux/arm64 beside the others) only when started with
+`LEZ_MONERO=1 ./scripts/start.sh`. `LEZ_MONERO=1` turns it on for the stack and every lane (Compose profile
 `monero`; `gen-config.sh` keeps the choice in `runtime.env`, so a later
 `up.sh --fresh-lez` keeps it, and `LEZ_MONERO=0` turns it off again):
 
@@ -532,13 +533,23 @@ python3 scripts/monero-lane.py balance --role taker
 ```
 
 **The pinned release.** Monero 0.18.5.1 (`tests/e2e/monero/provenance.env`:
-tag `v0.18.5.1`, source commit `4f92268d…`, archive
-`monero-linux-x64-v0.18.5.1.tar.bz2` with its sha256 `22a7dda7…`, the signed
-`hashes.txt` checked against the pinned signer key, fingerprint
-`81AC591F…2A0BDF92`). `stage-assets.sh` runs `scripts/verify-monero-release.sh`
-in a throwaway container, keeps only `monerod` and `monero-wallet-rpc` and runs
-their `--version` there; the downloaded binaries never run on the host. The
-image `lez-monerod:local` (115 MB) runs them on a distroless base.
+tag `v0.18.5.1`, source commit `4f92268d…`, one archive per architecture,
+`monero-linux-x64-v0.18.5.1.tar.bz2` (sha256 `22a7dda7…`, 84 575 716 bytes) for
+x86_64 and `monero-linux-armv8-v0.18.5.1.tar.bz2` (sha256 `c0caf042…`,
+74 269 877 bytes) for arm64, both bound by the signed `hashes.txt`, which is
+checked against the pinned signer key, fingerprint `81AC591F…2A0BDF92`).
+`stage-assets.sh` runs `scripts/verify-monero-release.sh` for the host's
+architecture in a throwaway container of that architecture: the manifest's
+signature and signer, the archive's sha256 and size, its members; it keeps only
+`monerod` and `monero-wallet-rpc` and runs their `--version` there; the
+downloaded binaries never run on the host. `images/monerod/provenance.json`
+records the archive and its architecture, and a binary staged for another
+architecture is staged again. The image `lez-monerod:local` (115 MB on x86_64)
+runs them on a distroless base (a multi-architecture index); its build checks
+that both binaries are executables of the image's architecture and labels the
+archive they came from. Monero's binaries are under the BSD 3-clause licence
+(the archive's `LICENSE`); the image carries the licence label, as the Bitcoin
+Core and Zebra images do.
 
 **What runs per lane.** `monerod` (`--regtest --offline`, fixed difficulty: no
 peers, no miner; blocks are generated on demand) and three `monero-wallet-rpc`:

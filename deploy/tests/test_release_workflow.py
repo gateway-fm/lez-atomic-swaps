@@ -28,9 +28,17 @@ class ReleaseWorkflow(unittest.TestCase):
     def test_every_compose_image_is_pushed(self):
         named = set(re.findall(r'image: \$\{LEZ_IMAGE_PREFIX:-lez\}-([a-z0-9-]+):', COMPOSE))
         self.assertTrue(named)
-        # Monero runs on the devnet only (profile `monero`): a bundle neither
-        # pulls nor publishes its image.
-        self.assertEqual(named - pushed_images() - {'monerod'}, set())
+        # Monero's monerod too (profile `monero`): a bundle pulls it with LEZ_MONERO=1.
+        self.assertIn('monerod', named)
+        self.assertEqual(named - pushed_images(), set())
+
+    def test_the_images_job_stages_and_builds_monero(self):
+        images = WORKFLOW.split('\n  images:\n', 1)[1].split('\n  smoke:\n', 1)[0]
+        stage = images.split('- name: Stage image contexts', 1)[1].split('- name:', 1)[0]
+        self.assertIn('LEZ_MONERO: "1"', stage)
+        build = re.search(r'docker compose (.*) build (.*)\n', images)
+        self.assertIn('--profile monero', build.group(1))
+        self.assertIn('monerod', build.group(2).split())
 
     def test_rust_job_uploads_what_the_contexts_copy(self):
         collect = WORKFLOW.split('name: node-payloads')[0].rsplit('- name: Collect payloads', 1)[1]
@@ -44,6 +52,23 @@ class ReleaseWorkflow(unittest.TestCase):
         for tool in ('provision', 'chat-draft', 'chat-finalize', 'transfer'):
             self.assertNotIn(f'zec-local-poc-{tool}', WORKFLOW, tool)
         self.assertIn('source-tree.txt', collect)
+        # the Maker's Monero effect tools and both roles' Stage-A planner, which
+        # package-role-node.sh puts into the Node packages
+        self.assertIn('cp deploy/images/maker-node/xmr-reference-* _out/images/maker-node/', collect)
+        self.assertIn('lez-v02-xmr-stage-a-plan', collect)
+        # every file a Node package carries is one of those, of lez-*, or a
+        # sidecar tool the collection names
+        package = (ROOT / 'deploy/scripts/package-role-node.sh').read_text()
+        packaged = set(re.findall(r'\b((?:lez|xmr)-[a-z0-9-]+)\b', package.split('case "$role" in', 1)[1].split('context=', 1)[0]))
+        self.assertIn('xmr-reference-monero-fund', packaged)
+        sidecar = set(re.search(r'sidecar/\{([^}]*)\}', collect).group(1).split(','))
+        for tool in packaged:
+            if tool.startswith('lez-v02-'):
+                self.assertIn(tool, sidecar, tool)
+            else:
+                self.assertTrue(tool.startswith(('lez-', 'xmr-reference-')), tool)
+        self.assertIn('install -m 0755 _in/node/images/maker-node/xmr-reference-* deploy/images/maker-node/', WORKFLOW)
+        self.assertIn('chmod 0755 deploy/images/maker-node/xmr-reference-*', WORKFLOW)
 
 
 class PackagesWorkflow(unittest.TestCase):
