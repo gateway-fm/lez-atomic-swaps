@@ -6926,7 +6926,7 @@ def scenario_xmr_punish(stamp: str) -> dict:
 # ---- the Node's own refund, its switch, and the devnet test hooks -------------------
 # The Taker Node refunds a Monero swap's LEZ by itself from R (finalized LEZ
 # time). The entrypoint reads the switch from <state>/xmr-automatic-refund at
-# each start; the Nodes of the devnet build (from-scratch.sh, feature
+# each start; the Nodes of the devnet build (from-scratch.sh with LEZ_TEST_HOOKS=1, feature
 # test-hooks) read their test hooks from <state>/test-hooks.
 XMR_NODE_STATE = {"maker": "/var/lib/lez/maker", "taker": "/var/lib/lez/taker"}
 XMR_HOOK_SCRIPT = ('set -eu; mkdir -p "$1"; chmod 0700 "$1"; '
@@ -6939,6 +6939,24 @@ def xmr_hook(role: str, name: str, value: str | None) -> None:
     its next use (no restart): a clock offset, a cheat flag, a count."""
     node_run(role, "sh", "-c", XMR_HOOK_SCRIPT, "hook", f"{XMR_NODE_STATE[role]}/test-hooks", name, value or "")
     log(f"  {role} test hook {name}: {value if value is not None else 'cleared'}")
+
+
+# What each hook needs built in, and a text only that build's executable holds:
+# the hook file's name, which code built without the feature never reads.
+XMR_TEST_HOOK_BUILDS = {"taker": ("/usr/local/bin/lez-taker-node", "clock-offset-ms"),
+                        "maker": ("/usr/local/bin/lez-v02-bridge-poc", "punish-nonce-thefts")}
+
+
+def xmr_require_test_hooks(role: str) -> None:
+    """Fails the scenario at once, before any swap, unless the role's Node (the
+    Taker) or sidecar (the Maker's) was built with the devnet test hooks
+    (from-scratch.sh with LEZ_TEST_HOOKS=1): without them a hook file is
+    ignored and the scenario would assert against an honest Node."""
+    program, text = XMR_TEST_HOOK_BUILDS[role]
+    result = subprocess.run(node_command(role, ["grep", "-qa", text, program]), capture_output=True)
+    if result.returncode != 0:
+        raise Failure(f"the {role}'s {program.rsplit('/', 1)[-1]} has no devnet test hooks: this scenario needs "
+                      "the devnet built with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh)")
 
 
 def xmr_set_automatic_refund(enabled: bool) -> None:
@@ -7095,6 +7113,7 @@ def scenario_xmr_taker_clock_ahead(stamp: str) -> dict:
     block building would otherwise be lost), then lands, and the Maker sweeps
     its Monero back. Asserted: no refund recorded as sent while the finalized
     LEZ time is before R, the Taker refunded, the Maker refunded."""
+    xmr_require_test_hooks("taker")
     offset_ms = 60_000
     before = xmr_before()
     offer_id = f"offer-e2e-xmr-{stamp}"
@@ -7167,6 +7186,7 @@ def scenario_xmr_punish_replans(stamp: str) -> dict:
     the sidecar once allowed. Asserted: the Maker punished; at least six more
     re-plan slots; the Maker's owner nonce moved by the six thefts and the
     punishment; LEZ moved the lot to the Maker less the six units."""
+    xmr_require_test_hooks("maker")
     maker_owner = lez_owner_account("maker")
     before = xmr_before()
     slots_before = xmr_punish_supersessions()
@@ -7309,6 +7329,7 @@ def scenario_xmr_taker_cheats(stamp: str) -> dict:
     Maker sweeps back. (ii) On a completed swap it sends tag 16 from R although
     the Maker's claim (tag 15) took the LEZ (cheat-refund-after-claim):
     refused, the escrow stays Claimed and no LEZ moves."""
+    xmr_require_test_hooks("taker")
     before = xmr_before()
     offer_id = f"offer-e2e-xmr-{stamp}-a"
     swap_id, windows = xmr_take(stamp, offer_id)

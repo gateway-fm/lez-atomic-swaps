@@ -38,6 +38,12 @@
 # (lez-build-*), outputs in the provision directory, so a rerun takes minutes.
 # No long-lived container is left behind and nothing holds the host Docker
 # socket except the reproducible guest build, for the duration of that run.
+#
+# LEZ_TEST_HOOKS=1 builds the Taker Node and the LEZ sidecar with their devnet
+# test hooks (feature test-hooks: a skewed clock, a cheating Taker, a punish
+# nonce thief), which the adversarial XMR scenarios need; off by default.
+# LEZ_RELEASE_BUILD (set by the release workflows) refuses it, and a crate built
+# with test-hooks while LEZ_RELEASE_BUILD is set does not compile.
 set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -115,6 +121,16 @@ ASSETS="$DEPLOY_ROOT/images/basecamp-ui/assets"
 
 log() { printf '\n[%s %s] %s\n' "$(date -u +%H:%M:%S)" "${PHASE:-}" "$*"; }
 fail() { echo "from-scratch failed: $*" >&2; exit 1; }
+
+# The devnet's test hooks: only on request, never in a release build.
+case "${LEZ_TEST_HOOKS:-0}" in 0|1) ;; *) fail "LEZ_TEST_HOOKS is 0 or 1, not '${LEZ_TEST_HOOKS}'" ;; esac
+if [[ "${LEZ_TEST_HOOKS:-0}" == 1 && -n "${LEZ_RELEASE_BUILD:-}" ]]; then
+  fail "LEZ_TEST_HOOKS=1 builds the devnet test hooks, which no release build (LEZ_RELEASE_BUILD) may carry"
+fi
+# The release mark goes into each build container, where the crates with
+# test hooks refuse to compile them under it.
+release_build_env=()
+[[ -z "${LEZ_RELEASE_BUILD:-}" ]] || release_build_env=(-e "LEZ_RELEASE_BUILD=$LEZ_RELEASE_BUILD")
 phase_wanted() { [[ -z "$ONLY" || "$ONLY" == "$1" || ( "$1" == build && "$ONLY" == build:* ) ]]; }
 build_step_wanted() { [[ -z "$ONLY" || "$ONLY" == build || "$ONLY" == "build:$1" ]]; }
 
@@ -325,12 +341,15 @@ phase_rust() {
   local b role
   for b in "${bins[@]}"; do mkdir -p "$DEPLOY_ROOT/images/${b%/*}"; done
   log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
+  # LEZ_TEST_HOOKS=1: the devnet test hooks of the Taker Node (a clock offset,
+  # a cheating refund; xmr_supervisor::test_hooks), never in a release build
+  local hooks=""
+  [[ "${LEZ_TEST_HOOKS:-0}" != 1 ]] || { hooks=",lez-taker-node/test-hooks"; log "with the devnet test hooks (LEZ_TEST_HOOKS=1)"; }
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
-    -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target -e CARGO_INCREMENTAL=0 "$RUST_IMAGE" bash -c '
+    -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target -e CARGO_INCREMENTAL=0 \
+    -e "LEZ_NODE_HOOKS_FEATURE=$hooks" ${release_build_env[@]+"${release_build_env[@]}"} "$RUST_IMAGE" bash -c '
       set -euo pipefail
-      # test-hooks: the devnet test hooks of the Taker Node (a clock offset, a
-      # cheating refund; xmr_supervisor::test_hooks), off in every release build
-      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr,lez-taker-node/test-hooks -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
+      cargo build --locked --bins --features "lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr$LEZ_NODE_HOOKS_FEATURE" -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
       # the dealer test fixture tools, alone: built with the others, feature
       # unification would put the dealer into the Node and actor binaries
       cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
@@ -594,12 +613,15 @@ sidecar_tree_stamp() {
 # tools: the devnet Maker image carries them beside the Node package
 # (images/maker-node/Dockerfile) for the zec-maker-early-claim, the XMR
 # adversarial and the *-custody-credit scenarios; no role package contains
-# them. The sidecar is built with its test hooks (feature test-hooks: the
-# punish nonce thief of xmr-punish-replans), which no release build has.
+# them. With LEZ_TEST_HOOKS=1 the sidecar is built with its test hooks
+# (feature test-hooks: the punish nonce thief of xmr-punish-replans), which no
+# release build has.
 build_sidecar() {
-  log "building the LEZ sidecar, the identity tool and the escrow claim and custody credit probes"
-  builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --features test-hooks --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan --bin lez-v02-escrow-claim-probe --bin lez-v02-custody-credit-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
+  local hooks=""
+  [[ "${LEZ_TEST_HOOKS:-0}" != 1 ]] || hooks="--features test-hooks"
+  log "building the LEZ sidecar, the identity tool and the escrow claim and custody credit probes${hooks:+ (with the devnet test hooks)}"
+  builder_run ${release_build_env[@]+"${release_build_env[@]}"} -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+      $hooks --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan --bin lez-v02-escrow-claim-probe --bin lez-v02-custody-credit-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc \
       /cache/target/sidecar/debug/lez-v02-xmr-stage-a-plan \
       /cache/target/sidecar/debug/lez-v02-escrow-claim-probe \

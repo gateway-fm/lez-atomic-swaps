@@ -57,13 +57,14 @@ if [[ -z "$lgx" ]]; then
 fi
 [[ -n "$lgx" && -x "$lgx" ]] || { echo "no lgx: set LGX to the module builder's lgx (the plugin's derivation names none)" >&2; exit 66; }
 
-# Build from this checkout; cargo only relinks what changed.
+# Build from this checkout; cargo only relinks what changed. A release build
+# (LEZ_RELEASE_BUILD): a crate built with its devnet test hooks fails to compile.
 target="${CARGO_TARGET_DIR:-$repo/target}"
 jobs="${LEZ_CARGO_JOBS:-6}"
-(cd "$repo" && CARGO_TARGET_DIR="$target" nice -n 10 cargo build --release --locked -j "$jobs" --bins \
+(cd "$repo" && LEZ_RELEASE_BUILD=1 CARGO_TARGET_DIR="$target" nice -n 10 cargo build --release --locked -j "$jobs" --bins \
   --features lez-maker-node/pair-zec,lez-taker-node/pair-zec \
   -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor)
-(cd "$repo" && CARGO_TARGET_DIR="$target/sidecar" nice -n 10 cargo +1.96.0 build --release --locked -j "$jobs" \
+(cd "$repo" && LEZ_RELEASE_BUILD=1 CARGO_TARGET_DIR="$target/sidecar" nice -n 10 cargo +1.96.0 build --release --locked -j "$jobs" \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --bin lez-v02-bridge-poc)
 
 source_commit="$(git -C "$repo" rev-parse HEAD)"

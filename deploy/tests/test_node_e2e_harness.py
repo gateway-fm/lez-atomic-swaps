@@ -862,14 +862,35 @@ class XmrOwnRefundAndAdversaries(unittest.TestCase):
                      'ZecEscrowInstruction::ClaimNativeXmr', 'TEST-ONLY'):
             self.assertIn(text, probe)
 
-    def test_the_devnet_build_has_the_test_hooks_and_no_release_build_does(self):
+    def test_the_devnet_build_has_the_test_hooks_only_on_request(self):
+        # The release side of this is test_release_workflow.NoTestHooksInARelease.
         from_scratch = (SCRIPTS / 'from-scratch.sh').read_text()
-        self.assertIn('lez-taker-node/test-hooks', from_scratch)
-        self.assertIn('--features test-hooks --bin lez-v02-bridge-poc', from_scratch)
+        self.assertIn('hooks=",lez-taker-node/test-hooks"', from_scratch)
+        self.assertIn('hooks="--features test-hooks"', from_scratch)
         self.assertIn('test-hooks = ["pair-xmr"]', (REPO / 'crates/taker-node/Cargo.toml').read_text())
         self.assertIn('test-hooks = []', (REPO / 'compat/lez-v0_2-sidecar/Cargo.toml').read_text())
-        for release in ('.github/workflows/release-images.yml', 'deploy/scripts/package-role-node.sh'):
-            self.assertNotIn('test-hooks', (REPO / release).read_text(), release)
+
+    def test_the_scenarios_with_hooks_fail_at_once_without_them(self):
+        for scenario, role in ((e2e.scenario_xmr_taker_clock_ahead, 'taker'),
+                               (e2e.scenario_xmr_punish_replans, 'maker'),
+                               (e2e.scenario_xmr_taker_cheats, 'taker')):
+            body = inspect.getsource(scenario).split('"""', 2)[2]
+            self.assertEqual(body.lstrip().splitlines()[0], f'xmr_require_test_hooks("{role}")')
+        ran = []
+        with patch.object(e2e.subprocess, 'run', lambda argv, **_: ran.append(argv) or
+                               subprocess.CompletedProcess(argv, 1, b'', b'')):
+            with self.assertRaisesRegex(e2e.Failure, 'LEZ_TEST_HOOKS=1'):
+                e2e.xmr_require_test_hooks('taker')
+        self.assertEqual(ran[0][-3:], ['-qa', 'clock-offset-ms', '/usr/local/bin/lez-taker-node'])
+        with patch.object(e2e.subprocess, 'run', lambda argv, **_: subprocess.CompletedProcess(argv, 0)):
+            e2e.xmr_require_test_hooks('maker')
+        for program, text in e2e.XMR_TEST_HOOK_BUILDS.values():
+            # The text is read only by code the feature builds in.
+            source = {'clock-offset-ms': 'crates/taker-node/src/taker_service/xmr_supervisor.rs',
+                      'punish-nonce-thefts': 'compat/lez-v0_2-sidecar/src/bridge_runtime.rs'}[text]
+            uses = [line for line in (REPO / source).read_text().splitlines()
+                    if f'"{text}"' in line]
+            self.assertEqual(len(uses), 1, (source, uses))
 
     def test_the_stolen_units_are_counted_against_the_lot(self):
         source = inspect.getsource(e2e.scenario_xmr_punish_replans)

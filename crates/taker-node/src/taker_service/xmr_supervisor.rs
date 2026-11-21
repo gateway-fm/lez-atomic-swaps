@@ -674,6 +674,13 @@ fn now_ms() -> u64 {
 pub(super) mod test_hooks {
     use std::path::PathBuf;
 
+    // A release build (the release workflows and packagers set
+    // LEZ_RELEASE_BUILD) cannot carry the test hooks: it does not compile.
+    const _: () = assert!(
+        option_env!("LEZ_RELEASE_BUILD").is_none(),
+        "the devnet test hooks (feature test-hooks) are never part of a release build (LEZ_RELEASE_BUILD)"
+    );
+
     fn file(name: &str) -> Option<PathBuf> {
         std::env::var_os("LEZ_TEST_HOOKS_DIR").map(|directory| PathBuf::from(directory).join(name))
     }

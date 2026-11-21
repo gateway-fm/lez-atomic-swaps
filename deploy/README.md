@@ -657,14 +657,25 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 Monero swap's LEZ by itself from R (finalized LEZ time). Its entrypoint turns
 that off with `LEZ_XMR_AUTOMATIC_REFUND=false` or the word `false` in
 `<state>/xmr-automatic-refund` (read at each start); `node-e2e.py` writes the
-file and restarts the Node. The devnet's build (`from-scratch.sh`) compiles
-the Taker Node with the feature `test-hooks` and the LEZ sidecar with its own
-`test-hooks`; both read files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`,
-set by the entrypoint): `clock-offset-ms` (the Taker supervisor's clock
-offset), `cheat-refund-before-r` and `cheat-refund-after-claim` (a cheating
-Taker), `punish-nonce-thefts` (a count, in the Maker's sidecar). No release
-build has either feature. A stack staged by another script must build the
-Nodes and the sidecar with the same features for these scenarios.
+file and restarts the Node. With `LEZ_TEST_HOOKS=1`, the devnet's build
+(`from-scratch.sh`) compiles the Taker Node with the feature `test-hooks` and
+the LEZ sidecar with its own `test-hooks`; both read files in
+`<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, set by the entrypoint):
+`clock-offset-ms` (the Taker supervisor's clock offset),
+`cheat-refund-before-r` and `cheat-refund-after-claim` (a cheating Taker),
+`punish-nonce-thefts` (a count, in the Maker's sidecar). Without it neither
+is built in, and `xmr-taker-clock-ahead`, `xmr-punish-replans` and
+`xmr-taker-cheats` fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`
+(they look for the hook's name in the Taker Node's or the Maker sidecar's
+executable). So a devnet for `regress.sh full` is built with
+`LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh`.
+
+No release has the hooks. The release workflows and the role packagers never
+name the feature or `LEZ_TEST_HOOKS`, and they mark their builds with
+`LEZ_RELEASE_BUILD`: under it `from-scratch.sh` refuses `LEZ_TEST_HOOKS=1`,
+and both crates' hook modules hold a compile-time assertion that
+`LEZ_RELEASE_BUILD` is unset, so a release build with the feature does not
+compile (`deploy/tests/test_release_workflow.py`, `NoTestHooksInARelease`).
 
 **A stranger's credit to the custody (TM-0032).** LEZ lets anyone pay into
 any initialised account, so a third party can send LEZ to a funded escrow's
