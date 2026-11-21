@@ -61,14 +61,27 @@ if [[ "$($rzup_bin --version)" != "rzup ${rzup_version}" ]]; then
   exit 1
 fi
 
+# rzup finds its releases through the GitHub API, which refuses an anonymous
+# caller once its address has spent the hourly allowance; CI's runners share
+# addresses. CI hands its read-only token in RZUP_GITHUB_TOKEN, and only the
+# two installs below see it, as the GITHUB_TOKEN rzup reads: no build does.
+rzup_token="${RZUP_GITHUB_TOKEN:-}"
+unset RZUP_GITHUB_TOKEN
+rzup_install() {
+  if [[ -n "$rzup_token" ]]; then
+    RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" GITHUB_TOKEN="$rzup_token" \
+      "$rzup_bin" install "$@"
+  else
+    RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" "$rzup_bin" install "$@"
+  fi
+}
+
 if [[ "${LEZ_NATIVE_TOOLS:-0}" != "1" ]]; then
 if ! RISC0_HOME="$risc0_home" "$rzup_bin" show | rg -q "rust.*${risc0_rust_version}"; then
-  RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" \
-    "$rzup_bin" install rust "$risc0_rust_version"
+  rzup_install rust "$risc0_rust_version"
 fi
 if [[ ! -x "$r0vm_bin" ]]; then
-  RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" \
-    "$rzup_bin" install r0vm "$risc0_version"
+  rzup_install r0vm "$risc0_version"
 fi
 fi
 
