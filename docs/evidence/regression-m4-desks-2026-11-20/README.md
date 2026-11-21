@@ -7,7 +7,8 @@ the Monero regtest chain up (`LEZ_MONERO=1`), three lanes at a time (`LEZ_LANES=
 at 23:05Z (`up.sh --fresh-lez`). Then, on the same chain, one Zcash desk journey in ADR 0216's order,
 recorded the same way: `runtime/regress/20261120T234825Z`, 23:48:25Z to 23:51:55Z. Each desk is
 driven in its party's own Basecamp through `ui-tests/verify.mjs`; each recording is a by-product of
-the test that passed while it was recorded.
+the test that passed while it was recorded. One operator ran both parties, both desks and both
+Nodes, on one host.
 
 These replace, for `86bdb8a4`, the recordings of `363df3cf` in
 [regression-m4-desks-2026-11-16](../regression-m4-desks-2026-11-16/), which are the record of that

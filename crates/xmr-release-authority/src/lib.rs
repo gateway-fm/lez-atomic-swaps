@@ -3,8 +3,18 @@
 //! A concrete issuer consumes validated Stage B, canonical finalized LEZ Fund
 //! evidence, an exact Monero output observation, and its authenticated topology
 //! attestation before it can feed encrypted publication storage and the
-//! crash-safe compare-and-swap journal. Live finalized-clock, node-submission,
-//! claim-finality, and actor integration remain pending.
+//! crash-safe compare-and-swap journal. It has no live finalized-clock,
+//! node-submission, claim-finality or actor integration of its own.
+//!
+//! # Where it runs
+//!
+//! Not on the Nodes' live XMR path. The Taker Node sends tag 14 in process
+//! through the swap's sidecar (`taker_service::xmr_supervisor` in
+//! `lez-taker-node`), on the finalized LEZ clock, and never calls this crate.
+//! The Nodes link it only through `lez-xmr-reference-actor`'s `sessions`
+//! feature, for the schema-v2 Taker tag-14 tool, and the
+//! `lez-v0-2-xmr-release-service` binaries that use it are in no deploy
+//! profile. The preconditions below hold for those uses.
 //!
 //! # `PoC` trust and rollback preconditions
 //!

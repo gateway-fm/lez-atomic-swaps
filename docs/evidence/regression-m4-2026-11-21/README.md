@@ -3,7 +3,9 @@
 One run of every test of `deploy/scripts/regress.sh full` (160: `regress.sh list full`) on the
 Docker devnet with the Monero regtest chain up (`LEZ_MONERO=1`), three lanes at a time
 (`LEZ_LANES=3`), without desk recordings: run `runtime/regress/20261121T020133Z`, 2026-11-21
-02:01:33Z to 05:42:36Z (UTC), at `d4475300`.
+02:01:33Z to 05:42:36Z (UTC), at `d4475300`. One operator ran both parties, Maker and Taker, on
+one host: Linux 6.8, x86_64, local linux/amd64 dev-profile images, Monero regtest. No second
+operator and no second host took part.
 
 ## What the tree is
 
@@ -242,7 +244,8 @@ commit too and predate the caption and wording changes.
 - No run uses the `local` profile. No Monero test runs on the `refund` profile. The block
   explorers are not part of any test.
 - Monero beyond an offline regtest chain: no stagenet or mainnet. x86_64 (linux/amd64) only;
-  macOS and linux/arm64 were not run on this commit.
+  macOS and linux/arm64 were not run on this commit, for Monero nor for BTC and ZEC.
+- Two operators on two hosts: one operator ran both parties on one host.
 - The systemd VM run with a Monero role (`scripts/run-maker-node-systemd-vm.sh`) was not run, nor
   was `scripts/run-zebra-e2e.sh`.
 - No desk recordings were made at `d4475300`. The recordings of

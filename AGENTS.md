@@ -25,9 +25,14 @@ as well (sign-off, tests with every behavioural change).
   BTC, ZEC, XMR and any later pair. A pair may differ only in the
   cryptographic mechanism that carries the secret (adaptor signature, hash
   preimage, key share). A pair that cannot follow the common flow in a
-  direction does not offer that direction. XMR does not follow this rule
-  yet; aligning it, or withdrawing the direction, is part of the XMR work
-  (issue #161).
+  direction does not offer that direction. XMR `TakerSellsLez` is the one
+  accepted exception
+  ([ADR 0217](docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md)):
+  a Monero output has no hash lock and no time lock, so there the Taker
+  authorises, the Maker claims LEZ first and reveals its Monero share, and
+  the Taker's LEZ refund, open in [R, P), is the only refund; XMR offers no
+  `TakerSellsForeign`. No other pair or direction may deviate without its own
+  accepted ADR.
 
 ## Evidence
 

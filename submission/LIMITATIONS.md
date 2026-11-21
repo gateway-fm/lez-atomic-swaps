@@ -78,6 +78,86 @@ checkpoint; they do not widen the current claim.
   spends. Fee starvation, deep reorganization, and action at arbitrary deadline
   boundaries are not closed production claims.
 
+## M4 boundary
+
+The XMR/LEZ pair (version 0.4.0). Each limit below is open unless it says
+otherwise; the deliverables and their proof are in
+[`docs/m4-acceptance-checklist.md`](../docs/m4-acceptance-checklist.md).
+
+Scope:
+
+- Monero 0.18.5.1 **regtest** on the private LEZ devnet only. No Monero
+  stagenet, testnet or mainnet swap has run; no window profile sized for a
+  public network exists (R6); the LEZ testnet waits for the LEZ 0.4 port
+  (#107). LEZ v0.2.4 pins RISC Zero 3.0, which is yanked
+  (GHSA-g6qg-9j8p-7j87); its `cargo-deny` exemption is an accepted risk on
+  devnet-only software (#184), and no public-network release is made while it
+  stands.
+- One direction, the Taker sells LEZ. Native LEZ only, no tokens (F7).
+- One operator ran both parties on one host for every recorded run.
+- No third-party review of the construction (DLEQ and adaptor composition);
+  S12 and S13 are M7.
+
+Protocol, by design ([ADR 0217](../docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md)):
+
+- The Taker's refund is open only in [R, P) (a departure from F5). From P the
+  Maker's punishment takes the LEZ and the Monero stays locked for good (a
+  departure from F6).
+- TM-0031: a Maker running other software can punish from P a swap it never
+  funded; a Taker Node down through all of [R, P) loses its LEZ, funded or
+  not.
+- TM-0019: the Taker's claim partial is committed, not verifiably encrypted;
+  a Taker that never authorises leaves the Maker's Monero to its refund.
+- The escrow verifies no DLEQ proof on chain; each party verifies both proofs
+  off chain before it signs.
+- The Taker makes the per-swap private view key and sends it to the Maker
+  over Chat; each role's own `monero-wallet-rpc` receives the full spend key
+  when it sweeps.
+- The single LEZ sequencer sees every refund in its mempool, and with it the
+  Taker's share. An operator colluding with the Maker could include a
+  backdated claim after seeing a refund; a refund it drops until P leaves the
+  Maker the LEZ.
+
+The escrow (TM-0032):
+
+- The custody-credit fix holds only for escrows under ImageID `ca66e0dc…`.
+  An escrow made under the program of v0.3.4 (`c22d61fc…`) can still be
+  locked for good by a stranger's credit to its custody.
+- A token escrow whose custody ATA a stranger creates in the same block as
+  its `InitializeToken` is refused by the sidecar's initialization
+  observation, which requires the ATA to be absent at that block. (Token
+  escrows are BTC and ZEC; XMR is native only.)
+
+The Maker Node:
+
+- It does not check the Monero network before it funds: the wallet transfer
+  checks the address type only, and monerod's network (`fakechain`) and
+  genesis are checked after the funding, when it is recorded.
+- Its Monero RPC reads refuse a wallet with more than 4,096 available outputs
+  (`MAX_AVAILABLE_OUTPUTS`): past that the Maker cannot find its output and
+  stops, failing closed.
+- Its funding tool makes three attempts five seconds apart; a wallet-rpc
+  that answers none of them ends the swap `expired` (refunded, nothing lost).
+- The id of its Monero refund sweep is written after the sweep is submitted;
+  a crash between the two loses it, and the re-run finds no unspent output to
+  sweep. Recovery is by hand.
+
+The Taker Node:
+
+- A sweep it has started and cannot prove unsent is marked in doubt and never
+  sent again; recovering the Monero from it is by hand, and no tool does it.
+  A failure to read the restored wallet's outputs or its primary address,
+  both before anything is sent, is also classed in doubt.
+- Its status view has no expired or punished state for a Monero swap: a swap
+  whose lock window closed reads `Offered` with `xmr_lez_lock_window_closed`,
+  a punished one `MakerRecoveryAvailable` with `xmr_refund_window_closed`,
+  and neither becomes terminal.
+
+The sidecar:
+
+- Its request store holds at most 4,096 entries (`MAX_STORE_ENTRIES`) and
+  evicts none: when full it refuses new requests.
+
 ## M6 boundary
 
 - The signed-off HTML prototypes create no daemon, wallet, or chain effects.
