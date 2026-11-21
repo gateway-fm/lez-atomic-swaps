@@ -7110,6 +7110,10 @@ def xmr_escrow_program_id() -> str:
 
 
 XMR_PROBE_SIGNER = "/tmp/xmr-probe-lez-signer.key"
+# The Maker's owner key as compose mounts it (runtime/lez/maker at
+# /run-lez-identity/maker, LEZ_MAKER_SIGNER_IDENTITY); /run-lez-identity holds
+# only identity.json and zcash.key beside that directory.
+XMR_MAKER_OWNER_KEY = "/run-lez-identity/maker/lez-signer.key"
 
 
 def xmr_escrow_probe(effect: str, swap_id: str, expect_moved: bool, why: str) -> dict:
@@ -7118,7 +7122,7 @@ def xmr_escrow_probe(effect: str, swap_id: str, expect_moved: bool, why: str) ->
     identity's, owner-private) and submitted from inside the Maker's container
     by the test-only probe. The swap id of an XMR swap is its escrow's on-chain
     id. Fails unless the escrow moved exactly when `expect_moved`."""
-    node_run("maker", "install", "-m", "0600", "/run-lez-identity/lez-signer.key", XMR_PROBE_SIGNER)
+    node_run("maker", "install", "-m", "0600", XMR_MAKER_OWNER_KEY, XMR_PROBE_SIGNER)
     argv = [ZEC_ESCROW_CLAIM_PROBE, "--effect", effect, "--sequencer-url", "http://127.0.0.1:3040/",
             "--escrow-program-id", xmr_escrow_program_id(), "--swap-id", swap_id,
             "--private-key-file", XMR_PROBE_SIGNER, "--observe-seconds", "30"]

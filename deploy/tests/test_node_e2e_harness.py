@@ -964,6 +964,14 @@ class CustodyCredit(unittest.TestCase):
         self.assertEqual(asked, [(e2e.STACK_INDEXER_URL, {'jsonrpc': '2.0', 'id': 1, 'method': 'getBlockById',
                                                           'params': [500]})])
 
+    def test_the_escrow_probe_signs_with_the_key_compose_mounts(self):
+        # compose mounts the Maker's identity directory at /run-lez-identity/maker;
+        # /run-lez-identity/lez-signer.key does not exist in the container
+        compose = (SCRIPTS.parent / 'compose.yaml').read_text()
+        self.assertIn('/lez/maker:/run-lez-identity/maker:ro', compose)
+        self.assertEqual(e2e.XMR_MAKER_OWNER_KEY, '/run-lez-identity/maker/lez-signer.key')
+        self.assertIn('XMR_MAKER_OWNER_KEY, XMR_PROBE_SIGNER', inspect.getsource(e2e.xmr_escrow_probe))
+
     def test_the_strangers_key_reaches_the_container_on_stdin(self):
         # docker exec without -i gives the command an empty stdin: the key
         # file was written empty and the probe refused it
