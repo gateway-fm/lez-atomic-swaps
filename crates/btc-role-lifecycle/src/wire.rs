@@ -46,6 +46,7 @@ pub struct BtcReserveRequestV1 {
     /// The Maker offer id as published over Delivery.
     pub offer_id: Box<str>,
     pub expected_offer_revision: u64,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub direction: SwapDirection,
     pub signed_offer_envelope: Vec<u8>,
@@ -81,6 +82,7 @@ pub struct LegPacketsV1 {
 pub struct BtcCeremonyReserveRequestV1 {
     pub schema_version: u16,
     pub request_id: RequestId,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub bitcoin_session_id: [u8; 32],
     pub lez_session_id: [u8; 32],
@@ -105,6 +107,7 @@ pub struct BtcCeremonyReserveResponseV1 {
 pub struct BtcCeremonyNonceRequestV1 {
     pub schema_version: u16,
     pub request_id: RequestId,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub taker_nonces: LegPacketsV1,
 }
@@ -123,6 +126,7 @@ pub struct BtcCeremonyNonceResponseV1 {
 pub struct BtcCeremonyPartialRequestV1 {
     pub schema_version: u16,
     pub request_id: RequestId,
+    #[serde(with = "lez_bridge_protocol::reservation_id_serde")]
     pub reservation_id: RequestId,
     pub taker_partials: LegPacketsV1,
 }
@@ -144,3 +148,41 @@ pub const BTC_LIFECYCLE_METHODS_V1: [&str; 4] = [
     "btc_ceremony_nonce_v1",
     "btc_ceremony_partial_v1",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{BtcCeremonyNonceRequestV1, LegPacketsV1};
+    use lez_bridge_protocol::RequestId;
+    use serde_json::Value;
+
+    /// The BTC rounds refuse a reservation id that could name another swap's
+    /// sibling path, as the XMR and ZEC rounds do.
+    #[test]
+    fn btc_rounds_refuse_an_id_that_is_not_path_safe() {
+        let request = serde_json::to_value(BtcCeremonyNonceRequestV1 {
+            schema_version: 1,
+            request_id: RequestId::new("btc-nonce-request-01").unwrap(),
+            reservation_id: RequestId::new("btc-reservation-0001").unwrap(),
+            taker_nonces: LegPacketsV1 {
+                bitcoin: vec![1],
+                lez: vec![2],
+            },
+        })
+        .unwrap();
+        serde_json::from_value::<BtcCeremonyNonceRequestV1>(request.clone()).unwrap();
+        for id in [
+            "btc-reservation-0001.btc-stage",
+            "btc/reservation-0001",
+            "..",
+            "",
+            &"a".repeat(65),
+        ] {
+            let mut bad = request.clone();
+            bad["reservation_id"] = Value::String(id.to_owned());
+            assert!(
+                serde_json::from_value::<BtcCeremonyNonceRequestV1>(bad).is_err(),
+                "{id:?}"
+            );
+        }
+    }
+}

@@ -282,6 +282,14 @@ leaves the container.
                                           draft, agreement key and actor config
 ```
 
+The Taker chooses the reservation id, so it names the swap directory only if
+it is 8 to 64 characters from `[A-Za-z0-9_-]`; both Nodes refuse any other id
+when they decode a Chat round and when they make a swap directory. A Maker
+composes an XMR or ZEC reservation in `swaps/.stage/<reservation id>.<pair>`
+and publishes it with one rename. No reservation id contains a `.`, so no
+swap directory is ever a stage, and clearing a stale stage never deletes a
+swap.
+
 With `LEZ_WALLET_SIGNER_SOCKET` set (compose.yaml sets it for both roles)
 `node-entrypoint.sh` removes any `btc/lez-signer.key` from the state volume
 and waits up to 120 s for the signer socket. The desk still reads the key

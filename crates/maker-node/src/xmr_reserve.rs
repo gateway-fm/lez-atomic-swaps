@@ -461,6 +461,10 @@ pub(super) async fn reserve(
     if request.schema_version != 1 || request.foreign_units == 0 {
         return Err(invalid_request("unsupported or empty XMR reservation"));
     }
+    // The id names the swap directory; decoding already refused any other.
+    if !request.reservation_id.is_reservation_id() {
+        return Err(invalid_request("the XMR reservation id is not path-safe"));
+    }
     let reservations = reservations(&context)?;
     let signing_key = context
         .chat_signing_key
@@ -524,13 +528,11 @@ pub(super) async fn reserve(
         .chain_view()
         .await
         .map_err(|error| internal(&format!("read monerod: {error:#}")))?;
-    // Everything is made in a private stage beside the swap directory and
-    // published by one rename, so a crash leaves no half reservation.
-    let stage = PathBuf::from(format!("{}.xmr-stage", layout.root().display()));
-    let _ = fs::remove_dir_all(&stage);
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&stage)
+    // Everything is made in a private stage outside the swaps root's id
+    // namespace and published by one rename, so a crash leaves no half
+    // reservation and no stage is ever another swap's directory.
+    let stage = layout
+        .fresh_stage("xmr")
         .map_err(|error| internal(&error))?;
     let reserved = reserve_xmr_maker_role(
         &reservations.config,

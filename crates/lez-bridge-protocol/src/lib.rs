@@ -207,7 +207,7 @@ pub use primitives::{
     ProtocolValueError, RequestId, RevealingPreimage, RunId, SchemaVersion, TransactionId,
     WITNESSED_LEZ_ASSET_TERMS_VERSION, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
     WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput, WitnessedTokenEscrowTermsV2,
-    WitnessedTokenEscrowTermsV2Input,
+    WitnessedTokenEscrowTermsV2Input, reservation_id_serde,
 };
 pub use xmr_v3::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,

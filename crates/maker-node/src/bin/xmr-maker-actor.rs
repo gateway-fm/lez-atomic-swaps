@@ -86,6 +86,9 @@ const TAG13_LOOKBACK_BLOCKS: u64 = 256;
 const TAG13_FILE: &str = "tag13-funding-finalized.json";
 const TAG14_FILE: &str = "tag14-finalized.json";
 const TAG16_FILE: &str = "tag16-finalized.json";
+/// The actor's own scan for the Maker's claim (the claim observer keeps its
+/// finality evidence apart).
+const TAG15_SCAN_FILE: &str = "tag15-scan-finalized.json";
 const CLAIM_SIGNATURE_FILE: &str = "maker-claim-completed-signature.json";
 const REFUND_SIGNATURE_FILE: &str = "maker-refund-observed-signature.json";
 const CLAIM_ACTIVATION_FILE: &str = "maker-claim-activation.json";
@@ -256,6 +259,9 @@ fn derive_status(facts: &Facts, now_ms: u64) -> Status {
 enum Watched {
     TakerLock,
     ClaimAuthorization,
+    /// The Maker's own claim (tag 15): scanned only before a claim gives way
+    /// to the punishment.
+    Claim,
     Refund,
 }
 
@@ -390,6 +396,14 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
     }
 }
 
+/// Whether a claim may be sent at the finalized LEZ clock `lez_ms`: only
+/// before the claim deadline, half the claim window before `R`, so that its
+/// tag 15 lands before `R`. A tag 15 sent later may be rejected after its
+/// completed signature, the Maker's key share, is out.
+const fn claim_may_be_sent(facts: &Facts, lez_ms: u64) -> bool {
+    lez_ms < facts.claim_deadline_ms()
+}
+
 /// A branch effect whose one invocation is spent: observed, or, when its
 /// tool stopped before recording its submission (a punishment: whenever it is
 /// not final), driven again under the same sidecar request ids
@@ -415,15 +429,29 @@ fn settle_spent_effect(
         let lez_ms = chains.lez_clock()?;
         if lez_ms >= facts.refund_ms {
             let refund = chains.scan(Watched::Refund)?;
+            // The claim observer reads an unavailable history or a spent
+            // page budget as "not final yet": the punishment needs the
+            // Maker's own claim proven absent to the finalized tip too, or a
+            // claimed swap would switch to a tag 17 that can never land.
             if let Some(branch) = match refund {
                 Scan::Found(_) => Some(XmrWorkflowBranch::Refund),
-                Scan::Absent(true) if lez_ms >= facts.punish_ms => Some(XmrWorkflowBranch::Punish),
+                Scan::Absent(true)
+                    if lez_ms >= facts.punish_ms
+                        && chains.scan(Watched::Claim)? == Scan::Absent(true) =>
+                {
+                    Some(XmrWorkflowBranch::Punish)
+                }
                 Scan::Absent(_) => None,
             } {
                 chains.activate(branch)?;
                 return Ok("activated");
             }
             // Tag 15 is valid only before `R`: what was sent is observed.
+            return Ok("awaiting_observation");
+        }
+        // Driving the claim again may complete and send its signature now:
+        // only while it still lands before `R`.
+        if !claim_may_be_sent(facts, lez_ms) {
             return Ok("awaiting_observation");
         }
     }
@@ -688,6 +716,8 @@ fn replace_private(path: &Path, bytes: &[u8]) -> Result<()> {
 struct ScanCursor {
     taker_lock: Option<u64>,
     claim_authorization: Option<u64>,
+    #[serde(default)]
+    claim: Option<u64>,
     refund: Option<u64>,
 }
 
@@ -696,6 +726,7 @@ impl ScanCursor {
         match watched {
             Watched::TakerLock => self.taker_lock,
             Watched::ClaimAuthorization => self.claim_authorization,
+            Watched::Claim => self.claim,
             Watched::Refund => self.refund,
         }
     }
@@ -704,6 +735,7 @@ impl ScanCursor {
         match watched {
             Watched::TakerLock => self.taker_lock = Some(height),
             Watched::ClaimAuthorization => self.claim_authorization = Some(height),
+            Watched::Claim => self.claim = Some(height),
             Watched::Refund => self.refund = Some(height),
         }
     }
@@ -837,6 +869,7 @@ impl LiveMaker {
         let effect = match watched {
             Watched::TakerLock => XmrNativeEffectV3::Fund,
             Watched::ClaimAuthorization => XmrNativeEffectV3::AuthorizeClaim,
+            Watched::Claim => XmrNativeEffectV3::Claim,
             Watched::Refund => XmrNativeEffectV3::Refund,
         };
         let terms = self.terms;
@@ -1010,6 +1043,7 @@ impl MakerChains for LiveMaker {
         let file = match watched {
             Watched::TakerLock => TAG13_FILE,
             Watched::ClaimAuthorization => TAG14_FILE,
+            Watched::Claim => TAG15_SCAN_FILE,
             Watched::Refund => TAG16_FILE,
         };
         // Found once is found: a later scan's clock and window differ, so a
@@ -1214,14 +1248,19 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOu
     // The LEZ effect tools reach the swap's sidecar, which a Node started
     // again respawns beside its actors: one not answering yet fails the
     // attempt here, before the step's one invocation is consumed.
-    if matches!(
+    let lez_ms = if matches!(
         recovery_step,
         XmrWorkflowStep::ClaimLezTag15 | XmrWorkflowStep::PunishLezTag17
     ) {
-        maker
-            .finalized_clock()
-            .context("the swap's LEZ sidecar does not answer yet")?;
-    }
+        Some(
+            maker
+                .finalized_clock()
+                .context("the swap's LEZ sidecar does not answer yet")?
+                .1,
+        )
+    } else {
+        None
+    };
     let execution = &maker.execution;
     // The branch's observers read its activation summary: a crash between
     // the activation's journal commit and the summary's write leaves it to
@@ -1259,6 +1298,22 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOu
             mut command,
             tool_plan_identity_sha256: _,
         } => {
+            // A claim selected before a stop may first be invoked after the
+            // claim deadline: its tag 15 could then land at or after `R`,
+            // and a rejected tag 15 still carries the completed signature,
+            // which reveals the Maker's key share. Past the deadline the
+            // tool is not run. The invocation stays spent with nothing
+            // written, so the observer decides: the Taker's refund at `R`,
+            // or the punishment past `P` (`settle_spent_effect`).
+            if recovery_step == XmrWorkflowStep::ClaimLezTag15 {
+                let facts = maker.facts()?;
+                if !lez_ms.is_some_and(|lez_ms| claim_may_be_sent(&facts, lez_ms)) {
+                    eprintln!(
+                        "XMR Maker claim withheld: the finalized LEZ clock is past the claim deadline"
+                    );
+                    return Ok(effect_output("claim", "awaiting_observation", &facts));
+                }
+            }
             if let Err(error) = run_silent(&mut command, timeout) {
                 mark_unknown(execution, recovery_step)?;
                 return Err(error.context("XMR Maker recovery invocation is ambiguous"));
@@ -1651,6 +1706,12 @@ mod tests {
         assert_eq!(swap.revision(), 5);
     }
 
+    impl Default for Scan {
+        fn default() -> Self {
+            Self::Absent(true)
+        }
+    }
+
     /// The durable model a stub drive works on, with every effect counted
     /// and an optional crash right after an effect's durable consumption.
     #[derive(Default)]
@@ -1665,6 +1726,9 @@ mod tests {
         tag14: bool,
         tag16: bool,
         refund_scan_to_tip: bool,
+        /// The Maker's tag 15 scan: found, or absent with whether it reached
+        /// the tip.
+        tag15: Scan,
         funds: u32,
         observed_funding: bool,
         activations: Vec<XmrWorkflowBranch>,
@@ -1684,6 +1748,7 @@ mod tests {
             Self {
                 facts: Some(facts()),
                 refund_scan_to_tip: true,
+                tag15: Scan::Absent(true),
                 ..Self::default()
             }
         }
@@ -1715,6 +1780,7 @@ mod tests {
                 Watched::Refund if self.tag16 => Scan::Found(0),
                 Watched::Refund => Scan::Absent(self.refund_scan_to_tip),
                 Watched::ClaimAuthorization => Scan::Absent(true),
+                Watched::Claim => self.tag15,
             })
         }
 
@@ -2008,7 +2074,8 @@ mod tests {
 
     #[test]
     fn a_claim_stopped_mid_tool_is_driven_again_only_before_r() {
-        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, R - 1);
+        let deadline = Stub::new().facts().unwrap().claim_deadline_ms();
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, deadline - 1);
         assert_eq!(
             settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
             "resubmitted"
@@ -2030,6 +2097,26 @@ mod tests {
             derive_status(&stub.facts().unwrap(), R).next_action,
             "claim_lez"
         );
+    }
+
+    /// A claim selected before a stop, resumed past the claim deadline:
+    /// nothing is sent, not even by a redrive, until the chain decides at
+    /// `R` (the Taker's refund) or past `P` (the punishment).
+    #[test]
+    fn a_claim_resumed_past_its_deadline_is_never_sent() {
+        let deadline = Stub::new().facts().unwrap().claim_deadline_ms();
+        for lez_ms in [deadline, R - 1] {
+            let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, lez_ms);
+            let facts = stub.facts().unwrap();
+            assert!(!claim_may_be_sent(&facts, lez_ms));
+            assert_eq!(
+                settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+                "awaiting_observation"
+            );
+            assert_eq!((stub.redrives, stub.activations.len()), (0, 0));
+        }
+        let stub = stopped_mid_effect(XmrWorkflowBranch::Claim, deadline - 1);
+        assert!(claim_may_be_sent(&stub.facts().unwrap(), deadline - 1));
     }
 
     #[test]
@@ -2071,6 +2158,31 @@ mod tests {
             derive_status(&stub.facts().unwrap(), P).next_action,
             "punish_lez"
         );
+    }
+
+    /// Past `P` with the refund absent to the tip, a claimed swap used to
+    /// switch to the punishment whenever the claim observer said "pending",
+    /// which it also says for an unavailable history or a spent page budget.
+    /// The Maker's own claim must now be absent to the tip as well.
+    #[test]
+    fn a_claim_gives_way_to_the_punishment_only_once_proven_absent() {
+        for tag15 in [Scan::Absent(false), Scan::Found(0)] {
+            let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, P);
+            stub.unwritten = false;
+            stub.tag15 = tag15;
+            assert_eq!(
+                settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+                "awaiting_observation"
+            );
+            assert!(stub.activations.is_empty());
+        }
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, P);
+        stub.unwritten = false;
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+            "activated"
+        );
+        assert_eq!(stub.activations, [XmrWorkflowBranch::Punish]);
     }
 
     #[test]

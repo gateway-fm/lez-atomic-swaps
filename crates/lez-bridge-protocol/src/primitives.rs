@@ -24,6 +24,9 @@ pub enum ProtocolValueError {
     /// A run or request identifier was outside its safe grammar.
     #[error("{0} must be 8..=64 ASCII characters from [A-Za-z0-9._-]")]
     InvalidIdentifier(&'static str),
+    /// A reservation id was outside its path-safe grammar.
+    #[error("reservation id must be 8..=64 ASCII characters from [A-Za-z0-9_-]")]
+    InvalidReservationId,
     /// A fixed-width identifier was not canonical lowercase hexadecimal.
     #[error("value must be exactly 64 lowercase hexadecimal characters")]
     InvalidHex32,
@@ -207,6 +210,63 @@ macro_rules! safe_identifier {
 
 safe_identifier!(RunId, "run id");
 safe_identifier!(RequestId, "request id");
+
+impl RequestId {
+    /// Whether this id may be a reservation id.
+    ///
+    /// A reservation id names the swap's directory under a Node's swaps
+    /// root, and the counterparty chooses it. Every path a Node makes beside
+    /// a swap directory carries a `.` in its name, so a reservation id is
+    /// 8..=64 bytes of `[A-Za-z0-9_-]`: the request-id grammar without `.`.
+    /// No reservation id can then name another swap's sibling path.
+    #[must_use]
+    pub fn is_reservation_id(&self) -> bool {
+        self.0
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    }
+
+    /// Validates and constructs a reservation id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the value is 8..=64 bytes of `[A-Za-z0-9_-]`.
+    pub fn new_reservation_id(value: impl Into<String>) -> Result<Self, ProtocolValueError> {
+        let id = Self::new(value).map_err(|_| ProtocolValueError::InvalidReservationId)?;
+        if id.is_reservation_id() {
+            Ok(id)
+        } else {
+            Err(ProtocolValueError::InvalidReservationId)
+        }
+    }
+}
+
+/// Serde for a wire field that carries a reservation id: decoding refuses
+/// any id outside [`RequestId::is_reservation_id`].
+///
+/// Use with `#[serde(with = "lez_bridge_protocol::reservation_id_serde")]`.
+pub mod reservation_id_serde {
+    use super::RequestId;
+    use serde::{Deserialize as _, Deserializer, Serialize as _, Serializer, de::Error as _};
+
+    /// Encodes the id as its string.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the serializer's error.
+    pub fn serialize<S: Serializer>(id: &RequestId, serializer: S) -> Result<S::Ok, S::Error> {
+        id.serialize(serializer)
+    }
+
+    /// Decodes a reservation id.
+    ///
+    /// # Errors
+    ///
+    /// Fails for an id outside the reservation-id grammar.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<RequestId, D::Error> {
+        RequestId::new_reservation_id(String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
 
 /// Fixed participant role assigned to one sidecar process.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
