@@ -146,8 +146,6 @@ The Taker Node:
 
 - A sweep it has started and cannot prove unsent is marked in doubt and never
   sent again; recovering the Monero from it is by hand, and no tool does it.
-  A failure to read the restored wallet's outputs or its primary address,
-  both before anything is sent, is also classed in doubt.
 - Its status view has no expired or punished state for a Monero swap: a swap
   whose lock window closed reads `Offered` with `xmr_lez_lock_window_closed`,
   a punished one `MakerRecoveryAvailable` with `xmr_refund_window_closed`,
