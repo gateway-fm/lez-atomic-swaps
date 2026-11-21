@@ -1618,6 +1618,12 @@ impl BridgeRuntime {
                 SubmissionOutcome::AlreadyKnown,
             ));
         }
+        #[cfg(feature = "test-hooks")]
+        if matches!(ownership, OwnedSubmission::XmrPunish)
+            && crate::test_hooks::take("punish-nonce-thefts")
+        {
+            return self.steal_punish_nonce(request).await;
+        }
         // A native escrow transaction whose signer nonce the account has
         // already passed (another transaction of this signer took it first,
         // as concurrent swaps do) can never be included: name it instead of
@@ -1697,6 +1703,37 @@ impl BridgeRuntime {
             .submit_prepared_transaction(&request.transaction)
             .await
             .map_err(|_| BridgeRuntimeError::UnknownSubmissionOutcome)?;
+        Ok(SubmitTransactionResult::new(
+            request.context.clone(),
+            request.transaction.transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
+    }
+
+    /// TEST-ONLY (feature `test-hooks`, the devnet's punish re-plan
+    /// scenario): while `punish-nonce-thefts` holds a count, another
+    /// transaction of the signer takes the punishment's nonce first and the
+    /// punishment itself is not sent, as if the sequencer dropped it; the
+    /// next drive re-plans it.
+    #[cfg(feature = "test-hooks")]
+    async fn steal_punish_nonce(
+        &self,
+        request: &SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
+        let theft = self
+            .planner
+            .punish_nonce_theft(&request.transaction)
+            .await?;
+        self.node
+            .submit_prepared_transaction(&theft)
+            .await
+            .map_err(|_| BridgeRuntimeError::UnknownSubmissionOutcome)?;
+        for _ in 0..60 {
+            if self.node.prepared_transaction_is_included(&theft).await? {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
         Ok(SubmitTransactionResult::new(
             request.context.clone(),
             request.transaction.transaction_id,

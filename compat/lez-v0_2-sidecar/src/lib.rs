@@ -24,6 +24,8 @@ pub mod message_signer;
 mod native_prepare;
 mod runtime;
 mod server;
+#[cfg(feature = "test-hooks")]
+mod test_hooks;
 mod vault_claim_prepare;
 mod xmr_stage_a_future_messages;
 

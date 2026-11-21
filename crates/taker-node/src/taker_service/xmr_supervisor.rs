@@ -655,11 +655,56 @@ impl XmrSwapFiles {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
+    let host = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
+        });
+    #[cfg(feature = "test-hooks")]
+    let host = host.saturating_add_signed(test_hooks::clock_offset_ms());
+    host
+}
+
+/// The devnet's test hooks: files in the directory `LEZ_TEST_HOOKS_DIR`
+/// names, read on every use. Built only with the `test-hooks` feature, which
+/// the devnet's build enables and no release build does: a Node built without
+/// it has none of this.
+#[cfg(feature = "test-hooks")]
+pub(super) mod test_hooks {
+    use std::path::PathBuf;
+
+    fn file(name: &str) -> Option<PathBuf> {
+        std::env::var_os("LEZ_TEST_HOOKS_DIR").map(|directory| PathBuf::from(directory).join(name))
+    }
+
+    /// `clock-offset-ms`: a signed offset added to the host clock the
+    /// supervisor reads, so the Node's clock runs ahead of (or behind) LEZ
+    /// time.
+    pub(crate) fn clock_offset_ms() -> i64 {
+        file("clock-offset-ms")
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| text.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// A flag file that is present.
+    pub(crate) fn flag(name: &str) -> bool {
+        file(name).is_some_and(|path| path.exists())
+    }
+}
+
+/// A cheating Taker, for the devnet's adversarial scenarios: with the
+/// `test-hooks` feature, `cheat-refund-before-r` sends the refund (tag 16)
+/// before LEZ time reaches R, and `cheat-refund-after-claim` sends it although
+/// the Maker's claim (tag 15) landed. Always false without the feature.
+fn cheat(name: &str) -> bool {
+    #[cfg(feature = "test-hooks")]
+    return test_hooks::flag(name);
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        let _ = name;
+        false
+    }
 }
 
 /// The swap's own sidecar as a bridge client, bound to its run.
@@ -1454,6 +1499,7 @@ pub(super) async fn refund_step<C: XmrRefundChains>(
     let lez_ms = chains.lez_time_ms().await?;
     if progress.refund_submitted.is_none()
         && !(windows.refund_ms <= lez_ms && lez_ms < windows.punish_ms)
+        && !cheat("cheat-refund-before-r")
     {
         return Ok(());
     }
@@ -1477,9 +1523,12 @@ pub(super) async fn refund_step<C: XmrRefundChains>(
     // the share of every refund it drops.
     let tip = chains.escrow_state_at_tip().await?;
     match tip {
-        Some(XmrNativeEscrowStateV3::Claimed) => return Ok(()),
+        Some(XmrNativeEscrowStateV3::Claimed) if !cheat("cheat-refund-after-claim") => {
+            return Ok(());
+        }
         Some(
-            XmrNativeEscrowStateV3::Funded
+            XmrNativeEscrowStateV3::Claimed
+            | XmrNativeEscrowStateV3::Funded
             | XmrNativeEscrowStateV3::ClaimAuthorized
             | XmrNativeEscrowStateV3::Refunded,
         ) => {}
@@ -1497,7 +1546,9 @@ pub(super) async fn refund_step<C: XmrRefundChains>(
         Some(recorded) => ensure!(*recorded == id, "the sidecar completed another refund"),
     }
     // A failed send does not stop the look for an earlier one.
-    let sent = if lez_ms < windows.punish_ms && tip != Some(XmrNativeEscrowStateV3::Refunded) {
+    let sent = if (lez_ms < windows.punish_ms || cheat("cheat-refund-before-r"))
+        && tip != Some(XmrNativeEscrowStateV3::Refunded)
+    {
         chains.submit_refund(&refund).await
     } else {
         Ok(())
@@ -2220,6 +2271,7 @@ async fn tick_swap(
         }
         2 => observe_monero(dynamic, files, &facts, &progress).await,
         3..=8 | 10 | 11 => settle().await,
+        12 if cheat("cheat-refund-after-claim") => settle().await,
         _ => Ok(()),
     }
 }
@@ -2243,9 +2295,9 @@ fn refund_runs(
         matches!(revision, 2..=8 | 10)
     } else {
         matches!(revision, 6..=8 | 10)
-    };
+    } || cheat("cheat-refund-after-claim");
     row && progress.funded.is_some()
-        && progress.maker_claim.is_none()
+        && (progress.maker_claim.is_none() || cheat("cheat-refund-after-claim"))
         && progress.refunded.is_none()
         && (automatic || refund_admitted || progress.refund_submitted.is_some())
 }

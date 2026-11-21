@@ -24,6 +24,10 @@ pair-xmr = [
     "dep:lez-xmr-monero-adapter",
 ]
 test-crash-hooks = ["pair-xmr", "pair-zec", "zec-reference-actor/test-crash-hooks"]
+# The devnet's test hooks (xmr_supervisor::test_hooks): a clock offset and a
+# cheating Taker's refund, read from LEZ_TEST_HOOKS_DIR. The devnet build
+# enables it (deploy/scripts/from-scratch.sh); no release build does.
+test-hooks = ["pair-xmr"]
 
 [[bin]]
 name = "lez-taker-node"

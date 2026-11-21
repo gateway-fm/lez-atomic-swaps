@@ -3073,6 +3073,45 @@ impl NativeEscrowPlanner {
         prepared_signer_nonce(prepared, self.signer_account_id).map(Some)
     }
 
+    /// TEST-ONLY (feature `test-hooks`): one unit from the signer to the
+    /// escrow's depositor at the nonce `punish` is signed at, which takes that
+    /// nonce so the punishment can never land and is re-planned.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a punishment that is not the current one, and bytes that do
+    /// not decode for the signer.
+    #[cfg(feature = "test-hooks")]
+    pub async fn punish_nonce_theft(
+        &self,
+        punish: &PreparedTransaction,
+    ) -> Result<PreparedTransaction, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active_xmr_punish_v3
+            .as_ref()
+            .filter(|active| active.result.punish == *punish)
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        let depositor = AccountId::new(
+            *active
+                .request
+                .terms
+                .to_input()
+                .depositor_account_id
+                .as_bytes(),
+        );
+        drop(state);
+        let nonce = prepared_signer_nonce(punish, self.signer_account_id)?;
+        let message = Message::try_new(
+            self.authenticated_transfer_program_id,
+            vec![self.signer_account_id, depositor],
+            vec![nonce.into()],
+            AuthenticatedTransferInstruction::Transfer { amount: 1 },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        self.prepare_message(message)
+    }
+
     /// Whether `prepared` is the completed tag-16 refund or the current
     /// tag-17 punishment this sidecar holds: a recovery whose identical bytes
     /// are sent again until it lands (a superseded punishment is not one).

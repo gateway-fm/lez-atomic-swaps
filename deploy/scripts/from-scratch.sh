@@ -328,7 +328,9 @@ phase_rust() {
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
     -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target -e CARGO_INCREMENTAL=0 "$RUST_IMAGE" bash -c '
       set -euo pipefail
-      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
+      # test-hooks: the devnet test hooks of the Taker Node (a clock offset, a
+      # cheating refund; xmr_supervisor::test_hooks), off in every release build
+      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr,lez-taker-node/test-hooks -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
       # the dealer test fixture tools, alone: built with the others, feature
       # unification would put the dealer into the Node and actor binaries
       cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
@@ -590,11 +592,13 @@ sidecar_tree_stamp() {
 
 # lez-v02-escrow-claim-probe is a test-only tool: the devnet Maker image
 # carries it beside the Node package (images/maker-node/Dockerfile) for the
-# zec-maker-early-claim scenario; no role package contains it.
+# zec-maker-early-claim scenario and the XMR adversarial ones; no role package
+# contains it. The sidecar is built with its test hooks (feature test-hooks:
+# the punish nonce thief of xmr-punish-replans), which no release build has.
 build_sidecar() {
   log "building the LEZ sidecar, the identity tool and the escrow claim probe"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan --bin lez-v02-escrow-claim-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
+      --features test-hooks --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan --bin lez-v02-escrow-claim-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc \
       /cache/target/sidecar/debug/lez-v02-xmr-stage-a-plan \
       /cache/target/sidecar/debug/lez-v02-escrow-claim-probe \
