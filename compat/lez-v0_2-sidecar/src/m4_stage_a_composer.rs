@@ -411,9 +411,26 @@ struct XmrStageAPlanInputV1 {
     refund_at_ms: u64,
     punish_at_ms: u64,
     maker_owner_nonce: u128,
+    /// The agreement's profile; absent means `accelerated-regtest` (the
+    /// devnet's Regtest input bytes carry no such field).
+    #[serde(default)]
+    monero_profile: Option<String>,
 }
 
 const XMR_STAGE_A_PLAN_INPUT_SCHEMA_V1: u16 = 1;
+
+/// The Monero network a plan input names: Regtest when it names no
+/// profile, Stagenet for `public-stagenet`. Mainnet and testnet have no
+/// profile, so no input names them.
+fn plan_input_network(profile: Option<&str>) -> Result<MoneroNetwork> {
+    match profile {
+        None | Some("accelerated-regtest") => Ok(MoneroNetwork::Regtest),
+        Some("public-stagenet") => Ok(MoneroNetwork::Stagenet),
+        Some(other) => {
+            anyhow::bail!("Stage-A plan input names an unknown Monero profile `{other}`")
+        }
+    }
+}
 
 /// Plans one canonical unsigned Stage-A wire from a JSON
 /// `XmrStageAPlanInputV1`, without any chain read.
@@ -440,7 +457,7 @@ pub fn plan_m4_stage_a_unsigned_wire(input: &[u8]) -> Result<Vec<u8>> {
     let swap_id = *input.swap_id.as_bytes();
     ensure!(swap_id != [0; 32], "swap ID must not be zero");
     let monero_identity = MoneroChainIdentity::new(
-        MoneroNetwork::Regtest,
+        plan_input_network(input.monero_profile.as_deref())?,
         *input.monero_genesis_hash.as_bytes(),
     )
     .context("Monero genesis identity is invalid")?;
@@ -597,18 +614,23 @@ fn compose_m4_stage_a_from_facts(
         taker.public_view_key() == public_view_key,
         "Maker and Taker packets do not bind one shared public view key"
     );
+    // The chain's network picks the profile: its address bytes, its
+    // confirmation and finality rules and its window minimums.
+    let profile = match monero_identity.network() {
+        MoneroNetwork::Regtest => XmrNamedProfileV1::AcceleratedRegtest,
+        MoneroNetwork::Stagenet => XmrNamedProfileV1::PublicStagenet,
+    };
     let shared_address = MoneroSharedAddressV1::derive_from_public_view_key(
-        MoneroAddressNetworkV1::Regtest,
+        profile.network(),
         maker.proof(),
         taker.proof(),
         public_view_key,
     )?;
-    let profile = XmrNamedProfileV1::AcceleratedRegtest;
     let metadata = compute_metadata_pda(&CHECKED_M4_ESCROW_PROGRAM_ID, &parameters.swap_id);
     let custody = compute_custody_pda(&CHECKED_M4_ESCROW_PROGRAM_ID, &parameters.swap_id);
     let transfer_program = programs::authenticated_transfer().id();
     let monero = XmrMoneroTermsV1::new(
-        MoneroAddressNetworkV1::Regtest,
+        profile.network(),
         monero_identity.genesis_hash(),
         parameters.monero_amount_piconero,
         profile.required_monero_confirmations(),
@@ -1006,6 +1028,62 @@ mod tests {
             plan_m4_stage_a_unsigned_wire(input.as_bytes()).expect("second plan"),
             planned
         );
+    }
+
+    #[test]
+    fn a_stagenet_plan_input_composes_a_stagenet_agreement() {
+        let packets = packets();
+        let packet =
+            |name: &str| hex::encode(fs::read(packets.directory.path().join(name)).unwrap());
+        let input = |profile: serde_json::Value, refund_ms: u64, punish_ms: u64| {
+            let mut value = serde_json::json!({
+                "schema_version": 1,
+                "maker_packet": packet("maker.json"),
+                "taker_packet": packet("taker.json"),
+                "swap_id": hex::encode([9; 32]),
+                "monero_amount_piconero": 10_000_000_000_u64,
+                "lez_amount": 75,
+                "monero_genesis_hash": "76ee3cc98646292206cd3e86f74d88b4dcc1d937088645e9b0cbca84b7ce74eb",
+                "lez_channel_id": hex::encode([40; 32]),
+                "lez_genesis_hash": hex::encode([41; 32]),
+                "maker_xmr_funding_cutoff_ms": 600_000,
+                "refund_at_ms": refund_ms,
+                "punish_at_ms": punish_ms,
+                "maker_owner_nonce": 11,
+            });
+            if !profile.is_null() {
+                value["monero_profile"] = profile;
+            }
+            value.to_string()
+        };
+        let stagenet = input(serde_json::json!("public-stagenet"), 7_200_000, 9_000_000);
+        let wire = plan_m4_stage_a_unsigned_wire(stagenet.as_bytes()).expect("Stagenet plan");
+        let body = ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wire).expect("canonical");
+        assert_eq!(body.body().profile(), XmrNamedProfileV1::PublicStagenet);
+        assert_eq!(
+            body.body().monero().network(),
+            MoneroAddressNetworkV1::Stagenet
+        );
+        assert!(body.shared_address().address_string().starts_with('5'));
+        // The same facts without a profile are the devnet's Regtest, whose
+        // shared address has mainnet bytes.
+        let regtest = input(serde_json::Value::Null, 7_200_000, 9_000_000);
+        let wire = plan_m4_stage_a_unsigned_wire(regtest.as_bytes()).expect("Regtest plan");
+        let body = ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wire).expect("canonical");
+        assert_eq!(body.body().profile(), XmrNamedProfileV1::AcceleratedRegtest);
+        // Stagenet windows below the profile's minimums, an unknown profile,
+        // and mainnet are refused.
+        for refused in [
+            input(
+                serde_json::json!("public-stagenet"),
+                600_000 + 5_999_000,
+                9_000_000,
+            ),
+            input(serde_json::json!("public-mainnet"), 7_200_000, 9_000_000),
+            input(serde_json::json!("mainnet"), 7_200_000, 9_000_000),
+        ] {
+            assert!(plan_m4_stage_a_unsigned_wire(refused.as_bytes()).is_err());
+        }
     }
 
     #[test]

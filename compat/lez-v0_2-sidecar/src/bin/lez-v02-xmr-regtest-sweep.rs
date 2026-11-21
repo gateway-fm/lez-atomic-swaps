@@ -18,7 +18,7 @@ use lez_bridge_protocol::RunId;
 use lez_v0_2_sidecar::validate_loopback_http_endpoint;
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroChainIdentity, MoneroNetwork,
-    MoneroOutputVerifier, MoneroRegtestWalletEffects, MoneroTopologyVerifier,
+    MoneroOutputVerifier, MoneroRegtestMining, MoneroRegtestWalletEffects, MoneroTopologyVerifier,
 };
 use lez_xmr_swap_sdk::{
     CrossCurveScalar, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroAddressNetworkV1, MoneroPrivateViewKey,
@@ -370,8 +370,12 @@ async fn execute(arguments: Arguments) -> Result<()> {
         .context("confirmation-mining wallet address is unavailable")?;
     let sweeper = MoneroRegtestWalletEffects::new(&daemon, &shared_wallet)
         .context("shared-wallet effect boundary is invalid")?;
+    let mining = MoneroRegtestMining::prove(identity, &daemon)
+        .await
+        .context("the daemon is not the Regtest this tool mines")?;
     let sweep = sweeper
         .restore_shared_and_sweep(
+            &mining,
             agreement.shared_address(),
             reconstructed,
             view_key,

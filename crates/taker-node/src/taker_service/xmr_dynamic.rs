@@ -30,7 +30,7 @@ use lez_node_common::{
 };
 use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_store::{MakerOfferId, maker_xmr_chat_swap_id};
-use lez_xmr_monero_adapter::{MoneroChainIdentityAttestor, MoneroNetwork};
+use lez_xmr_monero_adapter::MoneroChainIdentityAttestor;
 use lez_xmr_swap_sdk::{XmrAgreementV1, XmrWindowsV1};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
@@ -229,16 +229,22 @@ impl DynamicXmrRole {
         }
     }
 
-    /// What this Taker's own monerod says: its genesis and its tip.
+    /// What this Taker's own monerod says: its genesis and its tip. The
+    /// daemon must serve the role's configured network, by its genesis and
+    /// by its own `get_info`.
     pub(super) async fn chain_view(&self) -> Result<XmrMoneroChainView> {
         let attestor =
-            MoneroChainIdentityAttestor::new(MoneroNetwork::Regtest, &self.config.monerod()?)
+            MoneroChainIdentityAttestor::new(self.config.network(), &self.config.monerod()?)
                 .context("Monero daemon")?;
         let genesis = attestor
             .discover()
             .await
             .context("Monero genesis")?
             .genesis_hash();
+        attestor
+            .verify_network()
+            .await
+            .context("Monero daemon network")?;
         let tip_height = attestor.tip_height().await.context("Monero tip")?;
         Ok(XmrMoneroChainView {
             genesis,

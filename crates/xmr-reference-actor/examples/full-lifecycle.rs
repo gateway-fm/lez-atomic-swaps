@@ -100,7 +100,7 @@ use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal};
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity,
     MoneroChainIdentityAttestor, MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier,
-    MoneroRegtestWalletEffects, MoneroTransactionId,
+    MoneroRegtestMining, MoneroRegtestWalletEffects, MoneroTransactionId,
 };
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
@@ -1331,6 +1331,9 @@ struct LiveMonero {
     attestor: MoneroChainIdentityAttestor,
     identity: MoneroChainIdentity,
     funding_address: MoneroAddress,
+    /// Regtest only: this example mines its own confirmations there; on
+    /// Stagenet there is no mining capability and it waits for miners.
+    mining: Option<MoneroRegtestMining>,
 }
 
 struct Funded {
@@ -1408,6 +1411,7 @@ impl Monero {
         let effects = MoneroRegtestWalletEffects::new(&daemon, &wallet)?
             .with_role_wallet(funding_wallet, funding_password.to_string())?;
         let funding_address = effects.primary_standard_address().await?;
+        let mining = MoneroRegtestMining::where_the_role_mines(identity, &daemon).await?;
         println!(
             "Monero leg: LIVE {:?}; monerod {} (genesis {}, tip {}), funding wallet-rpc {} ({})",
             network(),
@@ -1424,6 +1428,7 @@ impl Monero {
             attestor,
             identity,
             funding_address,
+            mining,
         })))
     }
 
@@ -1435,7 +1440,7 @@ impl Monero {
             return Ok(None);
         };
         let restore_height = live.attestor.tip_height().await?;
-        if network() == MoneroNetwork::Stagenet {
+        let Some(mining) = &live.mining else {
             let transaction = live
                 .effects
                 .fund_shared_exact_once(shared, facts.amount_piconero)
@@ -1453,10 +1458,10 @@ impl Monero {
                 transaction,
                 restore_height,
             }));
-        }
+        };
         let funding = live
             .effects
-            .fund_shared_exact_and_confirm(shared, facts.amount_piconero)
+            .fund_shared_exact_and_confirm(mining, shared, facts.amount_piconero)
             .await?;
         facts.say(
             Some(60),
@@ -1540,14 +1545,15 @@ impl Monero {
             );
             return Ok("sweep skipped (offline)".into());
         };
-        if network() == MoneroNetwork::Stagenet {
+        let Some(mining) = &live.mining else {
             return live
                 .sweep_on_stagenet(facts, purpose, shared, key, view, funded)
                 .await;
-        }
+        };
         let sweep = live
             .effects
             .restore_shared_and_sweep(
+                mining,
                 shared,
                 key,
                 view,
@@ -1578,7 +1584,7 @@ impl LiveMonero {
     /// The funding wallet needs unlocked coins for both swaps; regtest
     /// coinbase unlocks after 60 blocks.
     async fn ensure_funds(&self, needed: u64) -> Result<()> {
-        if network() == MoneroNetwork::Stagenet {
+        let Some(mining) = &self.mining else {
             // Nothing to mine: the wallet's coins come from a faucet.
             self.effects.open_role_wallet().await?;
             let (_, balance, unlocked) = self.effects.role_wallet_balance().await?;
@@ -1590,7 +1596,7 @@ impl LiveMonero {
                 "the Stagenet funding wallet needs more than {needed} unlocked piconero"
             );
             return Ok(());
-        }
+        };
         for _ in 0..4 {
             self.effects.open_role_wallet().await?;
             self.effects.refresh_from_height(0).await?;
@@ -1603,7 +1609,7 @@ impl LiveMonero {
             );
             for _ in 0..7 {
                 self.effects
-                    .mine_confirmations(self.funding_address)
+                    .mine_confirmations(mining, self.funding_address)
                     .await?;
             }
         }

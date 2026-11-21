@@ -38,6 +38,7 @@
 
 #![forbid(unsafe_code)]
 
+mod regtest_mining;
 mod topology;
 mod wallet_effect;
 
@@ -60,9 +61,10 @@ use monero_rpc::{
 use thiserror::Error;
 use url::{Host, Url};
 
+pub use regtest_mining::{MoneroRegtestMining, MoneroRegtestMiningError};
 pub use topology::{
-    MoneroTopologyBindingError, MoneroTopologyError, MoneroTopologyVerifier,
-    VerifiedMoneroTopologyAttestation,
+    MAX_PUBLIC_TIP_AGE_SECONDS, MoneroTopologyBindingError, MoneroTopologyError,
+    MoneroTopologyVerifier, VerifiedMoneroTopologyAttestation,
 };
 pub use wallet_effect::{
     ConfirmedMoneroFunding, ConfirmedMoneroSweep, MoneroRegtestWalletEffects,
@@ -167,6 +169,57 @@ impl MoneroNetwork {
             Self::Stagenet => AddressNetwork::Stagenet,
         }
     }
+
+    /// The configuration name: `regtest` or `stagenet`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Regtest => "regtest",
+            Self::Stagenet => "stagenet",
+        }
+    }
+
+    /// Whether `address` is encoded for this network: Stagenet bytes on
+    /// Stagenet, mainnet bytes on Regtest (which has no bytes of its own).
+    /// A Testnet address belongs to neither.
+    #[must_use]
+    pub fn admits_address(self, address: &MoneroAddress) -> bool {
+        address.network == self.address_network()
+    }
+
+    /// Whether blocks on this network come only from the role's own
+    /// `generateblocks` (Regtest), or from miners the role does not run
+    /// (Stagenet), whose confirmations it can only wait for.
+    #[must_use]
+    pub const fn mined_by_the_role(self) -> bool {
+        matches!(self, Self::Regtest)
+    }
+}
+
+impl std::str::FromStr for MoneroNetwork {
+    type Err = MoneroNetworkNameError;
+
+    /// Parses a configured network name. `mainnet` and `testnet` are refused
+    /// by name: no profile takes swaps there.
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "regtest" => Ok(Self::Regtest),
+            "stagenet" => Ok(Self::Stagenet),
+            "mainnet" | "testnet" => Err(MoneroNetworkNameError::Refused),
+            _ => Err(MoneroNetworkNameError::Unknown),
+        }
+    }
+}
+
+/// A configured Monero network name that names no admitted network.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum MoneroNetworkNameError {
+    /// Monero mainnet or testnet: refused, no profile takes swaps there.
+    #[error("Monero mainnet and testnet are refused: the network is regtest or stagenet")]
+    Refused,
+    /// Not a Monero network name.
+    #[error("unknown Monero network: the network is regtest or stagenet")]
+    Unknown,
 }
 
 /// Network plus exact height-zero block identity committed before funding.
@@ -266,6 +319,45 @@ impl MoneroChainIdentityAttestor {
     pub async fn tip_height(&self) -> Result<u64, MoneroEvidenceError> {
         let count = MoneroRpcPort::rpc("get_block_count", || self.daemon.get_block_count()).await?;
         Ok(count.get() - 1)
+    }
+
+    /// The highest height whose block timestamp is at most `unix_seconds`, or
+    /// 0 when no block is that old, found by bisection over the daemon's
+    /// headers (about two dozen reads on Stagenet). A wallet restored from it
+    /// scans every block mined after that time without scanning the chain
+    /// from genesis. Monero block timestamps are only roughly ordered (a
+    /// block's may be up to two hours ahead, or as early as the median of the
+    /// 60 before it), so a caller passes a time well before the first block
+    /// it must see.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when a header read fails.
+    pub async fn height_at_or_before(&self, unix_seconds: u64) -> Result<u64, MoneroEvidenceError> {
+        let tip = self.tip_height().await?;
+        if self.block_timestamp(tip).await? <= unix_seconds {
+            return Ok(tip);
+        }
+        // The answer lies in [low, high]: a height at or before the time, or 0.
+        let (mut low, mut high) = (0, tip.saturating_sub(1));
+        while low < high {
+            let middle = low + (high - low).div_ceil(2);
+            if self.block_timestamp(middle).await? <= unix_seconds {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Ok(low)
+    }
+
+    async fn block_timestamp(&self, height: u64) -> Result<u64, MoneroEvidenceError> {
+        let header = MoneroRpcPort::rpc("get_block_header(height)", || {
+            self.daemon
+                .get_block_header(GetBlockHeaderSelector::Height(height))
+        })
+        .await?;
+        Ok(u64::try_from(header.timestamp.timestamp()).unwrap_or(0))
     }
 
     /// Non-secret exact daemon origin used for discovery.
@@ -1915,5 +2007,38 @@ mod tests {
             MoneroNetwork::Stagenet.address_network(),
             AddressNetwork::Stagenet
         );
+    }
+
+    #[test]
+    fn a_configured_network_is_regtest_or_stagenet_and_never_mainnet_or_testnet() {
+        assert_eq!("regtest".parse(), Ok(MoneroNetwork::Regtest));
+        assert_eq!("stagenet".parse(), Ok(MoneroNetwork::Stagenet));
+        for refused in ["mainnet", "testnet"] {
+            assert_eq!(
+                refused.parse::<MoneroNetwork>(),
+                Err(MoneroNetworkNameError::Refused)
+            );
+        }
+        for unknown in ["", "Stagenet", "fakechain", "stagenet ", "main"] {
+            assert_eq!(
+                unknown.parse::<MoneroNetwork>(),
+                Err(MoneroNetworkNameError::Unknown)
+            );
+        }
+        for network in [MoneroNetwork::Regtest, MoneroNetwork::Stagenet] {
+            assert_eq!(network.name().parse(), Ok(network));
+        }
+        assert!(MoneroNetwork::Regtest.mined_by_the_role());
+        assert!(!MoneroNetwork::Stagenet.mined_by_the_role());
+    }
+
+    #[test]
+    fn an_address_is_admitted_only_on_its_own_network() {
+        assert!(MoneroNetwork::Regtest.admits_address(&address(AddressNetwork::Mainnet)));
+        assert!(!MoneroNetwork::Regtest.admits_address(&address(AddressNetwork::Stagenet)));
+        assert!(!MoneroNetwork::Regtest.admits_address(&address(AddressNetwork::Testnet)));
+        assert!(MoneroNetwork::Stagenet.admits_address(&address(AddressNetwork::Stagenet)));
+        assert!(!MoneroNetwork::Stagenet.admits_address(&address(AddressNetwork::Mainnet)));
+        assert!(!MoneroNetwork::Stagenet.admits_address(&address(AddressNetwork::Testnet)));
     }
 }

@@ -17,16 +17,16 @@ use std::{path::Path, str::FromStr as _};
 use anyhow::{Context as _, Result, ensure};
 use lez_bridge_protocol::RunId;
 use lez_xmr_monero_adapter::{
-    ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity,
-    MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier, MoneroRegtestWalletEffects,
+    ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentityAttestor,
+    MoneroEvidenceError, MoneroOutputVerifier, MoneroRegtestMining, MoneroRegtestWalletEffects,
     MoneroTopologyVerifier, MoneroTransactionId, MoneroWalletEffectError as MoneroEffectError,
     MoneroWalletRpcLock, REQUIRED_MONERO_CONFIRMATIONS,
 };
 use lez_xmr_swap_sdk::{MoneroPrivateViewKey, XmrAgreementV1};
 
 use crate::{
-    M4_MONERO_NETWORK_SCOPE, M4_MONERO_RECEIPT_SCHEMA, MoneroReceiptEvidenceV2,
-    XmrEffectChildPlanV1, canonical_json_bytes,
+    M4_MONERO_RECEIPT_SCHEMA, MoneroEvidenceScope, MoneroReceiptEvidenceV2, XmrEffectChildPlanV1,
+    agreement_monero_identity, agreement_restore_height, canonical_json_bytes,
     maker_refund_activation::{
         FUNDING_SCHEMA, FundingEvidenceV2, maker_monero_funding_evidence_sha256,
         persist_or_validate_private,
@@ -38,8 +38,9 @@ use crate::{
 pub const XMR_MAKER_FUNDING_EVIDENCE_FILE: &str = "monero-funding.json";
 /// The independent receipt of that funding in the swap's evidence root.
 pub const XMR_MAKER_FUNDING_RECEIPT_FILE: &str = "monero-funding-receipt.json";
-/// The view-only wallets scan this chain from genesis (regtest only).
-const RESTORE_HEIGHT: u64 = 0;
+/// The role wallet refreshes from where it stopped: a start height at or
+/// below its own height leaves its scan incremental.
+const ROLE_WALLET_REFRESH_FROM: u64 = 0;
 /// Goes at the funding while it fails before its transfer, and the pause
 /// between them: a wallet-rpc request can fail in transit (2026-11-14, a
 /// `get_address` that never reached the wallet-rpc).
@@ -152,9 +153,12 @@ impl XmrRoleWalletRpcV1 {
     }
 }
 
-/// Sends the exact Stage-A amount from the role wallet to the shared address,
-/// mines its confirmations and records the funding with its receipt. The
-/// caller holds the workflow's one `FundMonero` invocation.
+/// Sends the exact Stage-A amount from the role wallet to the shared address
+/// and, on Regtest, mines its confirmations and records the funding with its
+/// receipt (the evidence digest). On a public network the miners confirm it:
+/// the tool returns `None` once the transfer is out, and the funding observer
+/// records the funding at its ten confirmations. The caller holds the
+/// workflow's one `FundMonero` invocation.
 ///
 /// A failure before the transfer is retried; once the attempts are spent it
 /// carries [`MoneroFundingNotSent`].
@@ -169,14 +173,21 @@ pub async fn fund_maker_monero(
     agreement: &XmrAgreementV1,
     view_key: MoneroPrivateViewKey,
     shared_wallet_password: &str,
-) -> Result<[u8; 32]> {
+) -> Result<Option<[u8; 32]>> {
     // Either file means a funding was observed: a receipt alone is a record
     // the observer completes, never a reason to send once more.
     ensure!(
         !recorded_funding_files(plan.evidence_root()),
         "the Monero funding is already recorded"
     );
+    let identity = agreement_monero_identity(agreement).context(MoneroFundingNotSent)?;
     let _lock = rpc.lock().context(MoneroFundingNotSent)?;
+    // Regtest's daemon proves it is the fakechain before this tool mines; on
+    // a public network there is no mining capability at all.
+    let mining = MoneroRegtestMining::where_the_role_mines(identity, rpc.daemon())
+        .await
+        .context("prove the Monero daemon's network")
+        .context(MoneroFundingNotSent)?;
     let role = rpc.role_effects().context(MoneroFundingNotSent)?;
     // The role wallet is open from here on, under the lock: the transfer and
     // the shared wallet's restore do not open it once more (an open takes the
@@ -189,12 +200,18 @@ pub async fn fund_maker_monero(
         // so its unlocked change is visible to this one transfer.
         let result = async {
             role.open_role_wallet().await?;
-            role.refresh_from_height(RESTORE_HEIGHT).await?;
-            open.fund_shared_exact_and_confirm(
+            role.refresh_from_height(ROLE_WALLET_REFRESH_FROM).await?;
+            let (shared, amount) = (
                 agreement.shared_address(),
                 agreement.body().monero().amount_piconero(),
-            )
-            .await
+            );
+            match &mining {
+                Some(mining) => open
+                    .fund_shared_exact_and_confirm(mining, shared, amount)
+                    .await
+                    .map(|funding| funding.transaction_id()),
+                None => open.fund_shared_exact_once(shared, amount).await,
+            }
         }
         .await;
         match result {
@@ -216,25 +233,37 @@ pub async fn fund_maker_monero(
             }
         }
     };
+    if mining.is_none() {
+        eprintln!(
+            "Maker Monero funding: sent {} in {}; the network's miners confirm it, the observer records it at {REQUIRED_MONERO_CONFIRMATIONS} confirmations",
+            agreement.body().monero().amount_piconero(),
+            hex::encode(funding.0)
+        );
+        let _ = role.open_role_wallet().await;
+        return Ok(None);
+    }
     let recorded = record_maker_monero_funding_locked(
         rpc,
         plan,
         agreement,
         view_key,
         shared_wallet_password,
-        Some(funding.transaction_id()),
+        Some(funding),
     )
     .await;
     let _ = role.open_role_wallet().await;
-    recorded?.context("the confirmed Monero funding is not yet observable")
+    recorded?
+        .context("the confirmed Monero funding is not yet observable")
+        .map(Some)
 }
 
 /// Returns the funding observer's evidence digest once the Maker's funding is
 /// recorded with its receipt: from the files when present, else from the
 /// shared output found in the swap's view-only wallet (a crash after the
-/// transfer). `None` while no confirmed exact output is visible; one seen in
-/// the pool or short of its confirmations it mines first (regtest,
-/// `mine_unconfirmed_funding`).
+/// transfer, or on a public network the confirmations its miners give).
+/// `None` while no confirmed exact output is visible; on Regtest one seen in
+/// the pool or short of its confirmations it mines first
+/// (`mine_unconfirmed_funding`), on a public network it waits.
 ///
 /// # Errors
 ///
@@ -302,6 +331,11 @@ async fn record_maker_monero_funding_locked(
     shared_wallet_password: &str,
     transaction: Option<MoneroTransactionId>,
 ) -> Result<Option<[u8; 32]>> {
+    let identity = agreement_monero_identity(agreement)?;
+    let scope = MoneroEvidenceScope::new(identity.network());
+    let attestor = MoneroChainIdentityAttestor::new(identity.network(), rpc.daemon())?;
+    let restore_height = agreement_restore_height(agreement, &attestor).await?;
+    let mining = MoneroRegtestMining::where_the_role_mines(identity, rpc.daemon()).await?;
     let name = format!("xmr-{}-view", hex::encode(plan.swap_id()));
     let password = shared_wallet_password.to_owned();
     let shared = MoneroRegtestWalletEffects::new(rpc.daemon(), rpc.wallet())?
@@ -321,27 +355,25 @@ async fn record_maker_monero_funding_locked(
             view_key,
             name,
             password,
-            RESTORE_HEIGHT,
+            restore_height,
         )
         .await
         .is_err()
     {
         shared.open_role_wallet().await?;
     }
-    shared.refresh_from_height(RESTORE_HEIGHT).await?;
+    shared.refresh_from_height(restore_height).await?;
     let amount = agreement.body().monero().amount_piconero();
-    let identity = MoneroChainIdentity::new(
-        MoneroNetwork::Regtest,
-        agreement.body().monero().genesis_hash(),
-    )?;
     let verifier = MoneroOutputVerifier::new(identity, rpc.daemon(), rpc.wallet())?;
     let observing = transaction.is_none();
     let transaction = if let Some(transaction) = transaction {
         transaction
     } else {
         let Some(transaction) = verifier.find_incoming(amount).await? else {
-            if verifier.find_incoming_in_pool(amount).await?.is_some() {
-                mine_unconfirmed_funding(rpc).await?;
+            if let Some(mining) = &mining
+                && verifier.find_incoming_in_pool(amount).await?.is_some()
+            {
+                mine_unconfirmed_funding(rpc, mining).await?;
             }
             return Ok(None);
         };
@@ -359,8 +391,11 @@ async fn record_maker_monero_funding_locked(
     {
         Ok(observation) => observation,
         Err(error) if pending(&error) => {
-            if observing && error.awaits_confirmations() {
-                mine_unconfirmed_funding(rpc).await?;
+            if let Some(mining) = &mining
+                && observing
+                && error.awaits_confirmations()
+            {
+                mine_unconfirmed_funding(rpc, mining).await?;
             }
             return Ok(None);
         }
@@ -375,7 +410,7 @@ async fn record_maker_monero_funding_locked(
     )?
     .verify()
     .await
-    .context("verify the peerless local Monero topology")?;
+    .context("verify the Monero topology")?;
     topology
         .validate_observation(&run_id, &observation)
         .context("bind the topology to the observed output")?;
@@ -397,7 +432,7 @@ async fn record_maker_monero_funding_locked(
         daemon_version: topology.daemon_version().to_owned(),
         target_wallet_version: topology.target_wallet_version(),
         foreign_wallet_version: topology.foreign_wallet_version(),
-        network_scope: M4_MONERO_NETWORK_SCOPE.to_owned(),
+        network_scope: scope.name().to_owned(),
         public_rpc_used: false,
         faucet_used: false,
     };
@@ -408,6 +443,7 @@ async fn record_maker_monero_funding_locked(
             agreement_commitment: hex::encode(agreement.agreement_commitment()),
             shared_address: agreement.shared_address().address_string(),
             amount_piconero: amount,
+            restore_height,
         },
     )
     .map(Some)
@@ -418,6 +454,7 @@ struct FundingFacts {
     agreement_commitment: String,
     shared_address: String,
     amount_piconero: u64,
+    restore_height: u64,
 }
 
 /// The funding evidence a receipt implies: every field comes from the
@@ -432,9 +469,9 @@ fn funding_evidence(facts: &FundingFacts, receipt: &MoneroReceiptEvidenceV2) -> 
         transaction_id: Some(receipt.transaction_id.clone()),
         confirmation_tip_height: Some(receipt.stable_tip_height),
         required_confirmations: REQUIRED_MONERO_CONFIRMATIONS,
-        restore_height: RESTORE_HEIGHT,
+        restore_height: facts.restore_height,
         wallet_role: "stage_a_shared_view_only".to_owned(),
-        network_scope: M4_MONERO_NETWORK_SCOPE.to_owned(),
+        network_scope: receipt.network_scope.clone(),
         public_rpc_used: false,
         faucet_used: false,
         automatic_submission_retry: false,
@@ -507,20 +544,23 @@ fn record_funding_files(
     ))
 }
 
-/// A regtest duty, here only: on a real network miners confirm the funding,
-/// on this regtest nothing does but the funding tool, which mines its
-/// confirmations right after its transfer. When that tool stopped in between
-/// (killed, or a failed mining call), the observer that finds the Maker's
-/// exact funding in the pool or short of its confirmations mines them,
-/// paying the coinbase to the role wallet; the next observation records the
-/// funding. (The adapter, and this module, admit regtest only.)
-async fn mine_unconfirmed_funding(rpc: &XmrRoleWalletRpcV1) -> Result<()> {
+/// A Regtest duty, here only: on a public network miners confirm the
+/// funding (and no [`MoneroRegtestMining`] exists for it), on Regtest nothing
+/// does but the funding tool, which mines its confirmations right after its
+/// transfer. When that tool stopped in between (killed, or a failed mining
+/// call), the observer that finds the Maker's exact funding in the pool or
+/// short of its confirmations mines them, paying the coinbase to the role
+/// wallet; the next observation records the funding.
+async fn mine_unconfirmed_funding(
+    rpc: &XmrRoleWalletRpcV1,
+    mining: &MoneroRegtestMining,
+) -> Result<()> {
     eprintln!(
         "Maker Monero funding observer: the funding is in the pool or short of its \
          confirmations; mining them (regtest)"
     );
     let role = rpc.role_effects()?;
-    role.mine_confirmations(role.primary_standard_address().await?)
+    role.mine_confirmations(mining, role.primary_standard_address().await?)
         .await
         .context("mine the unconfirmed Monero funding's confirmations")?;
     Ok(())
@@ -567,7 +607,7 @@ mod tests {
             daemon_version: "0.18".to_owned(),
             target_wallet_version: 1,
             foreign_wallet_version: 1,
-            network_scope: crate::M4_MONERO_NETWORK_SCOPE.to_owned(),
+            network_scope: "isolated_official_monero_regtest".to_owned(),
             public_rpc_used: false,
             faucet_used: false,
         }
@@ -578,6 +618,7 @@ mod tests {
             agreement_commitment: "aa".repeat(32),
             shared_address: "shared-address".to_owned(),
             amount_piconero: 1_000_000,
+            restore_height: 0,
         }
     }
 

@@ -15,7 +15,10 @@ use std::{
 use anyhow::{Context as _, Result, ensure};
 use clap::Parser;
 use lez_v0_2_sidecar::validate_loopback_http_endpoint;
-use lez_xmr_monero_adapter::{LoopbackRpcEndpoint, MoneroRegtestWalletEffects};
+use lez_xmr_monero_adapter::{
+    LoopbackRpcEndpoint, MoneroChainIdentity, MoneroNetwork, MoneroRegtestMining,
+    MoneroRegtestWalletEffects,
+};
 use lez_xmr_swap_sdk::{
     MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroAddressNetworkV1, MoneroPrivateViewKey, XmrAgreementV1,
 };
@@ -202,8 +205,19 @@ async fn execute(arguments: Arguments) -> Result<FundingEvidence> {
         .refresh_from_height(arguments.restore_height)
         .await
         .context("funding wallet refresh before transfer failed")?;
+    let mining = MoneroRegtestMining::prove(
+        MoneroChainIdentity::new(
+            MoneroNetwork::Regtest,
+            agreement.body().monero().genesis_hash(),
+        )
+        .context("Stage-A Monero chain identity is invalid")?,
+        &daemon,
+    )
+    .await
+    .context("the daemon is not the Regtest this tool mines")?;
     let funding = funder
         .fund_shared_exact_and_confirm(
+            &mining,
             agreement.shared_address(),
             agreement.body().monero().amount_piconero(),
         )

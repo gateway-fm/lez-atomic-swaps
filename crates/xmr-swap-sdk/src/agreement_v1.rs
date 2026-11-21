@@ -53,8 +53,15 @@ const XMR_CONFIRMATIONS: u32 = 10;
 const LEZ_FINALITY_UNITS: u32 = 2;
 const REGTEST_MINIMUM_FUNDING_TO_REFUND_MS: u64 = 10_000;
 const REGTEST_MINIMUM_REFUND_TO_PUNISH_MS: u64 = 10_000;
-const STAGENET_MINIMUM_FUNDING_TO_REFUND_MS: u64 = 12 * 60 * 60 * 1_000;
-const STAGENET_MINIMUM_REFUND_TO_PUNISH_MS: u64 = 2 * 60 * 60 * 1_000;
+// Stagenet's minimums (docs/monero-stagenet-guide.md, "The windows"): the
+// Maker claims only on a claim authorization it sees before R - (R - C)/2,
+// so each half of R - C must hold a funding sent just before C: 11 blocks at
+// 120 s (more than 45 minutes in 0.3 % of cases at the target rate) and the
+// Taker's and Maker's LEZ steps (5 minutes). A swap whose confirmations come
+// later falls back to the Taker's refund at R, with nothing lost. P - R holds
+// only LEZ work: the Taker's refund landing, and its Node's restarts.
+const STAGENET_MINIMUM_FUNDING_TO_REFUND_MS: u64 = 2 * (45 + 5) * 60 * 1_000;
+const STAGENET_MINIMUM_REFUND_TO_PUNISH_MS: u64 = 30 * 60 * 1_000;
 const XMR_METADATA_VERSION_V3: u8 = 3;
 
 /// Immutable network and safety policy selected before negotiation.
@@ -82,21 +89,27 @@ impl XmrNamedProfileV1 {
         }
     }
 
-    const fn network(self) -> MoneroAddressNetworkV1 {
+    /// The Monero network this profile's swaps settle on.
+    #[must_use]
+    pub const fn network(self) -> MoneroAddressNetworkV1 {
         match self {
             Self::AcceleratedRegtest => MoneroAddressNetworkV1::Regtest,
             Self::PublicStagenet => MoneroAddressNetworkV1::Stagenet,
         }
     }
 
-    const fn minimum_funding_to_refund_ms(self) -> u64 {
+    /// The shortest `R - C` this profile admits, in ms.
+    #[must_use]
+    pub const fn minimum_funding_to_refund_ms(self) -> u64 {
         match self {
             Self::AcceleratedRegtest => REGTEST_MINIMUM_FUNDING_TO_REFUND_MS,
             Self::PublicStagenet => STAGENET_MINIMUM_FUNDING_TO_REFUND_MS,
         }
     }
 
-    const fn minimum_refund_to_punish_ms(self) -> u64 {
+    /// The shortest `P - R` this profile admits, in ms.
+    #[must_use]
+    pub const fn minimum_refund_to_punish_ms(self) -> u64 {
         match self {
             Self::AcceleratedRegtest => REGTEST_MINIMUM_REFUND_TO_PUNISH_MS,
             Self::PublicStagenet => STAGENET_MINIMUM_REFUND_TO_PUNISH_MS,
@@ -3885,6 +3898,19 @@ mod tests {
             validated_candidate.finalized_consensus_timestamp_ms(),
             agreement.body().windows().maker_xmr_funding_cutoff_ms()
         );
+    }
+
+    #[test]
+    fn stagenet_minimum_windows_are_the_documented_sizing() {
+        // docs/monero-stagenet-guide.md, "The windows": 2 x (45 + 5) minutes
+        // between C and R, 30 minutes between R and P.
+        let stagenet = XmrNamedProfileV1::PublicStagenet;
+        assert_eq!(stagenet.minimum_funding_to_refund_ms(), 100 * 60 * 1_000);
+        assert_eq!(stagenet.minimum_refund_to_punish_ms(), 30 * 60 * 1_000);
+        assert_eq!(stagenet.network(), MoneroAddressNetworkV1::Stagenet);
+        let regtest = XmrNamedProfileV1::AcceleratedRegtest;
+        assert_eq!(regtest.network(), MoneroAddressNetworkV1::Regtest);
+        assert!(regtest.minimum_funding_to_refund_ms() < stagenet.minimum_funding_to_refund_ms());
     }
 
     #[test]

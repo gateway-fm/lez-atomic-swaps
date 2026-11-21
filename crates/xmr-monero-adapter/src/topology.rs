@@ -29,6 +29,13 @@ const GET_CONNECTIONS_REQUEST: &str =
     r#"{"jsonrpc":"2.0","id":"lez-m4-topology-v1","method":"get_connections"}"#;
 const GET_VERSION_REQUEST: &str =
     r#"{"jsonrpc":"2.0","id":"lez-m4-topology-v1","method":"get_version"}"#;
+const GET_LAST_BLOCK_HEADER_REQUEST: &str =
+    r#"{"jsonrpc":"2.0","id":"lez-m4-topology-v1","method":"get_last_block_header"}"#;
+/// How old, by this host's clock, the tip of a public network's daemon may
+/// be. Stagenet targets a block every 120 s; a tip an hour old is thirty
+/// intervals (e^-30 at the target rate, and about 0.25 % even at a fifth of
+/// it), so it says the daemon stalled, is cut off, or lies about the tip.
+pub const MAX_PUBLIC_TIP_AGE_SECONDS: u64 = 60 * 60;
 
 /// Verifies one exact run's isolated Monero daemon and wallet topology.
 pub struct MoneroTopologyVerifier<'endpoint> {
@@ -41,14 +48,17 @@ pub struct MoneroTopologyVerifier<'endpoint> {
 }
 
 impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
-    /// Creates an exact three-origin local Regtest topology verifier.
+    /// Creates an exact three-origin topology verifier.
     ///
     /// The foreign wallet contributes credentials that must work at its own
     /// origin and finish with HTTP 401 when replayed against `target_wallet`.
+    /// On Regtest [`Self::verify`] proves the peerless offline daemon; on
+    /// Stagenet a synchronized daemon with a recent tip (see
+    /// [`MAX_PUBLIC_TIP_AGE_SECONDS`]).
     ///
     /// # Errors
     ///
-    /// Rejects non-Regtest profiles, aliased origins, or HTTP-client failures.
+    /// Rejects aliased origins or HTTP-client failures.
     pub fn new(
         run_id: RunId,
         identity: MoneroChainIdentity,
@@ -56,9 +66,6 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         target_wallet: &'endpoint LoopbackRpcEndpoint,
         foreign_wallet: &'endpoint LoopbackRpcEndpoint,
     ) -> Result<Self, MoneroTopologyError> {
-        if identity.network() != MoneroNetwork::Regtest {
-            return Err(MoneroTopologyError::RequiresRegtest);
-        }
         if daemon.base_url == target_wallet.base_url
             || daemon.base_url == foreign_wallet.base_url
             || target_wallet.base_url == foreign_wallet.base_url
@@ -88,16 +95,13 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
     ///
     /// # Errors
     ///
-    /// Rejects non-Regtest profiles, an aliased daemon, or HTTP-client failures.
+    /// Rejects an aliased daemon or HTTP-client failures.
     pub fn for_one_wallet_rpc(
         run_id: RunId,
         identity: MoneroChainIdentity,
         daemon: &'endpoint LoopbackRpcEndpoint,
         wallet: &'endpoint LoopbackRpcEndpoint,
     ) -> Result<Self, MoneroTopologyError> {
-        if identity.network() != MoneroNetwork::Regtest {
-            return Err(MoneroTopologyError::RequiresRegtest);
-        }
         if daemon.base_url == wallet.base_url {
             return Err(MoneroTopologyError::AliasedRpcOrigins);
         }
@@ -132,17 +136,36 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
                 GET_INFO_REQUEST,
             )
             .await?;
-        validate_info(&info)?;
-
-        let connections: GetConnectionsResult = self
-            .call_success(
-                "daemon.get_connections",
-                self.daemon,
-                self.daemon,
-                GET_CONNECTIONS_REQUEST,
-            )
-            .await?;
-        validate_connections(&connections)?;
+        match self.identity.network() {
+            MoneroNetwork::Regtest => {
+                validate_info(&info)?;
+                let connections: GetConnectionsResult = self
+                    .call_success(
+                        "daemon.get_connections",
+                        self.daemon,
+                        self.daemon,
+                        GET_CONNECTIONS_REQUEST,
+                    )
+                    .await?;
+                validate_connections(&connections)?;
+            }
+            // A public network's daemon has peers and syncs: what it must
+            // show is that it serves the network, is synchronized, and that
+            // its tip is recent by this host's clock (a stalled or far-behind
+            // daemon would hold back or misreport confirmations).
+            MoneroNetwork::Stagenet => {
+                validate_public_info(&info, MoneroNetwork::Stagenet)?;
+                let header: GetLastBlockHeaderResult = self
+                    .call_success(
+                        "daemon.get_last_block_header",
+                        self.daemon,
+                        self.daemon,
+                        GET_LAST_BLOCK_HEADER_REQUEST,
+                    )
+                    .await?;
+                validate_fresh_tip(&header, &info, unix_now())?;
+            }
+        }
 
         let target_version: GetVersionResult = self
             .call_success(
@@ -336,7 +359,9 @@ impl fmt::Debug for MoneroTopologyVerifier<'_> {
     }
 }
 
-/// Non-forgeable proof of one exact local Regtest topology and auth boundary.
+/// Non-forgeable proof of one exact topology and auth boundary: the local
+/// peerless offline Regtest, or a synchronized Stagenet daemon with a fresh
+/// tip.
 ///
 /// Fields are private, no public constructor or status-validation port exists,
 /// and the type deliberately does not implement `Clone`.
@@ -471,9 +496,6 @@ fn validate_binding(
 /// Failure to establish the local Regtest topology and authentication proof.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum MoneroTopologyError {
-    /// The isolation capability is deliberately local-Regtest-only.
-    #[error("Monero topology attestation requires the Regtest profile")]
-    RequiresRegtest,
     /// The daemon's `get_info` names another network than the configured one.
     #[error("Monero daemon does not serve the configured network")]
     DaemonNetworkMismatch,
@@ -533,6 +555,15 @@ pub enum MoneroTopologyError {
     /// `get_info` did not prove the exact offline fakechain profile.
     #[error("Monero daemon did not report the exact offline peerless Regtest profile")]
     DaemonProfileMismatch,
+    /// A public network's daemon is not synchronized, still syncing, or below
+    /// the target height it reports.
+    #[error("Monero daemon is not synchronized with its network")]
+    DaemonNotSynchronized,
+    /// A public network's daemon reports a tip that is not its own `get_info`
+    /// tip, is marked untrusted, or is older (or further ahead) than
+    /// `MAX_PUBLIC_TIP_AGE_SECONDS` by this host's clock.
+    #[error("Monero daemon's tip is stale or inconsistent")]
+    DaemonTipStale,
     /// `get_connections` did not independently prove an empty connection set.
     #[error("Monero daemon returned a nonempty or untrusted connection set")]
     ConnectionsPresent,
@@ -614,6 +645,28 @@ struct GetInfoResult {
     incoming_connections_count: u64,
     outgoing_connections_count: u64,
     version: String,
+    /// Absent (an older or fixture answer) reads as not synchronized.
+    #[serde(default)]
+    synchronized: bool,
+    #[serde(default)]
+    busy_syncing: bool,
+    #[serde(default)]
+    height: u64,
+    #[serde(default)]
+    target_height: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetLastBlockHeaderResult {
+    status: String,
+    untrusted: bool,
+    block_header: LastBlockHeader,
+}
+
+#[derive(Debug, Deserialize)]
+struct LastBlockHeader {
+    height: u64,
+    timestamp: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -702,6 +755,48 @@ fn validate_network_info(
         return Err(MoneroTopologyError::DaemonNetworkMismatch);
     }
     Ok(())
+}
+
+/// A public network's daemon: it serves `network` ([`validate_network_info`]),
+/// says it is synchronized and not syncing, and its height has reached the
+/// target it reports (0 once synchronized).
+fn validate_public_info(
+    info: &GetInfoResult,
+    network: MoneroNetwork,
+) -> Result<(), MoneroTopologyError> {
+    validate_network_info(info, network)?;
+    if !info.synchronized
+        || info.busy_syncing
+        || info.height == 0
+        || (info.target_height != 0 && info.height < info.target_height)
+    {
+        return Err(MoneroTopologyError::DaemonNotSynchronized);
+    }
+    Ok(())
+}
+
+/// The tip the daemon reports is its `get_info` tip, trusted, and at most
+/// [`MAX_PUBLIC_TIP_AGE_SECONDS`] old (a timestamp up to that far ahead of
+/// this clock is also refused: Monero admits blocks up to two hours ahead).
+fn validate_fresh_tip(
+    header: &GetLastBlockHeaderResult,
+    info: &GetInfoResult,
+    now: u64,
+) -> Result<(), MoneroTopologyError> {
+    if header.status != "OK"
+        || header.untrusted
+        || header.block_header.height.checked_add(1) != Some(info.height)
+        || now.abs_diff(header.block_header.timestamp) > MAX_PUBLIC_TIP_AGE_SECONDS
+    {
+        return Err(MoneroTopologyError::DaemonTipStale);
+    }
+    Ok(())
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 fn validate_connections(connections: &GetConnectionsResult) -> Result<(), MoneroTopologyError> {
@@ -844,6 +939,69 @@ mod tests {
                     Err(MoneroTopologyError::DaemonNetworkMismatch)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_public_daemon_must_be_synchronized_with_a_fresh_tip_of_its_own() {
+        // The fixture is a daemon still syncing (48,557 of 2,255,223).
+        let syncing = info_with(&[]);
+        assert_eq!(
+            validate_public_info(&syncing, MoneroNetwork::Stagenet),
+            Err(MoneroTopologyError::DaemonNotSynchronized)
+        );
+        let synced = info_with(&[
+            (r#""busy_syncing":true"#, r#""busy_syncing":false"#),
+            (r#""synchronized":false"#, r#""synchronized":true"#),
+            (r#""target_height":2255223"#, r#""target_height":0"#),
+        ]);
+        assert_eq!(
+            validate_public_info(&synced, MoneroNetwork::Stagenet),
+            Ok(())
+        );
+        // Synchronized by its word, yet below the target it names, or busy.
+        for refused in [
+            info_with(&[
+                (r#""busy_syncing":true"#, r#""busy_syncing":false"#),
+                (r#""synchronized":false"#, r#""synchronized":true"#),
+            ]),
+            info_with(&[
+                (r#""synchronized":false"#, r#""synchronized":true"#),
+                (r#""target_height":2255223"#, r#""target_height":0"#),
+            ]),
+        ] {
+            assert_eq!(
+                validate_public_info(&refused, MoneroNetwork::Stagenet),
+                Err(MoneroTopologyError::DaemonNotSynchronized)
+            );
+        }
+        // A synchronized daemon of another network is refused for that.
+        assert_eq!(
+            validate_public_info(&synced, MoneroNetwork::Regtest),
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+
+        let now = 1_795_300_000;
+        let header = |height: u64, timestamp: u64, untrusted: bool| GetLastBlockHeaderResult {
+            status: "OK".to_owned(),
+            untrusted,
+            block_header: LastBlockHeader { height, timestamp },
+        };
+        // `synced` is at height 48,557: its tip is block 48,556.
+        assert_eq!(
+            validate_fresh_tip(&header(48_556, now - 600, false), &synced, now),
+            Ok(())
+        );
+        for stale in [
+            header(48_556, now - MAX_PUBLIC_TIP_AGE_SECONDS - 1, false),
+            header(48_556, now + MAX_PUBLIC_TIP_AGE_SECONDS + 1, false),
+            header(48_555, now, false),
+            header(48_556, now, true),
+        ] {
+            assert_eq!(
+                validate_fresh_tip(&stale, &synced, now),
+                Err(MoneroTopologyError::DaemonTipStale)
+            );
         }
     }
 

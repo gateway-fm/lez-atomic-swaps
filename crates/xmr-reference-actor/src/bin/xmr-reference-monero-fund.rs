@@ -2,8 +2,10 @@
 //!
 //! The workflow's one `FundMonero` invocation: under the role's wallet-rpc
 //! lock it sends the exact Stage-A amount from the role wallet to the shared
-//! address, mines the confirmations, and records the funding with its receipt
-//! in the evidence root (`xmr_reference_actor::fund_maker_monero`).
+//! address; on Regtest it mines the confirmations and records the funding
+//! with its receipt in the evidence root, on a public network the funding
+//! observer records it once miners have confirmed it
+//! (`xmr_reference_actor::fund_maker_monero`).
 
 #![forbid(unsafe_code)]
 

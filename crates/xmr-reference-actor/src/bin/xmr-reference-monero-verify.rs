@@ -14,8 +14,8 @@ use lez_bridge_protocol::RunId;
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity,
-    MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier, MoneroRegtestWalletEffects,
-    MoneroTopologyVerifier, MoneroTransactionId, MoneroWalletRpcLock,
+    MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier, MoneroRegtestMining,
+    MoneroRegtestWalletEffects, MoneroTopologyVerifier, MoneroTransactionId, MoneroWalletRpcLock,
     REQUIRED_MONERO_CONFIRMATIONS, VerifiedMoneroOutputObservation,
 };
 use lez_xmr_swap_sdk::{
@@ -234,17 +234,21 @@ async fn execute() -> Result<()> {
             // per role), and nothing else mines; a sweep its tool left in the
             // pool or short of them (killed, or a failed mining call) is
             // mined here, to its destination as the tool would.
-            if one_wallet_rpc.is_some()
-                && identity.network() == MoneroNetwork::Regtest
-                && error.awaits_confirmations()
-            {
+            let mining = if one_wallet_rpc.is_some() && error.awaits_confirmations() {
+                MoneroRegtestMining::where_the_role_mines(identity, &inputs.daemon)
+                    .await
+                    .context("prove the Monero daemon's network")?
+            } else {
+                None
+            };
+            if let Some(mining) = mining {
                 eprintln!(
                     "Monero {} sweep observer: the sweep is in the pool or short of its \
                      confirmations; mining them (regtest)",
                     inputs.route.role()
                 );
                 MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.role_wallet)?
-                    .mine_confirmations(inputs.destination)
+                    .mine_confirmations(&mining, inputs.destination)
                     .await
                     .context("mine the unconfirmed sweep's confirmations")?;
             }
@@ -273,7 +277,7 @@ async fn execute() -> Result<()> {
     .context("construct settlement topology verifier")?
     .verify()
     .await
-    .context("verify authenticated peerless settlement topology")?;
+    .context("verify the authenticated settlement topology")?;
     topology
         .validate_observation(
             &RunId::new(inputs.plan.run_id()).context("settlement run ID is invalid")?,
@@ -501,8 +505,15 @@ fn validate_submission(
         &submission.reconstructed_public_spend_key,
         "reconstructed public spend key",
     )?;
+    // The sweeping tool's restore height for this agreement: 0 on Regtest,
+    // on Stagenet the height before the funding cutoff
+    // (`agreement_restore_height`); the output's block is checked against
+    // it once observed.
     ensure!(
-        submission.restore_height == 0,
+        match monero_network(agreement.body().monero().network()) {
+            MoneroNetwork::Regtest => submission.restore_height == 0,
+            MoneroNetwork::Stagenet => submission.restore_height > 0,
+        },
         "settlement restore height changed"
     );
     Ok(())
@@ -536,7 +547,11 @@ fn final_evidence(
         daemon_version: topology.daemon_version().to_owned(),
         target_wallet_version: topology.target_wallet_version(),
         foreign_wallet_version: topology.foreign_wallet_version(),
-        network_scope: "isolated_official_monero_regtest".to_owned(),
+        network_scope: match observation.network() {
+            MoneroNetwork::Regtest => "isolated_official_monero_regtest",
+            MoneroNetwork::Stagenet => "public_monero_stagenet",
+        }
+        .to_owned(),
         finality_observer_sent_transaction: false,
         public_rpc_used: false,
         faucet_used: false,

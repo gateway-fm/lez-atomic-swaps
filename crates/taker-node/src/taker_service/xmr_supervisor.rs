@@ -54,7 +54,7 @@ use lez_btc_role_lifecycle::{
 use lez_swap_core::{Phase, SwapId};
 use lez_swap_store::TakerFacadeActionV1;
 use lez_xmr_monero_adapter::{
-    ExpectedMoneroOutput, MoneroAddress, MoneroChainIdentity, MoneroNetwork, MoneroOutputVerifier,
+    ExpectedMoneroOutput, MoneroAddress, MoneroOutputVerifier, MoneroRegtestMining,
     MoneroRegtestWalletEffects, MoneroTransactionId, MoneroWalletEffectError, MoneroWalletRpcLock,
 };
 use lez_xmr_swap_sdk::{
@@ -173,7 +173,8 @@ pub(super) struct XmrMakerClaimV1 {
 pub(super) struct XmrClaimSweepV1 {
     pub(super) transaction: String,
     pub(super) received_piconero: u64,
-    /// Its confirmations are mined (regtest: the sender mines them).
+    /// Its confirmations are mined, or left to the network's miners: on
+    /// Regtest the sender mines them, on Stagenet it only waits.
     #[serde(default)]
     pub(super) mined: bool,
 }
@@ -1394,10 +1395,7 @@ async fn observe_monero_locked(
             .await?;
         let amount = agreement.body().monero().amount_piconero();
         let verifier = MoneroOutputVerifier::new(
-            MoneroChainIdentity::new(
-                MoneroNetwork::Regtest,
-                agreement.body().monero().genesis_hash(),
-            )?,
+            xmr_reference_actor::agreement_monero_identity(&agreement)?,
             &monerod,
             &wallet_rpc,
         )?;
@@ -1746,7 +1744,8 @@ pub(super) trait XmrClaimChains: Sync {
         signature: [u8; 64],
         attempt: u32,
     ) -> std::result::Result<XmrClaimSweepV1, SweepFailure>;
-    /// Mines the sweep's confirmations (regtest).
+    /// Mines the sweep's confirmations on Regtest; on a public network does
+    /// nothing, for its miners confirm.
     async fn mine(&self) -> Result<()>;
     /// The swept output is final and unlocked in the role wallet.
     async fn sweep_confirmed(&self, sweep: &XmrClaimSweepV1) -> Result<bool>;
@@ -2123,6 +2122,11 @@ impl XmrClaimChains for LiveClaim {
             let key = maker_claim_key(&files, &agreement, signature)?;
             let role = LiveClaim::role_wallet(&dynamic)?;
             let destination = role.primary_standard_address().await?;
+            ensure!(
+                xmr_reference_actor::agreement_monero_network(&agreement)
+                    .admits_address(&destination),
+                "the role wallet's address is not on the swap's Monero network"
+            );
             let swept = role
                 .restore_shared_and_sweep_once(
                     agreement.shared_address(),
@@ -2156,9 +2160,22 @@ impl XmrClaimChains for LiveClaim {
 
     async fn mine(&self) -> Result<()> {
         let dynamic = Arc::clone(&self.dynamic);
+        let files = self.files.clone();
         under_wallet_lock(&self.dynamic, move || async move {
+            let (agreement, _, _) = files.agreement()?;
+            let config = dynamic.config();
+            // Regtest only: on a public network no mining capability exists,
+            // and the sweep's confirmations are its miners'.
+            let Some(mining) = MoneroRegtestMining::where_the_role_mines(
+                xmr_reference_actor::agreement_monero_identity(&agreement)?,
+                &config.monerod()?,
+            )
+            .await?
+            else {
+                return Ok(());
+            };
             let role = LiveClaim::role_wallet(&dynamic)?;
-            role.mine_confirmations(role.primary_standard_address().await?)
+            role.mine_confirmations(&mining, role.primary_standard_address().await?)
                 .await?;
             Ok(())
         })
@@ -2183,10 +2200,7 @@ impl XmrClaimChains for LiveClaim {
             hex::decode_to_slice(&sweep.transaction, &mut transaction)
                 .context("the recorded sweep")?;
             let verifier = MoneroOutputVerifier::new(
-                MoneroChainIdentity::new(
-                    MoneroNetwork::Regtest,
-                    agreement.body().monero().genesis_hash(),
-                )?,
+                xmr_reference_actor::agreement_monero_identity(&agreement)?,
                 &config.monerod()?,
                 &config.wallet_rpc()?,
             )?;

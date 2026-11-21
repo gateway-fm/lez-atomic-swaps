@@ -126,16 +126,43 @@ async fn stagenet_daemon_identity_and_network_are_exact() {
             .expect_err("not the isolated Regtest"),
         MoneroTopologyError::DaemonProfileMismatch
     );
-    // The topology verifier is Regtest-only by construction.
-    assert!(matches!(
-        MoneroTopologyVerifier::for_one_wallet_rpc(
-            RunId::new("stagenet-ci-topology".to_owned()).expect("run id"),
-            identity,
-            &daemon,
-            &wallet,
-        ),
-        Err(MoneroTopologyError::RequiresRegtest)
-    ));
+    // The Stagenet topology check of the same daemon:
+    // `stagenet_topology_admits_only_a_synchronized_daemon_with_a_fresh_tip`.
+    let _ = identity;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs the monerod --stagenet that scripts/run-monero-stagenet-ci.sh starts"]
+async fn stagenet_topology_admits_only_a_synchronized_daemon_with_a_fresh_tip() {
+    let daemon = daemon();
+    let wallet = wallet();
+    let identity = MoneroChainIdentityAttestor::new(MoneroNetwork::Stagenet, &daemon)
+        .expect("Stagenet attestor")
+        .discover()
+        .await
+        .expect("Stagenet genesis");
+    let topology = MoneroTopologyVerifier::for_one_wallet_rpc(
+        RunId::new("stagenet-ci-topology".to_owned()).expect("run id"),
+        identity,
+        &daemon,
+        &wallet,
+    )
+    .expect("Stagenet topology verifier");
+    // A Node's funding receipt needs this attestation. CI's daemon syncs a
+    // bounded prefix and is never at the tip, which the check must see; a
+    // daemon at the tip (MONERO_STAGENET_EXPECT_SYNCED=1) must pass it.
+    let attested = topology.verify().await;
+    if std::env::var("MONERO_STAGENET_EXPECT_SYNCED").as_deref() == Ok("1") {
+        let attestation = attested.expect("a synchronized Stagenet daemon");
+        assert_eq!(attestation.chain_identity(), identity);
+        assert!(!attestation.offline());
+        println!("stagenet topology: peers {}", attestation.peer_count());
+    } else {
+        assert_eq!(
+            attested.expect_err("a daemon still syncing"),
+            MoneroTopologyError::DaemonNotSynchronized
+        );
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

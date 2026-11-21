@@ -26,6 +26,8 @@ mod maker_refund_activation;
 #[cfg(feature = "sessions")]
 mod monero_funding;
 #[cfg(feature = "sessions")]
+mod monero_scope;
+#[cfg(feature = "sessions")]
 mod reserve;
 
 #[cfg(feature = "sessions")]
@@ -80,6 +82,13 @@ pub use effect_route::{
     XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverResultV1, XmrEffectObserverStateV1,
     XmrPreparedEffectInvocationV1, XmrPreparedEffectObservationV1,
     parse_xmr_effect_observer_result_v1, xmr_maker_submission_unwritten,
+};
+#[cfg(feature = "sessions")]
+use monero_scope::MoneroEvidenceScope;
+#[cfg(feature = "sessions")]
+pub use monero_scope::{
+    MAX_STAGENET_FUNDING_CUTOFF_SECONDS, address_network_monero, agreement_monero_identity,
+    agreement_monero_network, agreement_restore_height,
 };
 #[cfg(feature = "sessions")]
 pub use reserve::{
@@ -189,8 +198,6 @@ const M4_MONERO_RECEIPT_SCHEMA: &str = "lez_v02_m4_actual_local_monero_verificat
 const M7_MONERO_CLAIM_SUBMISSION_SCHEMA: &str = "lez_v02_m7_monero_claim_submission_v1";
 #[cfg(feature = "sessions")]
 const M7_MONERO_CLAIM_FINALITY_SCHEMA: &str = "lez_v02_m7_monero_claim_finality_v1";
-#[cfg(feature = "sessions")]
-const M4_MONERO_NETWORK_SCOPE: &str = "isolated_official_monero_regtest";
 #[cfg(feature = "sessions")]
 const M4_MONERO_DAEMON_VERSION: &str = "0.18.5.1-release";
 #[cfg(feature = "sessions")]
@@ -4110,7 +4117,7 @@ fn write_claim_sweep_binding_evidence(
         fee_piconero: accounting.fee_piconero,
         unreceived_remainder_piconero: accounting.unreceived_remainder_piconero,
         peer_count: receipt.peer_count,
-        network_scope: M4_MONERO_NETWORK_SCOPE,
+        network_scope: MoneroEvidenceScope::of_genesis_hex(&receipt.monero_genesis_hash).name(),
         public_rpc_used: false,
         faucet_used: false,
         automatic_submission_retry: false,
@@ -4333,7 +4340,7 @@ fn write_refund_sweep_binding_evidence(
         received_amount_piconero: accounting.received_amount_piconero,
         fee_piconero: fee,
         peer_count: receipt.peer_count,
-        network_scope: M4_MONERO_NETWORK_SCOPE,
+        network_scope: MoneroEvidenceScope::of_genesis_hex(&receipt.monero_genesis_hash).name(),
         public_rpc_used: false,
         faucet_used: false,
         automatic_submission_retry: false,
@@ -4370,8 +4377,10 @@ fn write_refund_binding_output(
     ensure!(
         evidence.destination_ownership_binding
             == "owner_private_maker_wallet_boundary_not_stage_a_committed"
-            && evidence.network_scope == M4_MONERO_NETWORK_SCOPE
-            && evidence.peer_count == 0
+            && evidence.network_scope
+                == MoneroEvidenceScope::of_genesis_hex(&evidence.monero_genesis_hash).name()
+            && MoneroEvidenceScope::of_genesis_hex(&evidence.monero_genesis_hash)
+                .admits_peer_count(evidence.peer_count)
             && !evidence.public_rpc_used
             && !evidence.faucet_used
             && !evidence.automatic_submission_retry,
@@ -4516,9 +4525,10 @@ fn validate_legacy_monero_evidence_pair(
             && sweep.sweeping_role == expected_sweeping_role,
         "Monero sweep roles are invalid"
     );
+    let scope = MoneroEvidenceScope::of_genesis(expected.monero_genesis_hash);
     ensure!(
-        sweep.network_scope == M4_MONERO_NETWORK_SCOPE
-            && receipt.network_scope == M4_MONERO_NETWORK_SCOPE
+        sweep.network_scope == scope.name()
+            && receipt.network_scope == scope.name()
             && sweep.network_scope == receipt.network_scope,
         "Monero evidence network scopes differ"
     );
@@ -4531,7 +4541,7 @@ fn validate_legacy_monero_evidence_pair(
         "Monero evidence used a prohibited public resource or automatic retry"
     );
     ensure!(
-        receipt.peer_count == 0,
+        scope.admits_peer_count(receipt.peer_count),
         "Monero verifier was not peer-isolated"
     );
     ensure!(
@@ -4540,7 +4550,7 @@ fn validate_legacy_monero_evidence_pair(
         "Monero wallet versions differ from the pinned M4 profile"
     );
     ensure!(
-        receipt.daemon_version == M4_MONERO_DAEMON_VERSION,
+        scope.admits_daemon_version(&receipt.daemon_version),
         "Monero daemon version differs from the pinned M4 profile"
     );
     Ok(remainder)
@@ -4752,8 +4762,9 @@ fn validate_semantic_monero_claim_pair(
             && finality.received_amount_piconero == sweep.received_amount_piconero,
         "semantic Monero claim accounting is not exact"
     );
+    let scope = MoneroEvidenceScope::of_genesis(expected.monero_genesis_hash);
     ensure!(
-        sweep.restore_height == 0
+        scope.admits_restore_height(sweep.restore_height, finality.containing_block_height)
             && sweep.finality_observer_required
             && !sweep.automatic_submission_retry
             && !sweep.public_rpc_used
@@ -4772,12 +4783,12 @@ fn validate_semantic_monero_claim_pair(
         "semantic Monero claim finality depth is invalid"
     );
     ensure!(
-        finality.peer_count == 0
-            && finality.daemon_version == M4_MONERO_DAEMON_VERSION
+        scope.admits_peer_count(finality.peer_count)
+            && scope.admits_daemon_version(&finality.daemon_version)
             && finality.target_wallet_version == M4_MONERO_WALLET_VERSION
             && finality.foreign_wallet_version == M4_MONERO_WALLET_VERSION
-            && finality.network_scope == M4_MONERO_NETWORK_SCOPE,
-        "semantic Monero claim topology differs from the certified local Regtest"
+            && finality.network_scope == scope.name(),
+        "semantic Monero claim topology differs from the certified profile"
     );
     let receipt = MoneroReceiptEvidenceV2 {
         schema: M7_MONERO_CLAIM_FINALITY_SCHEMA.to_owned(),
@@ -5067,7 +5078,7 @@ mod claim_sweep_binding_tests {
             daemon_version: "0.18.5.1-release".to_owned(),
             target_wallet_version: 65_567,
             foreign_wallet_version: 65_567,
-            network_scope: M4_MONERO_NETWORK_SCOPE.to_owned(),
+            network_scope: "isolated_official_monero_regtest".to_owned(),
             public_rpc_used: false,
             faucet_used: false,
         }
@@ -5087,7 +5098,7 @@ mod claim_sweep_binding_tests {
             restore_height: 0,
             revealed_role: "maker_claim_signature".to_owned(),
             sweeping_role: "taker".to_owned(),
-            network_scope: M4_MONERO_NETWORK_SCOPE.to_owned(),
+            network_scope: "isolated_official_monero_regtest".to_owned(),
             public_rpc_used: false,
             faucet_used: false,
             automatic_submission_retry: false,
@@ -5118,7 +5129,7 @@ mod claim_sweep_binding_tests {
             restore_height: 0,
             revealed_role: "maker_claim_signature".to_owned(),
             sweeping_role: "taker".to_owned(),
-            network_scope: M4_MONERO_NETWORK_SCOPE.to_owned(),
+            network_scope: "isolated_official_monero_regtest".to_owned(),
             public_rpc_used: false,
             faucet_used: false,
             automatic_submission_retry: false,
@@ -5177,7 +5188,7 @@ mod claim_sweep_binding_tests {
             daemon_version: M4_MONERO_DAEMON_VERSION.to_owned(),
             target_wallet_version: M4_MONERO_WALLET_VERSION,
             foreign_wallet_version: M4_MONERO_WALLET_VERSION,
-            network_scope: M4_MONERO_NETWORK_SCOPE.to_owned(),
+            network_scope: "isolated_official_monero_regtest".to_owned(),
             finality_observer_sent_transaction: false,
             public_rpc_used: false,
             faucet_used: false,
@@ -5360,7 +5371,7 @@ mod claim_sweep_binding_tests {
             received_amount_piconero: RECEIVED,
             fee_piconero: REMAINDER,
             peer_count: 0,
-            network_scope: M4_MONERO_NETWORK_SCOPE,
+            network_scope: "isolated_official_monero_regtest",
             public_rpc_used: false,
             faucet_used: false,
             automatic_submission_retry: false,

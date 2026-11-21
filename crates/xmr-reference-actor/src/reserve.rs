@@ -22,7 +22,7 @@ use anyhow::{Context as _, Result, anyhow, ensure};
 use lez_bridge_protocol::{Hex32, RequestId, RuntimeDescriptor};
 use lez_node_common::{XmrReserveRequestV1, XmrReserveResponseV1};
 use lez_swap_store::MakerOfferId;
-use lez_xmr_monero_adapter::LoopbackRpcEndpoint;
+use lez_xmr_monero_adapter::{LoopbackRpcEndpoint, MoneroNetwork};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES,
     MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES, MoneroPrivateViewKey, ValidatedXmrAgreementBodyV1,
@@ -67,12 +67,34 @@ pub const XMR_STAGE_B_FILE: &str = "stage-b.wire";
 /// The role's adaptor journal holding both the claim and the refund session.
 pub const XMR_ADAPTOR_JOURNAL_FILE: &str = "adaptor.sqlite3";
 
-/// The only Monero profile a role takes swaps under. A role has no Stagenet
-/// route: `docs/monero-stagenet-guide.md` says what it lacks.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+/// The Monero profile, and so the network, a role takes swaps under: the
+/// devnet's offline Regtest (`accelerated-regtest`) or public Stagenet
+/// (`public-stagenet`). The profile goes into Stage A, which both parties
+/// sign, so a Maker and a Taker of different networks never agree. Mainnet
+/// and testnet are refused by name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-enum XmrProfileName {
+pub enum XmrProfileName {
     AcceleratedRegtest,
+    PublicStagenet,
+}
+
+impl<'de> Deserialize<'de> for XmrProfileName {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        match name.as_str() {
+            "accelerated-regtest" => Ok(Self::AcceleratedRegtest),
+            "public-stagenet" => Ok(Self::PublicStagenet),
+            "mainnet" | "testnet" | "public-mainnet" | "public-testnet" => {
+                Err(serde::de::Error::custom(
+                    "Monero mainnet and testnet are refused: the profile is accelerated-regtest or public-stagenet",
+                ))
+            }
+            _ => Err(serde::de::Error::custom(
+                "unknown Monero profile: accelerated-regtest or public-stagenet",
+            )),
+        }
+    }
 }
 
 /// A Node's Monero role: its monerod and wallet-rpc, the recovery windows it
@@ -150,6 +172,21 @@ impl XmrRoleConfigV1 {
                 && config.refund_seconds < config.punish_seconds,
             "the Monero windows are not funding cutoff < refund < punish"
         );
+        let profile = config.profile();
+        ensure!(
+            config.refund_seconds - config.funding_cutoff_seconds
+                >= profile.minimum_funding_to_refund_ms() / 1_000
+                && config.punish_seconds - config.refund_seconds
+                    >= profile.minimum_refund_to_punish_ms() / 1_000,
+            "the Monero windows are shorter than the {} profile admits",
+            config.network().name()
+        );
+        ensure!(
+            config.network() != MoneroNetwork::Stagenet
+                || config.funding_cutoff_seconds <= crate::MAX_STAGENET_FUNDING_CUTOFF_SECONDS,
+            "a Stagenet funding cutoff is at most {} s after the take",
+            crate::MAX_STAGENET_FUNDING_CUTOFF_SECONDS
+        );
         config.monerod()?;
         config.wallet_rpc()?;
         ensure!(
@@ -179,7 +216,15 @@ impl XmrRoleConfigV1 {
     pub const fn profile(&self) -> XmrNamedProfileV1 {
         match self.profile {
             XmrProfileName::AcceleratedRegtest => XmrNamedProfileV1::AcceleratedRegtest,
+            XmrProfileName::PublicStagenet => XmrNamedProfileV1::PublicStagenet,
         }
+    }
+
+    /// The Monero network of that profile: the network the role's monerod
+    /// must serve and its attestor and verifier check.
+    #[must_use]
+    pub const fn network(&self) -> MoneroNetwork {
+        crate::address_network_monero(self.profile().network())
     }
 
     /// This role's monerod.
@@ -317,6 +362,10 @@ pub struct XmrStageAPlanInputV1 {
     pub punish_at_ms: u64,
     /// The Maker owner's finalized LEZ nonce; it feeds only the punish hash.
     pub maker_owner_nonce: u128,
+    /// The agreement's profile when it is not `accelerated-regtest` (absent
+    /// for the devnet's Regtest, so its input bytes are unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monero_profile: Option<XmrProfileName>,
 }
 
 impl XmrStageAPlanInputV1 {
@@ -613,6 +662,7 @@ pub fn reserve_xmr_maker_role(
     let maker_packet = ValidatedRolePacket::from_bytes(&material.packet_bytes)?;
     let packets = StageRolePackets::validated(maker_packet, taker_packet, None)?;
     let input = plan_input(
+        config.profile(),
         terms,
         lez,
         &material.packet_bytes,
@@ -707,6 +757,7 @@ pub fn check_xmr_taker_role(
     );
     let packets = StageRolePackets::validated(maker_packet, taker_packet, None)?;
     let input = plan_input(
+        config.profile(),
         terms,
         lez,
         &maker.maker_packet,
@@ -714,6 +765,19 @@ pub fn check_xmr_taker_role(
         check.monero.genesis,
         config.windows(maker.lez_anchor_unix_seconds)?,
         maker.maker_owner_nonce,
+    );
+    // Stated before the byte comparison, which would refuse it too: a
+    // Maker on another Monero network than this Taker's is never agreed with.
+    let maker_profile =
+        ValidatedXmrAgreementBodyV1::from_unsigned_wire(&maker.unsigned_stage_a_wire)
+            .context("the Maker's Stage A is invalid")?
+            .body()
+            .profile();
+    ensure!(
+        maker_profile == config.profile(),
+        "the Maker's Stage A is for another Monero network ({:?}) than this Taker's ({})",
+        maker_profile,
+        config.network().name()
     );
     let expected = planner.plan(&input)?;
     ensure!(
@@ -778,6 +842,7 @@ pub fn accept_xmr_maker_stage_a(role_root: &Path, agreement_wire: &[u8]) -> Resu
 }
 
 fn plan_input(
+    profile: XmrNamedProfileV1,
     terms: &XmrReservationTerms,
     lez: &XmrLezRole,
     maker_packet: &[u8],
@@ -800,6 +865,10 @@ fn plan_input(
         refund_at_ms: windows.refund_at_ms(),
         punish_at_ms: windows.punish_at_ms(),
         maker_owner_nonce,
+        monero_profile: match profile {
+            XmrNamedProfileV1::AcceleratedRegtest => None,
+            XmrNamedProfileV1::PublicStagenet => Some(XmrProfileName::PublicStagenet),
+        },
     }
 }
 
@@ -841,6 +910,13 @@ fn body_has_terms(
             .lez_owner_account()
             == maker
         && body.windows() == input.windows()
+        && body.profile()
+            == match input.monero_profile {
+                None | Some(XmrProfileName::AcceleratedRegtest) => {
+                    XmrNamedProfileV1::AcceleratedRegtest
+                }
+                Some(XmrProfileName::PublicStagenet) => XmrNamedProfileV1::PublicStagenet,
+            }
 }
 
 /// BIP340 over a Stage-A or Stage-B commitment, deterministic (no auxiliary
@@ -934,8 +1010,14 @@ pub(crate) mod tests {
                 XmrParticipantsV1::new(maker.identity().clone(), taker.identity().clone());
             let claim_key = participants.claim_aggregate_x_only_key()?;
             let refund_key = participants.refund_aggregate_x_only_key()?;
+            let profile = match input.monero_profile {
+                None | Some(XmrProfileName::AcceleratedRegtest) => {
+                    XmrNamedProfileV1::AcceleratedRegtest
+                }
+                Some(XmrProfileName::PublicStagenet) => XmrNamedProfileV1::PublicStagenet,
+            };
             let shared = MoneroSharedAddressV1::derive_from_public_view_key(
-                MoneroAddressNetworkV1::Regtest,
+                profile.network(),
                 maker.proof(),
                 taker.proof(),
                 maker.public_view_key(),
@@ -948,14 +1030,13 @@ pub(crate) mod tests {
                     .finalize()
                     .into()
             };
-            let profile = XmrNamedProfileV1::AcceleratedRegtest;
             let body = XmrAgreementBodyV1::new(
                 XmrSwapDirectionV1::TakerSellsLez,
                 profile,
                 *input.swap_id.as_bytes(),
                 participants,
                 XmrMoneroTermsV1::new(
-                    MoneroAddressNetworkV1::Regtest,
+                    profile.network(),
                     *input.monero_genesis_hash.as_bytes(),
                     input.monero_amount_piconero,
                     profile.required_monero_confirmations(),
@@ -1130,6 +1211,69 @@ pub(crate) mod tests {
             maker_root,
             taker_root,
         }
+    }
+
+    #[test]
+    fn a_taker_never_agrees_with_a_maker_on_another_monero_network() {
+        let directory = TempDir::new().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let maker_root = private_dir(&root.join("maker")).join("xmr");
+        let taker_root = private_dir(&root.join("taker")).join("xmr");
+        let stagenet_dir = private_dir(&root.join("stagenet"));
+        let stagenet = XmrRoleConfigV1::load(&write_config(&stagenet_dir, |json| {
+            json["profile"] = serde_json::json!("public-stagenet");
+            json["funding_cutoff_seconds"] = serde_json::json!(600);
+            json["refund_seconds"] = serde_json::json!(7_200);
+            json["punish_seconds"] = serde_json::json!(9_000);
+        }))
+        .unwrap();
+        let taker = begin_xmr_taker_role(&taker_root, [TAKER_ACCOUNT; 32]).unwrap();
+        let maker = reserve_xmr_maker_role(
+            &stagenet,
+            &FixturePlanner,
+            &terms(),
+            &lez(BridgeParticipant::Maker, MAKER_ACCOUNT),
+            &Zeroizing::new(MAKER_SECRET),
+            &taker,
+            monero(),
+            4,
+            NOW,
+            &maker_root,
+        )
+        .unwrap();
+        let body =
+            ValidatedXmrAgreementBodyV1::from_unsigned_wire(&maker.unsigned_stage_a_wire).unwrap();
+        assert_eq!(body.body().profile(), XmrNamedProfileV1::PublicStagenet);
+        assert_eq!(
+            body.body().monero().network(),
+            MoneroAddressNetworkV1::Stagenet
+        );
+        // A Taker configured for the devnet's Regtest refuses it by name.
+        let error = check_xmr_taker_role(
+            &config(&root),
+            &FixturePlanner,
+            &terms(),
+            &lez(BridgeParticipant::Taker, TAKER_ACCOUNT),
+            &taker_root,
+            &maker,
+            &taker_check(),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("another Monero network"),
+            "{error:#}"
+        );
+        // A Stagenet Taker agrees.
+        check_xmr_taker_role(
+            &stagenet,
+            &FixturePlanner,
+            &terms(),
+            &lez(BridgeParticipant::Taker, TAKER_ACCOUNT),
+            &taker_root,
+            &maker,
+            &taker_check(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1385,6 +1529,55 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_role_config_names_regtest_or_stagenet_and_refuses_mainnet_and_testnet() {
+        let directory = TempDir::new().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let stagenet = |cutoff: u64, refund: u64, punish: u64| {
+            write_config(&root, |json| {
+                json["profile"] = serde_json::json!("public-stagenet");
+                json["funding_cutoff_seconds"] = serde_json::json!(cutoff);
+                json["refund_seconds"] = serde_json::json!(refund);
+                json["punish_seconds"] = serde_json::json!(punish);
+            })
+        };
+        // The devnet's Stagenet windows: C, R, P = +10 min, +2 h, +2.5 h.
+        let loaded = XmrRoleConfigV1::load(&stagenet(600, 7_200, 9_000)).unwrap();
+        assert_eq!(loaded.profile(), XmrNamedProfileV1::PublicStagenet);
+        assert_eq!(loaded.network(), MoneroNetwork::Stagenet);
+        assert_eq!(config(&root).network(), MoneroNetwork::Regtest);
+        // At the profile's minimums, and one second below each.
+        assert!(XmrRoleConfigV1::load(&stagenet(600, 600 + 6_000, 600 + 6_000 + 1_800)).is_ok());
+        for (cutoff, refund, punish) in [
+            (600, 600 + 5_999, 600 + 5_999 + 1_800),
+            (600, 600 + 6_000, 600 + 6_000 + 1_799),
+            // A cutoff past what a Stagenet restore height looks back over.
+            (3 * 3_600 + 1, 3 * 3_600 + 1 + 6_000, 3 * 3_600 + 1 + 7_800),
+        ] {
+            let error = XmrRoleConfigV1::load(&stagenet(cutoff, refund, punish)).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("Stagenet")
+                    || format!("{error:#}").contains("stagenet"),
+                "{error:#}"
+            );
+        }
+        for refused in ["mainnet", "testnet", "public-mainnet", "public-testnet"] {
+            let path = write_config(&root, |json| json["profile"] = serde_json::json!(refused));
+            let error = format!("{:#}", XmrRoleConfigV1::load(&path).unwrap_err());
+            assert!(
+                error.contains("mainnet and testnet are refused"),
+                "{refused}: {error}"
+            );
+        }
+        let path = write_config(&root, |json| {
+            json["profile"] = serde_json::json!("fakechain")
+        });
+        assert!(
+            format!("{:#}", XmrRoleConfigV1::load(&path).unwrap_err())
+                .contains("unknown Monero profile")
+        );
+    }
+
+    #[test]
     fn the_role_config_is_checked_and_its_planner_pinned() {
         let directory = TempDir::new().unwrap();
         let root = fs::canonicalize(directory.path()).unwrap();
@@ -1427,6 +1620,7 @@ pub(crate) mod tests {
         fs::set_permissions(&planner, fs::Permissions::from_mode(0o700)).unwrap();
         let loaded = XmrRoleConfigV1::load(&root.join("xmr-role.json")).unwrap();
         let input = plan_input(
+            loaded.profile(),
             &terms(),
             &lez(BridgeParticipant::Maker, MAKER_ACCOUNT),
             b"{}\n",

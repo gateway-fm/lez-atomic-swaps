@@ -32,8 +32,8 @@ use monero_rpc::{
 use thiserror::Error;
 
 use super::{
-    LoopbackRpcEndpoint, MoneroTransactionId, REQUIRED_MONERO_CONFIRMATIONS, read_with_one_retry,
-    valid_credential,
+    LoopbackRpcEndpoint, MoneroRegtestMining, MoneroTransactionId, REQUIRED_MONERO_CONFIRMATIONS,
+    read_with_one_retry, valid_credential,
 };
 
 const WALLET_ACCOUNT_INDEX: u32 = 0;
@@ -383,6 +383,7 @@ impl MoneroRegtestWalletEffects {
     /// and fails closed on any typed wallet/daemon response mismatch.
     pub async fn fund_exact_and_confirm(
         &self,
+        mining: &MoneroRegtestMining,
         destination: Address,
         amount_piconero: u64,
     ) -> Result<ConfirmedMoneroFunding, MoneroWalletEffectError> {
@@ -395,7 +396,7 @@ impl MoneroRegtestWalletEffects {
                 .map_err(rpc_error("funding wallet address"))?
                 .address;
         let transaction_id = self.submit_exact(destination, amount).await?;
-        let confirmation_tip_height = self.mine_confirmations(mining_address).await?;
+        let confirmation_tip_height = self.mine_confirmations(mining, mining_address).await?;
         Ok(ConfirmedMoneroFunding {
             transaction_id,
             amount_piconero: amount.get(),
@@ -464,11 +465,12 @@ impl MoneroRegtestWalletEffects {
     /// method's fail-closed behavior.
     pub async fn fund_shared_exact_and_confirm(
         &self,
+        mining: &MoneroRegtestMining,
         destination: &MoneroSharedAddressV1,
         amount_piconero: u64,
     ) -> Result<ConfirmedMoneroFunding, MoneroWalletEffectError> {
         let destination = parse_shared_standard_address(destination)?;
-        self.fund_exact_and_confirm(destination, amount_piconero)
+        self.fund_exact_and_confirm(mining, destination, amount_piconero)
             .await
     }
 
@@ -564,6 +566,7 @@ impl MoneroRegtestWalletEffects {
     #[allow(clippy::too_many_arguments)]
     pub async fn restore_shared_and_sweep(
         &self,
+        mining: &MoneroRegtestMining,
         expected_address: &MoneroSharedAddressV1,
         reconstructed_spend_key: ReconstructedMoneroSpendKey,
         private_view_key: MoneroPrivateViewKey,
@@ -587,7 +590,7 @@ impl MoneroRegtestWalletEffects {
                 destination,
             )
             .await?;
-        let confirmation_tip_height = self.mine_confirmations(mining_address).await?;
+        let confirmation_tip_height = self.mine_confirmations(mining, mining_address).await?;
         Ok(ConfirmedMoneroSweep {
             transaction_id: submitted.transaction_id,
             funded_amount_piconero: submitted.funded_amount_piconero,
@@ -780,16 +783,23 @@ impl MoneroRegtestWalletEffects {
 
     /// Locally generates the fixed confirmation count on the Regtest daemon,
     /// paying the coinbase to `mining_address`, and returns the new height.
+    /// Only with a [`MoneroRegtestMining`] proven for this effect's daemon:
+    /// none exists for a public network.
     ///
     /// # Errors
     ///
-    /// Fails before mining for a non-standard address, and fails closed when
+    /// Fails before mining for a proof of another daemon or a non-standard
+    /// address, and fails closed when
     /// each of `MINING_ATTEMPTS` typed daemon calls fails or the one that
     /// succeeds reports a block count other than the fixed one.
     pub async fn mine_confirmations(
         &self,
+        mining: &MoneroRegtestMining,
         mining_address: Address,
     ) -> Result<u64, MoneroWalletEffectError> {
+        if !mining.covers(&self.daemon_origin) {
+            return Err(MoneroWalletEffectError::MiningNotProvenForThisDaemon);
+        }
         validate_standard_address(&mining_address)?;
         let mut attempt = 1;
         let generated = loop {
@@ -832,6 +842,9 @@ pub enum MoneroWalletEffectError {
     /// Daemon and wallet trust roles cannot share one origin.
     #[error("Monero daemon and wallet RPC origins must be distinct")]
     AliasedRpcOrigins,
+    /// A mining effect was given a Regtest mining proof of another daemon.
+    #[error("the Monero mining proof is not for this effect's daemon")]
+    MiningNotProvenForThisDaemon,
     /// The maintained typed RPC client could not be built.
     #[error("failed to build typed Monero wallet-effect RPC client")]
     RpcClientBuild,
@@ -1347,6 +1360,10 @@ mod tests {
         generated_blocks(9)
     }
 
+    fn mining(daemon: &FakeRpc) -> MoneroRegtestMining {
+        MoneroRegtestMining::for_tests(&daemon.endpoint)
+    }
+
     fn effects(daemon: &FakeRpc, wallet: &FakeRpc) -> MoneroRegtestWalletEffects {
         MoneroRegtestWalletEffects::new(&daemon.endpoint, &wallet.endpoint).expect("effects")
     }
@@ -1552,7 +1569,7 @@ mod tests {
             Ok(address(AddressType::Standard))
         );
         let funding = effects
-            .fund_exact_and_confirm(address(AddressType::Standard), 5_000)
+            .fund_exact_and_confirm(&mining(&daemon), address(AddressType::Standard), 5_000)
             .await
             .expect("funding");
         assert_eq!(funding.amount_piconero(), 5_000);
@@ -1637,7 +1654,7 @@ mod tests {
 
         assert_eq!(
             effects
-                .fund_exact_and_confirm(address(AddressType::Standard), 5_000)
+                .fund_exact_and_confirm(&mining(&daemon), address(AddressType::Standard), 5_000)
                 .await,
             Err(MoneroWalletEffectError::Rpc {
                 operation: "open role wallet",
@@ -1729,17 +1746,26 @@ mod tests {
         let effects = effects(&daemon, &wallet);
         assert_eq!(
             effects
-                .mine_confirmations(address(AddressType::SubAddress))
+                .mine_confirmations(&mining(&daemon), address(AddressType::SubAddress))
                 .await,
             Err(MoneroWalletEffectError::NonStandardAddress)
         );
         assert!(daemon.methods().is_empty());
         assert_eq!(
             effects
-                .mine_confirmations(address(AddressType::Standard))
+                .mine_confirmations(&mining(&daemon), address(AddressType::Standard))
                 .await,
             Ok(120)
         );
+        // A proof of another daemon mines nothing.
+        let other = FakeRpc::spawn(daemon_answer).await;
+        assert_eq!(
+            effects
+                .mine_confirmations(&mining(&other), address(AddressType::Standard))
+                .await,
+            Err(MoneroWalletEffectError::MiningNotProvenForThisDaemon)
+        );
+        assert!(other.methods().is_empty());
         assert_eq!(
             daemon.request(0)["params"]["amount_of_blocks"],
             REQUIRED_MONERO_CONFIRMATIONS
@@ -1749,7 +1775,7 @@ mod tests {
         assert_eq!(
             MoneroRegtestWalletEffects::new(&short.endpoint, &wallet.endpoint)
                 .expect("effects")
-                .mine_confirmations(address(AddressType::Standard))
+                .mine_confirmations(&mining(&short), address(AddressType::Standard))
                 .await,
             Err(MoneroWalletEffectError::ConfirmationBlockCountMismatch)
         );
@@ -1760,7 +1786,7 @@ mod tests {
         let wallet = FakeRpc::spawn(wallet_answer).await;
         let mine = async |daemon: &FakeRpc| {
             effects(daemon, &wallet)
-                .mine_confirmations(address(AddressType::Standard))
+                .mine_confirmations(&mining(daemon), address(AddressType::Standard))
                 .await
         };
 
@@ -1872,7 +1898,7 @@ mod tests {
         // A transfer is sent once: a second could pay twice.
         let lost = FakeRpc::spawn_failing(wallet_answer, "transfer", 1).await;
         let Err(MoneroWalletEffectError::Rpc { operation, .. }) = role(&lost)
-            .fund_exact_and_confirm(address(AddressType::Standard), 5_000)
+            .fund_exact_and_confirm(&mining(&daemon), address(AddressType::Standard), 5_000)
             .await
         else {
             panic!("a failed transfer fails the funding");

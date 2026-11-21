@@ -21,11 +21,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    ActorRole, M4_MONERO_CONFIRMATIONS, M4_MONERO_DAEMON_VERSION, M4_MONERO_EVIDENCE_MAX_BYTES,
-    M4_MONERO_NETWORK_SCOPE, M4_MONERO_RECEIPT_SCHEMA, M4_MONERO_WALLET_VERSION,
-    MoneroReceiptEvidenceV2, SecureDestination, XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
-    XMR_EFFECT_AUTHORITY_MAX_BYTES, canonical_json_bytes, decode_exact,
-    discovered_finalized_xmr_facts,
+    ActorRole, M4_MONERO_CONFIRMATIONS, M4_MONERO_EVIDENCE_MAX_BYTES, M4_MONERO_RECEIPT_SCHEMA,
+    M4_MONERO_WALLET_VERSION, MoneroEvidenceScope, MoneroReceiptEvidenceV2, SecureDestination,
+    XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XMR_EFFECT_AUTHORITY_MAX_BYTES, canonical_json_bytes,
+    decode_exact, discovered_finalized_xmr_facts,
     effect_input_custody::{
         XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE, XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE,
         XMR_EFFECT_MAKER_CLAIM_SIGNATURE_FILE, parse_private_view_key_bytes,
@@ -1204,6 +1203,11 @@ fn validate_funding_pair(
     let genesis_hash = hex::encode(agreement.body().monero().genesis_hash());
     let shared_address = agreement.shared_address().address_string();
     let amount = agreement.body().monero().amount_piconero();
+    let scope = MoneroEvidenceScope::of_genesis(agreement.body().monero().genesis_hash());
+    ensure!(
+        scope.network() == crate::agreement_monero_network(agreement),
+        "the Stage-A Monero genesis is not its profile's network"
+    );
     ensure!(
         funding.schema == FUNDING_SCHEMA
             && funding.attempt_state == "confirmed"
@@ -1212,7 +1216,7 @@ fn validate_funding_pair(
             && funding.amount_piconero == amount
             && funding.required_confirmations == M4_MONERO_CONFIRMATIONS
             && funding.wallet_role == "stage_a_shared_view_only"
-            && funding.network_scope == M4_MONERO_NETWORK_SCOPE
+            && funding.network_scope == scope.name()
             && !funding.public_rpc_used
             && !funding.faucet_used
             && !funding.automatic_submission_retry,
@@ -1229,11 +1233,11 @@ fn validate_funding_pair(
             && receipt.confirmations >= funding.required_confirmations
             && receipt.stable_tip_height == confirmation_tip_height
             && receipt.stable_tip_height >= receipt.containing_block_height
-            && receipt.peer_count == 0
-            && receipt.daemon_version == M4_MONERO_DAEMON_VERSION
+            && scope.admits_peer_count(receipt.peer_count)
+            && scope.admits_daemon_version(&receipt.daemon_version)
             && receipt.target_wallet_version == M4_MONERO_WALLET_VERSION
             && receipt.foreign_wallet_version == M4_MONERO_WALLET_VERSION
-            && receipt.network_scope == M4_MONERO_NETWORK_SCOPE
+            && receipt.network_scope == scope.name()
             && !receipt.public_rpc_used
             && !receipt.faucet_used,
         "independent Monero funding receipt differs from Stage A or funding evidence"
@@ -1245,7 +1249,8 @@ fn validate_funding_pair(
         .ok_or_else(|| anyhow!("Monero funding confirmation heights overflow"))?;
     ensure!(
         receipt.confirmations == exact_confirmations
-            && funding.restore_height <= receipt.containing_block_height,
+            && funding.restore_height <= receipt.containing_block_height
+            && scope.admits_restore_height(funding.restore_height, receipt.containing_block_height),
         "Monero funding receipt has inconsistent chain positions"
     );
     let transaction = decode_exact::<32>(transaction_id)?;

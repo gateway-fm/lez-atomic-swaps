@@ -54,7 +54,7 @@ use xmr_reference_actor::{
     XMR_MAKER_FUNDING_RECEIPT_FILE, XMR_MAKER_LEZ_SCAN_FILE, XMR_MONERO_FUNDING_NOT_SENT_EXIT,
     XmrEffectObserverStateV1, XmrMakerEffectSourcesV1, XmrPreparedEffectInvocationV1,
     activate_maker_claim_workflow_bytes, activate_maker_punish_workflow_bytes,
-    activate_maker_refund_workflow_bytes, complete_maker_claim_signature,
+    activate_maker_refund_workflow_bytes, agreement_monero_network, complete_maker_claim_signature,
     ingest_maker_refund_signature, load_validated_xmr_maker_authority_fd,
     load_validated_xmr_maker_effect_execution_fd, parse_xmr_effect_observer_result_v1,
     reconcile_maker_monero_funding_bytes, xmr_maker_submission_unwritten,
@@ -66,6 +66,11 @@ use zeroize::Zeroizing;
 const EFFECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// A Monero effect mines its confirmations and restores a wallet.
 const MONERO_EFFECT_TIMEOUT: Duration = Duration::from_mins(2);
+/// The same on a public network: no mining, but a wallet restored or
+/// refreshed through a public node pulls Stagenet's block hashes to its
+/// restore height and the blocks after it (minutes on 2026-11-21), and the
+/// node may stop answering this host for a while.
+const PUBLIC_MONERO_EFFECT_TIMEOUT: Duration = Duration::from_mins(6);
 const LEZ_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long the funding's monerod probe waits to connect and for an answer.
 const MONEROD_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -176,6 +181,10 @@ struct Facts {
     cutoff_ms: u64,
     refund_ms: u64,
     punish_ms: u64,
+    /// From when a funding sent and not yet observed is in doubt: `C` on
+    /// Regtest, where its tool mines it at once; the claim deadline on a
+    /// public network, whose miners take tens of minutes to confirm it.
+    funding_doubt_ms: u64,
     /// Consensus time of the block holding the Taker's finalized tag-13
     /// funding, once a drive saw it.
     tag13_final_ms: Option<u64>,
@@ -238,7 +247,7 @@ fn derive_status(facts: &Facts, now_ms: u64) -> Status {
             Funding::Reconciled => Status::new("both_legs_locked", "observe_claim_or_refund"),
             // Still observed; past the cutoff a funding the observer has not
             // found needs the owner (the tool's failure is in the Node log).
-            Funding::Invoked if now_ms >= facts.cutoff_ms => {
+            Funding::Invoked if now_ms >= facts.funding_doubt_ms => {
                 Status::new("maker_funding_in_doubt", "fund_monero")
             }
             Funding::Invoked => Status::new("taker_lock_confirmed", "fund_monero"),
@@ -556,19 +565,33 @@ fn drive(config_fd: i32) -> Result<EffectOutput> {
 /// Stage A's funding cutoff, refund and punish times. Validating Stage A
 /// verifies both cross-curve proofs (about a second of CPU), so an actor
 /// process does it once.
-fn windows_ms(agreement: &XmrAgreementV1) -> [u64; 3] {
+fn windows_ms(agreement: &XmrAgreementV1) -> [u64; 4] {
     let windows = agreement.body().windows();
-    [
+    let (cutoff, refund) = (
         windows.maker_xmr_funding_cutoff_ms(),
         windows.refund_at_ms(),
-        windows.punish_at_ms(),
-    ]
+    );
+    let funding_doubt = if agreement_monero_network(agreement).mined_by_the_role() {
+        cutoff
+    } else {
+        refund.saturating_sub(refund.saturating_sub(cutoff) / 2)
+    };
+    [cutoff, refund, windows.punish_at_ms(), funding_doubt]
+}
+
+/// How long one Monero effect tool may run on the agreement's network.
+fn monero_effect_timeout(agreement: &XmrAgreementV1) -> Duration {
+    if agreement_monero_network(agreement).mined_by_the_role() {
+        MONERO_EFFECT_TIMEOUT
+    } else {
+        PUBLIC_MONERO_EFFECT_TIMEOUT
+    }
 }
 
 /// The Maker's journal and evidence, with the clock windows of Stage A.
 fn read_facts(
     execution: &ValidatedXmrEffectExecutionV3,
-    [cutoff_ms, refund_ms, punish_ms]: [u64; 3],
+    [cutoff_ms, refund_ms, punish_ms, funding_doubt_ms]: [u64; 4],
 ) -> Result<Facts> {
     let identity = execution.workflow_identity();
     let workflow =
@@ -613,6 +636,7 @@ fn read_facts(
         cutoff_ms,
         refund_ms,
         punish_ms,
+        funding_doubt_ms,
         tag13_final_ms,
         funding,
         branch,
@@ -754,7 +778,8 @@ struct LiveMaker {
     execution: ValidatedXmrEffectExecutionV3,
     sources: XmrMakerEffectSourcesV1,
     terms: XmrNativeEscrowTermsV3,
-    windows: [u64; 3],
+    windows: [u64; 4],
+    monero_timeout: Duration,
     actor_lock: ActorHeldLock,
     workflow_lock: ActorHeldLock,
     runtime: tokio::runtime::Runtime,
@@ -773,6 +798,7 @@ impl LiveMaker {
             sources,
             terms,
             windows: windows_ms(&agreement),
+            monero_timeout: monero_effect_timeout(&agreement),
             actor_lock,
             workflow_lock,
             runtime: tokio::runtime::Builder::new_current_thread()
@@ -1090,7 +1116,7 @@ impl MakerChains for LiveMaker {
             .context("prepare the Maker's Monero funding")?
         {
             XmrPreparedEffectInvocationV1::InvokeOnce { mut command, .. } => {
-                match run_silent(&mut command, MONERO_EFFECT_TIMEOUT) {
+                match run_silent(&mut command, self.monero_timeout) {
                     Ok(()) => Ok(()),
                     Err(error)
                         if error.downcast_ref::<ChildExit>()
@@ -1115,7 +1141,7 @@ impl MakerChains for LiveMaker {
 
     fn observe_fund(&mut self) -> Result<bool> {
         let Some((digest, _, _)) =
-            self.run_observer(XmrWorkflowStep::FundMonero, MONERO_EFFECT_TIMEOUT)?
+            self.run_observer(XmrWorkflowStep::FundMonero, self.monero_timeout)?
         else {
             return Ok(false);
         };
@@ -1140,7 +1166,7 @@ impl MakerChains for LiveMaker {
     }
 
     fn observe_effect(&mut self, step: XmrWorkflowStep, plan: [u8; 32]) -> Result<bool> {
-        let timeout = effect_timeout(step);
+        let timeout = effect_timeout(step, self.monero_timeout);
         let Some((evidence, observed_plan, source)) = self.run_observer(step, timeout)? else {
             return Ok(false);
         };
@@ -1169,7 +1195,7 @@ impl MakerChains for LiveMaker {
             .execution
             .prepare_effect_redrive(step, &self.actor_lock, &self.workflow_lock)
             .context("prepare the XMR Maker effect's redrive")?;
-        run_silent(&mut command, effect_timeout(step)).map_err(|error| {
+        run_silent(&mut command, effect_timeout(step, self.monero_timeout)).map_err(|error| {
             error.context("the XMR Maker effect's redrive failed; it is observed and driven again")
         })
     }
@@ -1208,13 +1234,14 @@ fn monerod_answers(url: &str) -> bool {
         && answer.starts_with(b"HTTP/1.")
 }
 
-/// A Monero effect mines its confirmations; a LEZ effect asks the sidecar.
-fn effect_timeout(step: XmrWorkflowStep) -> Duration {
+/// A Monero effect mines its confirmations or waits on a public node
+/// (`monero`, by the network); a LEZ effect asks the sidecar.
+fn effect_timeout(step: XmrWorkflowStep, monero: Duration) -> Duration {
     if matches!(
         step,
         XmrWorkflowStep::FundMonero | XmrWorkflowStep::SweepMoneroRefund
     ) {
-        MONERO_EFFECT_TIMEOUT
+        monero
     } else {
         EFFECT_TIMEOUT
     }
@@ -1280,7 +1307,7 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOu
     {
         maker.record_activation(branch)?;
     }
-    let timeout = effect_timeout(recovery_step);
+    let timeout = effect_timeout(recovery_step, maker.monero_timeout);
 
     if recovery_requires_preflight(recovery_step) {
         execute_preflight(
@@ -1566,6 +1593,7 @@ mod tests {
             cutoff_ms: C,
             refund_ms: R,
             punish_ms: P,
+            funding_doubt_ms: C,
             tag13_final_ms: None,
             funding: Funding::NotInvoked,
             branch: None,
@@ -1673,6 +1701,15 @@ mod tests {
         swap.funding = Funding::Invoked;
         assert_eq!(status(swap, 1), ("taker_lock_confirmed", "fund_monero"));
         assert_eq!(status(swap, P), ("maker_funding_in_doubt", "fund_monero"));
+        // On a public network a funding still confirming after C is not in
+        // doubt until the claim deadline.
+        let mut public = swap;
+        public.funding_doubt_ms = public.claim_deadline_ms();
+        assert_eq!(status(public, C), ("taker_lock_confirmed", "fund_monero"));
+        assert_eq!(
+            status(public, public.claim_deadline_ms()),
+            ("maker_funding_in_doubt", "fund_monero")
+        );
         swap.funding = Funding::NotSent;
         assert_eq!(status(swap, 1), ("expired", "complete"));
         swap.funding = Funding::Reconciled;

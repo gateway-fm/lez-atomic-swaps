@@ -23,7 +23,7 @@ use lez_btc_role_lifecycle::{
     BtcRoleRuntime, SwapLayout, SwapSidecar,
     layout::{read_private, write_private_exact},
 };
-use lez_xmr_monero_adapter::{MoneroChainIdentityAttestor, MoneroNetwork};
+use lez_xmr_monero_adapter::MoneroChainIdentityAttestor;
 use lez_xmr_swap_sdk::MoneroPrivateViewKey;
 use xmr_reference_actor::{
     ActorRole, XMR_ADAPTOR_JOURNAL_FILE, XMR_MAKER_PACKET_FILE, XMR_STAGE_A_FILE, XMR_STAGE_B_FILE,
@@ -239,11 +239,13 @@ impl XmrMakerReservations {
     }
 
     /// This Maker's monerod: its genesis and its tip height, which becomes
-    /// the agreement's restore height.
+    /// the agreement's restore height. The daemon must serve the role's
+    /// configured network, by its genesis and by its own `get_info`.
     async fn chain_view(&self) -> anyhow::Result<XmrMoneroChainView> {
         let attestor =
-            MoneroChainIdentityAttestor::new(MoneroNetwork::Regtest, &self.config.monerod()?)?;
+            MoneroChainIdentityAttestor::new(self.config.network(), &self.config.monerod()?)?;
         let identity = attestor.discover().await?;
+        attestor.verify_network().await?;
         Ok(XmrMoneroChainView {
             genesis: identity.genesis_hash(),
             tip_height: attestor.tip_height().await?,
