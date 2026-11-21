@@ -935,3 +935,96 @@ fn a_stranger_cannot_create_the_custody_ata_before_the_escrow_exists() {
         Account::default()
     );
 }
+
+/// A stranger credits the full amount after `Initialize` and before the
+/// depositor funds. The escrow is still `Empty`: no claim and no refund can
+/// run, so nobody may treat the custody as the depositor's lock. When the
+/// depositor funds, the refund pays the recorded depositor the whole balance,
+/// the stranger's credit included; the stranger never gets it back.
+#[test]
+fn a_full_amount_credit_before_funding_is_not_a_lock() {
+    let mut chain = Native::new(&[]);
+    let full = transaction(
+        &chain.state,
+        chain.transfer_program,
+        vec![chain.claimant, chain.custody],
+        &[(chain.claimant, &chain.claimant_key)],
+        AuthenticatedTransferInstruction::Transfer { amount: 10 },
+    );
+    // The claimant holds 10; the escrow amount below is 10 for this case.
+    let initialize = transaction(
+        &chain.state,
+        ZEC_ESCROW_V02_ID,
+        vec![
+            chain.metadata,
+            chain.custody,
+            chain.depositor,
+            chain.claimant,
+        ],
+        &[(chain.depositor, &chain.depositor_key)],
+        EscrowInstruction::InitializeNative {
+            swap_id: SWAP_ID,
+            terms_hash: [31; 32],
+            secret_digest: Sha256::digest(PREIMAGE).into(),
+            amount: 10,
+            refund_at: REFUND_AT,
+            authenticated_transfer_program: chain.transfer_program,
+        },
+    );
+    chain
+        .submit(&initialize, 100)
+        .expect("the escrow initializes");
+    chain
+        .submit(&full, 100)
+        .expect("the counterparty credits the full amount itself");
+    assert_eq!(status(&chain.state, chain.metadata), EscrowStatus::Empty);
+    assert_eq!(balance(&chain.state, chain.custody), 10);
+
+    let claim = transaction(
+        &chain.state,
+        ZEC_ESCROW_V02_ID,
+        vec![chain.metadata, chain.custody, chain.claimant],
+        &[(chain.claimant, &chain.claimant_key)],
+        EscrowInstruction::ClaimNative {
+            swap_id: SWAP_ID,
+            preimage: PREIMAGE,
+        },
+    );
+    assert!(
+        chain.submit(&claim, REFUND_AT - 1).is_err(),
+        "a credited Empty escrow pays no claim"
+    );
+    let refund = transaction(
+        &chain.state,
+        ZEC_ESCROW_V02_ID,
+        vec![chain.metadata, chain.custody, chain.depositor],
+        &[],
+        EscrowInstruction::RefundNative { swap_id: SWAP_ID },
+    );
+    assert!(
+        chain.submit(&refund, REFUND_AT).is_err(),
+        "a credited Empty escrow pays no refund"
+    );
+
+    let mut funded = chain.branch();
+    funded.fund().expect("the depositor still funds");
+    assert_eq!(status(&funded.state, funded.metadata), EscrowStatus::Funded);
+    let depositor_before = balance(&funded.state, funded.depositor);
+    let refund = transaction(
+        &funded.state,
+        ZEC_ESCROW_V02_ID,
+        vec![funded.metadata, funded.custody, funded.depositor],
+        &[],
+        EscrowInstruction::RefundNative { swap_id: SWAP_ID },
+    );
+    funded
+        .submit(&refund, REFUND_AT)
+        .expect("the refund commits");
+    assert_eq!(balance(&funded.state, funded.custody), 0);
+    assert_eq!(
+        balance(&funded.state, funded.depositor),
+        depositor_before + 20,
+        "the recorded depositor gets its lot and the credit"
+    );
+    assert_eq!(balance(&funded.state, funded.claimant), 0);
+}

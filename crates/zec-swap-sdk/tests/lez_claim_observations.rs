@@ -119,6 +119,18 @@ fn prepared_observation_requires_the_exact_durable_submission_identity() {
     );
 }
 
+/// TM-0032: anyone can credit the custody, in the claim's own block too, so
+/// a claimed escrow whose custody holds a stranger's credit is still claimed.
+#[test]
+fn a_claimed_escrow_with_a_credited_custody_is_claim_evidence() {
+    let agreement = agreement();
+    RevealingClaimEvidenceV1::from_lez_claim_snapshot(
+        &agreement,
+        claim_snapshot(&agreement, Mutation::CustodyCredited),
+    )
+    .expect("a credited custody does not undo the claim");
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn negative_matrix_rejects_each_independent_node_or_agreement_deviation() {
@@ -221,10 +233,6 @@ fn negative_matrix_rejects_each_independent_node_or_agreement_deviation() {
             LezClaimObservationError::CustodyBindingMismatch,
         ),
         (
-            Mutation::CustodyNotEmptied,
-            LezClaimObservationError::CustodyBindingMismatch,
-        ),
-        (
             Mutation::InvalidDepth,
             chain(LezObservationError::InvalidConfirmationDepth),
         ),
@@ -276,7 +284,7 @@ enum Mutation {
     MetadataStatus,
     CustodyAccount,
     CustodyOwner,
-    CustodyNotEmptied,
+    CustodyCredited,
     InvalidDepth,
 }
 
@@ -461,7 +469,7 @@ fn claim_snapshot(agreement: &ZecAgreementV1, mutation: Mutation) -> LezClaimNod
             } else {
                 *authenticated_transfer_program_id
             },
-            balance: u128::from(matches!(mutation, Mutation::CustodyNotEmptied)),
+            balance: u128::from(matches!(mutation, Mutation::CustodyCredited)),
         },
     )
 }

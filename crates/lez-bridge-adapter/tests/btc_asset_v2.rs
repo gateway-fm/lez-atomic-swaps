@@ -647,6 +647,34 @@ async fn first_lock_proof_fails_closed_on_finality_placement_and_exact_effect_dr
     }
 }
 
+/// TM-0032: anyone can credit the custody ATA, so a funded custody holding
+/// more than the amount is still the Taker's first lock.
+#[tokio::test]
+async fn first_lock_proof_accepts_a_credited_custody() {
+    let agreement = agreement(SwapDirection::TakerSellsLez);
+    let selected = token_asset(&agreement, 40);
+    let binding = BtcLezAssetBridgeBindingV2::new(
+        &agreement,
+        &extension(&agreement, selected.clone()),
+        &selected,
+    )
+    .expect("binding");
+    let preparation = asset_preparation(&binding, token_effects());
+    adapter(
+        RecordingTransport::with_asset_proof(AssetProofMutation::CreditedCustody),
+        Participant::Maker,
+        runtime(Participant::Maker),
+    )
+    .prove_btc_asset_first_lock_v2(
+        &binding,
+        rid("prove-credited-custody"),
+        &preparation,
+        proof_window(),
+    )
+    .await
+    .expect("a credited custody is still the first lock");
+}
+
 #[tokio::test]
 async fn first_lock_proof_never_turns_missing_or_unavailable_reads_into_evidence() {
     let agreement = agreement(SwapDirection::TakerSellsLez);
@@ -806,6 +834,7 @@ enum AssetProofMutation {
     SameHeightFork,
     CustodyDrift,
     AmountDrift,
+    CreditedCustody,
     MetadataDrift,
     Missing,
     Unavailable,
@@ -1218,6 +1247,12 @@ fn mutate_asset_observation(
             custody.account_id = Hex32::from_bytes([77; 32]);
         }
         AssetProofMutation::AmountDrift => {
+            let WitnessedAssetCustodyFactsV2::CustomToken(custody) = &mut result.custody else {
+                unreachable!("token fixture")
+            };
+            custody.balance = NativeAmount::new(LEZ_AMOUNT - 1);
+        }
+        AssetProofMutation::CreditedCustody => {
             let WitnessedAssetCustodyFactsV2::CustomToken(custody) = &mut result.custody else {
                 unreachable!("token fixture")
             };

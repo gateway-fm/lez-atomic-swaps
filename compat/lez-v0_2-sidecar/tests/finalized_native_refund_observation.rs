@@ -950,8 +950,10 @@ async fn state_only_reads_metadata_and_custody_concurrently() {
     );
 }
 
+/// TM-0032: anyone can credit the custody, after the refund as before it,
+/// so a refunded escrow is recognised whatever its custody holds.
 #[tokio::test]
-async fn finalized_refund_requires_zero_custody_at_the_containing_block() {
+async fn finalized_refund_is_recognised_with_a_credited_custody() {
     let mut fixture = fixture().await;
     fixture
         .accounts
@@ -965,8 +967,70 @@ async fn finalized_refund_requires_zero_custody_at_the_containing_block() {
         indexer(&fixture),
     );
 
+    let result = observer.observe(&fixture.request).await.unwrap();
+    let NativeEscrowAccountObservation::Found(accounts) = result.accounts else {
+        panic!("refunded terminal accounts")
+    };
     assert_eq!(
-        observer.observe(&fixture.request).await.unwrap_err(),
+        accounts.metadata.status(),
+        lez_bridge_protocol::EscrowState::Refunded
+    );
+    assert!(matches!(result.refund, NativeRefundObservation::Found(_)));
+}
+
+/// TM-0032: a funded custody holds at least the amount; a credit on top is
+/// reported as it is, and less than the amount is never a funded escrow.
+#[tokio::test]
+async fn funded_state_accepts_a_credited_custody_and_refuses_a_short_one() {
+    let amount_of = |fixture: &Fixture| {
+        fixture
+            .request
+            .terms
+            .witnessed()
+            .unwrap()
+            .amount()
+            .as_u128()
+    };
+    let mut case = fixture().await;
+    case.request.target = NativeRefundObservationTarget::StateOnly;
+    let amount = amount_of(&case);
+    set_state(
+        &mut case,
+        [FINALIZED_TIP_ID],
+        EscrowStatus::Funded,
+        amount + 1,
+    );
+    let observer = FinalizedWitnessedRefundObserver::new(
+        case.runtime.clone(),
+        Arc::clone(&case.planner),
+        indexer(&case),
+    );
+    let result = observer.observe(&case.request).await.unwrap();
+    let NativeEscrowAccountObservation::Found(accounts) = result.accounts else {
+        panic!("funded state-only accounts")
+    };
+    assert_eq!(
+        accounts.metadata.status(),
+        lez_bridge_protocol::EscrowState::Funded
+    );
+    assert_eq!(accounts.custody.balance.as_u128(), amount + 1);
+
+    let mut case = fixture().await;
+    case.request.target = NativeRefundObservationTarget::StateOnly;
+    let amount = amount_of(&case);
+    set_state(
+        &mut case,
+        [FINALIZED_TIP_ID],
+        EscrowStatus::Funded,
+        amount - 1,
+    );
+    let observer = FinalizedWitnessedRefundObserver::new(
+        case.runtime.clone(),
+        Arc::clone(&case.planner),
+        indexer(&case),
+    );
+    assert_eq!(
+        observer.observe(&case.request).await.unwrap_err(),
         BridgeRuntimeError::InvalidObservation
     );
 }
