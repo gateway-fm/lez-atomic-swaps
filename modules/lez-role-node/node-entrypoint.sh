@@ -47,8 +47,11 @@ fi
 # request at a time and the Node's own tools hold it for seconds (each
 # open_wallet 2-4 s, refreshes, a transfer and its mining), so a probe there
 # read a busy wallet as down and the Maker withdrew its Monero offers for good.
+# No -f: a Stagenet node without a login (a public one) answers the Digest
+# exchange so that curl -f fails although the answer is 200; what decides is
+# the answer, which must be get_info's JSON with status OK.
 if [[ "${1:-}" == probe-monero ]]; then
-  curl_login "${2:?monerod login}" -sf --max-time 2 --digest -H 'content-type: application/json' \
+  curl_login "${2:?monerod login}" -s --max-time 4 --digest -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"get_info"}' http://127.0.0.1:18081/json_rpc |
     jq -e '.result.status == "OK"' >/dev/null || exit 1
   exit 0
