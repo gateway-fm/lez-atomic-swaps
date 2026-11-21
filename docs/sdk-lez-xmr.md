@@ -95,6 +95,11 @@ whose header gives the sources):
   not built here. Its two Pedersen generators are the ones used here:
   `alternate_generators_are_the_published_nums_points` derives them from their
   definitions (BIP-341's NUMS point on secp256k1, Monero's `H` on Ed25519).
+  Run outside the repository against this SDK, it gives the same generators
+  and the same two public keys for the same scalar, and no proof of either
+  library verifies under the other; what was run, and why that replaces the
+  vector conformance rfp#124 asks for (COMIT publishes no vectors), is
+  erratum [GW-M4-001](proposal-acceptance-errata.md).
 - `eigenwallet/core`, the community fork that continues COMIT's archived
   `xmr-btc-swap`, uses `sigma_fun`'s proof with the same two
   generators and the same transcript, on `sigma_fun` 0.7.0, whose proof code
