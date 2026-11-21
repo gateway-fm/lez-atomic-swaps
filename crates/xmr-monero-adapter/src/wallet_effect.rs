@@ -394,7 +394,41 @@ impl MoneroRegtestWalletEffects {
                 .await
                 .map_err(rpc_error("funding wallet address"))?
                 .address;
+        let transaction_id = self.submit_exact(destination, amount).await?;
+        let confirmation_tip_height = self.mine_confirmations(mining_address).await?;
+        Ok(ConfirmedMoneroFunding {
+            transaction_id,
+            amount_piconero: amount.get(),
+            confirmation_tip_height,
+        })
+    }
 
+    /// Submits one exact transfer from the role wallet (or, without one, the
+    /// currently open wallet) to the Stage-A shared address and returns its
+    /// transaction; it never mines. This is the funding effect for a network
+    /// whose blocks others mine, such as Stagenet: the caller waits for the
+    /// confirmations with [`crate::MoneroOutputVerifier`].
+    ///
+    /// # Errors
+    ///
+    /// Fails before submission for an address that is not a standard one or a
+    /// zero amount, and fails closed on a typed wallet response mismatch.
+    pub async fn fund_shared_exact_once(
+        &self,
+        destination: &MoneroSharedAddressV1,
+        amount_piconero: u64,
+    ) -> Result<MoneroTransactionId, MoneroWalletEffectError> {
+        let destination = parse_shared_standard_address(destination)?;
+        let amount = NonZeroU64::new(amount_piconero).ok_or(MoneroWalletEffectError::ZeroAmount)?;
+        self.open_role_wallet().await?;
+        self.submit_exact(destination, amount).await
+    }
+
+    async fn submit_exact(
+        &self,
+        destination: Address,
+        amount: NonZeroU64,
+    ) -> Result<MoneroTransactionId, MoneroWalletEffectError> {
         let mut destinations = HashMap::with_capacity(1);
         destinations.insert(destination, Amount::from_pico(amount.get()));
         let transfer = self
@@ -413,13 +447,7 @@ impl MoneroRegtestWalletEffects {
         if transfer.amount.as_pico() != amount.get() {
             return Err(MoneroWalletEffectError::FundingAmountMismatch);
         }
-
-        let confirmation_tip_height = self.mine_confirmations(mining_address).await?;
-        Ok(ConfirmedMoneroFunding {
-            transaction_id: transfer.tx_hash.0,
-            amount_piconero: amount.get(),
-            confirmation_tip_height,
-        })
+        Ok(transfer.tx_hash.0)
     }
 
     /// Funds the exact Stage-A shared address and locally generates ten
@@ -1545,6 +1573,44 @@ mod tests {
             serde_json::json!({ "filename": "maker", "password": "" })
         );
         assert_eq!(daemon.methods(), ["generateblocks"]);
+    }
+
+    #[tokio::test]
+    async fn shared_funding_once_submits_one_transfer_and_never_mines() {
+        let daemon = FakeRpc::spawn(daemon_answer).await;
+        let wallet = FakeRpc::spawn(wallet_answer).await;
+        let effects = effects(&daemon, &wallet)
+            .with_role_wallet("maker".to_owned(), String::new())
+            .expect("role wallet");
+        let prove = || {
+            let scalar = lez_xmr_swap_sdk::CrossCurveScalar::generate().expect("entropy");
+            lez_xmr_swap_sdk::CrossCurveDleqProofV1::prove(&scalar, &mut rand_core::OsRng)
+                .expect("DLEQ proof")
+        };
+        let view = MoneroPrivateViewKey::generate().expect("entropy");
+        let shared = MoneroSharedAddressV1::derive(
+            lez_xmr_swap_sdk::MoneroAddressNetworkV1::Stagenet,
+            &prove(),
+            &prove(),
+            &view,
+        )
+        .expect("Stagenet shared address");
+
+        assert_eq!(
+            effects.fund_shared_exact_once(&shared, 0).await,
+            Err(MoneroWalletEffectError::ZeroAmount)
+        );
+        let transaction = effects
+            .fund_shared_exact_once(&shared, 5_000)
+            .await
+            .expect("submitted");
+        assert_eq!(transaction, MoneroTransactionId::from([7; 32]));
+        assert_eq!(wallet.methods(), ["open_wallet", "transfer"]);
+        assert_eq!(
+            wallet.request(1)["params"]["destinations"][0]["address"],
+            serde_json::json!(shared.address_string())
+        );
+        assert!(daemon.methods().is_empty());
     }
 
     #[tokio::test]
