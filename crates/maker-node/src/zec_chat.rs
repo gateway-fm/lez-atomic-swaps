@@ -6,7 +6,7 @@ use anyhow::Context as _;
 
 use lez_zec_swap_sdk::ZecProfileId;
 
-use super::*;
+use super::{zec_reserve::Materialized, *};
 
 const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
 
@@ -163,10 +163,48 @@ fn complete_zec_chat(
         .zec_actor_provisioner
         .as_ref()
         .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker actor provisioning is unavailable"))?;
-    // A take-time reservation's template is made now, before the lookup below.
-    if let Some(reservations) = &context.zec_reservations {
-        reservations.materialize(&request.reservation_id, provisioner, now_unix_seconds)?;
+    // A take-time reservation's template is made now, before the lookup
+    // below, and only for a final agreement that countersigns its draft.
+    let materialized = match &context.zec_reservations {
+        Some(reservations) => reservations.materialize(
+            &request.reservation_id,
+            provisioner,
+            now_unix_seconds,
+            &request.final_agreement_wire,
+        )?,
+        None => Materialized::NotTakeTime,
+    };
+    let take_time = materialized == Materialized::Open;
+    let completed = complete_materialized_zec_chat(
+        request,
+        context,
+        completion_store,
+        provisioner,
+        now_unix_seconds,
+        take_time,
+    );
+    // A refusal after the template was made frees what the attempt took: the
+    // sidecar is retired and the outpoint is held only inside the grace. A
+    // swap completed before this attempt (a refused replay) is left alone.
+    if completed.is_err()
+        && take_time
+        && let Some(reservations) = &context.zec_reservations
+    {
+        reservations.refuse(&request.reservation_id);
     }
+    completed
+}
+
+fn complete_materialized_zec_chat(
+    request: &ZecChatCompleteRequestV1,
+    context: &MakerRpc,
+    completion_store: &SqliteZecRecoveryStore,
+    provisioner: &ZecMakerActorProvisioner,
+    now_unix_seconds: u64,
+    // The reservation was open when this attempt began: it records the
+    // completion before the commit.
+    take_time: bool,
+) -> RpcResult<ZecChatCompleteResponseV1> {
     // The Taker holds the swap secret in both directions and reveals it with
     // its claim of the Maker-funded leg; the Maker reads it from that claim.
     // A pinned template that carries a preimage is refused before the replay
@@ -191,6 +229,9 @@ fn complete_zec_chat(
         )
         .map_err(application_store_error)?
     {
+        if take_time && let Some(reservations) = &context.zec_reservations {
+            reservations.mark_completed(&request.reservation_id, &request.final_agreement_wire)?;
+        }
         return Ok(ZecChatCompleteResponseV1 {
             schema_version: 1,
             offer_revision: replay.offer_revision(),
@@ -209,6 +250,11 @@ fn complete_zec_chat(
         .provision(&request.final_agreement_wire, now_unix_seconds)
         .map_err(|_| rpc_error(INTERNAL_ERROR, "maker actor provisioning failed"))?;
     let swap_id: Box<str> = accepted.agreement().coordinator().id().as_str().into();
+    // Recorded before the commit: a crash between the two holds the outpoint
+    // until the refund time, never frees it under a completed swap.
+    if take_time && let Some(reservations) = &context.zec_reservations {
+        reservations.mark_completed(&request.reservation_id, &request.final_agreement_wire)?;
+    }
     let commit = completion_store
         .complete_maker_zec_negotiation_and_register_actor_within_capacity(
             &request.request_id,

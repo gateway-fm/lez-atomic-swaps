@@ -6,13 +6,16 @@
 //! share the sidecar port bookkeeping): its Zcash key, a recovery key, the
 //! unsigned draft and the record of the round (the Maker holds no claim
 //! preimage, ADR 0216). The swap's sidecar and actor template are made only at
-//! `zec_chat_complete_v1`, once a countersigned agreement exists; from then on
-//! the template is in the actor registry and its sidecar is kept running, also
-//! across a Node restart.
+//! `zec_chat_complete_v1`, once the final agreement validates and countersigns
+//! the reserved draft; a completion refused after that retires the sidecar
+//! again. A completed swap's template is in the actor registry and its sidecar
+//! is kept running, also across a Node restart. The completion record in the
+//! swap directory (`zec-completion.json`), not the template, decides how long
+//! the reservation holds its outpoint: a completed swap's until the agreement's
+//! LEZ refund time.
 
 use std::{
     fs,
-    os::unix::fs::DirBuilderExt as _,
     path::{Path, PathBuf},
 };
 
@@ -107,6 +110,102 @@ fn template_file(layout: &SwapLayout) -> PathBuf {
     layout.root().join(ROLE_DIRECTORY).join("actor-config.json")
 }
 
+const COMPLETION_FILE: &str = "zec-completion.json";
+
+/// Where a reservation's completion stands, recorded in the swap directory
+/// before every step that depends on it, so the outpoint commitment follows
+/// the completion rather than the existence of a template.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CompletionState {
+    /// The agreement was valid and the template is being made: the
+    /// reservation holds its outpoint only inside its grace, as before.
+    Pending,
+    /// The Maker refused the completion after it made the template: the
+    /// sidecar is retired, and the outpoint is held only inside the grace.
+    Refused,
+    /// The Maker provisioned its actor (the store commit follows): the
+    /// outpoint is held until the agreement's LEZ refund time.
+    Completed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ZecCompletionRecordV1 {
+    schema_version: u16,
+    state: CompletionState,
+    /// The LEZ refund time of the agreement, in Unix seconds. Past it the
+    /// Maker no longer funds: its outpoint was spent by the funding or will
+    /// never be.
+    release_at_unix_seconds: u64,
+}
+
+impl ZecCompletionRecordV1 {
+    fn load(layout: &SwapLayout) -> Option<Self> {
+        let bytes = read_private(&layout.root().join(COMPLETION_FILE), MAX_RECORD_BYTES).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Replaces the record by one rename of a synced file.
+    fn store(self, layout: &SwapLayout) -> anyhow::Result<()> {
+        let target = layout.root().join(COMPLETION_FILE);
+        let temporary = layout.root().join(".zec-completion.json.new");
+        let _ = fs::remove_file(&temporary);
+        write_private_exact(&temporary, &serde_json::to_vec_pretty(&self)?)?;
+        fs::rename(&temporary, &target)?;
+        fs::File::open(layout.root())?.sync_all()?;
+        Ok(())
+    }
+}
+
+/// Whether a reservation holds its outpoint at `now`, and whether it still
+/// counts as a live (uncompleted) reservation.
+///
+/// A completion that the Maker refused, or that never got past its template,
+/// holds the outpoint only inside the reservation's grace. A completed one
+/// holds it until the agreement's LEZ refund time, so a Taker that completes
+/// and never funds cannot pin it for good. A template with no completion
+/// record is a swap completed before the record existed: it keeps its
+/// outpoint, as it did then.
+fn holds_outpoint(
+    expires_at_unix_seconds: u64,
+    completion: Option<ZecCompletionRecordV1>,
+    template: bool,
+    now: u64,
+) -> (bool, bool) {
+    let in_grace = now < expires_at_unix_seconds;
+    match completion.map(|record| (record.state, record.release_at_unix_seconds)) {
+        Some((CompletionState::Completed, release)) => (now < release, false),
+        None if template => (true, false),
+        Some((CompletionState::Pending | CompletionState::Refused, _)) | None => {
+            (in_grace, in_grace)
+        }
+    }
+}
+
+/// What a completion found for its reservation id.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Materialized {
+    /// No take-time reservation: a static catalog swap.
+    NotTakeTime,
+    /// A take-time reservation not yet completed; its template is ready.
+    Open,
+    /// A take-time reservation already completed (a replay).
+    Completed,
+}
+
+/// The LEZ refund time of a countersigned agreement, in Unix seconds.
+fn release_time(final_agreement_wire: &[u8]) -> Result<u64, ErrorObjectOwned> {
+    let accepted = AcceptedZecAgreementV1::accept_wire_at(
+        final_agreement_wire,
+        lez_swap_core::UnixSeconds::new(0),
+        Participant::Maker,
+        0,
+    )
+    .map_err(invalid_request)?;
+    Ok(accepted.agreement().lez_refund_at_ms().div_ceil(1_000))
+}
+
 impl ZecMakerReservations {
     /// Binds the Zcash role configuration to the LEZ role of the Node-owned
     /// lifecycle's configuration file: its identity, signer, swaps root and
@@ -165,15 +264,77 @@ impl ZecMakerReservations {
         let mut committed = Vec::new();
         let mut live = 0;
         for (_, layout, record) in self.records() {
-            let completed = template_file(&layout).is_file();
-            if completed || now < record.expires_at_unix_seconds {
+            let (holds, is_live) = holds_outpoint(
+                record.expires_at_unix_seconds,
+                ZecCompletionRecordV1::load(&layout),
+                template_file(&layout).is_file(),
+                now,
+            );
+            if holds {
                 committed.push(candidate(&record.funding));
             }
-            if !completed && now < record.expires_at_unix_seconds {
+            if is_live {
                 live += 1;
             }
         }
         (committed, live)
+    }
+
+    /// Whether the reservation's completion is recorded as completed, or
+    /// predates the completion record (a template and no record).
+    fn completed(layout: &SwapLayout) -> bool {
+        match ZecCompletionRecordV1::load(layout) {
+            Some(record) => record.state == CompletionState::Completed,
+            None => template_file(layout).is_file(),
+        }
+    }
+
+    /// Records the completion before the store commit that follows it.
+    pub(super) fn mark_completed(
+        &self,
+        reservation_id: &RequestId,
+        final_agreement_wire: &[u8],
+    ) -> RpcResult<()> {
+        let layout = self.layout(reservation_id);
+        if ZecReservationRecordV1::load(layout.root()).is_err() {
+            return Ok(());
+        }
+        ZecCompletionRecordV1 {
+            schema_version: 1,
+            state: CompletionState::Completed,
+            release_at_unix_seconds: release_time(final_agreement_wire)?,
+        }
+        .store(&layout)
+        .map_err(|error| internal(&error))
+    }
+
+    /// After a refused completion of a reservation that was open when the
+    /// attempt began ([`Materialized::Open`]): retire the sidecar the attempt
+    /// started and hold the outpoint only inside the grace.
+    pub(super) fn refuse(&self, reservation_id: &RequestId) {
+        let _serial = self.rounds.blocking_lock();
+        let layout = self.layout(reservation_id);
+        if ZecReservationRecordV1::load(layout.root()).is_err() {
+            return;
+        }
+        if let Err(error) = (ZecCompletionRecordV1 {
+            schema_version: 1,
+            state: CompletionState::Refused,
+            release_at_unix_seconds: 0,
+        })
+        .store(&layout)
+        {
+            eprintln!(
+                "maker ZEC reservation {}: refusal not recorded ({error:#})",
+                reservation_id.as_str()
+            );
+        }
+        if let Err(error) = SwapSidecar::retire(&layout) {
+            eprintln!(
+                "maker ZEC reservation {}: sidecar not retired ({error:#})",
+                reservation_id.as_str()
+            );
+        }
     }
 
     /// What this Maker can fund Zcash from (`maker_wallet_balances_v1`): its
@@ -202,7 +363,7 @@ impl ZecMakerReservations {
                 "the proposed ZEC draft is not the reserved draft",
             ));
         }
-        if !template_file(&layout).is_file() && now >= record.expires_at_unix_seconds {
+        if !Self::completed(&layout) && now >= record.expires_at_unix_seconds {
             return Err(invalid_request("the ZEC reservation expired"));
         }
         Ok(())
@@ -212,22 +373,60 @@ impl ZecMakerReservations {
     /// Maker's actor template around the reserved draft and registers it, so
     /// the existing completion provisions the actor from it. A completion of
     /// a static catalog swap, or a replay, finds nothing to do.
+    ///
+    /// Until the completion is recorded as completed, the final agreement is
+    /// checked first: it must validate now and countersign exactly the draft
+    /// this Maker reserved. A wire that fails starts nothing and writes
+    /// nothing.
     pub(super) fn materialize(
         &self,
         reservation_id: &RequestId,
         provisioner: &ZecMakerActorProvisioner,
         now: u64,
-    ) -> RpcResult<()> {
+        final_agreement_wire: &[u8],
+    ) -> RpcResult<Materialized> {
         let _serial = self.rounds.blocking_lock();
         let layout = self.layout(reservation_id);
         let Ok(record) = ZecReservationRecordV1::load(layout.root()) else {
-            return Ok(());
+            return Ok(Materialized::NotTakeTime);
         };
         let template = template_file(&layout);
-        if !template.is_file() {
+        let completed = Self::completed(&layout);
+        if !completed {
             if now >= record.expires_at_unix_seconds {
                 return Err(invalid_request("the ZEC reservation expired"));
             }
+            let accepted = AcceptedZecAgreementV1::accept_wire_at(
+                final_agreement_wire,
+                lez_swap_core::UnixSeconds::new(now),
+                Participant::Maker,
+                0,
+            )
+            .map_err(invalid_request)?;
+            let draft = ZecAgreementDraftV1::from_wire_at(
+                &record.response.unsigned_draft_wire,
+                lez_swap_core::UnixSeconds::new(now),
+            )
+            .map_err(|error| internal(&error))?;
+            if draft.commitment() != *accepted.agreement().agreement_commitment() {
+                return Err(invalid_request(
+                    "the final ZEC agreement does not countersign the reserved draft",
+                ));
+            }
+            if template.is_file() {
+                // A retry after a refusal: its sidecar was retired.
+                SwapSidecar::ensure(&self.runtime, &layout, reservation_id)
+                    .map_err(|error| internal(&error))?;
+            }
+        }
+        if !template.is_file() {
+            ZecCompletionRecordV1 {
+                schema_version: 1,
+                state: CompletionState::Pending,
+                release_at_unix_seconds: 0,
+            }
+            .store(&layout)
+            .map_err(|error| internal(&error))?;
             let runtime = &self.runtime;
             let sidecar = SwapSidecar::ensure(runtime, &layout, reservation_id)
                 .map_err(|error| internal(&error))?;
@@ -263,7 +462,12 @@ impl ZecMakerReservations {
         }
         provisioner
             .insert(&template)
-            .map_err(|error| internal(&error))
+            .map_err(|error| internal(&error))?;
+        Ok(if completed {
+            Materialized::Completed
+        } else {
+            Materialized::Open
+        })
     }
 
     /// Registers every completed reservation's template again after a
@@ -272,7 +476,7 @@ impl ZecMakerReservations {
     pub(super) fn restore(self: &Arc<Self>, provisioner: &ZecMakerActorProvisioner) {
         for (_, layout, _) in self.records() {
             let template = template_file(&layout);
-            if template.is_file()
+            if Self::completed(&layout)
                 && let Err(error) = provisioner.insert(&template)
             {
                 eprintln!(
@@ -285,7 +489,7 @@ impl ZecMakerReservations {
         std::thread::spawn(move || {
             loop {
                 for (reservation_id, layout, _) in reservations.records() {
-                    if template_file(&layout).is_file()
+                    if Self::completed(&layout)
                         && let Err(error) =
                             SwapSidecar::ensure(&reservations.runtime, &layout, &reservation_id)
                     {
@@ -308,6 +512,10 @@ pub(super) async fn reserve(
 ) -> RpcResult<ZecReserveResponseV1> {
     if request.schema_version != 1 || request.foreign_units == 0 {
         return Err(invalid_request("unsupported or empty ZEC reservation"));
+    }
+    // The id names the swap directory; decoding already refused any other.
+    if !request.reservation_id.is_reservation_id() {
+        return Err(invalid_request("the ZEC reservation id is not path-safe"));
     }
     let reservations = context
         .zec_reservations
@@ -389,13 +597,11 @@ pub(super) async fn reserve(
         .config
         .connect()
         .map_err(|error| internal(&error))?;
-    // Everything is made in a private stage beside the swap directory and
-    // published by one rename, so a crash leaves no half reservation.
-    let stage = PathBuf::from(format!("{}.zec-stage", layout.root().display()));
-    let _ = fs::remove_dir_all(&stage);
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&stage)
+    // Everything is made in a private stage outside the swaps root's id
+    // namespace and published by one rename, so a crash leaves no half
+    // reservation and no stage is ever another swap's directory.
+    let stage = layout
+        .fresh_stage("zec")
         .map_err(|error| internal(&error))?;
     let reserved = reserve_zec_maker_role(
         &reservations.config,
@@ -452,4 +658,69 @@ pub(super) async fn reserve(
         return Err(internal(&error));
     }
     Ok(response)
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::{CompletionState, ZecCompletionRecordV1, holds_outpoint};
+
+    const EXPIRES: u64 = 1_000;
+    const RELEASE: u64 = 5_000;
+
+    const fn record(state: CompletionState) -> ZecCompletionRecordV1 {
+        ZecCompletionRecordV1 {
+            schema_version: 1,
+            state,
+            release_at_unix_seconds: RELEASE,
+        }
+    }
+
+    /// A completion the Maker refused, or one that stopped at its template,
+    /// no longer pins the outpoint once the grace ends: before the fix a bad
+    /// completion wrote the template, and any template held the outpoint for
+    /// good.
+    #[test]
+    fn a_refused_or_unfinished_completion_holds_the_outpoint_only_in_its_grace() {
+        for state in [CompletionState::Pending, CompletionState::Refused] {
+            assert_eq!(
+                holds_outpoint(EXPIRES, Some(record(state)), true, 10),
+                (true, true)
+            );
+            assert_eq!(
+                holds_outpoint(EXPIRES, Some(record(state)), true, EXPIRES),
+                (false, false),
+                "{state:?}"
+            );
+        }
+    }
+
+    /// Audit C7: a Taker that completes and never funds pins the outpoint
+    /// until the agreement's LEZ refund time, not forever.
+    #[test]
+    fn a_completed_swap_releases_its_outpoint_at_the_refund_time() {
+        let completed = Some(record(CompletionState::Completed));
+        assert_eq!(
+            holds_outpoint(EXPIRES, completed, true, EXPIRES),
+            (true, false)
+        );
+        assert_eq!(
+            holds_outpoint(EXPIRES, completed, true, RELEASE - 1),
+            (true, false)
+        );
+        assert_eq!(
+            holds_outpoint(EXPIRES, completed, true, RELEASE),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn a_reservation_without_a_completion_holds_its_outpoint_in_its_grace() {
+        assert_eq!(holds_outpoint(EXPIRES, None, false, 10), (true, true));
+        assert_eq!(
+            holds_outpoint(EXPIRES, None, false, EXPIRES),
+            (false, false)
+        );
+        // A swap completed before the completion record existed.
+        assert_eq!(holds_outpoint(EXPIRES, None, true, u64::MAX), (true, false));
+    }
 }

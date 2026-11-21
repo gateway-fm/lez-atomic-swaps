@@ -81,26 +81,34 @@ impl SwapSidecar {
         let record = if let Ok(bytes) = read_private(&record_file, MAX_RECORD_BYTES) {
             serde_json::from_slice::<SidecarRecordV1>(&bytes).context("sidecar record")?
         } else {
-            let record = SidecarRecordV1 {
-                schema_version: 1,
-                port: free_port(runtime)?,
-                run_id: run_id.as_str().to_owned(),
-                capability_file: layout.root().join("sidecar-capability"),
-                state_directory: layout.root().join("sidecar-state"),
-                log_file: layout.root().join("sidecar.log"),
-            };
-            let mut capability = [0_u8; 32];
-            getrandom::fill(&mut capability)
-                .map_err(|_| anyhow::anyhow!("OS randomness unavailable"))?;
-            write_private_exact(
-                &record.capability_file,
-                format!("{}\n", hex::encode(capability)).as_bytes(),
-            )?;
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(&record.state_directory)?;
-            write_private_exact(&record_file, &serde_json::to_vec_pretty(&record)?)?;
-            record
+            let lez = &runtime.config().lez;
+            record_with_free_port(
+                &runtime.config().swaps_root,
+                lez.sidecar_port_base,
+                lez.sidecar_port_count,
+                &record_file,
+                |port| {
+                    let record = SidecarRecordV1 {
+                        schema_version: 1,
+                        port,
+                        run_id: run_id.as_str().to_owned(),
+                        capability_file: layout.root().join("sidecar-capability"),
+                        state_directory: layout.root().join("sidecar-state"),
+                        log_file: layout.root().join("sidecar.log"),
+                    };
+                    let mut capability = [0_u8; 32];
+                    getrandom::fill(&mut capability)
+                        .map_err(|_| anyhow::anyhow!("OS randomness unavailable"))?;
+                    write_private_exact(
+                        &record.capability_file,
+                        format!("{}\n", hex::encode(capability)).as_bytes(),
+                    )?;
+                    fs::DirBuilder::new()
+                        .mode(0o700)
+                        .create(&record.state_directory)?;
+                    Ok(record)
+                },
+            )?
         };
         ensure!(
             record.run_id == run_id.as_str(),
@@ -193,6 +201,9 @@ impl SwapSidecar {
             .stderr(Stdio::from(log))
             .spawn()
             .with_context(|| format!("spawn {}", lez.sidecar_program.display()))?;
+        // The pid lets the Node retire this sidecar (`retire`). Recording it
+        // is best effort: without it the sidecar only cannot be retired.
+        let _ = fs::write(self.pid_file(), format!("{}\n", child.id()));
         // The child is intentionally not waited on: it outlives this call and
         // is reaped by the Node's init (tini) if it exits.
         drop(child);
@@ -218,6 +229,54 @@ impl SwapSidecar {
             thread::sleep(Duration::from_millis(100));
         }
         anyhow::bail!("sidecar did not report readiness in time")
+    }
+
+    fn pid_file(&self) -> PathBuf {
+        self.record.state_directory.join("sidecar.pid")
+    }
+
+    /// Stops the swap's sidecar, when one is running that this Node spawned
+    /// for this swap: the recorded pid must still run this sidecar program
+    /// with this swap's run id and state directory, so a reused pid is
+    /// never signalled. The record stays, so `ensure` can start it again.
+    ///
+    /// Returns whether a sidecar was signalled.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the swap's sidecar record cannot be read.
+    pub fn retire(layout: &SwapLayout) -> Result<bool> {
+        let record_file = layout.root().join("sidecar.json");
+        let Ok(bytes) = read_private(&record_file, MAX_RECORD_BYTES) else {
+            return Ok(false);
+        };
+        let sidecar = Self::from_record(
+            serde_json::from_slice::<SidecarRecordV1>(&bytes).context("sidecar record")?,
+        )?;
+        let Some(pid) = fs::read_to_string(sidecar.pid_file())
+            .ok()
+            .and_then(|text| text.trim().parse::<i32>().ok())
+            .and_then(rustix::process::Pid::from_raw)
+        else {
+            return Ok(false);
+        };
+        let Ok(output) = Command::new("ps")
+            .args(["-o", "command=", "-p", &pid.as_raw_nonzero().to_string()])
+            .stdin(Stdio::null())
+            .output()
+        else {
+            return Ok(false);
+        };
+        let command = String::from_utf8_lossy(&output.stdout);
+        let state = sidecar.record.state_directory.to_string_lossy();
+        if !command.contains(&format!("--run-id {}", sidecar.run_id.as_str()))
+            || !command.contains(&format!("--state-directory {state}"))
+        {
+            return Ok(false);
+        }
+        let signalled = rustix::process::kill_process(pid, rustix::process::Signal::TERM).is_ok();
+        let _ = fs::remove_file(sidecar.pid_file());
+        Ok(signalled)
     }
 
     #[must_use]
@@ -249,14 +308,37 @@ impl SwapSidecar {
     }
 }
 
+/// Serializes port allocation in this Node: the free-port probe and the
+/// write of the record that reserves the port are one step for every pair's
+/// swaps (BTC, ZEC and XMR take their own round locks), so two activations
+/// never record the same port.
+static PORT_ALLOCATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Picks a free port and writes the sidecar record that reserves it, under
+/// [`PORT_ALLOCATION`]. `make` builds the record for the port (and the files
+/// it names).
+fn record_with_free_port(
+    swaps_root: &std::path::Path,
+    port_base: u16,
+    port_count: u16,
+    record_file: &std::path::Path,
+    make: impl FnOnce(u16) -> Result<SidecarRecordV1>,
+) -> Result<SidecarRecordV1> {
+    let _allocating = PORT_ALLOCATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let record = make(free_port(swaps_root, port_base, port_count)?)?;
+    write_private_exact(record_file, &serde_json::to_vec_pretty(&record)?)?;
+    Ok(record)
+}
+
 /// A loopback port in the role's range that no other swap recorded and nothing
 /// listens on. Recorded ports stay reserved for their swap across restarts,
 /// so a respawned sidecar never lands on a port another swap's actor expects.
-fn free_port(runtime: &BtcRoleRuntime) -> Result<u16> {
-    let lez = &runtime.config().lez;
-    let recorded = recorded_ports(&runtime.config().swaps_root);
-    for offset in 0..lez.sidecar_port_count {
-        let port = lez.sidecar_port_base.saturating_add(offset);
+fn free_port(swaps_root: &std::path::Path, port_base: u16, port_count: u16) -> Result<u16> {
+    let recorded = recorded_ports(swaps_root);
+    for offset in 0..port_count {
+        let port = port_base.saturating_add(offset);
         if recorded.contains(&port) {
             continue;
         }
@@ -296,4 +378,59 @@ pub fn recorded_swaps(swaps_root: &std::path::Path) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, os::unix::fs::PermissionsExt as _, sync::Barrier};
+
+    use super::{SidecarRecordV1, record_with_free_port};
+
+    /// Two activations of different pairs used to probe the same free port
+    /// and record it both: each pair takes its own round lock, and the
+    /// probe and the record write were separate steps. The pause stands for
+    /// the capability and state directory written in between.
+    #[test]
+    fn concurrent_activations_never_record_the_same_port() {
+        const SWAPS: usize = 6;
+        let run = tempfile::tempdir().unwrap();
+        let swaps = fs::canonicalize(run.path()).unwrap();
+        let swaps = &swaps;
+        let base = 30_000 + u16::try_from(std::process::id() % 1_000).unwrap() * 20;
+        let barrier = Barrier::new(SWAPS);
+        let ports: Vec<u16> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..SWAPS)
+                .map(|index| {
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        let swap = swaps.join(format!("swap-reservation-{index:02}"));
+                        fs::create_dir(&swap).unwrap();
+                        fs::set_permissions(&swap, fs::Permissions::from_mode(0o700)).unwrap();
+                        barrier.wait();
+                        record_with_free_port(swaps, base, 16, &swap.join("sidecar.json"), |port| {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            Ok(SidecarRecordV1 {
+                                schema_version: 1,
+                                port,
+                                run_id: format!("swap-{index}"),
+                                capability_file: swap.join("sidecar-capability"),
+                                state_directory: swap.join("sidecar-state"),
+                                log_file: swap.join("sidecar.log"),
+                            })
+                        })
+                        .unwrap()
+                        .port
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+        let mut distinct = ports.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), SWAPS, "{ports:?}");
+    }
 }
