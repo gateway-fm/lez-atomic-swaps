@@ -69,8 +69,10 @@ const MONERO_EFFECT_TIMEOUT: Duration = Duration::from_mins(2);
 /// The same on a public network: no mining, but a wallet restored or
 /// refreshed through a public node pulls Stagenet's block hashes to its
 /// restore height and the blocks after it (minutes on 2026-11-21), and the
-/// node may stop answering this host for a while.
-const PUBLIC_MONERO_EFFECT_TIMEOUT: Duration = Duration::from_mins(6);
+/// node may stop answering this host for a while. Below the Maker Node's
+/// attempt deadline on Stagenet (node-entrypoint.sh: 5 min, the most the
+/// supervisor admits), which also covers the drive's other steps.
+const PUBLIC_MONERO_EFFECT_TIMEOUT: Duration = Duration::from_mins(4);
 const LEZ_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long the funding's monerod probe waits to connect and for an answer.
 const MONEROD_PROBE_TIMEOUT: Duration = Duration::from_secs(3);

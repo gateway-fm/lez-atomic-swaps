@@ -8,7 +8,10 @@
 #
 #   LEZ_XMR_STAGENET_NETWORK         the external Docker network of monerod
 #                                    and the two wallet-rpcs
-#   LEZ_XMR_STAGENET_MONEROD         monerod's host:port on it
+#   LEZ_XMR_STAGENET_MONEROD         monerod's host:port on it, or for each
+#   LEZ_XMR_STAGENET_MAKER_MONEROD   role its own (each party runs its own
+#   LEZ_XMR_STAGENET_TAKER_MONEROD   daemon; a public node also limits the
+#                                    connections of one address)
 #   LEZ_XMR_STAGENET_MAKER_WALLET    the Maker's wallet-rpc host:port
 #   LEZ_XMR_STAGENET_TAKER_WALLET    the Taker's wallet-rpc host:port
 #
@@ -17,12 +20,12 @@
 services:
   maker-node:
     environment:
-      LEZ_MONEROD_HOST: ${LEZ_XMR_STAGENET_MONEROD:?the Stagenet monerod host:port}
+      LEZ_MONEROD_HOST: ${LEZ_XMR_STAGENET_MAKER_MONEROD:-${LEZ_XMR_STAGENET_MONEROD:?the Stagenet monerod host:port}}
       LEZ_XMR_WALLET_HOST: ${LEZ_XMR_STAGENET_MAKER_WALLET:?the Maker's Stagenet wallet-rpc host:port}
     networks: [chains, stagenet]
   taker-node:
     environment:
-      LEZ_MONEROD_HOST: ${LEZ_XMR_STAGENET_MONEROD:?the Stagenet monerod host:port}
+      LEZ_MONEROD_HOST: ${LEZ_XMR_STAGENET_TAKER_MONEROD:-${LEZ_XMR_STAGENET_MONEROD:?the Stagenet monerod host:port}}
       LEZ_XMR_WALLET_HOST: ${LEZ_XMR_STAGENET_TAKER_WALLET:?the Taker's Stagenet wallet-rpc host:port}
     networks: [chains, stagenet]
 

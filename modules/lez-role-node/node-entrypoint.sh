@@ -714,7 +714,12 @@ case "$role" in
       fi
       # The Monero role (xmr_reserve_v1) and its actor. A Monero attempt runs
       # a tool that sends and then mines its ten confirmations, or restores a
-      # shared wallet: longer than the Node's default 30 s attempt.
+      # shared wallet: longer than the Node's default 30 s attempt. On
+      # Stagenet a wallet restored through a public node takes minutes, and
+      # the actor's own Monero tools get 4: the attempt gets the 5 the
+      # supervisor admits.
+      xmr_attempt_ms=120000
+      [[ "$xmr_profile" != public-stagenet ]] || xmr_attempt_ms=300000
       if [[ -s "$xmr_role_config" ]]; then
         mkdir -p "$state/xmr-actors"
         chmod 0700 "$state/xmr-actors"
@@ -722,7 +727,7 @@ case "$role" in
           --xmr-maker-actor-root "$state/xmr-actors"
           --xmr-actor-program "$bin/lez-xmr-maker-actor"
           --xmr-actor-program-sha256 "$(sha256_of "$bin/lez-xmr-maker-actor")"
-          --actor-attempt-timeout-milliseconds 120000)
+          --actor-attempt-timeout-milliseconds "$xmr_attempt_ms")
         echo "maker XMR authority configured"
       fi
     else
