@@ -272,7 +272,8 @@ sequenceDiagram
   the Maker's DLEQ proof, adds its own share, sweeps the output to its role
   wallet and mines 10 confirmations; it reports `completed` once it sees the
   swept output.
-- **Refund.** In [R, P) the owner's refund sends tag 16; the Maker Node
+- **Refund.** In [R, P) the Taker Node sends tag 16 by itself (or on its
+  owner's refund, see below); the Maker Node
   extracts the Taker's share from it and sweeps its Monero back. A Taker that
   sent tag 14 and saw no tag 15 by R refunds the same way (the escrow refunds
   from XmrClaimAuthorized).
@@ -298,13 +299,15 @@ profile the refund window [R, P) is 280 s (P − R above).
   reference Maker Node punishes only a swap whose Monero funding it invoked
   (an unfunded swap ends `expired`). A Taker must refund before P in every
   case, whether or not Monero was funded.
-- **Refunds are owner-commanded, never automatic.** The Taker Node offers the
-  refund (`available_action: "refund"`, actor phase `refund_available`) from R
-  and sends tag 16 only after its owner's `taker_swap_refund_v1`
-  (`lez-taker-cli swap refund`); its supervisor submits an admitted refund on
-  its next sweep (`--observer-sweep-seconds`, 3 s on the devnet's `fast` and
-  `refund` profiles). A Taker Node that is down, or an owner
-  who does not act, through [R, P) loses the LEZ.
+- **The Taker Node refunds by itself.** From R by the finalized LEZ time, on
+  a funded escrow the Maker has not claimed (funded with Monero or not), its
+  supervisor sends tag 16 with no owner's command on its next sweep
+  (`--observer-sweep-seconds`, 3 s on the devnet's `fast` and `refund`
+  profiles) and sends it again until it is final or LEZ time reaches P. The
+  owner's `taker_swap_refund_v1` (`lez-taker-cli swap refund`) is still
+  offered from R (`available_action: "refund"`, actor phase
+  `refund_available`); `initiation.xmr_automatic_refund: false` leaves the
+  refund to it alone. A Taker Node that is down through [R, P) loses the LEZ.
 - **The Taker Node warns.** From R + (P − R)/2 (R + 140 s on `fast`) a swap
   whose escrow is funded and not yet refunded is
   `attention_required` with `attention_reason: "refund_window_closing"` (the CLI

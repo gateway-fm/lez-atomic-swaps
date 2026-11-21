@@ -69,6 +69,8 @@ const ROLE_AGREEMENT_KEY_FILE: &str = "agreement.key";
 pub struct DynamicXmrRole {
     config: XmrRoleConfigV1,
     btc: std::sync::Arc<DynamicBtcRole>,
+    /// The supervisor refunds a swap's LEZ (tag 16) by itself from `R`.
+    automatic_refund: bool,
 }
 
 impl std::fmt::Debug for DynamicXmrRole {
@@ -127,7 +129,20 @@ impl DynamicXmrRole {
         Ok(Self {
             config: XmrRoleConfigV1::load(config_file)?,
             btc,
+            automatic_refund: true,
         })
+    }
+
+    /// Whether the supervisor refunds a swap's LEZ (tag 16) by itself from
+    /// `R` while the Maker has not claimed (on unless configured off).
+    #[must_use]
+    pub const fn with_automatic_refund(mut self, automatic_refund: bool) -> Self {
+        self.automatic_refund = automatic_refund;
+        self
+    }
+
+    pub(super) const fn automatic_refund(&self) -> bool {
+        self.automatic_refund
     }
 
     pub(super) const fn config(&self) -> &XmrRoleConfigV1 {

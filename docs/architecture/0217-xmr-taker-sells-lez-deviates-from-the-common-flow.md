@@ -119,7 +119,10 @@ against LEZ block time; C is not on chain.
 6. **Taker sweeps the Monero.** No deadline applies; the Taker Node watches
    for tag 15 also after R and P (`tick_swap`), since a tag 15 final before R
    may be seen later.
-7. **Taker refunds LEZ, in [R, P) (tag 16).** On the owner's refund the Taker
+7. **Taker refunds LEZ, in [R, P) (tag 16).** The Taker Node refunds by
+   itself, on every funded escrow the Maker has not claimed, with no owner's
+   command (`refund_runs`; `initiation.xmr_automatic_refund: false` leaves it
+   to the owner's refund, which is offered either way). It
    completes the refund pre-signature with its own share (`refund_signature`)
    and submits it once the finalized LEZ time is at or past R (`refund_step`):
    LEZ admits a transaction whose window is not open and drops it at block
@@ -185,12 +188,12 @@ Every abort point, from the code above:
 | Where it stops | Taker | Maker | Covered by |
 |---|---|---|---|
 | Before the Taker's lock | nothing at stake | nothing at stake; the reservation lapses after 900 s | — |
-| Taker locked; Maker never funds, or the lock is final after C | refunds LEZ with tag 16 in [R, P) | nothing at stake; its actor ends `expired`; the share tag 16 reveals opens an empty address | `xmr-maker-never-funds` |
-| Maker funded; Taker never authorises | refunds LEZ with tag 16 in [R, P) | sweeps its Monero back with the revealed share | `xmr-taker-refund`, `xmr-taker-refund-kill` |
+| Taker locked; Maker never funds, or the lock is final after C | its Node refunds LEZ with tag 16 from R by itself, or on the owner's refund | nothing at stake; its actor ends `expired`; the share tag 16 reveals opens an empty address | `xmr-maker-never-funds` (owner's refund); the refund by itself: unit test `the_node_refunds_by_itself_from_r_without_an_owner_command`, no devnet scenario |
+| Maker funded; Taker never authorises | its Node refunds LEZ with tag 16 from R by itself, or on the owner's refund | sweeps its Monero back with the revealed share | `xmr-taker-refund`, `xmr-taker-refund-kill` (owner's refund) |
 | Taker's refund sent and dropped (its clock ahead of LEZ time, or lost by the sequencer) | sends nothing before the finalized LEZ time reaches R, then sends the same tag 16 again on every tick until it is final or LEZ time reaches P | sweeps its Monero back once tag 16 is final; punishes only with no tag 16 to the finalized tip from P | unit tests: `a_refund_accepted_and_never_included_is_sent_again_until_it_lands`, `a_host_clock_ahead_of_lez_time_does_not_send_the_refund_early`, `a_refund_not_final_at_p_says_so` (Taker supervisor), `tag16_not_included_is_sent_again_until_it_lands` (sidecar); no devnet scenario skews the Taker's clock |
 | Taker authorised (tag 14); Maker does not claim by its deadline | from R the escrow refunds from `XmrClaimAuthorized`; the Node shows `xmr_maker_did_not_claim` with `refund`; refunds with tag 16 | sweeps its Monero back with the revealed share; a Maker that claims later than its own deadline but before R gives the Taker the share instead | unit tests: `a_late_claim_authorization_is_left_to_the_takers_refund` (Maker actor), `the_claim_path_reads_in_the_status_table` (Taker supervisor); no devnet scenario holds the Maker there |
-| Maker claimed (tag 15) | has the Maker's share; sweeps whenever it is back, no deadline | has the LEZ | `xmr-happy`, `xmr-concurrent`, `xmr-kill-taker` (7 kill points, among them "waiting for the Maker's claim" and "sweeping") |
-| Nothing before P, Maker funded | loses its LEZ | takes the LEZ with tag 17, re-planned past any number of taken nonces; its Monero stays locked | `xmr-punish`; re-plans and resends: unit test `a_punishment_replanned_more_than_five_times_still_lands` (sidecar), no devnet scenario takes tag 17's nonce |
+| Maker claimed (tag 15) | has the Maker's share; sweeps whenever it is back, no deadline; sends no refund, by itself or on command | has the LEZ | `xmr-happy`, `xmr-concurrent`, `xmr-kill-taker` (7 kill points, among them "waiting for the Maker's claim" and "sweeping"); unit test `after_the_makers_claim_the_node_sweeps_and_never_refunds` |
+| Taker Node down through [R, P), Maker funded | loses its LEZ | takes the LEZ with tag 17, re-planned past any number of taken nonces; its Monero stays locked | `xmr-punish`; re-plans and resends: unit test `a_punishment_replanned_more_than_five_times_still_lands` (sidecar), no devnet scenario takes tag 17's nonce |
 
 Crash and restart at each step are covered by `xmr-kill-taker`,
 `xmr-kill-maker` (6 kill points) and `xmr-taker-refund-kill`; all of the
@@ -228,14 +231,16 @@ first residual risk below.
 - **Unfunded punishment.** A Maker running other software than this
   repository's Maker Node can send tag 17 from P on a swap it never funded
   ([PUNISH](../milestone-1/protocol-design.md#punish-a-taker-that-does-not-act-before-p-loses-its-lez),
-  TM-0031). The Taker bears it; what bounds it is the Taker's refund in [R, P), which is
-  owner-commanded, never automatic. The Taker Node marks a funded swap not yet
+  TM-0031). The Taker bears it; what bounds it is the Taker's refund in [R, P), which
+  the Taker Node sends by itself from R, so a Taker Node that runs through
+  [R, P) keeps its LEZ. The Taker Node marks a funded swap not yet
   refunded `refund_window_closing` from R + (P − R)/2, and the Taker CLI and
   the desks' refund prompts say that from P the Maker takes the LEZ. The reference
   Maker punishes only a swap it funded.
-- **The Taker must be online in [R, P)** whenever the swap has not completed
-  before R: a Taker that does not authorise, or whose authorisation the Maker
-  does not answer, keeps its LEZ only by refunding in that window. A Taker
+- **The Taker Node must be running in [R, P)** whenever the swap has not
+  completed before R: a Taker that does not authorise, or whose authorisation
+  the Maker does not answer, keeps its LEZ only by the refund its Node sends
+  in that window. A Taker
   that authorised and then disappears loses nothing once the Maker has
   claimed: it sweeps when it returns.
 - **The Maker must claim between tag 14 and its deadline**, or the swap falls

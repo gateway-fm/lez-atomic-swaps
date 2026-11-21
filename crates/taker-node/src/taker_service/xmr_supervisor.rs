@@ -10,7 +10,9 @@
 //! the Maker's Monero share, which with the Taker's opens the shared address,
 //! and the supervisor sweeps it to the role wallet. From the agreement's
 //! refund time `R` the refund (tag 16) is offered and runs on the owner's
-//! command; halfway through `[R, P)` a swap still not refunded needs attention
+//! command, and by itself unless the Node is configured otherwise
+//! (`initiation.xmr_automatic_refund`); halfway through `[R, P)` a swap still
+//! not refunded needs attention
 //! (`refund_window_closing`), and from the punish time `P` it can no longer be
 //! refunded (the Maker may take the LEZ). The refund's window is read from the
 //! finalized LEZ time, not the host's clock, and a refund not yet final is
@@ -1338,14 +1340,6 @@ impl XmrRefundChains for LiveRefund {
     }
 }
 
-/// One refund step through the swap's own chains.
-async fn refund(dynamic: &DynamicXmrRole, files: &XmrSwapFiles) -> Result<()> {
-    let facts = files.facts()?;
-    let progress = files.progress()?;
-    let chains = LiveRefund::connect(dynamic, files, &facts)?;
-    refund_step(&chains, files, XmrWindows::of(&facts), &progress).await
-}
-
 /// Tag 14 publishes the Taker's claim partial: only on the owner's command,
 /// once both legs are locked (the escrow funded within the funding cutoff,
 /// the Maker's Monero verified final and unlocked), with no refund sent, and
@@ -1886,55 +1880,104 @@ async fn tick_swap(
     let progress = files.progress()?;
     let now = now_ms();
     let status = xmr_taker_view(&progress, XmrWindows::of(&facts), now);
-    let refund_admitted = admitted == Some(TakerFacadeActionV1::Refund);
-    let claim_admitted = admitted == Some(TakerFacadeActionV1::Claim);
-    let refund_waits = owner_busy && progress.refund_submitted.is_none();
-    // A refund once sent is driven until it is final: sent again while LEZ
-    // time is before P, and looked for after (the host's P may be early).
-    let refunding = refund_admitted || progress.refund_submitted.is_some();
+    let settle = || async {
+        let claim = LiveClaim::connect(dynamic, files, &facts)?;
+        let refund = LiveRefund::connect(dynamic, files, &facts)?;
+        settle_step(
+            &claim,
+            &refund,
+            files,
+            XmrWindows::of(&facts),
+            now,
+            admitted,
+            dynamic.automatic_refund(),
+            owner_busy,
+        )
+        .await
+    };
     match status.revision {
         0 if owner_busy && progress.scan_from.is_none() => Ok(()),
         0 => drive_lez_lock(dynamic, files, &facts, &progress).await,
         1 => release_lock_gate(dynamic, &facts.swap_id).await,
-        2 => observe_monero(dynamic, files, &facts, &progress).await,
-        3 if claim_admitted && owner_busy => Ok(()),
-        3 if claim_admitted => claim(dynamic, files, &facts, &progress, now, true).await,
-        4 | 5 | 11 => claim(dynamic, files, &facts, &progress, now, claim_admitted).await,
-        // Once tag 14 is out the Maker's claim is watched past R as well: a
-        // tag 15 final before R may be seen only afterwards.
-        // The watch never holds the refund back.
-        6..=8 | 10 if progress.claim_authorization.is_some() => {
-            let watched = claim(dynamic, files, &facts, &progress, now, claim_admitted).await;
-            if refunding && !refund_waits && files.progress()?.maker_claim.is_none() {
-                refund(dynamic, files).await?;
-            }
-            watched
+        // Waiting for the Maker's Monero is no reason not to refund from R.
+        2 if dynamic.automatic_refund() => {
+            let observed = observe_monero(dynamic, files, &facts, &progress).await;
+            observed.and(settle().await)
         }
-        6..=8 | 10 if refunding && refund_waits => Ok(()),
-        6..=8 | 10 if refunding => refund(dynamic, files).await,
+        2 => observe_monero(dynamic, files, &facts, &progress).await,
+        3..=8 | 10 | 11 => settle().await,
         _ => Ok(()),
     }
 }
 
-/// One claim step through the swap's own chains.
-async fn claim(
-    dynamic: &Arc<DynamicXmrRole>,
-    files: &XmrSwapFiles,
-    facts: &XmrTakerSwapFactsV1,
+/// Whether this tick runs the refund step: the escrow is funded and neither
+/// refunded nor claimed by the Maker (a recorded tag 15 means the Monero is
+/// swept instead), and the Node refunds by itself (`automatic`), the owner
+/// admitted the refund, or one is already sent (it is driven until it is
+/// final). By itself it runs on every funded row, also before the host's R:
+/// the refund step sends nothing before the finalized LEZ time reaches R. So
+/// a Taker Node that runs keeps its LEZ whether or not the Maker funded and
+/// whether or not its owner acts (TM-0031). While another swap has an owner
+/// transaction in flight a refund not yet sent waits.
+fn refund_runs(
     progress: &XmrTakerProgressV1,
-    now: u64,
-    admitted: bool,
+    revision: u64,
+    refund_admitted: bool,
+    automatic: bool,
+    owner_busy: bool,
+) -> bool {
+    let row = if automatic {
+        matches!(revision, 2..=8 | 10)
+    } else {
+        matches!(revision, 6..=8 | 10)
+    };
+    row && progress.funded.is_some()
+        && progress.maker_claim.is_none()
+        && progress.refunded.is_none()
+        && (automatic || refund_admitted || progress.refund_submitted.is_some())
+        && !(owner_busy && progress.refund_submitted.is_none())
+}
+
+/// The claim and the refund of one tick, by the swap's status row. Tag 14
+/// goes out only on the owner's command and is followed after; once it is
+/// out the Maker's claim is watched past R as well (a tag 15 final before R
+/// may be seen only afterwards). The refund runs after that watch, in the
+/// same tick, and never once the Maker's claim is recorded.
+#[allow(clippy::too_many_arguments)] // The row's inputs, one each.
+async fn settle_step<CC: XmrClaimChains, RC: XmrRefundChains>(
+    claim: &CC,
+    refund: &RC,
+    files: &XmrSwapFiles,
+    windows: XmrWindows,
+    now_ms: u64,
+    admitted: Option<TakerFacadeActionV1>,
+    automatic: bool,
+    owner_busy: bool,
 ) -> Result<()> {
-    let chains = LiveClaim::connect(dynamic, files, facts)?;
-    claim_step(
-        &chains,
-        files,
-        XmrWindows::of(facts),
-        progress,
-        now,
-        admitted,
-    )
-    .await
+    let progress = files.progress()?;
+    let revision = xmr_taker_view(&progress, windows, now_ms).revision;
+    let claim_admitted = admitted == Some(TakerFacadeActionV1::Claim);
+    let claimed = match revision {
+        3 if claim_admitted && owner_busy => Ok(()),
+        3 if claim_admitted => claim_step(claim, files, windows, &progress, now_ms, true).await,
+        4 | 5 | 11 => claim_step(claim, files, windows, &progress, now_ms, claim_admitted).await,
+        6..=8 | 10 if progress.claim_authorization.is_some() => {
+            claim_step(claim, files, windows, &progress, now_ms, claim_admitted).await
+        }
+        _ => Ok(()),
+    };
+    let progress = files.progress()?;
+    if !refund_runs(
+        &progress,
+        revision,
+        admitted == Some(TakerFacadeActionV1::Refund),
+        automatic,
+        owner_busy,
+    ) {
+        return claimed;
+    }
+    let refunded = refund_step(refund, files, windows, &progress).await;
+    claimed.and(refunded)
 }
 
 /// Runs the supervisor beside the Node's other loops, one pass per sweep.
@@ -1988,6 +2031,7 @@ async fn supervise_once(state: &TakerServiceState) {
         let receipt = prepared.execution().receipt_output().to_path_buf();
         let actor_root = prepared.execution().actor_root().to_path_buf();
         let swap_id = prepared.swap_id().clone();
+        let automatic = dynamic.automatic_refund();
         let loaded = tokio::task::spawn_blocking(move || {
             let actor = RouteActor::load_for_monitor(
                 lez_swap_core::Pair::Monero,
@@ -2003,7 +2047,7 @@ async fn supervise_once(state: &TakerServiceState) {
             let claiming = actor
                 .xmr_files()
                 .and_then(|files| files.progress().ok())
-                .is_some_and(|progress| drives_adaptor_material(&progress));
+                .is_some_and(|progress| drives_adaptor_material(&progress, automatic));
             let held = if admitted.is_some() || claiming {
                 Some(lez_swap_store::ActorHeldLock::acquire_for(
                     actor.swap_id(),
@@ -2055,11 +2099,16 @@ async fn supervise_once(state: &TakerServiceState) {
 }
 
 /// Whether the supervisor's next step of the swap may read its adaptor
-/// material without an owner's action: a claim it follows, or a refund it
-/// sends until it is final.
-fn drives_adaptor_material(progress: &XmrTakerProgressV1) -> bool {
+/// material without an owner's action: a claim it follows, a refund it sends
+/// until it is final, or, when the Node refunds by itself, any funded escrow
+/// neither refunded nor claimed by the Maker.
+fn drives_adaptor_material(progress: &XmrTakerProgressV1, automatic_refund: bool) -> bool {
     (progress.claim_authorization.is_some() && !progress.claim_completed)
         || (progress.refund_submitted.is_some() && progress.refunded.is_none())
+        || (automatic_refund
+            && progress.funded.is_some()
+            && progress.refunded.is_none()
+            && progress.maker_claim.is_none())
 }
 
 /// Whether a bound swap has an owner transaction in flight, read from its
@@ -3015,6 +3064,108 @@ mod tests {
         let refunded = at(&progress, WINDOWS.punish_ms + 1);
         assert_eq!(refunded.state, State::Refunded);
         assert!(refunded.revision >= late.revision);
+    }
+
+    /// One tick's claim and refund, the Node's automatic refund on or off.
+    async fn settle(
+        claim: &StubChains,
+        refund: &StubRefund,
+        files: &XmrSwapFiles,
+        now: u64,
+        admitted: Option<TakerFacadeActionV1>,
+        automatic: bool,
+    ) -> Result<()> {
+        settle_step(
+            claim, refund, files, WINDOWS, now, admitted, automatic, false,
+        )
+        .await
+    }
+
+    /// The Node refunds by itself from R by LEZ time, with no owner's
+    /// command: on a swap the Maker funded and on one it never funded (the
+    /// unfunded punishment of TM-0031 needs the Taker's refund in [R, P)),
+    /// and also while the host's clock is still before R. Off, only the
+    /// owner's command refunds.
+    #[tokio::test]
+    async fn the_node_refunds_by_itself_from_r_without_an_owner_command() {
+        let mut unfunded = locked();
+        unfunded.monero_funding_transaction = None;
+        for progress in [locked(), unfunded] {
+            let (_directory, files) = swap(&progress);
+            let claim = StubChains::default();
+            let refund = StubRefund::at(WINDOWS.refund_ms - 1);
+            settle(&claim, &refund, &files, WINDOWS.refund_ms, None, true)
+                .await
+                .unwrap();
+            assert_eq!(refund.calls("submit"), 0, "LEZ time is before R");
+            *refund.lez_ms.lock().unwrap() = WINDOWS.refund_ms;
+            settle(&claim, &refund, &files, WINDOWS.refund_ms, None, true)
+                .await
+                .unwrap();
+            assert_eq!(refund.calls("submit"), 1);
+            assert_eq!(actor_phase(&files, WINDOWS.refund_ms), "refund_in_flight");
+            assert_eq!(claim.calls("prepare"), 0, "no claim is authorised");
+        }
+
+        // The host's clock behind LEZ time: refunded from LEZ time's R.
+        let (_directory, files) = swap(&locked());
+        let (claim, refund) = (StubChains::default(), StubRefund::at(WINDOWS.refund_ms));
+        settle(
+            &claim,
+            &refund,
+            &files,
+            WINDOWS.refund_ms - 5_000,
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(refund.calls("submit"), 1);
+
+        // Off: nothing without the owner's command, which still refunds.
+        let (_directory, files) = swap(&locked());
+        let (claim, refund) = (StubChains::default(), StubRefund::at(WINDOWS.refund_ms));
+        settle(&claim, &refund, &files, WINDOWS.refund_ms, None, false)
+            .await
+            .unwrap();
+        assert_eq!(refund.calls("complete"), 0);
+        settle(
+            &claim,
+            &refund,
+            &files,
+            WINDOWS.refund_ms,
+            Some(TakerFacadeActionV1::Refund),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(refund.calls("submit"), 1);
+    }
+
+    /// The Maker's claim (tag 15) landed: the Node refunds nothing, also by
+    /// itself and on the owner's command, and sweeps the Monero instead.
+    #[tokio::test]
+    async fn after_the_makers_claim_the_node_sweeps_and_never_refunds() {
+        let mut progress = locked();
+        progress.claim_authorization = Some("ab".repeat(32));
+        progress.claim_authorized = effect(110_000);
+        for admitted in [None, Some(TakerFacadeActionV1::Refund)] {
+            let (_directory, files) = swap(&progress);
+            let claim = StubChains::default();
+            *claim.maker_claim.lock().unwrap() = Some(Some([0x11; 64]));
+            let refund = StubRefund::at(WINDOWS.refund_ms);
+            let now = WINDOWS.refund_ms;
+            settle(&claim, &refund, &files, now, admitted, true)
+                .await
+                .unwrap();
+            assert!(files.progress().unwrap().maker_claim.is_some());
+            settle(&claim, &refund, &files, now, admitted, true)
+                .await
+                .unwrap();
+            assert_eq!(claim.calls("sweep"), 1);
+            assert_eq!((refund.calls("complete"), refund.calls("submit")), (0, 0));
+            assert_eq!(files.progress().unwrap().refund_submitted, None);
+        }
     }
 
     #[test]

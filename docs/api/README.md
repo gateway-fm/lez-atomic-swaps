@@ -550,10 +550,14 @@ the punish branch are in [protocol-design.md](../milestone-1/protocol-design.md#
   the claim authorisation (tag 14), waits for the Maker's LEZ claim (tag 15),
   rebuilds the Monero spend key from it and sweeps the output into the role
   wallet.
-- **Refund.** `available_action: "refund"` from R. `taker_swap_refund_v1`
-  admits it and the supervisor sends the LEZ refund (tag 16) on its next pass;
-  it is valid only before P. **The Node never refunds by itself**: from P the
-  Maker can take the LEZ (tag 17) and the Monero stays locked for good.
+- **Refund.** The Node refunds by itself: from R by the finalized LEZ time,
+  while the Maker's LEZ claim (tag 15) has not landed, its supervisor sends
+  the LEZ refund (tag 16) with no owner's command, and sends it again until
+  it is final; it is valid only before P, and from P the Maker can take the
+  LEZ (tag 17) and the Monero stays locked for good. `available_action:
+  "refund"` is offered from R as well, and `taker_swap_refund_v1` admits it
+  for the supervisor's next pass. Setting `initiation.xmr_automatic_refund`
+  to `false` in the Node's configuration leaves the refund to that command.
 
 An admitted Monero claim or refund is run by the Node's supervisor on its next
 pass (`--observer-sweep-seconds`, 3 s on the devnet). The `swap` view of a
