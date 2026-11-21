@@ -1,19 +1,44 @@
 //! Regression vectors and negative cases for the cross-curve DLEQ envelope and
-//! Monero spend-key-share recovery.
+//! Monero spend-key-share recovery, and a parameter cross-check against the
+//! COMIT swap.
 //!
 //! No third-party vectors exist for this construction: neither `sigma_fun`
 //! 0.9.0 nor COMIT's archived `cross-curve-dleq` crate nor `xmr-btc-swap` ships
-//! fixed proofs (their tests are random property tests), and `xmr-btc-swap`
-//! instantiates the proof with the standard basepoints rather than the
-//! alternate generators used here, so its proofs would not match these bytes.
-//! The files under `tests/vectors/` are therefore SELF-GENERATED regression
-//! vectors: deterministic inputs run once through the pinned `sigma_fun`,
-//! `musig2` and `monero` crates (`regenerate_self_generated_vectors` below).
-//! They pin today's bytes; they do not show agreement with another
-//! implementation. The independent checks derive the expected public keys and
+//! fixed proofs (their tests are random property tests). The files under
+//! `tests/vectors/` are therefore SELF-GENERATED regression vectors:
+//! deterministic inputs run once through the pinned `sigma_fun`, `musig2` and
+//! `monero` crates (`regenerate_self_generated_vectors` below). They pin
+//! today's bytes. The independent checks derive the expected public keys and
 //! the shared address with libraries the proof path does not use
 //! (`secp256k1`/libsecp256k1 and the `monero` crate's `curve25519-dalek`,
 //! where `sigma_fun` uses `secp256kfun` and `curve25519-dalek-ng`).
+//!
+//! What the cross-check shows, and what it does not:
+//!
+//! - `comit-network/cross-curve-dleq` (archived, last commit 6e90b10e) proves
+//!   the same statement (one scalar below 2^252 behind `x·G` on secp256k1 and
+//!   `x·B` on Ed25519, standard basepoints) with a different proof: its own
+//!   bitwise OR-proofs, a 31-byte XOR-split challenge and two signatures, not
+//!   `sigma_fun`'s. Its proofs cannot verify here or ours there, and it has no
+//!   licence and is git-only, which `deny.toml` refuses, so it is not a
+//!   dependency. Only its Pedersen generators are compared: its `G_PRIME` and
+//!   `H_PRIME` are the bytes this SDK uses, and
+//!   `alternate_generators_are_the_published_nums_points` derives both from
+//!   their published definitions (BIP-341's NUMS point; Monero's `H`).
+//! - `eigenwallet/core`, the community fork that continues COMIT's archived
+//!   `comit-network/xmr-btc-swap`, has used `sigma_fun`'s proof with those
+//!   two generators since its commit d39a51ab (2026-07). It pins `sigma_fun`
+//!   0.7.0, whose DLEQ module, Fiat-Shamir and transcript differ from 0.9.0
+//!   only in imports and type signatures (source diff, not a test).
+//!   `proofs_interoperate_with_the_eigenwallet_parameters` rebuilds that
+//!   proof system from its source with 0.9.0: it accepts the vectors' proofs,
+//!   and it produces byte-identical proof bytes from the vectors' inputs. That
+//!   shows parameter agreement through one library, not agreement between two
+//!   implementations, and not their wire encoding (they send the proof struct
+//!   in their own messages; the envelope here is this SDK's).
+//! - The archived `xmr-btc-swap` passed the standard basepoints as Pedersen
+//!   generators; `archived_xmr_btc_swap_basepoint_parameters_are_refused`
+//!   shows proofs do not cross between those parameters and these.
 
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
@@ -29,8 +54,14 @@ use monero::{
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng as _};
 use sha2::{Digest as _, Sha256};
 use sigma_fun::{
-    ed25519::curve25519_dalek::edwards::CompressedEdwardsY,
-    ext::dl_secp256k1_ed25519_eq::CrossCurveDLEQProof,
+    HashTranscript,
+    ed25519::curve25519_dalek::{
+        constants::ED25519_BASEPOINT_COMPRESSED,
+        edwards::{CompressedEdwardsY, EdwardsPoint},
+        scalar::Scalar as EdScalar,
+    },
+    ext::dl_secp256k1_ed25519_eq::{CrossCurveDLEQ, CrossCurveDLEQProof},
+    secp256k1::fun::Point as SigmaSecpPoint,
 };
 use zeroize::Zeroizing;
 
@@ -38,8 +69,18 @@ const VECTORS_FILE: &str = "cross_curve_dleq_v1.txt";
 const DLEQ_VECTORS: [&str; 3] = ["one", "max", "mixed"];
 const TRANSCRIPT_COMMITMENT_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr/cross-curve-dleq-transcript/v1";
 
+/// `G_PRIME` (`src/secp256k1.rs`) and `H_PRIME` (`src/ed25519.rs`) of
+/// `comit-network/cross-curve-dleq` at 6e90b10e, its Pedersen generators.
+const COMIT_POC_SECP256K1_G_PRIME: &str =
+    "0250929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0";
+const COMIT_POC_ED25519_H_PRIME: &str =
+    "8b655970153799af2aeadc9ff1add0ea6c7251d54154cfa92c173a0dd39c1f94";
+
 /// The wire envelope's field order, mirrored so tests can rebuild it.
 type Wire = (u8, Vec<u8>, Vec<u8>, Vec<u8>, [u8; 32]);
+
+/// `sigma_fun`'s proof system with the transcript the SDK and the COMIT swap use.
+type ProofSystem = CrossCurveDLEQ<HashTranscript<Sha256, ChaCha20Rng>>;
 
 fn vectors_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/vectors")
@@ -457,6 +498,159 @@ fn trailing_proof_bytes_are_rejected() {
         CrossCurveDleqProofV1::from_wire_bytes(&reseal(proof_trailing)).unwrap_err(),
         CrossCurveDleqError::ProofSerialization
     );
+}
+
+/// BIP-341's NUMS point, `lift_x(SHA256(uncompressed G))`, with libsecp256k1.
+fn bip341_nums_point() -> [u8; 33] {
+    let generator = secp256k1::PublicKey::from_slice(&libsecp256k1_public_key(one_le())).unwrap();
+    let x = Sha256::digest(generator.serialize_uncompressed());
+    secp256k1::XOnlyPublicKey::from_slice(&x)
+        .expect("the NUMS x-coordinate is on the curve")
+        .public_key(secp256k1::Parity::Even)
+        .serialize()
+}
+
+/// Monero's Pedersen `H`, `8 · decompress(Keccak-256(compressed B))`.
+fn monero_pedersen_h() -> [u8; 32] {
+    CompressedEdwardsY(monero::cryptonote::hash::keccak_256(
+        ED25519_BASEPOINT_COMPRESSED.as_bytes(),
+    ))
+    .decompress()
+    .expect("the hash of B is on the curve")
+    .mul_by_cofactor()
+    .compress()
+    .to_bytes()
+}
+
+fn one_le() -> [u8; 32] {
+    let mut one = [0_u8; 32];
+    one[0] = 1;
+    one
+}
+
+fn proof_system(secp256k1_h: [u8; 33], ed25519_h: [u8; 32]) -> ProofSystem {
+    ProofSystem::new(
+        SigmaSecpPoint::from_bytes(secp256k1_h).unwrap(),
+        CompressedEdwardsY(ed25519_h).decompress().unwrap(),
+    )
+}
+
+fn claim(secp: [u8; 33], ed: [u8; 32]) -> (SigmaSecpPoint, EdwardsPoint) {
+    (
+        SigmaSecpPoint::from_bytes(secp).unwrap(),
+        CompressedEdwardsY(ed).decompress().unwrap(),
+    )
+}
+
+/// Wraps a proof made outside the SDK in the SDK's envelope.
+fn envelope(secp: [u8; 33], ed: [u8; 32], proof: &CrossCurveDLEQProof) -> Vec<u8> {
+    reseal((
+        1,
+        secp.to_vec(),
+        ed.to_vec(),
+        postcard::to_allocvec(proof).unwrap(),
+        [0; 32],
+    ))
+}
+
+#[test]
+fn alternate_generators_are_the_published_nums_points() {
+    assert_eq!(
+        hex::encode(bip341_nums_point()),
+        COMIT_POC_SECP256K1_G_PRIME
+    );
+    assert_eq!(hex::encode(monero_pedersen_h()), COMIT_POC_ED25519_H_PRIME);
+}
+
+/// `eigenwallet/core` `swap-machine/src/common/mod.rs` (420c2721):
+/// `CrossCurveDLEQ::<HashTranscript<Sha256, ChaCha20Rng>>::new(
+/// PEDERSEN_BLINDING_H_SECP256K1, pedersen_blinding_h_ed25519())`, the BIP-341
+/// NUMS point and monero-oxide's `CompressedPoint::H`.
+#[test]
+fn proofs_interoperate_with_the_eigenwallet_parameters() {
+    let eigenwallet = proof_system(bip341_nums_point(), monero_pedersen_h());
+    let vectors = load_vectors();
+    for name in DLEQ_VECTORS {
+        let vector = &vectors[&format!("dleq {name}")];
+        let scalar_le = field::<32>(vector, "scalar_le");
+        let ours = CrossCurveDleqProofV1::from_wire_bytes(&wire_bytes(name)).unwrap();
+        let ours_claim = claim(ours.secp256k1_public_key(), ours.ed25519_public_key());
+        let ours_proof: CrossCurveDLEQProof = postcard::from_bytes(ours.proof_bytes()).unwrap();
+        assert!(
+            eigenwallet.verify(&ours_proof, ours_claim),
+            "{name}: ours there"
+        );
+
+        let (theirs, (secp, ed)) = eigenwallet.prove(
+            &EdScalar::from_canonical_bytes(scalar_le).unwrap(),
+            &mut ChaCha20Rng::from_seed(field::<32>(vector, "rng_seed")),
+        );
+        assert_eq!(secp.to_bytes(), ours.secp256k1_public_key(), "{name}");
+        assert_eq!(
+            ed.compress().to_bytes(),
+            ours.ed25519_public_key(),
+            "{name}"
+        );
+        assert_eq!(
+            postcard::to_allocvec(&theirs).unwrap(),
+            ours.proof_bytes(),
+            "{name}: same inputs, same proof"
+        );
+        CrossCurveDleqProofV1::from_wire_bytes(&envelope(
+            secp.to_bytes(),
+            ed.compress().to_bytes(),
+            &theirs,
+        ))
+        .expect("theirs here")
+        .verify_scalar(&scalar(scalar_le))
+        .expect("their proof opens with the scalar");
+    }
+
+    // A proof binds its own pair: their verifier refuses ours under a public
+    // key of another scalar on either curve.
+    let mixed = CrossCurveDleqProofV1::from_wire_bytes(&wire_bytes("mixed")).unwrap();
+    let max = CrossCurveDleqProofV1::from_wire_bytes(&wire_bytes("max")).unwrap();
+    let mixed_proof: CrossCurveDLEQProof = postcard::from_bytes(mixed.proof_bytes()).unwrap();
+    for (secp, ed) in [
+        (max.secp256k1_public_key(), mixed.ed25519_public_key()),
+        (mixed.secp256k1_public_key(), max.ed25519_public_key()),
+        (max.secp256k1_public_key(), max.ed25519_public_key()),
+    ] {
+        assert!(!eigenwallet.verify(&mixed_proof, claim(secp, ed)));
+    }
+}
+
+/// `comit-network/xmr-btc-swap` `swap/src/protocol.rs` (dc6ba84b, archived):
+/// `CrossCurveDLEQ::new((*ecdsa_fun::fun::G).normalize(), ED25519_BASEPOINT_POINT)`.
+#[test]
+fn archived_xmr_btc_swap_basepoint_parameters_are_refused() {
+    let archived = proof_system(
+        libsecp256k1_public_key(one_le()),
+        ED25519_BASEPOINT_COMPRESSED.to_bytes(),
+    );
+    let vector = &load_vectors()["dleq mixed"];
+    let scalar_le = field::<32>(vector, "scalar_le");
+    let (theirs, (secp, ed)) = archived.prove(
+        &EdScalar::from_canonical_bytes(scalar_le).unwrap(),
+        &mut ChaCha20Rng::from_seed(field::<32>(vector, "rng_seed")),
+    );
+    assert!(archived.verify(&theirs, (secp, ed)));
+    assert_eq!(
+        CrossCurveDleqProofV1::from_wire_bytes(&envelope(
+            secp.to_bytes(),
+            ed.compress().to_bytes(),
+            &theirs
+        ))
+        .unwrap_err(),
+        CrossCurveDleqError::InvalidProof
+    );
+
+    let ours = CrossCurveDleqProofV1::from_wire_bytes(&wire_bytes("mixed")).unwrap();
+    let ours_proof: CrossCurveDLEQProof = postcard::from_bytes(ours.proof_bytes()).unwrap();
+    assert!(!archived.verify(
+        &ours_proof,
+        claim(ours.secp256k1_public_key(), ours.ed25519_public_key())
+    ));
 }
 
 /// Writes the self-generated vectors. Run only to replace them on purpose:
