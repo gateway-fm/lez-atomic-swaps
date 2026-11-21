@@ -565,6 +565,38 @@ class FailedTestNodeLogs(unittest.TestCase):
             self.assertFalse(any('/var/lib/lez' in part or 'runtime/' in part or 'cookie' in part for part in argv), argv)
 
 
+class RecordingStartsWithoutOffers(unittest.TestCase):
+    """withdraw-offers (ui-e2e.sh --record): every active offer is withdrawn
+    through the desk's own owner RPC, each with its revision and its own
+    request id."""
+
+    def test_every_active_offer_is_withdrawn_at_its_revision(self):
+        calls = []
+
+        def fake_call(role, method, params, *_):
+            calls.append((role, method, params))
+            if method == 'maker_offer_list':
+                return [{'offer': {'id': 'aa' * 32}, 'revision': 1}, {'offer': {'id': 'bb' * 32}, 'revision': 3}]
+            return {}
+
+        with patch.object(e2e, 'call', fake_call):
+            withdrawn = e2e.withdraw_open_offers('20261121T000000Z')
+        self.assertEqual(withdrawn, ['aa' * 32, 'bb' * 32])
+        self.assertEqual(calls[0], ('maker', 'maker_offer_list', {'states': ['active']}))
+        self.assertEqual(calls[1:], [
+            ('maker', 'maker_offer_withdraw', {'request_id': 'ui-record-withdraw-20261121T000000Z-1',
+                                               'offer_id': 'aa' * 32, 'expected_revision': 1}),
+            ('maker', 'maker_offer_withdraw', {'request_id': 'ui-record-withdraw-20261121T000000Z-2',
+                                               'offer_id': 'bb' * 32, 'expected_revision': 3}),
+        ])
+
+    def test_no_open_offer_withdraws_nothing(self):
+        calls = []
+        with patch.object(e2e, 'call', lambda role, method, params, *_: calls.append(method) or []):
+            self.assertEqual(e2e.withdraw_open_offers('s'), [])
+        self.assertEqual(calls, ['maker_offer_list'])
+
+
 REPO = SCRIPTS.parents[1]
 PROBE = 'lez-v02-escrow-claim-probe'
 

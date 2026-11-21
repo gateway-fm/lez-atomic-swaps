@@ -1111,6 +1111,13 @@ run_one() {
     esac
   fi
   if [[ "${LEZ_REPAIR_INDEXER:-1}" == 1 ]]; then bash scripts/repair-indexer.sh >/dev/null || fail "repair-indexer.sh"; fi
+  # A recording starts from no open offers: they outlive reset-swaps.sh and a
+  # new LEZ chain, and leftover rows push the journey's own out of view.
+  if [[ "$record" == 1 ]]; then
+    log "withdrawing the Maker Node's open offers for the recording (maker_offer_withdraw, as the desk's Withdraw)"
+    python3 scripts/node-e2e.py withdraw-offers 2>&1 | sed 's/^/   /'
+    [[ "${PIPESTATUS[0]}" == 0 ]] || fail "withdraw-offers"
+  fi
   case "$name" in
     happy) scenario_happy ;;
     restart-taker) scenario_restart taker ;;

@@ -258,7 +258,10 @@ scripts/ui-e2e.sh happy --direction TakerSellsLez --record       # the Maker pay
 
 Each party's desk is the one its own Basecamp has open: the Maker's on VNC at
 `127.0.0.1:5903`, the Taker's at `127.0.0.1:5904` (`compose.testnet.yaml`; a local
-stack keeps 5901 and 5902), and `ui-e2e.sh` drives those same desks.
+stack keeps 5901 and 5902), and `ui-e2e.sh` drives those same desks. A recorded
+run (`--record`) first withdraws every open offer of the Maker Node
+(`maker_offer_withdraw`, what the desk's Withdraw calls), so the recording
+starts from the journey's own offers only.
 
 Four things differ from a local run, and each of them will fail a run if missed.
 

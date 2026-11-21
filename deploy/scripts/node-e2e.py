@@ -7742,6 +7742,22 @@ def bounded_lines(text: str, limit: int = NODE_LOG_LINES) -> tuple[str, int]:
     return "".join(f"{line}\n" for line in kept[-limit:]), len(lines) - len(kept)
 
 
+def withdraw_open_offers(stamp: str) -> list[str]:
+    """Withdraws every active offer on this lane's Maker Node through
+    `maker_offer_withdraw`, the owner RPC the Maker desk's Withdraw calls, and
+    returns their ids. Offers are not tied to a chain and outlive both
+    reset-swaps.sh and up.sh --fresh-lez (they end at their lifetime), so a
+    recorded desk journey (ui-e2e.sh --record) starts from none: leftover rows
+    pushed the Maker desk's own row out of view (2026-11-20)."""
+    withdrawn = []
+    for n, record in enumerate(call("maker", "maker_offer_list", {"states": ["active"]}), 1):
+        offer_id = record["offer"]["id"]
+        call("maker", "maker_offer_withdraw", {"request_id": f"ui-record-withdraw-{stamp}-{n}",
+                                               "offer_id": offer_id, "expected_revision": record["revision"]})
+        withdrawn.append(offer_id)
+    return withdrawn
+
+
 def keep_node_logs(directory: pathlib.Path) -> list[str]:
     """Saves both Nodes' logs and health answers into `directory`; returns one note per file."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -7823,7 +7839,7 @@ def run(name: str) -> bool:
 def main() -> int:
     global MANUAL_DRIVE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "xmr-fund", "node-logs", "all"])
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "xmr-fund", "node-logs", "withdraw-offers", "all"])
     parser.add_argument("--out", help="node-logs: the directory both Nodes' logs and health answers are saved in")
     parser.add_argument("--swap-id", action="append", default=[],
                         help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
@@ -7848,6 +7864,14 @@ def main() -> int:
             parser.error("node-logs needs --out")
         for note in keep_node_logs(pathlib.Path(args.out)):
             log(f"  kept {note}")
+        return 0
+    if args.scenario == "withdraw-offers":
+        try:
+            withdrawn = withdraw_open_offers(time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
+        except Failure as failure:
+            log(f"FAILED: {failure}")
+            return 1
+        log(f"  withdrew {len(withdrawn)} open offer(s) on the Maker Node{': ' + ' '.join(withdrawn) if withdrawn else ''}")
         return 0
     if args.pair == "Monero":
         if (args.direction or "TakerSellsLez") != "TakerSellsLez":
