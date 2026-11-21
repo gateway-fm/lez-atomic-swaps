@@ -360,7 +360,7 @@ fn provision_maker_recovery(
         adaptor_journal: fixture.maker_actor_state.clone(),
         evidence_root,
         lez: Lez {
-            sidecar_url: fake_sidecar_url().to_owned(),
+            sidecar_url: fake_sidecar_url(kind == MakerRecoveryKind::Claim).to_owned(),
             runtime_sha256: hex::encode(Sha256::digest(fs::read(&runtime).unwrap())),
             runtime_file: runtime,
             capability_file: capability,
@@ -439,22 +439,42 @@ fn provision_maker_recovery(
 
 /// A loopback swap sidecar answering only the finalized clock, as the one in
 /// `xmr_reserve_fixture.rs` answers nothing; it lives as long as the test
-/// process.
-fn fake_sidecar_url() -> &'static str {
-    static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| {
+/// process. With `before_claim_deadline` its clock is the wall clock, before
+/// the fixture's windows (the claim is sent only before its deadline, half
+/// the claim window before R); otherwise a fixed time past all of them (the
+/// punishment and the refund sweep).
+fn fake_sidecar_url(before_claim_deadline: bool) -> &'static str {
+    static PAST_WINDOWS: OnceLock<String> = OnceLock::new();
+    static BEFORE_DEADLINE: OnceLock<String> = OnceLock::new();
+    let url = if before_claim_deadline {
+        &BEFORE_DEADLINE
+    } else {
+        &PAST_WINDOWS
+    };
+    url.get_or_init(|| {
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async move {
                 let mut module = RpcModule::new(());
                 module
-                    .register_method(METHOD_OBSERVE_FINALIZED_CLOCK, |params, (), _| {
+                    .register_method(METHOD_OBSERVE_FINALIZED_CLOCK, move |params, (), _| {
                         let request: ObserveFinalizedClockRequest = params.one()?;
+                        let timestamp_ms = if before_claim_deadline {
+                            u64::try_from(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis(),
+                            )
+                            .unwrap()
+                        } else {
+                            1_850_000_000_070
+                        };
                         Ok::<_, ErrorObjectOwned>(ObserveFinalizedClockResult::new(
                             request.context,
                             request.runtime,
-                            ChainClock::new(Hex32::from_bytes([70; 32]), 70, 1_850_000_000_070),
+                            ChainClock::new(Hex32::from_bytes([70; 32]), 70, timestamp_ms),
                         ))
                     })
                     .unwrap();
