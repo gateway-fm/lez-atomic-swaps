@@ -14,6 +14,13 @@
 //!
 //! Environment (defaults in brackets):
 //!
+//! - `LEZ_XMR_EXAMPLE_NETWORK` \[`regtest`\]: `regtest` runs the Monero leg
+//!   on the devnet's regtest and mines its confirmations; `stagenet` runs it
+//!   on Monero Stagenet under the `PublicStagenet` profile: it funds the
+//!   shared address and sweeps it with transactions that Stagenet's miners
+//!   confirm, waits for the ten confirmations of each, and sizes the modelled
+//!   windows for that profile (C, R, P = +9.6 h, +21.6 h, +30 h, the `fast`
+//!   windows times 108). `docs/monero-stagenet-guide.md` sets it up.
 //! - `LEZ_XMR_EXAMPLE_MONERO` \[`live`\]: `live` runs the Monero leg and stops
 //!   with an error when monerod does not answer; `off` runs everything else
 //!   and says on every Monero step that it was skipped.
@@ -27,6 +34,8 @@
 //!   `deploy/runtime/lanes/<k>/monero`).
 //! - `LEZ_XMR_FUNDING_WALLET` \[`funding`\]: the wallet the funding wallet-rpc
 //!   opens; the example leaves it open again when it ends.
+//! - `LEZ_XMR_FUNDING_WALLET_PASSWORD_FILE` \[none: no password\]: a file
+//!   holding that wallet's password.
 //! - `LEZ_XMR_EXAMPLE_SEED` \[`full-lifecycle`\]: the seed of every key.
 //!
 //! What runs for real, on the types the Nodes run (`xmr-reference-actor`,
@@ -74,6 +83,8 @@ use std::{
     os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
     str::FromStr as _,
+    sync::OnceLock,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
@@ -88,8 +99,8 @@ use lez_adaptor_signature::{
 use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal};
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity,
-    MoneroChainIdentityAttestor, MoneroNetwork, MoneroOutputVerifier, MoneroRegtestWalletEffects,
-    MoneroTransactionId,
+    MoneroChainIdentityAttestor, MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier,
+    MoneroRegtestWalletEffects, MoneroTransactionId,
 };
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
@@ -127,7 +138,48 @@ const CLAIM_PARTIAL_DOMAIN: &[u8] = b"logos.gateway.lez-xmr.claim-partial-commit
 const EXAMPLE_WALLET_PASSWORD: &str = "lez-full-lifecycle-example";
 const ADAPTOR_JOURNAL: &str = "adaptor.sqlite3";
 
+/// The Monero network of the run, from `LEZ_XMR_EXAMPLE_NETWORK`.
+static NETWORK: OnceLock<MoneroNetwork> = OnceLock::new();
+/// How long the Stagenet run waits for ten confirmations of one transaction.
+const STAGENET_CONFIRMATION_WAIT: Duration = Duration::from_hours(3);
+
+fn network() -> MoneroNetwork {
+    *NETWORK.get().unwrap_or(&MoneroNetwork::Regtest)
+}
+
+/// The model clock's multiplier: 1 on regtest; on Stagenet 108, so that the
+/// `fast` windows meet the `PublicStagenet` minimums (R - C >= 12 h,
+/// P - R >= 2 h).
+fn clock_scale() -> u64 {
+    match network() {
+        MoneroNetwork::Regtest => 1,
+        MoneroNetwork::Stagenet => 108,
+    }
+}
+
+fn address_network() -> MoneroAddressNetworkV1 {
+    match network() {
+        MoneroNetwork::Regtest => MoneroAddressNetworkV1::Regtest,
+        MoneroNetwork::Stagenet => MoneroAddressNetworkV1::Stagenet,
+    }
+}
+
+fn named_profile() -> XmrNamedProfileV1 {
+    match network() {
+        MoneroNetwork::Regtest => XmrNamedProfileV1::AcceleratedRegtest,
+        MoneroNetwork::Stagenet => XmrNamedProfileV1::PublicStagenet,
+    }
+}
+
 fn main() -> Result<()> {
+    let network = match env::var("LEZ_XMR_EXAMPLE_NETWORK").as_deref() {
+        Err(_) | Ok("regtest") => MoneroNetwork::Regtest,
+        Ok("stagenet") => MoneroNetwork::Stagenet,
+        Ok(other) => bail!("LEZ_XMR_EXAMPLE_NETWORK is `regtest` or `stagenet`, not `{other}`"),
+    };
+    NETWORK
+        .set(network)
+        .map_err(|_| anyhow!("the network is set once"))?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -142,9 +194,26 @@ async fn run() -> Result<()> {
         Monero::Live(live) => live.identity.genesis_hash(),
         Monero::Offline => OFFLINE_MONERO_GENESIS,
     };
+    // Stagenet coins come from a faucet: a tenth of the regtest amounts.
+    let piconero = |regtest: u64| match network() {
+        MoneroNetwork::Regtest => regtest,
+        MoneroNetwork::Stagenet => regtest / 10,
+    };
     let swaps = [
-        Facts::new(1, Branch::Claim, 200_000_000_000, 500, monero_genesis),
-        Facts::new(2, Branch::Refund, 100_000_000_000, 250, monero_genesis),
+        Facts::new(
+            1,
+            Branch::Claim,
+            piconero(200_000_000_000),
+            500,
+            monero_genesis,
+        ),
+        Facts::new(
+            2,
+            Branch::Refund,
+            piconero(100_000_000_000),
+            250,
+            monero_genesis,
+        ),
     ];
     if let Monero::Live(live) = &monero {
         live.ensure_funds(swaps.iter().map(|facts| facts.amount_piconero).sum())
@@ -209,8 +278,8 @@ impl Facts {
 
     fn say(&self, at_s: Option<u64>, line: &str) {
         match at_s {
-            Some(at) => println!("[{} | LEZ +{at:>4} s] {line}", self.label),
-            None => println!("[{} |           ] {line}", self.label),
+            Some(at) => println!("[{} | LEZ +{:>6} s] {line}", self.label, at * clock_scale()),
+            None => println!("[{} |             ] {line}", self.label),
         }
     }
 }
@@ -460,12 +529,12 @@ fn compose_stage_a(
     let claim_key = participants.claim_aggregate_x_only_key()?;
     let refund_key = participants.refund_aggregate_x_only_key()?;
     let shared = MoneroSharedAddressV1::derive_from_public_view_key(
-        MoneroAddressNetworkV1::Regtest,
+        address_network(),
         &maker_proof,
         &taker_proof,
         taker.public_view_key,
     )?;
-    let profile = XmrNamedProfileV1::AcceleratedRegtest;
+    let profile = named_profile();
     let derived = |purpose: &[u8]| tagged_hash(purpose, &facts.swap_id);
     let body = XmrAgreementBodyV1::new(
         XmrSwapDirectionV1::TakerSellsLez,
@@ -473,7 +542,7 @@ fn compose_stage_a(
         facts.swap_id,
         participants,
         XmrMoneroTermsV1::new(
-            MoneroAddressNetworkV1::Regtest,
+            address_network(),
             facts.monero_genesis,
             facts.amount_piconero,
             profile.required_monero_confirmations(),
@@ -792,8 +861,9 @@ fn check_lock_before_cutoff(facts: &Facts, maker: &Party, escrow: &ModelEscrow) 
     facts.say(
         Some(30),
         &format!(
-            "Maker: LEZ lock {} matches Stage B and is final before C (+{FUNDING_CUTOFF_S} s)",
-            short(&validated.funding_transaction_id())
+            "Maker: LEZ lock {} matches Stage B and is final before C (+{} s)",
+            short(&validated.funding_transaction_id()),
+            FUNDING_CUTOFF_S * clock_scale()
         ),
     );
     Ok(())
@@ -1310,19 +1380,37 @@ impl Monero {
         )?;
         let funding_wallet =
             env::var("LEZ_XMR_FUNDING_WALLET").unwrap_or_else(|_| "funding".into());
-        let attestor = MoneroChainIdentityAttestor::new(MoneroNetwork::Regtest, &daemon)?;
+        let funding_password = match env::var_os("LEZ_XMR_FUNDING_WALLET_PASSWORD_FILE") {
+            Some(path) => Zeroizing::new(
+                fs::read_to_string(&path)
+                    .context("read LEZ_XMR_FUNDING_WALLET_PASSWORD_FILE")?
+                    .trim()
+                    .to_owned(),
+            ),
+            None => Zeroizing::new(String::new()),
+        };
+        let attestor = MoneroChainIdentityAttestor::new(network(), &daemon)?;
         let identity = attestor.discover().await.with_context(|| {
             format!(
-                "monerod at {} does not answer (start it with `LEZ_MONERO=1 bash scripts/up.sh`, \
+                "monerod at {} does not answer, or serves another network than {:?} \
+                 (start it with `LEZ_MONERO=1 bash scripts/up.sh`, \
                  or run with LEZ_XMR_EXAMPLE_MONERO=off)",
-                daemon.base_url()
+                daemon.base_url(),
+                network()
             )
         })?;
+        if network() == MoneroNetwork::Stagenet {
+            attestor
+                .verify_network()
+                .await
+                .context("the daemon's get_info does not name Stagenet")?;
+        }
         let effects = MoneroRegtestWalletEffects::new(&daemon, &wallet)?
-            .with_role_wallet(funding_wallet, String::new())?;
+            .with_role_wallet(funding_wallet, funding_password.to_string())?;
         let funding_address = effects.primary_standard_address().await?;
         println!(
-            "Monero leg: LIVE regtest; monerod {} (genesis {}, tip {}), funding wallet-rpc {} ({})",
+            "Monero leg: LIVE {:?}; monerod {} (genesis {}, tip {}), funding wallet-rpc {} ({})",
+            network(),
             daemon.base_url(),
             short(&identity.genesis_hash()),
             attestor.tip_height().await?,
@@ -1347,6 +1435,25 @@ impl Monero {
             return Ok(None);
         };
         let restore_height = live.attestor.tip_height().await?;
+        if network() == MoneroNetwork::Stagenet {
+            let transaction = live
+                .effects
+                .fund_shared_exact_once(shared, facts.amount_piconero)
+                .await?;
+            facts.say(
+                Some(60),
+                &format!(
+                    "Maker: sent {} piconero to the shared address {} in {} at Stagenet height {restore_height}",
+                    facts.amount_piconero,
+                    short_str(&shared.address_string()),
+                    hex::encode(transaction.0)
+                ),
+            );
+            return Ok(Some(Funded {
+                transaction,
+                restore_height,
+            }));
+        }
         let funding = live
             .effects
             .fund_shared_exact_and_confirm(shared, facts.amount_piconero)
@@ -1388,16 +1495,20 @@ impl Monero {
                 funded.restore_height,
             )
             .await?;
-        live.effects
-            .refresh_from_height(funded.restore_height)
-            .await?;
         let verifier = MoneroOutputVerifier::new(live.identity, &live.daemon, &live.wallet)?;
-        let observed = verifier
-            .verify(&ExpectedMoneroOutput::new(
-                funded.transaction,
-                MoneroAddress::from_str(&shared.address_string())?,
-                facts.amount_piconero,
-            )?)
+        let expected = ExpectedMoneroOutput::new(
+            funded.transaction,
+            MoneroAddress::from_str(&shared.address_string())?,
+            facts.amount_piconero,
+        )?;
+        let observed = live
+            .await_confirmed(
+                facts,
+                "Taker: the shared output",
+                &verifier,
+                &expected,
+                || live.effects.refresh_from_height(funded.restore_height),
+            )
             .await?;
         facts.say(
             Some(90),
@@ -1429,6 +1540,11 @@ impl Monero {
             );
             return Ok("sweep skipped (offline)".into());
         };
+        if network() == MoneroNetwork::Stagenet {
+            return live
+                .sweep_on_stagenet(facts, purpose, shared, key, view, funded)
+                .await;
+        }
         let sweep = live
             .effects
             .restore_shared_and_sweep(
@@ -1462,6 +1578,19 @@ impl LiveMonero {
     /// The funding wallet needs unlocked coins for both swaps; regtest
     /// coinbase unlocks after 60 blocks.
     async fn ensure_funds(&self, needed: u64) -> Result<()> {
+        if network() == MoneroNetwork::Stagenet {
+            // Nothing to mine: the wallet's coins come from a faucet.
+            self.effects.open_role_wallet().await?;
+            let (_, balance, unlocked) = self.effects.role_wallet_balance().await?;
+            println!(
+                "Monero leg: the Stagenet funding wallet holds {balance} piconero, {unlocked} unlocked; the swaps need {needed} and fees"
+            );
+            ensure!(
+                unlocked > needed,
+                "the Stagenet funding wallet needs more than {needed} unlocked piconero"
+            );
+            return Ok(());
+        }
         for _ in 0..4 {
             self.effects.open_role_wallet().await?;
             self.effects.refresh_from_height(0).await?;
@@ -1480,6 +1609,153 @@ impl LiveMonero {
         }
         bail!("the funding wallet has too little unlocked Monero after mining")
     }
+}
+
+impl LiveMonero {
+    /// The exact output at ten confirmations. On regtest they are mined
+    /// already; on Stagenet this waits for them, rereading every 30 s.
+    async fn await_confirmed<F, Fut>(
+        &self,
+        facts: &Facts,
+        what: &str,
+        verifier: &MoneroOutputVerifier,
+        expected: &ExpectedMoneroOutput,
+        refresh: F,
+    ) -> Result<lez_xmr_monero_adapter::VerifiedMoneroOutputObservation>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<
+                Output = Result<(), lez_xmr_monero_adapter::MoneroWalletEffectError>,
+            >,
+    {
+        let started = Instant::now();
+        let mut last = String::new();
+        loop {
+            // Through a public node a refresh can outlast the RPC deadline
+            // while the wallet-rpc goes on scanning: on Stagenet that is one
+            // more wait, not an error.
+            if let Err(error) = refresh().await {
+                if network() != MoneroNetwork::Stagenet
+                    || started.elapsed() >= STAGENET_CONFIRMATION_WAIT
+                {
+                    return Err(error.into());
+                }
+                facts.say(
+                    None,
+                    &format!("{what}: the wallet is still refreshing ({error})"),
+                );
+                tokio::task::block_in_place(|| std::thread::sleep(Duration::from_secs(30)));
+                continue;
+            }
+            match verifier.verify(expected).await {
+                Ok(observed) => return Ok(observed),
+                Err(error)
+                    if network() == MoneroNetwork::Stagenet
+                        && is_pending(&error)
+                        && started.elapsed() < STAGENET_CONFIRMATION_WAIT =>
+                {
+                    let tip = self
+                        .attestor
+                        .tip_height()
+                        .await
+                        .map_or_else(|_| "unread".to_owned(), |tip| tip.to_string());
+                    let now = format!("{error}");
+                    if now != last {
+                        facts.say(
+                            None,
+                            &format!(
+                                "{what}: {now} (Stagenet tip {tip}, {} s waited)",
+                                started.elapsed().as_secs()
+                            ),
+                        );
+                        last = now;
+                    }
+                    tokio::task::block_in_place(|| std::thread::sleep(Duration::from_secs(30)));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    /// Sweeps with the rebuilt key, then waits for the sweep's ten
+    /// confirmations in the funding wallet.
+    async fn sweep_on_stagenet(
+        &self,
+        facts: &Facts,
+        purpose: &str,
+        shared: &MoneroSharedAddressV1,
+        key: ReconstructedMoneroSpendKey,
+        view: MoneroPrivateViewKey,
+        funded: &Funded,
+    ) -> Result<String> {
+        let sweep_height = self.attestor.tip_height().await?;
+        let submitted = self
+            .effects
+            .restore_shared_and_sweep_once(
+                shared,
+                key,
+                view,
+                wallet_name(facts, purpose, funded),
+                EXAMPLE_WALLET_PASSWORD.into(),
+                funded.restore_height,
+                facts.amount_piconero,
+                self.funding_address,
+            )
+            .await?;
+        facts.say(
+            None,
+            &format!(
+                "swept the shared output with the rebuilt key in {} ({} piconero, fee {}); waiting for its confirmations",
+                hex::encode(submitted.transaction_id().0),
+                submitted.received_amount_piconero(),
+                submitted.fee_piconero()
+            ),
+        );
+        self.effects.open_role_wallet().await?;
+        let verifier = MoneroOutputVerifier::new(self.identity, &self.daemon, &self.wallet)?;
+        let expected = ExpectedMoneroOutput::new(
+            submitted.transaction_id(),
+            self.funding_address,
+            submitted.received_amount_piconero(),
+        )?;
+        let observed = self
+            .await_confirmed(facts, "the sweep", &verifier, &expected, || {
+                self.effects.refresh_from_height(sweep_height)
+            })
+            .await?;
+        let receipt = format!(
+            "tx {} received {} piconero (fee {}), in block {} at Stagenet height {}, {} confirmations",
+            hex::encode(submitted.transaction_id().0),
+            submitted.received_amount_piconero(),
+            submitted.fee_piconero(),
+            short(&observed.containing_block_hash()),
+            observed.containing_block_height(),
+            observed.confirmations()
+        );
+        facts.say(
+            None,
+            &format!("swept the shared output with the rebuilt key: {receipt}"),
+        );
+        Ok(receipt)
+    }
+}
+
+/// An output that is not yet at ten confirmations: in the pool, not yet seen
+/// by the wallet, or short of blocks; or a read that did not get through (a
+/// public node limits the connections of one address and drops some).
+const fn is_pending(error: &MoneroEvidenceError) -> bool {
+    matches!(
+        error,
+        MoneroEvidenceError::Rpc { .. }
+            | MoneroEvidenceError::MissingWalletTransfer
+            | MoneroEvidenceError::WalletTransferInPool
+            | MoneroEvidenceError::OutputNotUnlocked
+            | MoneroEvidenceError::DaemonMissedTransaction
+            | MoneroEvidenceError::DaemonTransactionInPool
+            | MoneroEvidenceError::InsufficientConfirmations
+            | MoneroEvidenceError::NonzeroUnlockDistance
+            | MoneroEvidenceError::UnstableTip
+    )
 }
 
 fn wallet_name(facts: &Facts, purpose: &str, funded: &Funded) -> String {
@@ -1501,8 +1777,8 @@ fn tagged_hash(tag: &[u8], data: &[u8]) -> [u8; 32] {
         .into()
 }
 
-const fn at_ms(offset_s: u64) -> u64 {
-    (ANCHOR_S + offset_s) * 1_000
+fn at_ms(offset_s: u64) -> u64 {
+    (ANCHOR_S + offset_s * clock_scale()) * 1_000
 }
 
 const fn role_name(role: Role) -> &'static str {
