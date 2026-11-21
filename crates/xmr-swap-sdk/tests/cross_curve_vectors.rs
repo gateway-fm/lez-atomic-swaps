@@ -500,6 +500,33 @@ fn trailing_proof_bytes_are_rejected() {
     );
 }
 
+/// The inner proof bytes have one encoding: a non-minimal postcard length
+/// (`fc 81 00` for the 252 commitments, `fc 01` canonically) decodes to the
+/// same proof but is refused, so a proof has one transcript commitment.
+#[test]
+fn non_minimal_inner_proof_encoding_is_rejected() {
+    let fixed = decode_wire(&wire_bytes("mixed"));
+    let proof: CrossCurveDLEQProof = postcard::from_bytes(&fixed.3).unwrap();
+    let commitments = postcard::to_allocvec(&proof.commitments).unwrap();
+    assert_eq!(&commitments[..2], &[0xfc, 0x01]);
+    let at = fixed
+        .3
+        .windows(commitments.len())
+        .position(|window| window == commitments.as_slice())
+        .expect("the commitments inside the proof bytes");
+    let mut altered = fixed.clone();
+    altered.3 = [&fixed.3[..at], &[0xfc, 0x81, 0x00][..], &fixed.3[at + 2..]].concat();
+    assert_eq!(
+        postcard::from_bytes::<CrossCurveDLEQProof>(&altered.3).unwrap(),
+        proof,
+        "postcard alone accepts the longer length"
+    );
+    assert_eq!(
+        CrossCurveDleqProofV1::from_wire_bytes(&reseal(altered)).unwrap_err(),
+        CrossCurveDleqError::ProofSerialization
+    );
+}
+
 /// BIP-341's NUMS point, `lift_x(SHA256(uncompressed G))`, with libsecp256k1.
 fn bip341_nums_point() -> [u8; 33] {
     let generator = secp256k1::PublicKey::from_slice(&libsecp256k1_public_key(one_le())).unwrap();

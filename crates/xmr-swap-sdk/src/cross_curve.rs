@@ -186,8 +186,8 @@ impl CrossCurveDleqProofV1 {
     ///
     /// # Errors
     ///
-    /// Rejects malformed points/proofs, trailing proof bytes, identity or
-    /// torsion Ed25519 points, invalid DLEQ equations, and a changed envelope
+    /// Rejects malformed points/proofs, trailing or noncanonical proof bytes,
+    /// identity or torsion Ed25519 points, invalid DLEQ equations, and a changed envelope
     /// commitment.
     pub fn verify(&self) -> Result<(), CrossCurveDleqError> {
         if self.proof_bytes.is_empty() || self.proof_bytes.len() > MAX_PROOF_BYTES {
@@ -209,6 +209,13 @@ impl CrossCurveDleqProofV1 {
             postcard::take_from_bytes(&self.proof_bytes)
                 .map_err(|_| CrossCurveDleqError::ProofSerialization)?;
         if !remainder.is_empty() {
+            return Err(CrossCurveDleqError::ProofSerialization);
+        }
+        // postcard accepts non-minimal lengths; one proof gets one encoding,
+        // so one transcript commitment.
+        if postcard::to_allocvec(&proof).map_err(|_| CrossCurveDleqError::ProofSerialization)?
+            != self.proof_bytes
+        {
             return Err(CrossCurveDleqError::ProofSerialization);
         }
         if !proof_system()?.verify(&proof, (secp256k1_point, ed25519_point)) {
