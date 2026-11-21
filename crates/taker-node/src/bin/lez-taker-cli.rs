@@ -256,6 +256,10 @@ enum SwapCommand {
         request_id: String,
         #[arg(long)]
         offer_id: String,
+        /// The Maker whose offer this is (its compressed public key, hex):
+        /// needed when offers of two Makers share the id.
+        #[arg(long)]
+        maker_public_key: Option<String>,
         /// Foreign-chain atomic units (sats, zatoshis or piconero, 10^-12 XMR)
         /// within the offer's bounds.
         #[arg(long)]
@@ -945,6 +949,7 @@ async fn execute_taker_swap(command: SwapCommand, socket: &std::path::Path) -> a
         SwapCommand::Take {
             request_id,
             offer_id,
+            maker_public_key,
             foreign_units,
             funding_transaction_hex,
         } => (
@@ -953,6 +958,7 @@ async fn execute_taker_swap(command: SwapCommand, socket: &std::path::Path) -> a
                 socket,
                 request_id,
                 &offer_id,
+                maker_public_key.as_deref(),
                 foreign_units,
                 funding_transaction_hex,
             )
@@ -1248,11 +1254,42 @@ fn xmr_balance_words(monero: Option<&serde_json::Value>) -> String {
     }
 }
 
+/// The listed offer `offer_id` names (`key` gives a row's offer id and its
+/// Maker's identity in hex). Offers of two Makers may share an id, and the
+/// take carries the chosen row's Maker identity, envelope digest and price:
+/// with more than one, the Maker must be named, never the first row taken.
+fn select_offer<T>(
+    rows: impl IntoIterator<Item = T>,
+    offer_id: &str,
+    maker: Option<&str>,
+    key: impl Fn(&T) -> (String, String),
+) -> anyhow::Result<T> {
+    let mut matching: Vec<T> = rows
+        .into_iter()
+        .filter(|row| {
+            let (id, identity) = key(row);
+            id == offer_id && maker.is_none_or(|maker| identity.eq_ignore_ascii_case(maker))
+        })
+        .collect();
+    match matching.len() {
+        0 => anyhow::bail!(
+            "the Taker Node lists no live offer {offer_id}{}",
+            maker.map_or_else(String::new, |maker| format!(" from Maker {maker}"))
+        ),
+        1 => Ok(matching.remove(0)),
+        count => anyhow::bail!(
+            "{count} Makers list an offer {offer_id}: name the one you reviewed with \
+             --maker-public-key (swap offers shows each offer's Maker)"
+        ),
+    }
+}
+
 /// The initiate request for one offer as the Node lists it.
 async fn take_request(
     socket: &std::path::Path,
     request_id: String,
     offer_id: &str,
+    maker_public_key: Option<&str>,
     foreign_units: u64,
     funding_transaction_hex: Option<String>,
 ) -> anyhow::Result<serde_json::Value> {
@@ -1267,11 +1304,12 @@ async fn take_request(
         },
     )
     .await?;
-    let view = offers
-        .offers
-        .into_iter()
-        .find(|view| view.offer.id().as_str() == offer_id)
-        .with_context(|| format!("the Taker Node lists no live offer {offer_id}"))?;
+    let view = select_offer(offers.offers, offer_id, maker_public_key, |view| {
+        (
+            view.offer.id().as_str().to_owned(),
+            hex::encode(view.maker_identity.as_bytes()),
+        )
+    })?;
     let offer = &view.offer;
     let expected_lez_units = offer.quote_foreign_amount(foreign_units).map_err(|error| {
         anyhow::anyhow!(
@@ -2283,5 +2321,34 @@ mod xmr_words_tests {
         let mut zcash = view(TakerSwapStateV1::Completed, "completed", None, None);
         zcash.route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
         assert_eq!(xmr_swap_words(&zcash), None);
+    }
+}
+
+#[cfg(test)]
+mod take_tests {
+    use super::select_offer;
+
+    /// Offers of two Makers may carry the same id; the take is the reviewed
+    /// Maker's offer, never the first row with the id.
+    #[test]
+    fn a_take_names_its_maker_when_two_share_the_offer_id() {
+        let rows = vec![
+            ("offer-1", "02aa"),
+            ("offer-1", "03bb"),
+            ("offer-2", "02aa"),
+        ];
+        let key = |row: &(&str, &str)| (row.0.to_owned(), row.1.to_owned());
+        let error = select_offer(rows.clone(), "offer-1", None, key).unwrap_err();
+        assert!(error.to_string().contains("--maker-public-key"), "{error}");
+        assert_eq!(
+            select_offer(rows.clone(), "offer-1", Some("03BB"), key).unwrap(),
+            ("offer-1", "03bb")
+        );
+        assert_eq!(
+            select_offer(rows.clone(), "offer-2", None, key).unwrap(),
+            ("offer-2", "02aa")
+        );
+        assert!(select_offer(rows.clone(), "offer-2", Some("03bb"), key).is_err());
+        assert!(select_offer(rows, "offer-3", None, key).is_err());
     }
 }

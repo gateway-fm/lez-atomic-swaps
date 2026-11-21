@@ -418,7 +418,9 @@ Registration and errors:
 Taker CLI: `lez-taker-cli [--socket /run/lez/taker/node.sock]` calls one method
 per command, prints its JSON result, and on an error prints its code, message and
 `data`. `swap take` fills the offer's route, identity, digest and exact quote from
-the Node's listing. A timed-out step is safe to repeat with the same arguments.
+the Node's listing; when offers of two Makers share the id it refuses until
+`--maker-public-key` names the one reviewed. A timed-out step is safe to repeat
+with the same arguments.
 
 ```sh
 lez-taker-cli swap offers --pair bitcoin --direction taker-sells-foreign   # or --pair zcash
