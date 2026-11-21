@@ -1070,7 +1070,7 @@ impl FinalizedAssetObserver {
         terms: &WitnessedLezAssetTermsV2,
         block_id: u64,
         expected_state: EscrowState,
-        expected_balance: u128,
+        minimum_balance: u128,
     ) -> Result<(WitnessedEscrowMetadataFacts, WitnessedAssetCustodyFactsV2), BridgeRuntimeError>
     {
         match terms.asset() {
@@ -1084,8 +1084,8 @@ impl FinalizedAssetObserver {
                 )?;
                 let expected_program =
                     program_id_from_hex(native.authenticated_transfer_program_id());
-                if account.program_owner.0 != expected_program
-                    || account.balance != expected_balance
+                // At least: anyone can credit the custody (TM-0032).
+                if account.program_owner.0 != expected_program || account.balance < minimum_balance
                 {
                     return Err(BridgeRuntimeError::InvalidObservation);
                 }
@@ -1121,7 +1121,7 @@ impl FinalizedAssetObserver {
                     return Err(BridgeRuntimeError::InvalidObservation);
                 };
                 if definition_id.into_value() != *token.token_definition_account_id().as_bytes()
-                    || balance != expected_balance
+                    || balance < minimum_balance
                 {
                     return Err(BridgeRuntimeError::InvalidObservation);
                 }

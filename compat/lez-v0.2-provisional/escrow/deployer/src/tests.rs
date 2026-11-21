@@ -834,23 +834,23 @@ fn f7_public_idl_and_artifact_identity_are_exact_and_append_only() {
 
     assert_eq!(
         manifest.artifact.elf_sha256,
-        "3d49502421a5705b2c386bde8d3a439914196f0727169a98794932c14b9777d4"
+        "3a016fd0059390384da2d6f86d366e6f2036b6ffdda3c8b5cd4a7d965bdc47f3"
     );
     assert_eq!(
         manifest.artifact.image_id,
-        "c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b"
+        "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98"
     );
     assert_eq!(
         manifest.artifact.program_id_words,
         [
-            4_234_227_138,
-            2_206_258_688,
-            214_047_648,
-            3_760_419_936,
-            3_098_458_389,
-            4_157_455_202,
-            2_215_058_280,
-            455_239_811,
+            3_705_693_898,
+            2_119_768_129,
+            1_729_138_698,
+            3_969_569_807,
+            2_629_450_642,
+            1_788_751_411,
+            2_367_740_198,
+            2_561_668_797,
         ]
     );
     assert_eq!(interface.instruction_count, 18);

@@ -718,6 +718,57 @@ fn all_six_xmr_effects_validate_exact_finalized_facts() {
     }
 }
 
+/// TM-0032: anyone can credit the custody. Every effect's facts accept a
+/// custody holding more than the rule's minimum, a funded custody holding
+/// less is refused, and a stranger's credit of the full amount before funding
+/// is never a lock: the Fund effect still needs the escrow's Funded metadata.
+#[test]
+fn xmr_effects_accept_a_credited_custody_and_never_a_credit_as_the_lock() {
+    let clock = ChainClock::new(h(71), 110, 30_000);
+    let window = DiscoveryWindow::new(90, 21).expect("window");
+    let classify = |effect, target, facts| {
+        ClassifyFinalizedNativeXmrEffectV3Result::new(
+            context(),
+            terms(),
+            effect,
+            target,
+            FinalizedNativeXmrScanOutcomeV3::found(clock, window, facts),
+        )
+    };
+    for effect in [
+        XmrNativeEffectV3::Initialize,
+        XmrNativeEffectV3::Fund,
+        XmrNativeEffectV3::AuthorizeClaim,
+        XmrNativeEffectV3::Claim,
+        XmrNativeEffectV3::Refund,
+        XmrNativeEffectV3::Punish,
+    ] {
+        let (target, mut facts) = effect_fixture(effect);
+        facts.custody = NativeCustodyFacts::new(h(6), h(4), facts.custody.balance.as_u128() + 1);
+        roundtrip(&classify(effect, target, facts).expect("a credited custody is accepted"));
+    }
+
+    let (target, mut facts) = effect_fixture(XmrNativeEffectV3::Fund);
+    facts.custody = NativeCustodyFacts::new(h(6), h(4), 41);
+    assert!(
+        classify(XmrNativeEffectV3::Fund, target, facts).is_err(),
+        "a funded custody holding less than the amount is no lock"
+    );
+
+    let (target, mut facts) = effect_fixture(XmrNativeEffectV3::Initialize);
+    facts.custody = NativeCustodyFacts::new(h(6), h(4), 42);
+    let initialized = classify(XmrNativeEffectV3::Initialize, target, facts)
+        .expect("a full-amount credit before funding is observed as it is");
+    roundtrip(&initialized);
+    let (target, mut facts) = effect_fixture(XmrNativeEffectV3::Fund);
+    facts.metadata =
+        XmrNativeEscrowMetadataFactsV3::from_terms(terms(), XmrNativeEscrowStateV3::Empty);
+    assert!(
+        classify(XmrNativeEffectV3::Fund, target, facts).is_err(),
+        "a custody holding the amount with Empty metadata is not funded"
+    );
+}
+
 #[test]
 fn refund_finalized_facts_enforce_half_open_refund_window() {
     let clock = ChainClock::new(h(71), 110, 30_000);

@@ -1139,6 +1139,32 @@
       "remaining": "The escrow does not bind tag 17 to the Monero funding, and the reference Maker's rule binds only that software; any Maker key holder can send tag 17 from P. A Taker Node that is down through [R, P), or one configured not to refund by itself whose owner does not act, loses the LEZ whether or not Monero was funded; nothing outside the owner's own polling of the Node delivers the warning. The refund by itself has run in unit tests only: xmr-maker-never-funds now leaves its swap to it, and has not run since. The devnet windows are sized for regtest (gen-config.sh: P - R = LEZ step + stall + margin + 2 Maker drives, 280 s on fast); no profile sized for a public network exists. The devnet scenario node:xmr:xmr-unfunded-punish:TakerSellsLez sends tag 17 from P on an unfunded swap, once with the Taker Node stopped through [R, P) (the punishment pays) and once with it running (its own refund wins); it has not run yet, so the unfunded case is shown only by the escrow unit test xmr_native_claim_refund_and_punish_are_atomic_and_disjoint, which accepts tag 17 from Funded from P.",
       "owner": "xmr-protocol",
       "state": "open"
+    },
+    {
+      "id": "TM-0032",
+      "old_ids": [],
+      "view": "chain-protocol",
+      "scenario": "Anyone holding one unit of the escrowed asset sends it to the custody account of a funded escrow, PDA(escrow, [\"custody\", swap_id]) for LEZ or the metadata PDA's associated token account for a token, with a plain authenticated-transfer or token transfer it signs alone. LEZ allows it: the authenticated-transfer and token programs check only the sender's authorisation, and validate_execution restricts balance decreases, never increases. An escrow that requires the custody to hold exactly the amount can then never end: claim, refund and punish all refuse, the LEZ is locked for good, and in XMR the Monero is locked with it, because tags 15 and 16 never reveal a share. The same credit between initialisation and funding, or a custody ATA created by a stranger before CreateTokenCustody, blocks the escrow before it is funded.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E12", "E16", "F13", "F17"]
+      },
+      "classes": ["stride.denial-of-service", "stride.tampering", "protocol.economic-griefing", "protocol.recovery"],
+      "harms": ["AS-FUNDS", "INV-03"],
+      "milestones": ["M2", "M3", "M4"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 2, "impact": 5 }, "residual": { "likelihood": 1, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 3 } }
+      ],
+      "control": "The escrow program accepts a custody that holds more than the amount. FundNative and FundToken no longer require an empty custody, CreateTokenCustody accepts the exact ATA when it already exists as a holding of the escrow's definition, and every ending (ClaimNative, ClaimNativeWitnessed, RefundNative, ClaimToken, ClaimTokenWitnessed, RefundToken and XMR tags 15, 16 and 17) requires at least the amount and pays the whole custody balance to that ending's recipient, so the custody is empty when the escrow is terminal and the surplus goes to the party the branch pays. A native custody cannot be credited before Initialize: the transfer would have to claim the default PDA, which needs an authorisation only the escrow can give. The executor tests in compat/lez-v0.2-provisional/escrow/methods/tests/custody_dust.rs send the stranger's transfer as a public transaction against the real guest and drive every ending of every pair, and the escrow unit tests native_endings_of_every_pair_sweep_a_credited_custody, native_funding_accepts_a_custody_credited_after_initialization and token_endings_sweep_a_credited_custody_and_custody_creation_is_idempotent check the same rules. The Nodes apply the same rule: a funded custody holds at least the amount, and a counterparty verifying a lock refuses less (the BTC first-lock proof, the LEZ bridge client's funding check, the XMR Fund effect and the ZEC SDK's canonical observation); an ending is recognised from the escrow's terminal status whatever the custody holds afterwards (the sidecar's finalized claim, refund, asset and XMR observations, the bridge adapter, the BTC reference actor and the ZEC SDK's claim observation); the owner sees the agreed amount. A stranger's credit, even of the full amount, before funding is never a lock: funding is the escrow's Funded status, set only by FundNative or FundToken from the recorded depositor, and a later refund pays the credit to that depositor (a_full_amount_credit_before_funding_is_not_a_lock, xmr_effects_accept_a_credited_custody_and_never_a_credit_as_the_lock).",
+      "proofs": ["compat/lez-v0.2-provisional/escrow/src/lib.rs", "compat/lez-v0.2-provisional/escrow/methods/tests/custody_dust.rs", "compat/lez-v0_2-sidecar/src/finalized_claim_observation.rs", "crates/lez-bridge-adapter/src/btc_first_lock_proof.rs", "crates/lez-bridge-protocol/src/xmr_v3.rs"],
+      "remaining": "The fix changes the program, so it holds only for escrows created under the new ImageID; every escrow under the program released in v0.3.4 (c22d61fc…) can still be locked this way, and no instruction recovers one. A token escrow whose custody ATA a stranger creates in the same block as InitializeToken is still refused by the sidecar's initialization observation, which requires the ATA to be absent at that block. The devnet scenarios btc-, zec- and xmr-custody-credit and their refund variants have not run.",
+      "owner": "lez-program",
+      "state": "working"
     }
   ]
 }

@@ -1388,7 +1388,7 @@ enum ClaimMutation {
     DepthOverflow,
 }
 
-const ALL_CLAIM_MUTATIONS: [ClaimMutation; 22] = [
+const ALL_CLAIM_MUTATIONS: [ClaimMutation; 21] = [
     ClaimMutation::ResponseContext,
     ClaimMutation::TipHash,
     ClaimMutation::TipHeight,
@@ -1409,7 +1409,6 @@ const ALL_CLAIM_MUTATIONS: [ClaimMutation; 22] = [
     ClaimMutation::MetadataStatus,
     ClaimMutation::CustodyAccount,
     ClaimMutation::CustodyOwner,
-    ClaimMutation::CustodyBalance,
     ClaimMutation::DepthOverflow,
 ];
 
@@ -2418,7 +2417,7 @@ enum RefundMutation {
     DepthOverflow,
 }
 
-const ALL_REFUND_MUTATIONS: [RefundMutation; 21] = [
+const ALL_REFUND_MUTATIONS: [RefundMutation; 20] = [
     RefundMutation::ResponseContext,
     RefundMutation::ClockHash,
     RefundMutation::ClockHeight,
@@ -2427,7 +2426,6 @@ const ALL_REFUND_MUTATIONS: [RefundMutation; 21] = [
     RefundMutation::MetadataStatus,
     RefundMutation::CustodyAccount,
     RefundMutation::CustodyOwner,
-    RefundMutation::CustodyBalance,
     RefundMutation::RefundId,
     RefundMutation::RefundBytes,
     RefundMutation::NonPublic,
@@ -2466,6 +2464,57 @@ async fn refund_primitive_identity_account_clock_window_and_depth_mutations_fail
         assert!(result.is_err(), "mutation {mutation:?} must fail closed");
         assert_eq!(transport.observe_requests.lock().expect("log").len(), 1);
     }
+}
+
+/// TM-0032: anyone can credit the custody, in the ending's own block too, so
+/// a claimed or refunded escrow is recognised whatever its custody holds.
+#[tokio::test]
+async fn claim_and_refund_are_confirmed_with_a_credited_custody() {
+    let agreement = agreement();
+    let mut response = claim_found_observation(
+        &agreement,
+        claim_context(Participant::Maker, "claim-credited"),
+    );
+    mutate_claim_observation(&mut response, ClaimMutation::CustodyBalance);
+    let adapter = claim_adapter(
+        ClaimTransport::new([response]),
+        &agreement,
+        Participant::Maker,
+    );
+    let result = adapter
+        .observe_prepared_native_revealing_claim(
+            &agreement,
+            RequestId::new("claim-credited").expect("request id"),
+            &prepared_claim_submission(),
+        )
+        .await;
+    assert!(
+        matches!(result, Ok(RevealingClaimObservationV1::Confirmed(_))),
+        "{result:?}"
+    );
+
+    let mut response = refund_found_observation(
+        &agreement,
+        refund_context(Participant::Taker, "refund-credited"),
+    );
+    mutate_refund_observation(&mut response, RefundMutation::CustodyBalance);
+    let adapter = refund_adapter(
+        RefundTransport::new([response]),
+        &agreement,
+        Participant::Taker,
+    );
+    let result = adapter
+        .observe_prepared_native_refund(
+            &agreement,
+            RequestId::new("refund-credited").expect("request id"),
+            &prepared_refund_submission(),
+            DiscoveryWindow::new(10, 3).expect("window"),
+        )
+        .await;
+    assert!(
+        matches!(result, Ok(RefundObservationV1::Confirmed(_))),
+        "{result:?}"
+    );
 }
 
 #[test]

@@ -7,17 +7,20 @@
 # (lez_maker_node.lgx, scripts/package-role-node.sh) carries the Node, its
 # CLI, its actors, the LEZ sidecar and the launcher; this image installs it,
 # and compose.yaml configures it. Only the Maker's executables are here
-# (deploy/role-symmetry.json). One test-only tool is not part of the package:
+# (deploy/role-symmetry.json). Two test-only tools are not part of the package:
 # lez-v02-escrow-claim-probe, which the devnet scenario zec-maker-early-claim
 # (scripts/node-e2e.py) runs here with the Maker's claimant key to show the
-# LEZ escrow refuses a claim made with what the Maker holds (ADR 0216).
+# LEZ escrow refuses a claim made with what the Maker holds (ADR 0216), and
+# lez-v02-custody-credit-probe, which the *-custody-credit scenarios run here
+# with a third account's key to credit a funded escrow's custody (TM-0032).
 #
-# The staged probe is a debug build; strip it so the image ships only what runs.
+# The staged probes are debug builds; strip them so the image ships only what runs.
 FROM debian:bookworm-slim AS strip
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends binutils \
     && rm -rf /var/lib/apt/lists/*
 COPY lez-v02-escrow-claim-probe /payload/
+COPY lez-v02-custody-credit-probe /payload/
 RUN strip /payload/*
 
 # "basecamp" is a build context (compose.yaml: service:basecamp-ui), not a registry image.

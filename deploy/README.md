@@ -607,10 +607,10 @@ swaps at once spaces each swap's drives further apart and needs wider windows.
 their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over
 its owner RPC); `regress.sh` runs them as `node:xmr:<scenario>:TakerSellsLez`,
 on `fast`, and leaves them out with a line on a stack without `LEZ_MONERO=1`.
-All nineteen are in the `full` tier, none in `smoke`. The six added with the
-Node's own refund (`xmr-taker-clock-ahead` to `xmr-taker-cheats` below) have
-not run yet: they were written while the devnet was being rebuilt for arm64. A lot is 1 XMR for 50 000
-LEZ units.
+All twenty-one are in the `full` tier, none in `smoke`. The six added with
+the Node's own refund (`xmr-taker-clock-ahead` to `xmr-taker-cheats` below)
+have not run yet: they were written while the devnet was being rebuilt for
+arm64. A lot is 1 XMR for 50 000 LEZ units.
 
 ```sh
 bash scripts/regress.sh run node:xmr:xmr-happy:TakerSellsLez
@@ -651,6 +651,26 @@ offset), `cheat-refund-before-r` and `cheat-refund-after-claim` (a cheating
 Taker), `punish-nonce-thefts` (a count, in the Maker's sidecar). No release
 build has either feature. A stack staged by another script must build the
 Nodes and the sidecar with the same features for these scenarios.
+
+**A stranger's credit to the custody (TM-0032).** LEZ lets anyone pay into
+any initialised account, so a third party can send LEZ to a funded escrow's
+custody at a moment it chooses. Each of these runs its pair's own scenario
+unchanged while `lez-v02-custody-credit-probe`, a test-only tool the devnet
+Maker image carries beside the claim probe, waits in the Maker's container
+for the swap's escrow to be funded and then sends one unit to its custody
+from `heartbeat-echo-02` (funded at genesis, held by neither party). The swap
+must end as its scenario says, and `assert_lez_settled` allows exactly that
+unit more to the ending's recipient: the claimant on a claim, the depositor
+on a refund. `regress.sh full` runs all six.
+
+| Scenario | What it proves |
+|---|---|
+| `btc-custody-credit` (both directions) | `happy` with the credit: the swap completes, the LEZ claimant gets the lot and the unit |
+| `btc-custody-credit-refund` (TakerSellsLez) | `taker-refund` with the credit: the Taker refunds its LEZ and gets the unit too |
+| `zec-custody-credit` (both directions) | `zec-happy` with the credit, as `btc-custody-credit` |
+| `zec-custody-credit-refund` (TakerSellsLez) | `zec-taker-refund` with the credit, as `btc-custody-credit-refund` |
+| `xmr-custody-credit` | `xmr-happy` with the credit: the Maker's LEZ claim (tag 15) takes the lot and the unit, the Taker sweeps its Monero |
+| `xmr-custody-credit-refund` | `xmr-taker-refund` with the credit: the Taker's refund (tag 16) returns the lot and the unit, the Maker sweeps its Monero back |
 
 In the full regression of 2026-11-15 they ran across lanes 1 to 3
 (`docs/evidence/regression-m4-2026-11-15/`). Footprint, measured on 2026-11-13: after 190 blocks a lane's

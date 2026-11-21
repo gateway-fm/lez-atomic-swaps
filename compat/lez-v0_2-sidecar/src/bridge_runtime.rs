@@ -465,13 +465,14 @@ impl BridgeRuntime {
             .checked_add(1)
             .ok_or(BridgeRuntimeError::InvalidObservation)?;
         let metadata_hash_after = account_sha256(after.metadata_account())?;
+        // The custody is not compared: anyone can credit it (TM-0032), and
+        // the unchanged metadata already proves the escrow did not move.
         let custody_hash_after = account_sha256(after.custody_account())?;
         if after.depositor_account().balance != expected_sender_balance
             || u128::from(after.depositor_account().nonce) != expected_sender_nonce
             || after.claimant_account().balance != expected_recipient_balance
             || u128::from(after.claimant_account().nonce) != preparation.recipient_before.nonce
             || metadata_hash_after != preparation.metadata_account_sha256_before
-            || custody_hash_after != preparation.custody_account_sha256_before
             || clock_after.height <= preparation.clock_before.height
             || clock_after.timestamp_ms >= preparation.exclusive_punish_at_ms
         {
@@ -2590,12 +2591,11 @@ impl BridgeRuntime {
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        let expected_balance = if state == EscrowState::Funded {
-            terms.amount().as_u128()
-        } else {
-            0
-        };
-        if facts.custody_account().balance != expected_balance {
+        // Anyone can credit the custody (TM-0032): a funded escrow holds at
+        // least the amount, and any other state may hold a stranger's credit.
+        if state == EscrowState::Funded
+            && facts.custody_account().balance < terms.amount().as_u128()
+        {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         let metadata_facts = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
@@ -2667,12 +2667,11 @@ impl BridgeRuntime {
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        let expected_balance = if state == EscrowState::Funded {
-            terms.amount().as_u128()
-        } else {
-            0
-        };
-        if facts.custody_account().balance != expected_balance {
+        // Anyone can credit the custody (TM-0032): a funded escrow holds at
+        // least the amount, and any other state may hold a stranger's credit.
+        if state == EscrowState::Funded
+            && facts.custody_account().balance < terms.amount().as_u128()
+        {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         let metadata_facts = EscrowMetadataFacts::from_lee_v0_2_native_terms(
@@ -2854,7 +2853,7 @@ fn validate_funded_xmr_clock_state(
             != *input.custody_account_id.as_bytes()
         || facts.metadata_account().program_owner != escrow_program
         || facts.custody_account().program_owner != transfer_program
-        || facts.custody_account().balance != input.amount
+        || facts.custody_account().balance < input.amount
         || facts.depositor_account().program_owner != transfer_program
         || facts.claimant_account().program_owner != transfer_program
         || facts.depositor_account().balance == 0

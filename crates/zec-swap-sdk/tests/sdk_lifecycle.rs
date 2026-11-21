@@ -2103,6 +2103,13 @@ fn canonical_lez_observation_rejects_each_changed_chain_transaction_and_account_
             .is_err()
         );
     }
+    // TM-0032: anyone can credit the custody, so a funded custody holding
+    // more than the amount is still the canonical lock.
+    CanonicalLezEscrowObservationV1::validate(
+        &agreement,
+        &canonical_lez_snapshot(&agreement, LezSnapshotMutation::CustodyCredited),
+    )
+    .expect("a credited funded custody is the lock");
 }
 
 #[test]

@@ -550,7 +550,7 @@ pub enum LezClaimObservationError {
     /// Terminal metadata address, owner, or decoded contents differ.
     #[error("claimed LEZ escrow metadata does not match the signed agreement")]
     MetadataBindingMismatch,
-    /// Claimed custody identity, owner, definition, or empty balance differs.
+    /// Claimed custody identity, owner, or definition differs.
     #[error("claimed LEZ escrow custody is not canonically empty")]
     CustodyBindingMismatch,
     /// Durable primitive snapshot schema is unsupported.

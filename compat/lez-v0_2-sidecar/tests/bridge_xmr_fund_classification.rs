@@ -1378,16 +1378,6 @@ async fn authenticated_exact_persisted_fund_requires_stable_finalized_history() 
             "metadata-state",
             initialization_state_indexer(&prepared, &xmr_terms, depositor, EscrowStatus::Funded, 0),
         ),
-        (
-            "custody-balance",
-            initialization_state_indexer(
-                &prepared,
-                &xmr_terms,
-                depositor,
-                EscrowStatus::Empty,
-                xmr_terms.to_input().amount,
-            ),
-        ),
     ] {
         let (invalid_client, invalid_bridge) = start_classifier_sidecar(
             directory.path(),
@@ -1414,6 +1404,44 @@ async fn authenticated_exact_persisted_fund_requires_stable_finalized_history() 
             .await
             .expect("invalid Initialize sidecar stops");
     }
+
+    // TM-0032: a stranger can credit the custody after Initialize, even with
+    // the full amount. The effect is observed as it is: the escrow is still
+    // Empty, so the credit is never taken for the Taker's funding.
+    let (credited_client, credited_bridge) = start_classifier_sidecar(
+        directory.path(),
+        "bridge-credited-initialize-idempotency.json",
+        descriptor.clone(),
+        Arc::clone(&restarted_planner),
+        &node_endpoint,
+        initialization_state_indexer(
+            &prepared,
+            &xmr_terms,
+            depositor,
+            EscrowStatus::Empty,
+            xmr_terms.to_input().amount,
+        ),
+    )
+    .await;
+    let credited = credited_client
+        .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+            &descriptor,
+            &xmr_terms,
+            XmrNativeEffectV3::Initialize,
+            &prepared.initialization,
+            "xmr-credited-initialize",
+        ))
+        .await
+        .expect("a credited Initialize is classified");
+    let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = credited.outcome else {
+        panic!("the credited Initialize is found")
+    };
+    assert_eq!(facts.metadata.state, XmrNativeEscrowStateV3::Empty);
+    assert_eq!(facts.custody.balance.as_u128(), xmr_terms.to_input().amount);
+    credited_bridge
+        .stop()
+        .await
+        .expect("credited Initialize sidecar stops");
 
     let absent_indexer = missing_fund_indexer(&xmr_terms, EscrowStatus::Empty);
     let (absent_client, absent_bridge) = start_classifier_sidecar(

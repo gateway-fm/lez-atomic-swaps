@@ -4411,7 +4411,9 @@ fn validate_asset_state(
     metadata: &WitnessedEscrowMetadataFacts,
     custody: &WitnessedAssetCustodyFactsV2,
     expected_status: Option<EscrowState>,
-    expected_balance: Option<NativeAmount>,
+    // At least: anyone can credit the custody (TM-0032), and an ending pays
+    // out the whole balance.
+    minimum_balance: Option<NativeAmount>,
 ) -> Result<(), ProtocolValueError> {
     ensure(metadata.version == 2, "metadata version")?;
     if let Some(status) = expected_status {
@@ -4420,12 +4422,12 @@ fn validate_asset_state(
 
     match (terms.asset(), custody) {
         (WitnessedLezAssetV2::Native(terms), WitnessedAssetCustodyFactsV2::Native(custody)) => {
-            validate_native_asset_state(terms, metadata, custody, expected_balance)
+            validate_native_asset_state(terms, metadata, custody, minimum_balance)
         }
         (
             WitnessedLezAssetV2::CustomToken(terms),
             WitnessedAssetCustodyFactsV2::CustomToken(custody),
-        ) => validate_token_asset_state(terms, metadata, custody, expected_balance),
+        ) => validate_token_asset_state(terms, metadata, custody, minimum_balance),
         _ => Err(ProtocolValueError::WitnessedAssetFactsMismatch(
             "asset kind",
         )),
@@ -4436,7 +4438,7 @@ fn validate_native_asset_state(
     terms: &WitnessedNativeEscrowTerms,
     metadata: &WitnessedEscrowMetadataFacts,
     custody: &NativeCustodyFacts,
-    expected_balance: Option<NativeAmount>,
+    minimum_balance: Option<NativeAmount>,
 ) -> Result<(), ProtocolValueError> {
     ensure(metadata.swap_id == terms.swap_id(), "swap id")?;
     ensure(metadata.terms_hash == terms.terms_hash(), "terms hash")?;
@@ -4480,8 +4482,8 @@ fn validate_native_asset_state(
         custody.owner_program_id == terms.authenticated_transfer_program_id(),
         "native custody owner",
     )?;
-    if let Some(balance) = expected_balance {
-        ensure(custody.balance == balance, "native custody balance")?;
+    if let Some(balance) = minimum_balance {
+        ensure(custody.balance >= balance, "native custody balance")?;
     }
     Ok(())
 }
@@ -4490,7 +4492,7 @@ fn validate_token_asset_state(
     terms: &WitnessedTokenEscrowTermsV2,
     metadata: &WitnessedEscrowMetadataFacts,
     custody: &TokenHoldingFactsV2,
-    expected_balance: Option<NativeAmount>,
+    minimum_balance: Option<NativeAmount>,
 ) -> Result<(), ProtocolValueError> {
     ensure(metadata.swap_id == terms.swap_id(), "swap id")?;
     ensure(metadata.terms_hash == terms.terms_hash(), "terms hash")?;
@@ -4536,8 +4538,8 @@ fn validate_token_asset_state(
         metadata.refund_at_ms == terms.refund_at_ms(),
         "token refund time",
     )?;
-    if let Some(balance) = expected_balance {
-        ensure(custody.balance == balance, "token custody balance")?;
+    if let Some(balance) = minimum_balance {
+        ensure(custody.balance >= balance, "token custody balance")?;
     }
     Ok(())
 }
