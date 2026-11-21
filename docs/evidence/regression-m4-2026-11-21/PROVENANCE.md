@@ -1,6 +1,7 @@
 # Provenance — full regression at `d4475300`, 2026-11-21
 
-Everything in this folder was produced on one host by the Docker devnet of `deploy/`: every
+One operator ran both parties, Maker and Taker, on one host. Everything in this folder was
+produced on that host by the Docker devnet of `deploy/`: every
 test of `scripts/regress.sh full` (160: `regress.sh list full`), the Node scenarios by
 `scripts/node-e2e.py` and the desk journeys by `scripts/ui-e2e.sh`, three at a time on three
 regression lanes, with the Monero regtest chain up (`LEZ_MONERO=1`).
