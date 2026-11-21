@@ -882,6 +882,16 @@ class XmrOwnRefundAndAdversaries(unittest.TestCase):
         self.assertNotIn('taker_swap_refund_v1', never)
         self.assertIn('own refund from R', never)
 
+    def test_the_desk_refund_journey_switches_the_nodes_own_refund_off(self):
+        # with it on, the Taker Node refunded at R and the journey, waiting for
+        # the closing warning and the desk's Refund button, saw refunded instead
+        ui = (SCRIPTS / 'ui-e2e.sh').read_text()
+        journey = ui[ui.index('scenario_xmr_taker_refund() {'):ui.index('scenario_xmr_concurrent() {')]
+        self.assertLess(journey.index('taker_own_refund false'), journey.index('take swap'))
+        self.assertIn('taker_own_refund true', journey)
+        self.assertIn('/var/lib/lez/taker/xmr-automatic-refund', ui)
+        self.assertIn('taker_own_refund true', ui[ui.index('trap '):ui.index("' EXIT")])
+
     def probe(self, evidence, returncode=0, expect_moved=False):
         ran, fake_run = self.run_commands(returncode, json.dumps(evidence) + '\n')
         with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \

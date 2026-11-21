@@ -127,8 +127,9 @@ fail() { log "FAILED: $*"; exit 1; }
 # A scenario that stops a party's Basecamp registers it here, and one that
 # holds the Nodes down sets nodes_held; either is undone however the scenario
 # ends.
-stopped_node=""; nodes_held=0; logos_on=0
+stopped_node=""; nodes_held=0; logos_on=0; own_refund_off=0
 trap '[[ -z "$stopped_node" ]] || docker start "$stopped_node" >/dev/null 2>&1
+  [[ "$own_refund_off" == 0 ]] || taker_own_refund true >/dev/null 2>&1
   [[ "$nodes_held" == 0 ]] || bash scripts/node-hold.sh release maker taker >/dev/null 2>&1
   [[ "$logos_on" == 0 ]] || { chat_log; transport local; }' EXIT
 stop_node() { stopped_node="$1"; docker stop "$1" >/dev/null; }
@@ -278,6 +279,17 @@ ensure_coins() { # ensure_coins <wallet> <count>: two concurrent swaps need two 
   done
   btc generatetoaddress 1 bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6 >/dev/null
   sleep 3
+}
+# taker_own_refund <true|false>: the Taker Node's own Monero refund from R (on by
+# default), the switch its entrypoint reads at each start (<state>/xmr-automatic-refund,
+# as node-e2e.py's xmr_set_automatic_refund writes it); the Taker's Basecamp is
+# restarted to take it.
+taker_own_refund() {
+  in_node taker sh -c 'printf "%s\n" "$2" > "$1.tmp" && mv "$1.tmp" "$1"' switch \
+    /var/lib/lez/taker/xmr-automatic-refund "$1" || fail "cannot set the Taker Node's own refund to $1"
+  restart_node taker
+  if [[ "$1" == false ]]; then own_refund_off=1; else own_refund_off=0; fi
+  log "the Taker Node refunds by itself: $1"
 }
 require_fast() { [[ "${LEZ_TIMING_PROFILE:-local}" =~ ^(refund|fast)$ ]] || fail "this scenario needs LEZ_TIMING_PROFILE=refund or fast (scripts/up.sh)"; }
 
@@ -1002,13 +1014,17 @@ scenario_xmr_happy() {
 # The Maker funds the Monero and the Taker never claims it. From the
 # agreement's refund time R (LEZ_XMR_REFUND_SECONDS after the take) the Taker
 # desk offers Refund; halfway to the punish time P it warns that the window is
-# closing. The Taker presses Refund once (tag 16, before P); the Maker Node
+# closing. The Taker presses Refund once (tag 16, before P; the Taker Node's own
+# refund is off for the journey, taker_own_refund); the Maker Node
 # learns the Taker's Monero share from the final refund and sweeps its Monero
 # back, which its desk shows; both desks end refunded. The waits up to R and
 # up to the warning are the host's, so the recording holds no idle minutes.
 scenario_xmr_taker_refund() {
   local swap maker_pid taker_pid
   require_fast
+  # The journey shows the desk's Refund button and the closing warning: with
+  # the Taker Node's own refund on, the Node refunds at R and neither shows.
+  taker_own_refund false
   xmr_publish
   take swap
   note "The Taker Node locks its LEZ on its own and the Maker Node funds Monero; the Taker will not claim it"
@@ -1034,6 +1050,7 @@ scenario_xmr_taker_refund() {
   taker_wait_bg taker_pid refunded "$swap"
   wait "$maker_pid" || fail "Maker desk: refunded"
   wait "$taker_pid" || fail "Taker desk: refunded"
+  taker_own_refund true
   export_evidence "$swap"
 }
 # Two Monero swaps at once: both offers from the Maker desk's form, both taken
