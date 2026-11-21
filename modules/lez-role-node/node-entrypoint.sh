@@ -675,7 +675,8 @@ case "$role" in
           --zec-maker-actor-root "$zec_state/actors"
           --zec-actor-program "$zec_actor_program"
           --zec-actor-program-sha256 "$(sha256_of "$zec_actor_program")")
-        for zec_template in "${zec_configs[@]}"; do
+        # Empty when only the role config is present (see node_helper).
+        for zec_template in ${zec_configs[@]+"${zec_configs[@]}"}; do
           args+=(--zec-source-maker-config "$zec_template")
         done
         # No claim preimage: the Maker reads the secret from the Taker's
