@@ -27,10 +27,9 @@ use indexer_service_protocol::Block;
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability};
 use lez_bridge_protocol::{
-    ErrorCode, Hex32, MessageContext, Participant, PrepareNativeXmrPunishV3Request,
-    PreparedTransaction, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    SubmissionOutcome, SubmitTransactionRequest, XmrNativeEscrowTermsV3,
-    XmrNativeEscrowTermsV3Input,
+    Hex32, MessageContext, Participant, PrepareNativeXmrPunishV3Request, PreparedTransaction,
+    RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitTransactionRequest, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -533,28 +532,53 @@ async fn a_restart_after_a_replan_and_before_its_journal_entry_starts() {
     sequencer.stopped().await;
 }
 
+/// Tag 17 has no upper window and after P nothing else moves the escrow, so
+/// a punishment can always still land: it is re-planned for as long as its
+/// nonce keeps being taken, past five re-plans, never given up for the count
+/// (the rule of issue #172), and its current bytes are sent again until they
+/// land. A restart recovers the whole lineage.
 #[tokio::test]
-async fn the_sixth_punishment_replan_is_refused_by_name() {
+async fn a_punishment_replanned_more_than_five_times_still_lands() {
     let chain = Chain::new();
     let (endpoint, sequencer) = start_sequencer(chain.clone()).await;
     let directory = secure_directory();
     let sidecar = start_sidecar(&endpoint, directory.path(), &chain).await;
     let mut current = sidecar.prepare().await.expect("punishment prepared");
-    for step in 1..=5_u128 {
+    for step in 1..=8_u128 {
         chain.set_live_nonce(FIRST_NONCE + step);
-        let replanned = sidecar.prepare().await.expect("bounded re-plan");
+        let replanned = sidecar
+            .prepare()
+            .await
+            .expect("re-planned while it can land");
         assert_eq!(nonce_of(&replanned, sidecar.signer), FIRST_NONCE + step);
         assert_ne!(replanned, current);
         current = replanned;
     }
-    chain.set_live_nonce(FIRST_NONCE + 10);
-    let Err(BridgeClientError::Remote(error)) = sidecar.prepare().await else {
-        panic!("a sixth re-plan must be refused");
-    };
-    assert_eq!(error.code(), ErrorCode::ReplanExhausted);
-    assert_eq!(supersession_files(directory.path()).len(), 5);
+    assert_eq!(supersession_files(directory.path()).len(), 8);
+
+    // Accepted is not included: the sequencer may drop it, so the current
+    // punishment is sent again.
+    assert_eq!(sidecar.submit(&current).await, SubmissionOutcome::Accepted);
+    assert_eq!(sidecar.submit(&current).await, SubmissionOutcome::Accepted);
+    assert_eq!(chain.send_count(), 2);
 
     sidecar.server.stop().await.expect("stop");
+    let restarted = start_sidecar(&endpoint, directory.path(), &chain).await;
+    assert_eq!(
+        restarted.prepare().await.expect("lineage recovered"),
+        current
+    );
+    // It lands, which moves the nonce: kept, and already known.
+    chain.include_exact(&current);
+    chain.set_live_nonce(FIRST_NONCE + 9);
+    assert_eq!(restarted.prepare().await.expect("included"), current);
+    assert_eq!(
+        restarted.submit(&current).await,
+        SubmissionOutcome::AlreadyKnown
+    );
+    assert_eq!(chain.send_count(), 2);
+
+    restarted.server.stop().await.expect("stop");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
 }

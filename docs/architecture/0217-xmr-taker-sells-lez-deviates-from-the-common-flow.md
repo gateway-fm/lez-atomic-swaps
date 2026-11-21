@@ -138,7 +138,12 @@ against LEZ block time; C is not on chain.
    only from P, and pays the Maker. It reveals no share: the Monero stays at
    the shared address for good. The reference Maker activates the punishment
    only for a swap whose funding it invoked, with the finalized clock past P
-   and no tag 16 found to the finalized tip.
+   and no tag 16 found to the finalized tip. Tag 17 has no upper window and
+   nothing else moves the escrow after P, so the punishment is driven until
+   it is final: sent again while the node has not included it, and re-planned
+   at the live nonce whenever another transaction of the owner took its own,
+   for as long as that happens (`MAX_XMR_PUNISH_REPLANS` only keeps the
+   lineage finite).
 
 Tags 15 and 16 are exclusive: tag 15 ends at R, tag 16 starts there, and each
 moves the escrow out of the state the other needs. The escrow test
@@ -185,7 +190,7 @@ Every abort point, from the code above:
 | Taker's refund sent and dropped (its clock ahead of LEZ time, or lost by the sequencer) | sends nothing before the finalized LEZ time reaches R, then sends the same tag 16 again on every tick until it is final or LEZ time reaches P | sweeps its Monero back once tag 16 is final; punishes only with no tag 16 to the finalized tip from P | unit tests: `a_refund_accepted_and_never_included_is_sent_again_until_it_lands`, `a_host_clock_ahead_of_lez_time_does_not_send_the_refund_early`, `a_refund_not_final_at_p_says_so` (Taker supervisor), `tag16_not_included_is_sent_again_until_it_lands` (sidecar); no devnet scenario skews the Taker's clock |
 | Taker authorised (tag 14); Maker does not claim by its deadline | from R the escrow refunds from `XmrClaimAuthorized`; the Node shows `xmr_maker_did_not_claim` with `refund`; refunds with tag 16 | sweeps its Monero back with the revealed share; a Maker that claims later than its own deadline but before R gives the Taker the share instead | unit tests: `a_late_claim_authorization_is_left_to_the_takers_refund` (Maker actor), `the_claim_path_reads_in_the_status_table` (Taker supervisor); no devnet scenario holds the Maker there |
 | Maker claimed (tag 15) | has the Maker's share; sweeps whenever it is back, no deadline | has the LEZ | `xmr-happy`, `xmr-concurrent`, `xmr-kill-taker` (7 kill points, among them "waiting for the Maker's claim" and "sweeping") |
-| Nothing before P, Maker funded | loses its LEZ | takes the LEZ with tag 17; its Monero stays locked | `xmr-punish` |
+| Nothing before P, Maker funded | loses its LEZ | takes the LEZ with tag 17, re-planned past any number of taken nonces; its Monero stays locked | `xmr-punish`; re-plans and resends: unit test `a_punishment_replanned_more_than_five_times_still_lands` (sidecar), no devnet scenario takes tag 17's nonce |
 
 Crash and restart at each step are covered by `xmr-kill-taker`,
 `xmr-kill-maker` (6 kill points) and `xmr-taker-refund-kill`; all of the

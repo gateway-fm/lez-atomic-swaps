@@ -663,10 +663,14 @@ one. What the Monero side does about it, and what is left:
   without coordination. The Maker Node's actor attempts run one at a time, so
   two owner transactions collide only if the second is prepared before the
   first is in a block. Until it is final the Node drives tag 17 again on every
-  attempt; the swap's sidecar answers with the same bytes unless the node has
+  attempt, and the sidecar sends the current bytes again unless the node
+  already includes them; it answers with the same bytes unless the node has
   not included them while the owner's nonce is above theirs (they can then
   never land), and then plans the same punishment at that nonce, kept beside
-  the first in a re-plan slot of its own (at most five). The escrow is
+  the first in a re-plan slot of its own. Tag 17 has no upper window and
+  nothing else moves the escrow after P, so it is re-planned for as long as
+  its nonce is taken (the bound, 16,384, only keeps the lineage finite;
+  `MAX_XMR_PUNISH_REPLANS`), never given up after a count. The escrow is
   punished once: a second tag 17 cannot execute, and the Maker finds the one
   that landed by its terms. Not run on the devnet: no scenario makes another
   owner transaction take tag 17's nonce.

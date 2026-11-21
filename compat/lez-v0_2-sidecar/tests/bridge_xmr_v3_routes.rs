@@ -1574,7 +1574,7 @@ async fn xmr_punish_binds_the_committed_message_except_the_claimant_nonce() {
 }
 
 #[tokio::test]
-async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable() {
+async fn durable_xmr_punish_is_transaction_bound_sent_until_it_lands_and_restart_stable() {
     let (depositor, _) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1622,21 +1622,23 @@ async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable(
         .fresh_client()
         .submit_transaction(submission_request.clone())
         .await
-        .expect("submit exact durable tag-17 punishment once");
+        .expect("submit exact durable tag-17 punishment");
     assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
     assert_eq!(submitted.transaction_id, prepared.punish.transaction_id);
     assert_eq!(fixture.lookup_count(), 1);
     assert_eq!(fixture.send_count(), 1);
+    // Accepted is not included: the current punishment is decided on the
+    // chain again and sent again (after P nothing else moves the escrow).
     assert_eq!(
         maker
             .fresh_client()
             .submit_transaction(submission_request.clone())
             .await
-            .expect("same tag-17 release replays without node I/O"),
+            .expect("a tag-17 punishment not yet included is sent again"),
         submitted
     );
-    assert_eq!(fixture.lookup_count(), 1);
-    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 2);
 
     maker.server.stop().await.expect("stop first Maker sidecar");
     // The owner's nonce has not passed the punishment's (41): the restart
@@ -1666,14 +1668,29 @@ async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable(
     );
     assert_eq!(
         restarted_client
-            .submit_transaction(submission_request)
+            .submit_transaction(submission_request.clone())
             .await
-            .expect("restart replays accepted one-attempt release"),
+            .expect("after a restart the punishment is sent again"),
         submitted
     );
     assert_eq!(restarted_nonce.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(fixture.lookup_count(), 1);
-    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(fixture.lookup_count(), 3);
+    assert_eq!(fixture.send_count(), 3);
+    // Included: already known, nothing sent.
+    fixture.include_exact(&prepared.punish);
+    let landed = BridgeClient::connect(BridgeClientConfig::new(
+        restarted_server.endpoint(),
+        SidecarCapability::new(CAPABILITY).expect("client capability"),
+        RunId::new(RUN_ID).expect("run id"),
+        maker_runtime,
+        Duration::from_secs(2),
+    ))
+    .expect("bridge client")
+    .submit_transaction(submission_request)
+    .await
+    .expect("an included punishment is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 3);
 
     restarted_server.stop().await.expect("stop restarted Maker");
     sequencer.stop().expect("sequencer stop");

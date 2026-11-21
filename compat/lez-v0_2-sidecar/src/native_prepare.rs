@@ -348,7 +348,14 @@ struct ActiveXmrPunishPrepareV3 {
 }
 
 /// The most re-plans of one tag-17 punishment (its lineage slots).
-const MAX_XMR_PUNISH_REPLANS: u32 = 5;
+///
+/// A punishment is re-planned only after its nonce was taken, and tag 17 has
+/// no upper window: after the punish time nothing else moves the escrow, so a
+/// punishment that can still land is never given up for its count (the rule
+/// of issue #172). The bound only keeps the lineage finite: the Maker's actor
+/// re-plans at most once per drive and drives are seconds apart, so a
+/// punishment reaches it only after hours of every drive's nonce being taken.
+pub(crate) const MAX_XMR_PUNISH_REPLANS: u32 = 16_384;
 
 #[derive(Clone)]
 struct ActiveClaimPrepare {
@@ -3066,14 +3073,19 @@ impl NativeEscrowPlanner {
         prepared_signer_nonce(prepared, self.signer_account_id).map(Some)
     }
 
-    /// Whether `prepared` is the completed tag-16 refund this sidecar holds:
-    /// a recovery whose identical bytes are sent again until it lands.
+    /// Whether `prepared` is the completed tag-16 refund or the current
+    /// tag-17 punishment this sidecar holds: a recovery whose identical bytes
+    /// are sent again until it lands (a superseded punishment is not one).
     pub async fn xmr_recovery_submission(&self, prepared: &PreparedTransaction) -> bool {
         let state = self.state.lock().await;
         state
             .completed_xmr_refund_v3
             .as_ref()
             .is_some_and(|completed| completed.result.refund == *prepared)
+            || state
+                .active_xmr_punish_v3
+                .as_ref()
+                .is_some_and(|active| active.result.punish == *prepared)
     }
 
     fn validate_claim_supersede_request(
@@ -4036,7 +4048,10 @@ impl NativeEscrowPlanner {
             let loaded = store
                 .load::<PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result>(kind)?;
             match (loaded, absent) {
-                (None, _) => absent = true,
+                (None, false) => absent = true,
+                // The lineage is contiguous: the slot after the first absent
+                // one is checked for corruption, and the scan ends there.
+                (None, true) => break,
                 (Some(_), true) => return Err(DurableReservationError::CorruptReservation.into()),
                 (Some((slot_request, slot_result)), false) => {
                     self.validate_prepared_native_xmr_punish_v3(&slot_request, &slot_result)?;
