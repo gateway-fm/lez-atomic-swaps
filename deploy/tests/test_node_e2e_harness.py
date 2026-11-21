@@ -805,7 +805,7 @@ class XmrOwnRefundAndAdversaries(unittest.TestCase):
         # take request id come from the stamp; the second take under the same
         # stamp was refused (-32009, the request id conflicts with its mutation)
         for scenario in (e2e.scenario_xmr_unfunded_punish, e2e.scenario_xmr_taker_cheats):
-            stamps = []
+            stamps, order = [], []
 
             class Stop(Exception):
                 pass
@@ -827,13 +827,21 @@ class XmrOwnRefundAndAdversaries(unittest.TestCase):
                                    lez_finalized_time_ms=lambda: 0, wait_lez_time=quiet, node_stop=quiet,
                                    node_start=quiet, wait_healthy=quiet,
                                    taker_view=lambda swap: {'state': 'claim_available'},
-                                   xmr_escrow_probe=quiet, xmr_maker_wallet=quiet, lez_balances=lambda: {},
+                                   xmr_escrow_probe=lambda *a, **k: {'included_in_block': 7,
+                                                                     'before': {'status': 'Refunded'}},
+                                   wait_lez_final_through=lambda height, profile, why: order.append(('final', height)),
+                                   timing_profile=lambda: {},
+                                   xmr_maker_wallet=quiet, lez_balances=lambda: order.append('balances') or {},
                                    expected_settlement=lambda *a: {}, wait_maker_terminal=lambda *a, **k: 'refunded',
                                    assert_lez_settled=quiet, log=quiet), \
                     patch.object(e2e.time, 'sleep', lambda s: None):
                 with self.assertRaises(Stop):
                     scenario('1795280156')
             self.assertEqual(len(set(stamps)), 2, (scenario.__name__, stamps))
+            if scenario is e2e.scenario_xmr_unfunded_punish:
+                # the indexer's balances are finalized only: the punishment's
+                # block is waited for before they are read
+                self.assertEqual(order[:2], [('final', 7), 'balances'])
 
     def test_the_scenarios_are_registered_and_need_the_containers(self):
         for name in XMR_NEW_SCENARIOS:

@@ -7375,6 +7375,9 @@ def scenario_xmr_unfunded_punish(stamp: str) -> dict:
         wait_healthy("taker")
         view = taker_view(swap_id)
         log(f"  the Taker, back up, reads {view['state']} ({view.get('attention_reason')})")
+        # the balances are the indexer's, finalized only; the probe saw its
+        # punishment included, a block or two before it is final
+        wait_lez_final_through(paid["included_in_block"], timing_profile(), "the punishment")
         punished = {role: balance - before["lez"][role] for role, balance in lez_balances().items()}
         want = {role: amounts["lez_units"] for role, amounts in
                 expected_settlement("completed", REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
