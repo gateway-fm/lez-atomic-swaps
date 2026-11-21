@@ -152,8 +152,9 @@ The Taker Node:
 
 The sidecar:
 
-- Its request store holds at most 4,096 entries (`MAX_STORE_ENTRIES`) and
-  evicts none: when full it refuses new requests.
+- Its request store holds at most 4,096 entries (`MAX_STORE_ENTRIES`). When
+  full it evicts a read, then the oldest settled submission; a store full of
+  preparations and submissions in flight refuses new requests.
 
 ## M6 boundary
 
