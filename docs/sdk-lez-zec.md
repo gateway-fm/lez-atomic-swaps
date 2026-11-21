@@ -333,8 +333,13 @@ Neither side sends a private key or preimage. Each side then writes only its
 own material and actor template around the draft (the Taker at once, the Maker
 at `zec_chat_complete_v1`, which refuses a body other than the reserved one,
 as `zec_chat_propose_v1` does) and starts its own sidecar; propose and
-complete sign as for a catalog swap. A Maker holds at most 16 open
-reservations, each for 900 s; an identical retry is answered from its record.
+complete sign as for a catalog swap. The Maker checks the final agreement
+before it writes anything: it must validate now and countersign exactly the
+reserved draft, or the completion is refused with no template and no
+sidecar. A completion refused after that retires the sidecar it started.
+Either way the reservation holds its outpoint only for the rest of its
+900 s. A Maker holds at most 16 open reservations, each for 900 s; an
+identical retry is answered from its record.
 
 Before a first composed swap, pay the funder's own key: the Maker's when the
 Taker sells LEZ, the Taker's when it sells ZEC. `lez-maker-cli balances --zcash`

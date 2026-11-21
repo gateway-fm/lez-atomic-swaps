@@ -193,6 +193,9 @@ impl SwapSidecar {
             .stderr(Stdio::from(log))
             .spawn()
             .with_context(|| format!("spawn {}", lez.sidecar_program.display()))?;
+        // The pid lets the Node retire this sidecar (`retire`). Recording it
+        // is best effort: without it the sidecar only cannot be retired.
+        let _ = fs::write(self.pid_file(), format!("{}\n", child.id()));
         // The child is intentionally not waited on: it outlives this call and
         // is reaped by the Node's init (tini) if it exits.
         drop(child);
@@ -218,6 +221,55 @@ impl SwapSidecar {
             thread::sleep(Duration::from_millis(100));
         }
         anyhow::bail!("sidecar did not report readiness in time")
+    }
+
+    fn pid_file(&self) -> PathBuf {
+        self.record.state_directory.join("sidecar.pid")
+    }
+
+    /// Stops the swap's sidecar, when one is running that this Node spawned
+    /// for this swap: the recorded pid must still run this sidecar program
+    /// with this swap's run id and state directory, so a reused pid is
+    /// never signalled. The record stays, so `ensure` can start it again.
+    ///
+    /// Returns whether a sidecar was signalled.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the swap's sidecar record cannot be read.
+    pub fn retire(layout: &SwapLayout) -> Result<bool> {
+        let record_file = layout.root().join("sidecar.json");
+        let Ok(bytes) = read_private(&record_file, MAX_RECORD_BYTES) else {
+            return Ok(false);
+        };
+        let sidecar = Self::from_record(
+            serde_json::from_slice::<SidecarRecordV1>(&bytes).context("sidecar record")?,
+        )?;
+        let Some(pid) = fs::read_to_string(sidecar.pid_file())
+            .ok()
+            .and_then(|text| text.trim().parse::<i32>().ok())
+            .and_then(rustix::process::Pid::from_raw)
+        else {
+            return Ok(false);
+        };
+        let Ok(output) = Command::new("ps")
+            .args(["-o", "command=", "-p", &pid.as_raw_nonzero().to_string()])
+            .stdin(Stdio::null())
+            .output()
+        else {
+            return Ok(false);
+        };
+        let command = String::from_utf8_lossy(&output.stdout);
+        let state = sidecar.record.state_directory.to_string_lossy();
+        if !command.contains(&format!("--run-id {}", sidecar.run_id.as_str()))
+            || !command.contains(&format!("--state-directory {state}"))
+        {
+            return Ok(false);
+        }
+        let signalled =
+            rustix::process::kill_process(pid, rustix::process::Signal::TERM).is_ok();
+        let _ = fs::remove_file(sidecar.pid_file());
+        Ok(signalled)
     }
 
     #[must_use]
