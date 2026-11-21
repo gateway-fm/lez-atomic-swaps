@@ -104,11 +104,14 @@ This is the standard construction for Monero swaps: the h4sh3d paper
 ([eprint 2020/1126](https://eprint.iacr.org/2020/1126)) and COMIT's
 `xmr-btc-swap` (pinned commit `dc6ba84…`, referenced below), where the
 scriptable chain is Bitcoin and the adaptor signatures are ECDSA; here the
-scriptable chain is LEZ and the adaptor signatures are BIP-340 MuSig2. It is not
-byte-compatible with COMIT: the proof here uses alternate generators (the Grin
-Pedersen generator on secp256k1 and Monero's RingCT alternate generator on
-Ed25519) where `xmr-btc-swap` passes the standard basepoints, so the two produce
-different proofs. No third-party vectors exist for this construction;
+scriptable chain is LEZ and the adaptor signatures are BIP-340 MuSig2. The
+DLEQ proof is `sigma_fun`'s with BIP-341's NUMS point on secp256k1 and Monero's
+`H` on Ed25519 as Pedersen generators, the generators of COMIT's archived
+`cross-curve-dleq` and of `eigenwallet/core`, the fork that continues COMIT's
+swap; the
+pinned `xmr-btc-swap` passes the standard basepoints instead, so its proofs and
+these do not verify across. [The SDK guide](../sdk-lez-xmr.md#the-dleq-proof-and-key-share-recovery)
+says what the cross-check shows. No third-party vectors exist for this construction;
 `crates/xmr-swap-sdk/tests/vectors/` holds **self-generated regression
 vectors** (deterministic inputs run once through the pinned crates), which pin
 today's bytes and show no agreement with another implementation

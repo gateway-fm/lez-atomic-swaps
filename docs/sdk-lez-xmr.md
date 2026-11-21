@@ -31,7 +31,7 @@ the same file unless stated otherwise; they run in CI under
 | The two adaptor sessions | `XmrAgreementV1::{claim_session_descriptor, refund_session_descriptor, claim_partial_context_binding, commit_taker_claim_partial}`, `XmrAdaptorSessionDescriptorV1`, `XmrSessionTranscriptV1` | `agreement_v1.rs` | `adaptor_session_descriptors_reconstruct_exact_contexts_and_fail_closed` |
 | Stage B, the activation | `ValidatedXmrActivationBodyV1::from_unsigned_wire`, `XmrActivatedAgreementV1`, `XmrActivationRecordV1` | `agreement_v1.rs` | `unsigned_stage_b_requires_validated_stage_a_and_view_key_before_countersigning`, `unsigned_stage_b_wire_is_the_checked_signed_prefix_and_fails_closed`, `stage_b_activation_and_private_view_key_mutations_fail_closed` |
 | The LEZ lock check | `XmrLezInitializePlanV1`, `XmrLezLockCandidateV1`, `XmrValidatedLezLockCandidateV1` | `agreement_v1.rs` | `canonical_stage_b_activation_enables_lez_init_and_candidate_validation`, `lez_lock_candidate_checks_exact_terms_finality_and_funding_cutoff` |
-| Cross-curve DLEQ | `CrossCurveScalar::{generate, from_monero_little_endian, adaptor_scalar_big_endian, monero_public_key}`, `CrossCurveDleqProofV1::{prove, verify, verify_scalar, to_wire_bytes, from_wire_bytes}` | `cross_curve.rs` | [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs): `dleq_vectors_reproduce_and_verify_from_fixed_bytes`, `tampered_proof_and_commitment_are_rejected`, `wrong_point_on_either_curve_is_rejected`, `truncated_and_over_long_encodings_are_rejected`, `trailing_proof_bytes_are_rejected` |
+| Cross-curve DLEQ | `CrossCurveScalar::{generate, from_monero_little_endian, adaptor_scalar_big_endian, monero_public_key}`, `CrossCurveDleqProofV1::{prove, verify, verify_scalar, to_wire_bytes, from_wire_bytes}` | `cross_curve.rs` | [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs): `dleq_vectors_reproduce_and_verify_from_fixed_bytes`, `tampered_proof_and_commitment_are_rejected`, `wrong_point_on_either_curve_is_rejected`, `truncated_and_over_long_encodings_are_rejected`, `trailing_proof_bytes_are_rejected`, `alternate_generators_are_the_published_nums_points`, `proofs_interoperate_with_the_eigenwallet_parameters`, `archived_xmr_btc_swap_basepoint_parameters_are_refused` |
 | Shared address and key-share recovery | `MoneroPrivateViewKey`, `MoneroSharedAddressV1::{derive, derive_from_public_view_key}`, `ReconstructedMoneroSpendKey::reconstruct`, `MoneroAddressNetworkV1` | `shared_spend.rs` | `claim_and_signed_refund_reveal_orders_reconstruct_the_same_spend_key`, `unrelated_extracted_or_retained_share_cannot_open_the_funded_address`; `tests/cross_curve_vectors.rs`: `recovery_vector_reconstructs_the_same_key_on_both_paths`, `share_that_does_not_match_is_rejected` |
 | A lifecycle facade | `XmrPairSdk`, `ActiveXmrSwap`, `XmrRoleActorPort`, `XmrNegotiationEnvelopeV1`, `XmrLifecyclePhaseV1` | `sdk.rs` | `lifecycle_transition_graph_accepts_claim_refund_and_exact_replay`, `negotiation_envelope_rejects_empty_trailing_and_unknown_schema`; see [the facade](#the-facade-is-not-what-the-nodes-run) |
 
@@ -78,12 +78,39 @@ checks the result opens the agreed address. The same call serves both orders:
 the Taker with the Maker's proof after a LEZ claim, the Maker with the Taker's
 after a LEZ refund.
 
-The proofs use alternate generators that `xmr-btc-swap` does not, so they are
-not byte-compatible with COMIT's. The files under
-[`tests/vectors/`](../crates/xmr-swap-sdk/tests/vectors) are **self-generated
-regression vectors**: deterministic inputs run once through the pinned
-`sigma_fun`, `musig2` and `monero` crates. They pin today's bytes; they show no
-agreement with another implementation.
+The files under [`tests/vectors/`](../crates/xmr-swap-sdk/tests/vectors) are
+**self-generated regression vectors**: deterministic inputs run once through
+the pinned `sigma_fun`, `musig2` and `monero` crates. They pin today's bytes;
+nobody else publishes vectors for this proof.
+
+Conformance with COMIT is shown for the parameters only
+([`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs),
+whose header gives the sources):
+
+- `comit-network/cross-curve-dleq`, COMIT's archived proof of concept, proves
+  the same statement (one scalar below 2^252 behind the two public keys on the
+  standard basepoints) with a different proof, so no proof verifies across
+  the two. It is unlicensed and git-only, which `deny.toml` refuses, so it is
+  not built here. Its two Pedersen generators are the ones used here:
+  `alternate_generators_are_the_published_nums_points` derives them from their
+  definitions (BIP-341's NUMS point on secp256k1, Monero's `H` on Ed25519).
+- `eigenwallet/core`, the community fork that continues COMIT's archived
+  `xmr-btc-swap`, uses `sigma_fun`'s proof with the same two
+  generators and the same transcript, on `sigma_fun` 0.7.0, whose proof code
+  differs from 0.9.0 only in imports and type signatures.
+  `proofs_interoperate_with_the_eigenwallet_parameters` rebuilds its proof
+  system with 0.9.0: it accepts the vectors' proofs and makes the same proof
+  bytes from the same inputs. That is one library with one set of
+  parameters, not a second implementation; their messages carry the proof
+  struct in their own encoding, not this SDK's envelope.
+- The archived `xmr-btc-swap` passed the standard basepoints instead;
+  `archived_xmr_btc_swap_basepoint_parameters_are_refused` shows its proofs
+  are refused here and ours there.
+
+The proof's Fiat-Shamir challenge covers the whole statement (both public
+keys, both generators, all 252 commitment pairs) under `sigma_fun`'s protocol
+name; this SDK's domain string is in the envelope's transcript commitment, not
+in the challenge.
 
 ### Wire limits
 
