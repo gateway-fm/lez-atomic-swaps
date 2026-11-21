@@ -123,7 +123,7 @@ tier_tests() { # tier_tests <tier>
       for s in xmr-happy xmr-taker-refund xmr-maker-never-funds xmr-punish xmr-concurrent xmr-kill-taker xmr-kill-maker xmr-taker-refund-kill \
         xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock mixed-three-pair \
         xmr-taker-clock-ahead xmr-punish-replans xmr-maker-claim-without-authorization xmr-maker-early-punish \
-        xmr-unfunded-punish xmr-taker-cheats; do echo "node:xmr:$s:TakerSellsLez"; done
+        xmr-unfunded-punish xmr-taker-cheats xmr-shared-address-dust; do echo "node:xmr:$s:TakerSellsLez"; done
       # Monero offers from the Maker desk's form, taken on the Taker desk: claimed, refunded, two at once
       for s in xmr-happy xmr-taker-refund xmr-concurrent; do echo "ui:xmr:$s:TakerSellsLez"; done
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;

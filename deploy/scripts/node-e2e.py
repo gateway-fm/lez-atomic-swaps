@@ -6769,6 +6769,67 @@ def xmr_assert_completed(before: dict, swap_id: str) -> dict:
             "taker_monero_sweep": swept}
 
 
+# What xmr-shared-address-dust pays to a swap's shared address beside the
+# lot: one output at depth and one in the pool. Each is above the sweep's fee
+# tolerance, so a sweep that took either would pay the Taker more than the lot.
+XMR_DUST_PICONERO = {"confirmed": 20_000_000_000, "pending": 30_000_000_000}  # 0.02 and 0.03 XMR
+XMR_FUNDING_EVIDENCE_READER = r"""
+import json, os, sys
+swap_id = sys.argv[1]
+for root, _, files in os.walk(sys.argv[2]):
+    if "xmr-reservation.json" not in files:
+        continue
+    try:
+        if json.load(open(os.path.join(root, "xmr-reservation.json")))["response"]["swap_id"] != swap_id:
+            continue
+        print(json.load(open(os.path.join(root, "xmr-effect", "evidence", "monero-funding.json")))["shared_address"])
+    except (OSError, ValueError, KeyError, TypeError):
+        print("")
+    sys.exit(0)
+print("")
+"""
+
+
+def xmr_shared_address(swap_id: str) -> str:
+    """The swap's shared Monero address, from the Maker's funding evidence
+    (xmr-effect/evidence/monero-funding.json, written once its funding is at
+    depth) in the Maker's swap directory whose xmr-reservation.json answered
+    this swap id (the directory is named by another id)."""
+    result = subprocess.run(node_command("maker", ["python3", "-c", XMR_FUNDING_EVIDENCE_READER, swap_id,
+                                                   XMR_NODE_STATE["maker"]]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    address = result.stdout.strip()
+    if result.returncode != 0 or not address:
+        raise Failure(f"no Maker funding evidence names the shared address of {swap_id[:12]}: "
+                      f"{(result.stdout + result.stderr).strip()[-200:]}")
+    return address
+
+
+def scenario_xmr_shared_address_dust(stamp: str) -> dict:
+    """Both parties know the swap's shared Monero address, so anyone they tell
+    can pay it. Once the Maker's funding is at depth, a third party (the
+    lane's funding wallet) pays the shared address two more outputs: one mined
+    to depth, one left in the pool. The Taker claims and the swap completes as
+    xmr-happy: its sweep spends the swap's own output by its key image and
+    leaves the extra ones. Asserted as xmr-happy: LEZ to the unit, the Taker's
+    one received transfer the lot less at most the fee (the extra outputs are
+    each above that tolerance, so a sweep that took one pays more), both Nodes
+    completed."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    xmr_wait_funded(swap_id, windows)
+    address = xmr_shared_address(swap_id)
+    dust = {"confirmed": xmr_lane("pay", "--address", address, "--piconero", str(XMR_DUST_PICONERO["confirmed"]),
+                                  "--confirm"),
+            "pending": xmr_lane("pay", "--address", address, "--piconero", str(XMR_DUST_PICONERO["pending"]))}
+    log(f"  a third party paid the shared address {address[:12]}… {XMR_DUST_PICONERO['confirmed'] / 1e12} XMR at depth "
+        f"and {XMR_DUST_PICONERO['pending'] / 1e12} XMR in the pool")
+    xmr_claim_and_complete(stamp, swap_id, windows)
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, "shared_address": address,
+            "dust": dust, **xmr_assert_completed(before, swap_id)}
+
+
 def scenario_xmr_taker_refund(stamp: str, kill: bool = False) -> dict:
     """The Maker funds the Monero, the Taker does not claim: from the
     agreement's refund time R its refund (tag 16) returns its LEZ, and the
@@ -8227,6 +8288,7 @@ XMR_SCENARIOS = {
     "xmr-maker-early-punish": scenario_xmr_maker_early_punish,
     "xmr-unfunded-punish": scenario_xmr_unfunded_punish,
     "xmr-taker-cheats": scenario_xmr_taker_cheats,
+    "xmr-shared-address-dust": scenario_xmr_shared_address_dust,
     "mixed-three-pair": scenario_mixed_three_pair,
 }
 

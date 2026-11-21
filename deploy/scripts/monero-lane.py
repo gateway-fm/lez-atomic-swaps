@@ -8,6 +8,11 @@
     monero-lane.py balance [--role R]            the role's balance, the same way, its
                                                  incoming transfers other than coinbase and
                                                  its outgoing ones
+    monero-lane.py pay --address A --piconero N  the funding wallet pays N piconero to any
+                       [--confirm]               address A (a swap's shared address, which
+                                                 its parties can tell anyone); with
+                                                 --confirm ten blocks confirm it, without
+                                                 it stays in the pool
 
 The lane is LEZ_LANE (1, the stack itself, when unset; scripts/lane.sh names
 its containers, files and ports). monerod and the funding wallet-rpc are
@@ -169,6 +174,26 @@ def fund(role: str, xmr: int) -> dict:
             "balance_piconero": after["balance"], "unlocked_balance_piconero": after["unlocked_balance"]}
 
 
+def pay(address: str, piconero: int, confirm: bool) -> dict:
+    """The funding wallet pays `piconero` to `address`, which no wallet of this
+    lane need hold; mined to its ten confirmations with `confirm`."""
+    open_wallet("funding")
+    for _ in range(4):
+        call("funding", "refresh")
+        if call("funding", "get_balance", {"account_index": 0})["unlocked_balance"] > piconero + PICONERO \
+                and call("daemon", "get_info")["height"] >= 100:
+            break
+        mine(100, "coinbase unlocks after 60 blocks; a transfer's ring takes 15 unlocked decoys")
+    else:
+        raise Failure(f"the funding wallet cannot pay {piconero} piconero after mining")
+    transfer = call("funding", "transfer", {"destinations": [{"amount": piconero, "address": address}],
+                                            "account_index": 0, "priority": 1})
+    log(f"funding → {address[:12]}… {piconero} piconero in {transfer['tx_hash']} (fee {transfer['fee']} piconero)")
+    height = mine(CONFIRMATIONS, "the agreement's ten confirmations") if confirm else None
+    return {"lane": LANE["LEZ_LANE"], "address": address, "txid": transfer["tx_hash"], "amount_piconero": piconero,
+            "confirmed": confirm, "height": height}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -178,12 +203,18 @@ def main() -> int:
         command.add_argument("--role", choices=["maker", "taker"], default="maker")
         if name == "fund":
             command.add_argument("--xmr", type=int, default=10)
+    paying = sub.add_parser("pay")
+    paying.add_argument("--address", required=True)
+    paying.add_argument("--piconero", type=int, required=True)
+    paying.add_argument("--confirm", action="store_true")
     args = parser.parse_args()
     try:
         if args.command == "mine":
             print(json.dumps({"lane": LANE["LEZ_LANE"], "height": mine(args.blocks, "by hand")}))
         elif args.command == "fund":
             print(json.dumps(fund(args.role, args.xmr)))
+        elif args.command == "pay":
+            print(json.dumps(pay(args.address, args.piconero, args.confirm)))
         else:
             print(json.dumps({"lane": LANE["LEZ_LANE"], "role": args.role, **balance(args.role)}))
     except Failure as failure:

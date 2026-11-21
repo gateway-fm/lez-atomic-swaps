@@ -323,7 +323,7 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 174)
+        self.assertEqual(len(full), 175)
 
     def test_full_has_the_custody_credit_scenarios_once_each(self):
         full = self.tier('full')
@@ -340,7 +340,8 @@ class Tiers(unittest.TestCase):
     def test_full_has_the_xmr_refund_and_adversarial_scenarios(self):
         full = self.tier('full')
         for scenario in ('xmr-taker-clock-ahead', 'xmr-punish-replans', 'xmr-maker-claim-without-authorization',
-                         'xmr-maker-early-punish', 'xmr-unfunded-punish', 'xmr-taker-cheats'):
+                         'xmr-maker-early-punish', 'xmr-unfunded-punish', 'xmr-taker-cheats',
+                         'xmr-shared-address-dust'):
             self.assertIn(f'node:xmr:{scenario}:TakerSellsLez', full)
 
     def test_smoke_is_unchanged(self):

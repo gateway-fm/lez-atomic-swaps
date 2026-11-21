@@ -621,7 +621,7 @@ swaps at once spaces each swap's drives further apart and needs wider windows.
 their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over
 its owner RPC); `regress.sh` runs them as `node:xmr:<scenario>:TakerSellsLez`,
 on `fast`, and leaves them out with a line on a stack without `LEZ_MONERO=1`.
-All twenty-one are in the `full` tier, none in `smoke`. The six added with
+All twenty-two are in the `full` tier, none in `smoke`. The six added with
 the Node's own refund (`xmr-taker-clock-ahead` to `xmr-taker-cheats` below)
 have not run yet: they were written while the devnet was being rebuilt for
 arm64. A lot is 1 XMR for 50 000 LEZ units.
@@ -652,6 +652,7 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 | `xmr-maker-early-punish` | a cheating Maker sends tag 17 before P: refused, the escrow stays `Funded`; the Taker Node refunds from R; past P tag 17 again: refused, the escrow is `Refunded`; the Maker sweeps back |
 | `xmr-unfunded-punish` | TM-0031: an unfunded swap (the Maker's wallet-rpc stopped), the Taker Node stopped through [R, P): tag 17 from P pays the Maker the LEZ; then the same with the Taker Node running: it refunds by itself from R and tag 17 from P is refused |
 | `xmr-taker-cheats` | a cheating Taker (test hooks `cheat-refund-before-r`, `cheat-refund-after-claim`): tag 16 before R is dropped and the escrow keeps the LEZ, then the same refund lands from R; on a completed swap tag 16 from R is refused and no LEZ moves |
+| `xmr-shared-address-dust` | `xmr-happy` with two more outputs paid to the swap's shared address by a third party (the lane's funding wallet) once the Maker's funding is at depth, 0.02 XMR mined to depth and 0.03 XMR left in the pool: the Taker's sweep spends the swap's own output by its key image and leaves both; the Taker's one received transfer is the lot less at most the fee |
 
 **The Taker's own refund and the test hooks.** The Taker Node refunds a
 Monero swap's LEZ by itself from R (finalized LEZ time). Its entrypoint turns
