@@ -58,7 +58,8 @@ as well (sign-off, tests with every behavioural change).
   and rustdoc checks of every Cargo workspace with CI's flags; `--fast`
   covers formatting everywhere and the root workspace's lints.
 - Before a push that changes code, also run what CI runs beyond the lints:
-  the root workspace tests with the four XMR excludes of `ci.yml`, the Node
+  the root workspace tests (`cargo test --locked --workspace --all-targets`,
+  no excludes, as `ci.yml` runs them), the Node
   suites with `--features pair-zec` and with `--all-features`,
   `python3 -m unittest discover -s deploy/tests`,
   `scripts/test-check-all-workspaces.sh`, `scripts/test-ci-hardening-policy.sh`
