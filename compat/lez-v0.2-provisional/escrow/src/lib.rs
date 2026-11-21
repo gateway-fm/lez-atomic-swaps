@@ -2,8 +2,14 @@
 //!
 //! Each state transition and its authenticated-transfer chained call are one
 //! [`SpelOutput`]. LEZ validates the complete recursive execution before
-//! committing it, so metadata cannot become terminal unless the exact custody
+//! committing it, so metadata cannot become terminal unless the custody
 //! transfer also succeeds.
+//!
+//! LEZ lets anyone credit any initialised account, so a custody account can
+//! hold more than the escrowed amount (TM-0032). Funding therefore accepts a
+//! custody that already holds a balance, and every ending requires at least
+//! the amount and pays the whole custody balance to that ending's recipient,
+//! leaving the custody empty.
 
 #![allow(dead_code)]
 
@@ -468,7 +474,7 @@ fn validated_native_claim_state(
         || state.custody != custody.account_id
         || claimant.account.program_owner != state.asset_program
         || custody.account.program_owner != state.asset_program
-        || custody.account.balance != state.amount
+        || custody.account.balance < state.amount
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -521,7 +527,7 @@ fn validated_xmr_native_witness_state(
         || state.custody != custody.account_id
         || recipient.account.program_owner != state.asset_program
         || custody.account.program_owner != state.asset_program
-        || custody.account.balance != state.amount
+        || custody.account.balance < state.amount
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -593,7 +599,7 @@ fn validated_xmr_native_punish_state(
         || state.custody != custody.account_id
         || claimant.account.program_owner != state.asset_program
         || custody.account.program_owner != state.asset_program
-        || custody.account.balance != state.amount
+        || custody.account.balance < state.amount
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -685,7 +691,7 @@ fn validated_token_claim_state(
         || custody.account.program_owner != state.asset_program
         || token_definition(claimant_asset)?.into_value() != state.asset_definition
         || token_definition(custody)?.into_value() != state.asset_definition
-        || fungible_balance(custody)? != state.amount
+        || fungible_balance(custody)? < state.amount
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -881,7 +887,6 @@ mod zec_escrow {
             || state.custody != custody.account_id
             || depositor.account.program_owner != state.asset_program
             || custody.account.program_owner != state.asset_program
-            || custody.account.balance != 0
             || depositor.account.balance < state.amount
         {
             return Err(custom_error(
@@ -927,7 +932,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             claimant.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -960,7 +965,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             claimant.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -998,7 +1003,7 @@ mod zec_escrow {
             || state.custody != custody.account_id
             || depositor.account.program_owner != state.asset_program
             || custody.account.program_owner != state.asset_program
-            || custody.account.balance != state.amount
+            || custody.account.balance < state.amount
         {
             return Err(custom_error(
                 ERROR_ACCOUNT_BINDING,
@@ -1010,7 +1015,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             depositor.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -1081,7 +1086,10 @@ mod zec_escrow {
                     metadata.account_id,
                     token_definition.account_id,
                 )
-            || custody.account != Account::default()
+            || !(custody.account == Account::default()
+                || (custody.account.program_owner == state.asset_program
+                    && token_holding(&custody)?.definition_id().into_value()
+                        == state.asset_definition))
         {
             return Err(custom_error(
                 ERROR_ACCOUNT_BINDING,
@@ -1127,7 +1135,6 @@ mod zec_escrow {
             || token_definition(&depositor_asset)?.into_value() != state.asset_definition
             || token_definition(&custody)?.into_value() != state.asset_definition
             || fungible_balance(&depositor_asset)? < state.amount
-            || fungible_balance(&custody)? != 0
         {
             return Err(custom_error(
                 ERROR_ACCOUNT_BINDING,
@@ -1178,7 +1185,7 @@ mod zec_escrow {
             metadata.clone(),
             custody.clone(),
             claimant_asset.clone(),
-            state.amount,
+            fungible_balance(&custody)?,
             true,
             &swap_id,
         );
@@ -1208,7 +1215,7 @@ mod zec_escrow {
             || custody.account.program_owner != state.asset_program
             || token_definition(&depositor_asset)?.into_value() != state.asset_definition
             || token_definition(&custody)?.into_value() != state.asset_definition
-            || fungible_balance(&custody)? != state.amount
+            || fungible_balance(&custody)? < state.amount
         {
             return Err(custom_error(
                 ERROR_ACCOUNT_BINDING,
@@ -1223,7 +1230,7 @@ mod zec_escrow {
             metadata.clone(),
             custody.clone(),
             depositor_asset.clone(),
-            state.amount,
+            fungible_balance(&custody)?,
             true,
             &swap_id,
         );
@@ -1310,7 +1317,7 @@ mod zec_escrow {
             metadata.clone(),
             custody.clone(),
             claimant_asset.clone(),
-            state.amount,
+            fungible_balance(&custody)?,
             true,
             &swap_id,
         );
@@ -1429,7 +1436,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             claimant.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -1464,7 +1471,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             depositor.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );
@@ -1498,7 +1505,7 @@ mod zec_escrow {
             state.asset_program,
             custody.clone(),
             claimant.clone(),
-            state.amount,
+            custody.account.balance,
             true,
             &swap_id,
         );

@@ -8,7 +8,7 @@ public_deployment = false
 lez_tag = "v0.2.4"
 lez_commit = "47eba256479f6f785acbd138834340703cd03401"
 spel_commit = "7f13e71f91372a32e26b71d19dbbb60532711048"
-contract_sha256 = "ee3bf98ee33f39071db3ae56c2efdc629370744274b6bdc4f79e11d3bfd56f34"
+contract_sha256 = "7a581ae6b5b7130ab1e956d799ba34a067229d61d0f929385d3cb7d6b9c74e47"
 guest_manifest_sha256 = "ad2d8d2c16d7c785c813c11e8a4fa96ede4d94de8acbe2684779d1e8d1d3a412"
 guest_lock_sha256 = "a583b83d3ae19f8bce44b925c6baccea931fe25d5518605e1d90d03ec7cb3ed0"
 guest_entrypoint_sha256 = "8266638301f2179a808d0dd295e9c0e946e13ad12fbaf6a0321182299e1e49df"
@@ -27,8 +27,8 @@ circuits_version = "v0.4.2"
 circuits_sha256 = "e9131ffac8b08a80e1a7152b34fdd5d5c52674d4cb396e8162131ca5dd7c858d"
 
 [artifact]
-elf_sha256 = "3d49502421a5705b2c386bde8d3a439914196f0727169a98794932c14b9777d4"
-image_id = "c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b"
+elf_sha256 = "3a016fd0059390384da2d6f86d366e6f2036b6ffdda3c8b5cd4a7d965bdc47f3"
+image_id = "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98"
 fresh_docker_embedding_required = true
 run_owned_target_required = true
 
