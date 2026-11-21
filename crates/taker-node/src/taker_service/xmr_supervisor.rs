@@ -1951,30 +1951,11 @@ fn claim_wallet_password(share: &[u8; 32]) -> Zeroizing<String> {
 }
 
 /// Whether a sweep error proves the transfer never reached the wallet: the
-/// adapter failed before `sweep_single`. Anything else may have been sent.
+/// adapter failed before `sweep_single`
+/// ([`MoneroWalletEffectError::sweep_not_sent`]). Anything else may have been
+/// sent.
 fn sweep_not_sent(error: &MoneroWalletEffectError) -> bool {
-    use MoneroWalletEffectError as Error;
-    matches!(
-        error,
-        Error::InvalidWalletFilename
-            | Error::InvalidWalletPassword
-            | Error::NonStandardAddress
-            | Error::ZeroAmount
-            | Error::InvalidSharedAddress
-            | Error::PrivateViewKeyMismatch
-            | Error::InvalidPrivateKey
-            | Error::RestoredAddressMismatch
-            | Error::RestoredBalanceMismatch
-            | Error::WalletRpcLock
-            | Error::Rpc {
-                operation: "open role wallet"
-                    | "close current wallet"
-                    | "generate shared wallet from keys"
-                    | "refresh restored wallet"
-                    | "read restored wallet outputs",
-                ..
-            }
-    )
+    error.sweep_not_sent()
 }
 
 /// Runs `work` on a blocking thread under the role's wallet-rpc lock (a
@@ -2540,6 +2521,26 @@ mod tests {
         refund_ms: 360_000,
         punish_ms: 480_000,
     };
+
+    /// Each RPC failure a sweep can meet before it sends proves it was not
+    /// sent, so it is retried: the address read of a reopened shared wallet
+    /// and the read of its outputs were classified as in doubt.
+    #[test]
+    fn a_sweep_that_failed_before_sending_is_not_sent() {
+        let rpc = |operation| MoneroWalletEffectError::Rpc {
+            operation,
+            cause: "down".to_owned(),
+        };
+        for operation in [
+            "restored wallet primary address",
+            "read restored wallet outputs",
+            "refresh restored wallet",
+            "generate shared wallet from keys",
+        ] {
+            assert!(super::sweep_not_sent(&rpc(operation)), "{operation}");
+        }
+        assert!(!super::sweep_not_sent(&rpc("sweep reconstructed wallet")));
+    }
 
     #[allow(clippy::unnecessary_wraps)] // Every use sets an optional field.
     fn effect(finalized_at_ms: u64) -> Option<FinalizedLezEffectV1> {

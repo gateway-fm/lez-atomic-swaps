@@ -325,7 +325,7 @@ impl MoneroRegtestWalletEffects {
             )
         })
         .await
-        .map_err(rpc_error("open role wallet"))
+        .map_err(rpc_error(OP_OPEN_ROLE_WALLET))
     }
 
     /// Returns the role wallet's (or, without one, the currently open
@@ -483,7 +483,7 @@ impl MoneroRegtestWalletEffects {
         self.wallet
             .close_wallet()
             .await
-            .map_err(rpc_error("close current wallet"))?;
+            .map_err(rpc_error(OP_CLOSE_CURRENT_WALLET))?;
         let created = self
             .wallet
             .generate_from_keys(GenerateFromKeysArgs {
@@ -587,11 +587,11 @@ impl MoneroRegtestWalletEffects {
                 .open_wallet(filename.clone(), Some(password.clone()))
         })
         .await
-        .map_err(rpc_error("generate shared wallet from keys"))?;
+        .map_err(rpc_error(OP_GENERATE_SHARED_FROM_KEYS))?;
         Ok(
             read_with_one_retry(|| self.wallet.get_address(WALLET_ACCOUNT_INDEX, Some(vec![0])))
                 .await
-                .map_err(rpc_error("restored wallet primary address"))?
+                .map_err(rpc_error(OP_RESTORED_PRIMARY_ADDRESS))?
                 .address,
         )
     }
@@ -644,7 +644,7 @@ impl MoneroRegtestWalletEffects {
         self.wallet
             .close_wallet()
             .await
-            .map_err(rpc_error("close current wallet"))?;
+            .map_err(rpc_error(OP_CLOSE_CURRENT_WALLET))?;
         let created = self
             .generate_or_reopen_shared(GenerateFromKeysArgs {
                 restore_height: Some(restore_height),
@@ -684,7 +684,7 @@ impl MoneroRegtestWalletEffects {
     ) -> Result<SubmittedMoneroSweep, MoneroWalletEffectError> {
         read_with_one_retry(|| self.wallet.refresh(Some(restore_height)))
             .await
-            .map_err(rpc_error("refresh restored wallet"))?;
+            .map_err(rpc_error(OP_REFRESH_RESTORED_WALLET))?;
         let transfers = read_with_one_retry(|| {
             self.wallet.incoming_transfers(
                 TransferType::Available,
@@ -693,7 +693,7 @@ impl MoneroRegtestWalletEffects {
             )
         })
         .await
-        .map_err(rpc_error("read restored wallet outputs"))?;
+        .map_err(rpc_error(OP_READ_RESTORED_OUTPUTS))?;
         let output = transfers
             .transfers
             .unwrap_or_default()
@@ -868,11 +868,53 @@ pub enum MoneroWalletEffectError {
     WalletRpcLock,
 }
 
+impl MoneroWalletEffectError {
+    /// Whether this error of [`MoneroRegtestWalletEffects::restore_shared_and_sweep_once`]
+    /// proves the sweep was never sent: it failed a check, or an RPC call it
+    /// makes before `sweep_single`. Anything else (the sweep call itself, or
+    /// its answer) may have sent it.
+    #[must_use]
+    pub fn sweep_not_sent(&self) -> bool {
+        match self {
+            Self::InvalidWalletFilename
+            | Self::InvalidWalletPassword
+            | Self::NonStandardAddress
+            | Self::ZeroAmount
+            | Self::InvalidSharedAddress
+            | Self::PrivateViewKeyMismatch
+            | Self::InvalidPrivateKey
+            | Self::RestoredAddressMismatch
+            | Self::RestoredBalanceMismatch
+            | Self::WalletRpcLock => true,
+            Self::Rpc { operation, .. } => matches!(
+                *operation,
+                OP_OPEN_ROLE_WALLET
+                    | OP_CLOSE_CURRENT_WALLET
+                    | OP_GENERATE_SHARED_FROM_KEYS
+                    | OP_RESTORED_PRIMARY_ADDRESS
+                    | OP_REFRESH_RESTORED_WALLET
+                    | OP_READ_RESTORED_OUTPUTS
+            ),
+            _ => false,
+        }
+    }
+}
+
 /// The longest underlying RPC error text an [`MoneroWalletEffectError::Rpc`] keeps.
 const MAX_RPC_CAUSE_CHARS: usize = 400;
 
 /// Maps a typed client failure of `operation` to [`MoneroWalletEffectError::Rpc`],
 /// keeping its error chain.
+// The operations a reconstructed-wallet sweep runs before it sends
+// (`sweep_single`): a typed RPC failure of one of them proves nothing was sent
+// ([`MoneroWalletEffectError::sweep_not_sent`]).
+const OP_OPEN_ROLE_WALLET: &str = "open role wallet";
+const OP_CLOSE_CURRENT_WALLET: &str = "close current wallet";
+const OP_GENERATE_SHARED_FROM_KEYS: &str = "generate shared wallet from keys";
+const OP_RESTORED_PRIMARY_ADDRESS: &str = "restored wallet primary address";
+const OP_REFRESH_RESTORED_WALLET: &str = "refresh restored wallet";
+const OP_READ_RESTORED_OUTPUTS: &str = "read restored wallet outputs";
+
 fn rpc_error(operation: &'static str) -> impl FnOnce(anyhow::Error) -> MoneroWalletEffectError {
     move |error| MoneroWalletEffectError::Rpc {
         operation,
@@ -1356,6 +1398,99 @@ mod tests {
             sweep["params"]["address"],
             address(AddressType::Standard).to_string()
         );
+    }
+
+    fn wallet_error() -> serde_json::Value {
+        serde_json::json!({ "error": { "code": -1, "message": "failing on purpose" } })
+    }
+
+    fn shared_wallet_failing_outputs(method: &str) -> serde_json::Value {
+        match method {
+            "incoming_transfers" => wallet_error(),
+            other => shared_wallet_with_extra_outputs(other),
+        }
+    }
+
+    fn shared_wallet_failing_sweep(method: &str) -> serde_json::Value {
+        match method {
+            "sweep_single" => wallet_error(),
+            other => shared_wallet_with_extra_outputs(other),
+        }
+    }
+
+    /// The reopen path of a sweep driven again: the wallet file exists, so
+    /// generate_from_keys fails, open_wallet succeeds and the address read
+    /// fails.
+    fn shared_wallet_failing_reopened_address(method: &str) -> serde_json::Value {
+        match method {
+            "open_wallet" => serde_json::json!({ "result": {} }),
+            _ => wallet_error(),
+        }
+    }
+
+    /// A failure before `sweep_single` proves the sweep was not sent; one of
+    /// the sweep call itself does not. The Taker supervisor relies on this
+    /// (a sweep not sent is retried, one in doubt is not), so each operation
+    /// a sweep runs before it sends is named.
+    #[tokio::test]
+    async fn only_a_failure_before_the_sweep_call_proves_nothing_was_sent() {
+        let daemon = FakeRpc::spawn(daemon_answer).await;
+        let amount = NonZeroU64::new(SWAP_PICONERO).unwrap();
+        let outputs = FakeRpc::spawn(shared_wallet_failing_outputs).await;
+        let failed = effects(&daemon, &outputs)
+            .sweep_exact_output(0, amount, address(AddressType::Standard))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&failed, MoneroWalletEffectError::Rpc { operation, .. } if *operation == OP_READ_RESTORED_OUTPUTS)
+        );
+        assert!(failed.sweep_not_sent());
+
+        let sweep = FakeRpc::spawn(shared_wallet_failing_sweep).await;
+        let failed = effects(&daemon, &sweep)
+            .sweep_exact_output(0, amount, address(AddressType::Standard))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&failed, MoneroWalletEffectError::Rpc { operation, .. } if *operation == "sweep reconstructed wallet")
+        );
+        assert!(!failed.sweep_not_sent());
+
+        let reopened = FakeRpc::spawn(shared_wallet_failing_reopened_address).await;
+        let key = || PrivateKey::from_slice(&[1_u8; 32]).expect("scalar");
+        let failed = effects(&daemon, &reopened)
+            .generate_or_reopen_shared(GenerateFromKeysArgs {
+                restore_height: Some(0),
+                filename: "shared-swap".to_owned(),
+                address: address(AddressType::Standard),
+                spendkey: Some(key()),
+                viewkey: key(),
+                password: "password".to_owned(),
+                autosave_current: Some(true),
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&failed, MoneroWalletEffectError::Rpc { operation, .. } if *operation == OP_RESTORED_PRIMARY_ADDRESS)
+        );
+        assert!(failed.sweep_not_sent());
+
+        for operation in [
+            OP_OPEN_ROLE_WALLET,
+            OP_CLOSE_CURRENT_WALLET,
+            OP_GENERATE_SHARED_FROM_KEYS,
+            OP_RESTORED_PRIMARY_ADDRESS,
+            OP_REFRESH_RESTORED_WALLET,
+            OP_READ_RESTORED_OUTPUTS,
+        ] {
+            assert!(rpc_error(operation)(anyhow::anyhow!("down")).sweep_not_sent());
+        }
+        for operation in ["sweep reconstructed wallet", "generate confirmation blocks"] {
+            assert!(!rpc_error(operation)(anyhow::anyhow!("down")).sweep_not_sent());
+        }
+        assert!(!MoneroWalletEffectError::InvalidSweepTransactionCount.sweep_not_sent());
     }
 
     #[tokio::test]
