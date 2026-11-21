@@ -7,6 +7,7 @@ its pure helpers are driven with fakes.
 import datetime
 import importlib.util
 import inspect
+import io
 import json
 import os
 import pathlib
@@ -939,6 +940,29 @@ class CustodyCredit(unittest.TestCase):
                          ['zec-custody-credit', 'zec-custody-credit-refund'])
         self.assertEqual(sorted(name for name in e2e.XMR_SCENARIOS if 'custody-credit' in name),
                          ['xmr-custody-credit', 'xmr-custody-credit-refund'])
+
+    def test_the_finalized_lez_time_is_the_indexers_block_header(self):
+        # the sequencer's getBlock answers the encoded block (a string); the
+        # indexer's getBlockById answers the header with its timestamp
+        asked = []
+
+        class Answer(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def urlopen(request, timeout):
+            asked.append((request.full_url, json.loads(request.data)))
+            return Answer(json.dumps({'jsonrpc': '2.0', 'id': 1, 'result': {
+                'header': {'block_id': 500, 'timestamp': 1_795_277_043_886}, 'body': {}}}).encode())
+
+        with patch.object(e2e, 'lez_rpc_number', lambda url, method: 500), \
+                patch.object(e2e.urllib.request, 'urlopen', urlopen):
+            self.assertEqual(e2e.lez_finalized_time_ms(), 1_795_277_043_886)
+        self.assertEqual(asked, [(e2e.STACK_INDEXER_URL, {'jsonrpc': '2.0', 'id': 1, 'method': 'getBlockById',
+                                                          'params': [500]})])
 
     def test_the_strangers_key_reaches_the_container_on_stdin(self):
         # docker exec without -i gives the command an empty stdin: the key

@@ -7080,10 +7080,11 @@ def xmr_taker_record(swap_id: str, name: str = "xmr-taker-progress.json") -> dic
 
 def lez_finalized_time_ms() -> int:
     """The finalized LEZ block's consensus time, ms (the clock the Taker's
-    refund and the Maker's punishment run on)."""
+    refund and the Maker's punishment run on), from the indexer's block (the
+    sequencer's getBlock answers the block's encoded bytes, not JSON)."""
     height = lez_rpc_number(STACK_INDEXER_URL, "getLastFinalizedBlockId")
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getBlock", "params": [height]}).encode()
-    request = urllib.request.Request(STACK_SEQUENCER_URL, data=body, headers={"content-type": "application/json"})
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getBlockById", "params": [height]}).encode()
+    request = urllib.request.Request(STACK_INDEXER_URL, data=body, headers={"content-type": "application/json"})
     with urllib.request.urlopen(request, timeout=10) as response:
         return int(json.load(response)["result"]["header"]["timestamp"])
 
