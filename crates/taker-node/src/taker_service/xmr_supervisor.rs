@@ -1944,7 +1944,7 @@ fn claim_wallet_password(share: &[u8; 32]) -> Zeroizing<String> {
 }
 
 /// Whether a sweep error proves the transfer never reached the wallet: the
-/// adapter failed before `sweep_all`. Anything else may have been sent.
+/// adapter failed before `sweep_single`. Anything else may have been sent.
 fn sweep_not_sent(error: &MoneroWalletEffectError) -> bool {
     use MoneroWalletEffectError as Error;
     matches!(
@@ -1964,7 +1964,7 @@ fn sweep_not_sent(error: &MoneroWalletEffectError) -> bool {
                     | "close current wallet"
                     | "generate shared wallet from keys"
                     | "refresh restored wallet"
-                    | "read restored wallet balance",
+                    | "read restored wallet outputs",
                 ..
             }
     )
