@@ -780,6 +780,26 @@ class XmrOwnRefundAndAdversaries(unittest.TestCase):
 
         return ran, fake_run
 
+    def test_the_cheating_refund_is_switched_on_once_the_monero_is_in(self):
+        # set at the take, the Taker's refund went out before the Maker's
+        # funding and the wait for claim_available timed out
+        calls = []
+
+        class Stop(Exception):
+            pass
+
+        def stop(*_):
+            raise Stop
+
+        with patch.multiple(e2e, xmr_require_test_hooks=lambda role: None, xmr_before=lambda: {},
+                            xmr_take=lambda stamp, offer: ('aa' * 32, {}),
+                            xmr_wait_funded=lambda swap, windows: calls.append('funded'),
+                            xmr_hook=lambda role, name, value: calls.append((name, value)),
+                            xmr_windows_ms=stop):
+            with self.assertRaises(Stop):
+                e2e.scenario_xmr_taker_cheats('1')
+        self.assertEqual(calls[:2], ['funded', ('cheat-refund-before-r', '1')])
+
     def test_a_scenarios_second_take_has_a_stamp_of_its_own(self):
         # the Maker's configure-pair and publish request ids and the Taker's
         # take request id come from the stamp; the second take under the same

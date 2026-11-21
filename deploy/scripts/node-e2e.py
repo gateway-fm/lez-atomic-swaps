@@ -7410,9 +7410,12 @@ def scenario_xmr_taker_cheats(stamp: str) -> dict:
     before = xmr_before()
     offer_id = f"offer-e2e-xmr-{stamp}-a"
     swap_id, windows = xmr_take(stamp, offer_id)
+    # the flag only once the Monero is in: the cheating Taker sends its refund
+    # on its next step, so set at the take it went out before the Maker's
+    # funding and the swap never showed claim_available
+    xmr_wait_funded(swap_id, windows)
     xmr_hook("taker", "cheat-refund-before-r", "1")
     try:
-        xmr_wait_funded(swap_id, windows)
         refund_at = xmr_windows_ms(swap_id)["R"]
         wait = Wait("the cheating Taker's refund before R", 300)
         while wait.running():
