@@ -646,7 +646,15 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 | `mixed-three-pair` | a Monero, a Bitcoin and a Zcash swap of the same Nodes at once, all TakerSellsLez; all three complete |
 
 In the full regression of 2026-11-15 they ran across lanes 1 to 3
-(`docs/evidence/regression-m4-2026-11-15/`). Footprint, measured on 2026-11-13: after 190 blocks a lane's
+(`docs/evidence/regression-m4-2026-11-15/`), on x86_64 (linux/amd64), as did
+the later M4 regressions under `docs/evidence/`. On arm64 they ran on
+2026-11-21 on an Apple-silicon Mac with Docker Desktop 29.9 (linux/arm64
+images, the `linux-armv8` release), at `0b0ee495`: all thirteen and the three
+`ui:xmr` journeys on two lanes, 16 of 16 passed on the first try in 77 min,
+with `node:zec:zec-happy:TakerSellsLez` before them; `xmr-happy`,
+`xmr-taker-refund`, `xmr-punish` and `node:btc:happy:TakerSellsLez` had passed
+on one lane at `7eaa942c` (the same Node binaries). The isolated lane
+(`scripts/run-monero-e2e.sh`) has not run on arm64. Footprint, measured on 2026-11-13: after 190 blocks a lane's
 monerod volume holds 0.5 MB and each wallet's 0.4 MB; monerod uses about
 270 MB of memory, each wallet-rpc about 13 MB.
 
