@@ -8174,26 +8174,61 @@ def parse_custody_credit_evidence(returncode: int, stdout: str, units: int) -> d
     return evidence
 
 
+def custody_credit_probe_container() -> list[str]:
+    """`docker run` of a throwaway container from the Maker's image in the
+    stack sequencer's network namespace (the probe takes only a literal-loopback
+    sequencer URL), reading the key on stdin. Not the Maker's own container:
+    the refund scenarios stop the Maker Node while the probe waits, and a
+    stopped container kills what runs in it."""
+    image = subprocess.run(["docker", "inspect", "--format", "{{.Config.Image}}", NODES["maker"][0]],
+                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL).stdout.strip()
+    if not image:
+        raise Failure(f"cannot read the image of {NODES['maker'][0]}")
+    sequencer = f"{os.environ.get('LEZ_STACK_PREFIX', 'lez')}-sequencer"
+    return ["docker", "run", "--rm", "-i", "--name", f"{PREFIX}-custody-credit-probe",
+            "--network", f"container:{sequencer}", "--user", "4713:4713", "--entrypoint", "sh", image, "-c",
+            f'umask 077 && cat > {CUSTODY_CREDIT_CONTAINER_KEY} && exec "$@"', "probe"]
+
+
+# The key's path in the throwaway probe container (custody_credit_probe_container).
+CUSTODY_CREDIT_CONTAINER_KEY = "/tmp/custody-credit-probe.key"
+
+
 def run_custody_credit_probe(depositor: str, units: int, timeout: int) -> dict:
-    """Writes the stranger's key into the Maker's container, runs the probe
-    there (it waits until the depositor's new escrow is Funded, then credits
-    its custody) and removes the key again."""
+    """Runs the probe (it waits until the depositor's new escrow is Funded,
+    then credits its custody) with the stranger's key: in a throwaway
+    container from the Maker's image, which gets the key on stdin
+    (custody_credit_probe_container), or beside a native Maker Node with the
+    key written into its run directory and removed again."""
+    native = bool(NATIVE_RUN_ROOT)
+    key_file = CUSTODY_CREDIT_KEY if native else CUSTODY_CREDIT_CONTAINER_KEY
     argv = [CUSTODY_CREDIT_PROBE, "--sequencer-url", "http://127.0.0.1:3040/",
             "--escrow-program-id", escrow_program_id(), "--depositor", lez_owner_account(depositor),
-            "--private-key-file", CUSTODY_CREDIT_KEY, "--amount", str(units),
+            "--private-key-file", key_file, "--amount", str(units),
             "--wait-funded-seconds", str(timeout), "--observe-seconds", "60"]
-    install = subprocess.run(node_command_stdin("maker", ["sh", "-c", f"umask 077 && cat > {CUSTODY_CREDIT_KEY}"]),
-                             input=custody_credit_key(), capture_output=True, check=False, timeout=60)
-    if install.returncode != 0:
-        raise Failure(f"could not write the stranger's key into the Maker's container: {install.stderr[-200:]!r}")
-    try:
-        log(f"  custody credit: waiting for the {depositor}'s escrow to be funded, then {units} unit(s) from "
-            f"{CUSTODY_CREDIT_WALLET}: {' '.join(argv)}")
-        result = subprocess.run(node_command("maker", argv), capture_output=True, text=True, check=False,
-                                stdin=subprocess.DEVNULL, timeout=timeout + 300)
-    finally:
-        subprocess.run(node_command("maker", ["rm", "-f", CUSTODY_CREDIT_KEY]), capture_output=True, check=False,
-                       stdin=subprocess.DEVNULL, timeout=60)
+    log(f"  custody credit: waiting for the {depositor}'s escrow to be funded, then {units} unit(s) from "
+        f"{CUSTODY_CREDIT_WALLET}: {' '.join(argv)}")
+    if not native:
+        container = custody_credit_probe_container()
+        remove = ["docker", "rm", "-f", f"{PREFIX}-custody-credit-probe"]
+        subprocess.run(remove, capture_output=True, check=False, stdin=subprocess.DEVNULL, timeout=60)
+        try:
+            result = subprocess.run([*container, *argv], input=custody_credit_key().decode(), capture_output=True,
+                                    text=True, check=False, timeout=timeout + 300)
+        finally:
+            # a probe whose client timed out keeps running in its container
+            subprocess.run(remove, capture_output=True, check=False, stdin=subprocess.DEVNULL, timeout=60)
+    else:
+        install = subprocess.run(node_command_stdin("maker", ["sh", "-c", f"umask 077 && cat > {key_file}"]),
+                                 input=custody_credit_key(), capture_output=True, check=False, timeout=60)
+        if install.returncode != 0:
+            raise Failure(f"could not write the stranger's key beside the Maker Node: {install.stderr[-200:]!r}")
+        try:
+            result = subprocess.run(node_command("maker", argv), capture_output=True, text=True, check=False,
+                                    stdin=subprocess.DEVNULL, timeout=timeout + 300)
+        finally:
+            subprocess.run(node_command("maker", ["rm", "-f", key_file]), capture_output=True, check=False,
+                           stdin=subprocess.DEVNULL, timeout=60)
     for line in result.stderr.strip().splitlines():
         log(f"    probe stderr: {line}")
     evidence = parse_custody_credit_evidence(result.returncode, result.stdout, units)

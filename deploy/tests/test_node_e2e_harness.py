@@ -972,21 +972,6 @@ class CustodyCredit(unittest.TestCase):
         self.assertEqual(e2e.XMR_MAKER_OWNER_KEY, '/run-lez-identity/maker/lez-signer.key')
         self.assertIn('XMR_MAKER_OWNER_KEY, XMR_PROBE_SIGNER', inspect.getsource(e2e.xmr_escrow_probe))
 
-    def test_the_strangers_key_reaches_the_container_on_stdin(self):
-        # docker exec without -i gives the command an empty stdin: the key
-        # file was written empty and the probe refused it
-        runs = []
-        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), \
-                patch.object(e2e, 'custody_credit_key', lambda: b'71' * 32 + b'\n'), \
-                patch.object(e2e, 'lez_owner_account', lambda role: 'owner'), \
-                patch.object(e2e, 'escrow_program_id', lambda: 'aa' * 32), \
-                patch.object(e2e.subprocess, 'run', lambda argv, **kw: runs.append((argv, kw)) or
-                             subprocess.CompletedProcess(argv, 0, json.dumps(credit_evidence()) + '\n', '')):
-            e2e.run_custody_credit_probe('taker', 1, 60)
-        install = next((argv, kw) for argv, kw in runs if kw.get('input'))
-        self.assertEqual(install[0][:4], ['docker', 'exec', '-i', 'lez-maker-node'])
-        self.assertEqual(install[1]['input'], b'71' * 32 + b'\n')
-
     def test_the_evidence_of_a_landed_stranger_credit_is_accepted(self):
         evidence = e2e.parse_custody_credit_evidence(0, json.dumps(credit_evidence()) + '\n', 1)
         self.assertEqual(evidence['after']['custody_balance'], 1_001)
@@ -1050,43 +1035,52 @@ class CustodyCredit(unittest.TestCase):
         self.assertEqual(self.settle({'maker': 11_002, 'taker': 9_000}, surplus={'maker': 2})['lez_deltas'],
                          {'maker': 1_002, 'taker': -1_000})
 
-    def test_the_key_reaches_the_container_on_stdin_and_is_removed(self):
+    def test_the_key_reaches_a_throwaway_probe_container_on_stdin(self):
+        # Not the Maker's container: docker exec without -i gave the key file
+        # an empty stdin, and the refund scenarios stop the Maker's container
+        # while the probe waits, which killed a probe run in it.
         ran = []
 
         def fake_run(command, **kwargs):
             ran.append((command, kwargs.get('input')))
-            if command[-1:] == ['-f'] or 'rm' in command:
-                return unittest.mock.Mock(returncode=0, stdout='', stderr='')
+            if command[:2] == ['docker', 'inspect']:
+                return unittest.mock.Mock(returncode=0, stdout='lez-maker-node:local\n', stderr='')
             if CREDIT_PROBE in ' '.join(command):
                 return unittest.mock.Mock(returncode=0, stdout=json.dumps(credit_evidence()) + '\n', stderr='')
-            return unittest.mock.Mock(returncode=0, stdout=b'', stderr=b'')
+            return unittest.mock.Mock(returncode=0, stdout='', stderr='')
 
         key = b'ab' * 32 + b'\n'
         with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.dict(os.environ, {'LEZ_STACK_PREFIX': 'lez'}), \
                 patch.object(e2e, 'log', lambda *_: None), patch.object(e2e, 'custody_credit_key', lambda: key), \
                 patch.object(e2e, 'escrow_program_id', lambda: 'bb' * 32), \
                 patch.object(e2e, 'lez_owner_account', lambda role: f'{role}-account'):
             e2e.run_custody_credit_probe('taker', 1, 600)
-        install, probe, remove = ran
-        self.assertEqual(install[0][:3], ['docker', 'exec', 'lez-maker-node'])
-        self.assertEqual(install[1], key)
+        inspect_image, stale, probe, remove = ran
+        self.assertEqual(stale[0], ['docker', 'rm', '-f', 'lez-custody-credit-probe'])
         command = probe[0]
-        self.assertEqual(command[:4], ['docker', 'exec', 'lez-maker-node', f'/usr/local/bin/{CREDIT_PROBE}'])
+        self.assertEqual(command[:4], ['docker', 'run', '--rm', '-i'])
+        self.assertEqual(command[command.index('--network') + 1], 'container:lez-sequencer')
+        self.assertIn('lez-maker-node:local', command)
+        self.assertEqual(probe[1], key.decode())
         self.assertNotIn(key.decode().strip(), ' '.join(command))
         for flag, value in (('--depositor', 'taker-account'), ('--escrow-program-id', 'bb' * 32),
-                            ('--private-key-file', e2e.CUSTODY_CREDIT_KEY), ('--amount', '1'),
+                            ('--private-key-file', e2e.CUSTODY_CREDIT_CONTAINER_KEY), ('--amount', '1'),
                             ('--sequencer-url', 'http://127.0.0.1:3040/')):
             self.assertEqual(command[command.index(flag) + 1], value)
-        self.assertEqual(remove[0][-3:], ['rm', '-f', e2e.CUSTODY_CREDIT_KEY])
+        self.assertEqual(remove[0], ['docker', 'rm', '-f', 'lez-custody-credit-probe'])
+        self.assertFalse([c for c, _ in ran if c[:2] == ['docker', 'exec']])
 
-    def test_the_key_is_removed_when_the_probe_fails(self):
+    def test_the_probe_container_is_removed_when_the_probe_times_out(self):
         ran = []
 
         def fake_run(command, **kwargs):
             ran.append(command)
+            if command[:2] == ['docker', 'inspect']:
+                return unittest.mock.Mock(returncode=0, stdout='lez-maker-node:local\n', stderr='')
             if CREDIT_PROBE in ' '.join(command):
                 raise subprocess.TimeoutExpired(command, 1)
-            return unittest.mock.Mock(returncode=0, stdout=b'', stderr=b'')
+            return unittest.mock.Mock(returncode=0, stdout='', stderr='')
 
         with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
                 patch.object(e2e, 'log', lambda *_: None), patch.object(e2e, 'custody_credit_key', lambda: b'k'), \
@@ -1094,7 +1088,7 @@ class CustodyCredit(unittest.TestCase):
                 patch.object(e2e, 'lez_owner_account', lambda role: role):
             with self.assertRaises(subprocess.TimeoutExpired):
                 e2e.run_custody_credit_probe('maker', 1, 600)
-        self.assertEqual(ran[-1][-3:], ['rm', '-f', e2e.CUSTODY_CREDIT_KEY])
+        self.assertEqual(ran[-1], ['docker', 'rm', '-f', 'lez-custody-credit-probe'])
 
     def test_the_depositor_is_the_taker_only_when_it_sells_lez(self):
         with patch.object(e2e, 'REVERSE', True):
