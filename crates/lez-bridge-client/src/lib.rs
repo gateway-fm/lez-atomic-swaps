@@ -3126,7 +3126,7 @@ fn validate_finalized_witnessed_funding_facts(
         || metadata != &expected_metadata
         || custody.account_id != metadata.custody_account_id
         || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
-        || custody.balance != expected_terms.amount()
+        || custody.balance < expected_terms.amount()
         || !exact_signer
         || block.block_id < window_start
         || block.block_id > window_end
@@ -3182,7 +3182,6 @@ fn validate_finalized_witnessed_initialization_facts(
         || metadata != &expected_metadata
         || custody.account_id != metadata.custody_account_id
         || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
-        || custody.balance.as_u128() != 0
         || block.timestamp_ms == 0
         || block.block_id < window_start
         || block.block_id > window_end
@@ -3241,7 +3240,6 @@ fn validate_finalized_witnessed_claim_facts(
         || metadata != &expected_metadata
         || custody.account_id != metadata.custody_account_id
         || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
-        || custody.balance.as_u128() != 0
         || !aggregate_signature_is_valid(
             claim.aggregate_signature.as_bytes(),
             expected_claim.message_hash.as_bytes(),
