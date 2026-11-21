@@ -390,6 +390,14 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
     }
 }
 
+/// Whether a claim may be sent at the finalized LEZ clock `lez_ms`: only
+/// before the claim deadline, half the claim window before `R`, so that its
+/// tag 15 lands before `R`. A tag 15 sent later may be rejected after its
+/// completed signature, the Maker's key share, is out.
+const fn claim_may_be_sent(facts: &Facts, lez_ms: u64) -> bool {
+    lez_ms < facts.claim_deadline_ms()
+}
+
 /// A branch effect whose one invocation is spent: observed, or, when its
 /// tool stopped before recording its submission (a punishment: whenever it is
 /// not final), driven again under the same sidecar request ids
@@ -424,6 +432,11 @@ fn settle_spent_effect(
                 return Ok("activated");
             }
             // Tag 15 is valid only before `R`: what was sent is observed.
+            return Ok("awaiting_observation");
+        }
+        // Driving the claim again may complete and send its signature now:
+        // only while it still lands before `R`.
+        if !claim_may_be_sent(facts, lez_ms) {
             return Ok("awaiting_observation");
         }
     }
@@ -1214,14 +1227,19 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOu
     // The LEZ effect tools reach the swap's sidecar, which a Node started
     // again respawns beside its actors: one not answering yet fails the
     // attempt here, before the step's one invocation is consumed.
-    if matches!(
+    let lez_ms = if matches!(
         recovery_step,
         XmrWorkflowStep::ClaimLezTag15 | XmrWorkflowStep::PunishLezTag17
     ) {
-        maker
-            .finalized_clock()
-            .context("the swap's LEZ sidecar does not answer yet")?;
-    }
+        Some(
+            maker
+                .finalized_clock()
+                .context("the swap's LEZ sidecar does not answer yet")?
+                .1,
+        )
+    } else {
+        None
+    };
     let execution = &maker.execution;
     // The branch's observers read its activation summary: a crash between
     // the activation's journal commit and the summary's write leaves it to
@@ -1259,6 +1277,22 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOu
             mut command,
             tool_plan_identity_sha256: _,
         } => {
+            // A claim selected before a stop may first be invoked after the
+            // claim deadline: its tag 15 could then land at or after `R`,
+            // and a rejected tag 15 still carries the completed signature,
+            // which reveals the Maker's key share. Past the deadline the
+            // tool is not run. The invocation stays spent with nothing
+            // written, so the observer decides: the Taker's refund at `R`,
+            // or the punishment past `P` (`settle_spent_effect`).
+            if recovery_step == XmrWorkflowStep::ClaimLezTag15 {
+                let facts = maker.facts()?;
+                if !lez_ms.is_some_and(|lez_ms| claim_may_be_sent(&facts, lez_ms)) {
+                    eprintln!(
+                        "XMR Maker claim withheld: the finalized LEZ clock is past the claim deadline"
+                    );
+                    return Ok(effect_output("claim", "awaiting_observation", &facts));
+                }
+            }
             if let Err(error) = run_silent(&mut command, timeout) {
                 mark_unknown(execution, recovery_step)?;
                 return Err(error.context("XMR Maker recovery invocation is ambiguous"));
@@ -2008,7 +2042,8 @@ mod tests {
 
     #[test]
     fn a_claim_stopped_mid_tool_is_driven_again_only_before_r() {
-        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, R - 1);
+        let deadline = Stub::new().facts().unwrap().claim_deadline_ms();
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, deadline - 1);
         assert_eq!(
             settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
             "resubmitted"
@@ -2030,6 +2065,26 @@ mod tests {
             derive_status(&stub.facts().unwrap(), R).next_action,
             "claim_lez"
         );
+    }
+
+    /// A claim selected before a stop, resumed past the claim deadline:
+    /// nothing is sent, not even by a redrive, until the chain decides at
+    /// `R` (the Taker's refund) or past `P` (the punishment).
+    #[test]
+    fn a_claim_resumed_past_its_deadline_is_never_sent() {
+        let deadline = Stub::new().facts().unwrap().claim_deadline_ms();
+        for lez_ms in [deadline, R - 1] {
+            let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, lez_ms);
+            let facts = stub.facts().unwrap();
+            assert!(!claim_may_be_sent(&facts, lez_ms));
+            assert_eq!(
+                settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+                "awaiting_observation"
+            );
+            assert_eq!((stub.redrives, stub.activations.len()), (0, 0));
+        }
+        let stub = stopped_mid_effect(XmrWorkflowBranch::Claim, deadline - 1);
+        assert!(claim_may_be_sent(&stub.facts().unwrap(), deadline - 1));
     }
 
     #[test]
