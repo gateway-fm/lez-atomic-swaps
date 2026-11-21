@@ -38,11 +38,12 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use spel_framework_core::pda::{compute_pda, seed_from_str};
 
-/// The program id the escrow was deployed under on LEZ testnet 0.2, as the
-/// deployment manifest pins it.
-const DEPLOYED_IMAGE_ID: &str = "c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b";
+/// The program id the deployment manifest pins. The escrow deployed on LEZ
+/// testnet 0.2 (c22d61fc…, block 10566) is the program before the custody
+/// fix of TM-0032; these cycles are measured on the pinned one.
+const DEPLOYED_IMAGE_ID: &str = "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98";
 const DEPLOYED_PROGRAM_ID_WORDS: [u32; 8] = [
-    4234227138, 2206258688, 214047648, 3760419936, 3098458389, 4157455202, 2215058280, 455239811,
+    3705693898, 2119768129, 1729138698, 3969569807, 2629450642, 1788751411, 2367740198, 2561668797,
 ];
 
 /// The chain's ceiling for one public execution.
@@ -231,7 +232,7 @@ fn zec_escrow_operations_report_executor_cycles_for_the_deployed_program() {
     assert_eq!(escrow.id(), ZEC_ESCROW_V02_ID);
     assert_eq!(
         ZEC_ESCROW_V02_ID, DEPLOYED_PROGRAM_ID_WORDS,
-        "these cycles must describe the program deployed on testnet"
+        "these cycles must describe the program the deployment manifest pins"
     );
 
     let authenticated_transfer = programs::authenticated_transfer();
@@ -367,7 +368,7 @@ fn escrow_operations_report_executor_cycles_for_the_deployed_program() {
     assert_eq!(escrow.id(), ZEC_ESCROW_V02_ID);
     assert_eq!(
         ZEC_ESCROW_V02_ID, DEPLOYED_PROGRAM_ID_WORDS,
-        "these cycles must describe the program deployed on testnet"
+        "these cycles must describe the program the deployment manifest pins"
     );
 
     let aggregate = aggregate();
@@ -566,7 +567,7 @@ fn xmr_escrow_operations_report_executor_cycles_for_the_deployed_program() {
     assert_eq!(escrow.id(), ZEC_ESCROW_V02_ID);
     assert_eq!(
         ZEC_ESCROW_V02_ID, DEPLOYED_PROGRAM_ID_WORDS,
-        "these cycles must describe the program deployed on testnet"
+        "these cycles must describe the program the deployment manifest pins"
     );
 
     let claim_aggregate = aggregate();

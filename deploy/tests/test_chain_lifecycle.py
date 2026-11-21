@@ -17,7 +17,7 @@ import unittest
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
 LIVE = 'a' * 64
 OLD = 'b' * 64
-PROGRAM = 'c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b'
+PROGRAM = 'ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98'
 WALLETS = ('maker-munich-01', 'maker-basel-02', 'taker-zurich-01', 'taker-limmat-02')
 
 
