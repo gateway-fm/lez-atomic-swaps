@@ -40,15 +40,16 @@ pub const XMR_MAKER_FUNDING_EVIDENCE_FILE: &str = "monero-funding.json";
 pub const XMR_MAKER_FUNDING_RECEIPT_FILE: &str = "monero-funding-receipt.json";
 /// The view-only wallets scan this chain from genesis (regtest only).
 const RESTORE_HEIGHT: u64 = 0;
-/// Goes at the funding while it fails before its transfer, and the pause
-/// between them: a wallet-rpc request can fail in transit (2026-11-14, a
-/// `get_address` that never reached the wallet-rpc).
+/// Goes at the funding while it fails without sending, and the pause between
+/// them: a wallet-rpc request can fail in transit (2026-11-14, a
+/// `get_address` that never reached the wallet-rpc; 2026-11-21, a `transfer`
+/// the wallet-rpc refused with a 401).
 const FUNDING_ATTEMPTS: u32 = 3;
 const FUNDING_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The error context of a Maker funding that failed before its transfer was
-/// handed to the wallet-rpc: no Monero was sent. The funding tool's exit
-/// status tells the actor so.
+/// handed to the wallet-rpc, or whose transfer the wallet-rpc did not run:
+/// no Monero was sent. The funding tool's exit status tells the actor so.
 #[derive(Clone, Copy, Debug)]
 pub struct MoneroFundingNotSent;
 
@@ -61,18 +62,11 @@ impl std::fmt::Display for MoneroFundingNotSent {
 /// The funding tool's exit status for a [`MoneroFundingNotSent`] failure.
 pub const XMR_MONERO_FUNDING_NOT_SENT_EXIT: i32 = 3;
 
-/// Wallet-effect failures of the funding that come before its `transfer`.
+/// Wallet-effect failures of the funding that prove nothing was sent: a
+/// failure before its `transfer`, or a transfer the wallet-rpc did not run
+/// (refused, or not found by the lookup that follows a lost answer).
 fn failed_before_transfer(error: &MoneroEffectError) -> bool {
-    matches!(
-        error,
-        MoneroEffectError::NonStandardAddress
-            | MoneroEffectError::ZeroAmount
-            | MoneroEffectError::InvalidSharedAddress
-            | MoneroEffectError::Rpc {
-                operation: "open role wallet" | "refresh current wallet" | "funding wallet address",
-                ..
-            }
-    )
+    error.funding_not_sent()
 }
 
 /// One role's single wallet-rpc as an effect child reaches it: the daemon,
@@ -156,7 +150,8 @@ impl XmrRoleWalletRpcV1 {
 /// mines its confirmations and records the funding with its receipt. The
 /// caller holds the workflow's one `FundMonero` invocation.
 ///
-/// A failure before the transfer is retried; once the attempts are spent it
+/// A failure that sent nothing (before the transfer, or a transfer the
+/// wallet-rpc did not run) is retried; once the attempts are spent it
 /// carries [`MoneroFundingNotSent`].
 ///
 /// # Errors
@@ -201,7 +196,7 @@ pub async fn fund_maker_monero(
             Ok(funding) => break funding,
             Err(error) if failed_before_transfer(&error) && attempt < FUNDING_ATTEMPTS => {
                 eprintln!(
-                    "Maker Monero funding: {error} before the transfer (attempt {attempt} of {FUNDING_ATTEMPTS}); trying again"
+                    "Maker Monero funding: {error}; nothing was sent (attempt {attempt} of {FUNDING_ATTEMPTS}); trying again"
                 );
                 attempt += 1;
                 std::thread::sleep(FUNDING_RETRY_PAUSE);

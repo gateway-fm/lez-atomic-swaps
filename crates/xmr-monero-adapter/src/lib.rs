@@ -31,10 +31,18 @@
 //! connection than its challenge (when the challenged connection is not yet
 //! back in the pool) gets the server's HTML 401 page, which `monero-rpc`
 //! 0.5.1 decodes as the JSON answer ("expected value at line 1 column 1");
-//! the server ran nothing. The crate builds its own HTTP client, so this
-//! adapter cannot pin both legs to one connection: read-only calls are made
-//! once more after such a failure, the mining call a bounded number of
-//! times, and a transfer or sweep never.
+//! the server ran nothing. The client (`diqwest` 3.1.0, which `monero-rpc`
+//! uses) sends the answer without reading the challenge's body, so the
+//! challenged connection may still be in use when the answer goes out. The
+//! crate builds its own HTTP client, so this adapter cannot pin both legs to
+//! one connection: a read-only call is made up to [`READ_ATTEMPTS`] times
+//! after such a failure, the mining call a bounded number of times. The two
+//! calls that send money, `transfer` and `sweep_single`, go as raw JSON-RPC
+//! calls that read the HTTP status: a 401 starts the exchange again, and a
+//! failure is either a request the wallet-rpc did not run or one it may have
+//! run (`MoneroWalletEffectError::RequestNotSent` and the operation's `Rpc`
+//! error); a transfer that may have run is looked up before anything is sent
+//! again.
 
 #![forbid(unsafe_code)]
 
@@ -885,25 +893,33 @@ fn valid_credential(value: &str, colon_allowed: bool) -> bool {
             .all(|byte| (0x21..=0x7e).contains(&byte) && (colon_allowed || byte != b':'))
 }
 
-/// Makes one read-only, idempotent typed call, and makes it once more when
-/// the first failed in transport or in decoding the response (see the
-/// Digest note in the crate documentation). An error the server answered
-/// with (a JSON-RPC error) is not retried. Only reads come here: a transfer
-/// or a sweep sent twice could pay twice, and none is ever passed in.
-async fn read_with_one_retry<T, F>(call: impl Fn() -> F) -> Result<T, anyhow::Error>
+/// Attempts of one read-only typed call that fails in transport or in
+/// decoding its answer (see the Digest note in the crate documentation).
+pub const READ_ATTEMPTS: u32 = 3;
+
+/// Makes one read-only, idempotent typed call, and makes it again, up to
+/// [`READ_ATTEMPTS`] in all, while it fails in transport or in decoding the
+/// response (see the Digest note in the crate documentation). An error the
+/// server answered with (a JSON-RPC error) is not retried. Only reads come
+/// here: a transfer or a sweep sent twice could pay twice, and none is ever
+/// passed in.
+async fn read_with_retries<T, F>(call: impl Fn() -> F) -> Result<T, anyhow::Error>
 where
     F: Future<Output = Result<T, anyhow::Error>>,
 {
-    match call().await {
-        Err(error) if failed_in_transport(&error) => call().await,
-        result => result,
+    let mut attempt = 1;
+    loop {
+        match call().await {
+            Err(error) if failed_in_transport(&error) && attempt < READ_ATTEMPTS => attempt += 1,
+            result => return result,
+        }
     }
 }
 
 /// Whether a typed call failed in the HTTP client (sending, timing out, or
 /// decoding the body), not in a server's JSON-RPC answer. `monero-rpc`
 /// 0.5.1's `get_block` alone turns its client's error into text ("Can not
-/// fetch block: …"), so that read is made once more on any failure.
+/// fetch block: …"), so that read is made again on any failure.
 fn failed_in_transport(error: &anyhow::Error) -> bool {
     error.is::<reqwest::Error>()
         || error.is::<diqwest::error::Error>()
@@ -1083,8 +1099,8 @@ impl MoneroRpcPort {
         })
     }
 
-    /// One read-only typed call, made once more on a transport or decode
-    /// failure ([`read_with_one_retry`]).
+    /// One read-only typed call, made again on a transport or decode
+    /// failure ([`read_with_retries`]).
     async fn rpc<T, F>(
         operation: &'static str,
         call: impl Fn() -> F,
@@ -1092,7 +1108,7 @@ impl MoneroRpcPort {
     where
         F: Future<Output = Result<T, anyhow::Error>>,
     {
-        read_with_one_retry(call)
+        read_with_retries(call)
             .await
             .map_err(|source| MoneroEvidenceError::Rpc { operation, source })
     }
