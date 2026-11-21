@@ -745,7 +745,7 @@ fn xmr_effects_accept_a_credited_custody_and_never_a_credit_as_the_lock() {
     ] {
         let (target, mut facts) = effect_fixture(effect);
         facts.custody = NativeCustodyFacts::new(h(6), h(4), facts.custody.balance.as_u128() + 1);
-        classify(effect, target, facts).expect("a credited custody is accepted");
+        roundtrip(&classify(effect, target, facts).expect("a credited custody is accepted"));
     }
 
     let (target, mut facts) = effect_fixture(XmrNativeEffectV3::Fund);
