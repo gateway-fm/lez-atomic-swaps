@@ -67,9 +67,10 @@
 //! adaptor journal. It keeps only what a role root persists: its Monero
 //! share, the shared view key, Stage A and Stage B. With the public escrow
 //! (the tag-14 claim partial and the tag-15 or tag-16 signature) that is
-//! enough: the claim pre-signature is aggregated again from Stage B's Maker
-//! partial and nonces and the published Taker partial; the refund
-//! pre-signature is in Stage B itself.
+//! enough for the SDK's `XmrActivatedAgreementV1::recover_claim_spend_key`
+//! (the claim pre-signature aggregated again from Stage B's Maker partial and
+//! nonces and the published Taker partial) and `recover_refund_spend_key`
+//! (the refund pre-signature is in Stage B itself).
 //!
 //! Keys, shares and the view key come from a seeded `ChaCha20` stream, so the
 //! shared addresses and the Stage-A commitments repeat run to run; the
@@ -92,10 +93,7 @@ use lez_adaptor_role_runner::{
     CeremonySeat, Role, ValidatedSession, accept_published_peer_partial_and_adapt,
     extract_verified_adaptor_secret, read_final_signature_packet,
 };
-use lez_adaptor_signature::{
-    adapt_presignature, aggregate_adaptor_presignature, extract_adaptor_secret,
-    verify_final_signature,
-};
+use lez_adaptor_signature::{adapt_presignature, verify_final_signature};
 use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal};
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity,
@@ -994,22 +992,13 @@ fn recover_claim_key(
     let activated = XmrActivatedAgreementV1::from_wire(&agreement, &durable.stage_b, &view)?;
     let taker_partial = chain.claim_partial.context("no tag 14 on chain")?;
     let claim_signature = chain.claim_signature.context("no tag 15 on chain")?;
-    activated.verify_published_taker_claim_partial(&agreement, taker_partial)?;
-    let context = agreement.claim_session_descriptor().context()?;
-    let transcript = activated.body().claim_transcript();
-    let presignature = aggregate_adaptor_presignature(
-        &context,
-        transcript.maker_public_nonce(),
-        transcript.taker_public_nonce(),
-        activated.body().maker_claim_partial(),
-        taker_partial,
-    )?;
-    let maker_share = extract_adaptor_secret(&context, presignature, claim_signature)?;
-    Ok(ReconstructedMoneroSpendKey::reconstruct(
-        agreement.shared_address(),
-        agreement.maker_proof(),
+    // Stage B's Maker partial and nonces with the tag-14 partial give the
+    // claim presignature again; tag 15 reveals the Maker's share.
+    Ok(activated.recover_claim_spend_key(
+        &agreement,
         CrossCurveScalar::from_monero_little_endian(*durable.share)?,
-        maker_share,
+        taker_partial,
+        claim_signature,
     )?)
 }
 
@@ -1124,17 +1113,12 @@ fn recover_refund_key(
     let view = MoneroPrivateViewKey::from_monero_little_endian(*durable.view)?;
     let activated = XmrActivatedAgreementV1::from_wire(&agreement, &durable.stage_b, &view)?;
     let refund_signature = chain.refund_signature.context("no tag 16 on chain")?;
-    let context = agreement.refund_session_descriptor().context()?;
-    let taker_share = extract_adaptor_secret(
-        &context,
-        activated.body().refund_presignature(),
-        refund_signature,
-    )?;
-    Ok(ReconstructedMoneroSpendKey::reconstruct(
-        agreement.shared_address(),
-        agreement.taker_proof(),
+    // Tag 16 completes Stage B's refund presignature: it reveals the Taker's
+    // share.
+    Ok(activated.recover_refund_spend_key(
+        &agreement,
         CrossCurveScalar::from_monero_little_endian(*durable.share)?,
-        taker_share,
+        refund_signature,
     )?)
 }
 

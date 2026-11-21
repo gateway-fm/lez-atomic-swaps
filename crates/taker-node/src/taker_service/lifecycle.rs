@@ -1433,10 +1433,7 @@ fn apply_zec_admitted_refund(view: &mut TakerSwapViewV1, refund_admitted: bool, 
 }
 
 fn overlay_held_revealing_claim(view: &mut TakerSwapViewV1, state_db: &Path) {
-    if matches!(
-        view.state,
-        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
-    ) {
+    if view.state.is_terminal() {
         return;
     }
     if let Some(holder) = revealing_claim_holder(state_db) {
@@ -1454,10 +1451,7 @@ fn overlay_held_revealing_claim(view: &mut TakerSwapViewV1, state_db: &Path) {
 /// shows (the actor keeps submitting; nothing is decided).
 #[cfg(feature = "pair-zec")]
 fn overlay_lez_first_lock_attempts(view: &mut TakerSwapViewV1, state_db: &Path) {
-    if matches!(
-        view.state,
-        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
-    ) {
+    if view.state.is_terminal() {
         return;
     }
     view.status_detail = zec_reference_actor::lez_first_lock_attempts(state_db)
@@ -1503,12 +1497,10 @@ fn overlay_last_outcome(view: &mut TakerSwapViewV1, outcome: Option<ActorLastOut
     let Some(outcome) = outcome else {
         return;
     };
-    if matches!(
-        view.state,
-        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
-    ) || outcome
-        .revision
-        .is_some_and(|revision| revision != view.progress_generation)
+    if view.state.is_terminal()
+        || outcome
+            .revision
+            .is_some_and(|revision| revision != view.progress_generation)
     {
         return;
     }
@@ -1827,11 +1819,7 @@ fn terminal_view(
         return None;
     }
     let view = super::zec_supervisor::view_from_snapshot(facts, record?.progress()?);
-    matches!(
-        view.state,
-        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
-    )
-    .then_some(view)
+    view.state.is_terminal().then_some(view)
 }
 
 /// The registered facts of one swap, for a monitor read without its bundle.
@@ -2114,12 +2102,7 @@ fn overlay_admitted_action(
     // actor offers next is not hidden behind a claim that can never land.
     let still_offered = admission.requested_after_generation() == view.progress_generation
         && view.available_action.map(facade_action) == Some(admission.action());
-    if !still_offered
-        || matches!(
-            view.state,
-            TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
-        )
-    {
+    if !still_offered || view.state.is_terminal() {
         return Ok(view);
     }
     view.state = match admission.action() {

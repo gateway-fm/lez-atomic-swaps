@@ -393,7 +393,10 @@ acted. It turns into an ordinary entry once final.
 States include `initiating`, `not_activated`, `awaiting_first_lock`,
 `awaiting_second_lock`, `both_legs_locked`, `claim_available`,
 `refund_available`, `claim_in_progress`, `refund_in_progress`, `completed`,
-`refunded`, `attention_required`. `awaiting_second_lock` carries
+`refunded`, `expired`, `punished`, `attention_required`. `completed`,
+`refunded`, `expired` (a Monero take whose LEZ lock window closed with nothing
+locked) and `punished` (a Monero swap whose refund window closed with the LEZ
+still locked) are terminal. `awaiting_second_lock` carries
 `available_action: "refund"` only once the Maker's second-lock cutoff
 (`terms.maker_second_lock_cutoff_unix_seconds`) has passed; before it the
 Maker's lock is still awaited and no action is offered. `both_legs_locked` with no
@@ -571,7 +574,7 @@ when the owner is needed (`crates/taker-node/src/taker_service/xmr_supervisor.rs
 | `lez_locking` | `awaiting_first_lock` | — | the Node is locking the LEZ |
 | `progress_unreadable` | `attention_required` (`xmr_progress_unreadable`) | — | the swap's progress record (`xmr-taker-progress.json`, named in `status_detail`) cannot be read; the Node does not drive the swap until it is repaired. The Node writes it whole (a temporary file, synced and renamed), so its own crash cannot cut it short |
 | `lez_lock_unconfirmed` | `attention_required` (`xmr_lez_lock_unconfirmed`) | — | C passed with a lock prepared and not seen final: the Node sends nothing more and keeps looking for it on chain; a lock found (final before or after C) turns the row locked, and is refunded from R |
-| `lez_lock_window_closed` | `attention_required` (`xmr_lez_lock_window_closed`) | — | no lock was prepared by C, or the finalized LEZ time reached R with nothing in the escrow: nothing is locked, the take is over |
+| `lez_lock_window_closed` | `expired` | — | no lock was prepared by C, or the finalized LEZ time reached R with nothing in the escrow: nothing is locked, the take is over |
 | `taker_lock_confirmed` | `awaiting_second_lock` | — | LEZ locked; waiting for the Maker's Monero at 10 confirmations |
 | `both_legs_locked` | `claim_available` | `claim` | both legs locked, before R |
 | `claim_authorizing` | `claim_in_progress` | — | tag 14 sent, not yet final |
@@ -582,7 +585,7 @@ when the owner is needed (`crates/taker-node/src/taker_service/xmr_supervisor.rs
 | `refund_in_flight` | `refund_in_progress` | — | tag 16 sent, not yet final; sent again, the same bytes, while the finalized LEZ time is before P |
 | `refund_not_final` | `attention_required` (`xmr_refund_not_final_by_punish_time`) | — | P passed with tag 16 sent and not seen final: one that landed before P still turns the row `refunded`; otherwise the Maker can take the LEZ |
 | `refunded` | `refunded` | — | the LEZ is back |
-| `punish_open` | `attention_required` (`xmr_refund_window_closed`) | — | P passed without a refund: the Maker can take the LEZ; the Monero stays locked |
+| `punish_open` | `punished` | — | P passed without a refund: the Maker can take the LEZ; the Monero stays locked |
 
 `xmr_claim_sweep_in_doubt` means a sweep was started and its outcome not
 recorded; it is **never resent**. Its `status_detail` names the wallet file

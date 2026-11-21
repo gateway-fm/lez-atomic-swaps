@@ -546,7 +546,26 @@ fn status(config_fd: i32) -> Result<StatusOutput> {
 }
 
 fn effect_output(command: &'static str, outcome: &'static str, facts: &Facts) -> EffectOutput {
-    let status = derive_status(facts, now_ms());
+    effect_output_at(command, outcome, facts, now_ms())
+}
+
+/// The effect output against the facts at `now`. A drive that ends on an
+/// expired swap reports the absorbing `unchanged`, whatever it did: a Taker
+/// lock found final after the cutoff, or a scan the cutoff crossed, changes
+/// nothing the Maker does, and the supervisor takes an expired drive only as
+/// `unchanged` (it failed the schedule as `actor_output_invalid`).
+fn effect_output_at(
+    command: &'static str,
+    outcome: &'static str,
+    facts: &Facts,
+    now_ms: u64,
+) -> EffectOutput {
+    let status = derive_status(facts, now_ms);
+    let outcome = if command == "drive" && status.phase == "expired" {
+        "unchanged"
+    } else {
+        outcome
+    };
     EffectOutput {
         schema_version: 1,
         role: "maker",
@@ -1682,6 +1701,34 @@ mod tests {
             XmrWorkflowStep::SweepMoneroRefund
         ));
         assert_eq!(XmrWorkflowStep::ClaimLezTag15.name(), "claim_lez_tag15");
+    }
+
+    /// A Taker lock final after the cutoff, or a drive whose scan the cutoff
+    /// crossed, ends the drive on `expired`: its output is the absorbing
+    /// `unchanged` the supervisor accepts, not `observed` (which it took for
+    /// invalid output and failed the schedule on).
+    #[test]
+    fn a_drive_that_ends_on_an_expired_swap_reports_unchanged() {
+        let mut late = facts();
+        late.tag13_final_ms = Some(C + 1);
+        let output = effect_output_at("drive", "observed", &late, 1);
+        assert_eq!(
+            (output.outcome, output.phase, output.next_action),
+            ("unchanged", "expired", "complete")
+        );
+        let mut crossed = facts();
+        crossed.tag13_final_ms = Some(C - 1);
+        let output = effect_output_at("drive", "observed", &crossed, C);
+        assert_eq!(
+            (output.outcome, output.phase, output.next_action),
+            ("unchanged", "expired", "complete")
+        );
+        // Before the cutoff an observed lock stays observed.
+        let output = effect_output_at("drive", "observed", &crossed, C - 1);
+        assert_eq!(
+            (output.outcome, output.phase),
+            ("observed", "taker_lock_confirmed")
+        );
     }
 
     #[test]

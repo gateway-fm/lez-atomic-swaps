@@ -389,8 +389,8 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         if (attentionReason == QStringLiteral("xmr_lez_lock_unconfirmed"))
             return {"attention_required", "LEZ lock not confirmed", 15,
                     "The Maker's funding cutoff passed before your LEZ lock was seen final: your Node keeps looking for it and refunds it from the refund time if it landed", "", ""};
-        if (attentionReason == QStringLiteral("xmr_lez_lock_window_closed"))
-            return {"attention_required", "LEZ lock window closed", 0,
+        if (nodeState == "expired")
+            return {"expired", "Expired", 100,
                     "Your LEZ was not locked before the Maker's funding cutoff: nothing of yours is locked and this take is over", "", ""};
         if (nodeState == "awaiting_second_lock")
             return {"awaiting_maker_lock", "Waiting for the Maker's Monero", 45,
@@ -426,9 +426,9 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         if (attentionReason == QStringLiteral("xmr_refund_not_final_by_punish_time"))
             return {"attention_required", "Refund not final", 0,
                     "Your LEZ refund was sent and did not land before the punish time: unless your Node still finds it final, the Maker can punish and take your LEZ", "", ""};
-        if (attentionReason == QStringLiteral("xmr_refund_window_closed"))
-            return {"attention_required", "Refund window closed", 0,
-                    "The refund window closed without a refund: the Maker can punish and take your LEZ; the Monero stays locked", "", ""};
+        if (nodeState == "punished")
+            return {"punished", "Punished", 100,
+                    "The refund window closed without a refund: your LEZ is the Maker's to take by its punishment, and the Monero stays locked", "", ""};
     }
     if (pair == QStringLiteral("Zcash")) {
         // The Taker Node has no lock RPC for ZEC: its supervisor drives the
@@ -956,7 +956,7 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
                                        swap.value("effects").toArray(),
                                        swap.value("privacy_guidance").toString()));
             if (row.state == "completed") ++completed;
-            else if (row.state != "refunded") ++active;
+            else if (row.state != "refunded" && row.state != "expired" && row.state != "punished") ++active;
             if (!row.action.isEmpty()) ++needsAction;
         }
     }

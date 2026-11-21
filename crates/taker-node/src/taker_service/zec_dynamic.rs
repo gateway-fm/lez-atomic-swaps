@@ -161,11 +161,15 @@ impl DynamicZecRole {
         });
     }
 
-    /// Funding outpoints this Taker already committed to other reservations.
+    /// Funding outpoints this Taker already committed to other reservations:
+    /// those of prepared swaps, and those of reservations still inside the
+    /// Maker's grace ([`reservation_holds_funding`]).
     fn committed_funding(&self, except: &Path) -> Vec<CandidateOutpoint> {
+        let now = std::time::SystemTime::now();
         self.swap_directories()
             .into_iter()
             .filter(|root| root != except)
+            .filter(|root| reservation_holds_funding(root, now))
             .filter_map(|root| read_private(&root.join(RESERVE_FILE), MAX_RECORD_BYTES).ok())
             .filter_map(|bytes| serde_json::from_slice::<TakerReserveRecordV1>(&bytes).ok())
             .filter_map(|record| record.request.taker_funding.as_ref().map(candidate))
@@ -192,6 +196,31 @@ impl DynamicZecRole {
                 .authenticated_transfer_program_id(),
         }
     }
+}
+
+/// How long a reservation that never became a prepared swap holds its
+/// funding outpoint: the Maker's reservation grace (`zec_reserve.rs`), after
+/// which the Maker refuses its completion.
+const UNPREPARED_RESERVATION_HOLD: std::time::Duration = std::time::Duration::from_mins(15);
+
+/// Whether the swap directory's reservation still holds its funding outpoint.
+/// A prepared swap holds it for good. A reservation that never became one (a
+/// take that failed or was refused) holds it only through the Maker's grace,
+/// counted from when the reservation was recorded; after that the outpoint
+/// is free for another take. It used to be held for ever, so one failed take
+/// locked a single-output Taker out of Zcash.
+fn reservation_holds_funding(root: &Path, now: std::time::SystemTime) -> bool {
+    if root.join(PREPARED_FILE).exists() {
+        return true;
+    }
+    let Ok(recorded) = fs::metadata(root.join(RESERVE_FILE)).and_then(|meta| meta.modified())
+    else {
+        // No record, or one whose time cannot be read: an unreadable one is
+        // kept, as before.
+        return root.join(RESERVE_FILE).exists();
+    };
+    now.duration_since(recorded)
+        .map_or(true, |age| age < UNPREPARED_RESERVATION_HOLD)
 }
 
 fn store_record(layout: &SwapLayout, record: &TakerReserveRecordV1) -> Result<()> {
@@ -433,4 +462,46 @@ pub(super) async fn prepare(
     };
     write_private_exact(&prepared_file, &serde_json::to_vec_pretty(&configured)?)?;
     Ok(configured)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        PREPARED_FILE, RESERVE_FILE, UNPREPARED_RESERVATION_HOLD, reservation_holds_funding,
+    };
+    use std::fs;
+    use std::time::{Duration, SystemTime};
+
+    fn swap_dir(name: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("lez-taker-zec-hold-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("swap directory");
+        root
+    }
+
+    /// A failed take's reservation holds its funding outpoint through the
+    /// Maker's grace and then lets it go; a prepared swap's holds it for good.
+    #[test]
+    fn a_failed_take_frees_its_funding_after_the_reservation_grace() {
+        let failed = swap_dir("failed");
+        fs::write(failed.join(RESERVE_FILE), b"{}").expect("record");
+        let recorded = fs::metadata(failed.join(RESERVE_FILE))
+            .and_then(|meta| meta.modified())
+            .expect("mtime");
+        assert!(reservation_holds_funding(&failed, recorded));
+        let later = recorded + UNPREPARED_RESERVATION_HOLD + Duration::from_secs(1);
+        assert!(!reservation_holds_funding(&failed, later));
+
+        let prepared = swap_dir("prepared");
+        fs::write(prepared.join(RESERVE_FILE), b"{}").expect("record");
+        fs::write(prepared.join(PREPARED_FILE), b"{}").expect("prepared");
+        assert!(reservation_holds_funding(&prepared, later));
+
+        let empty = swap_dir("empty");
+        assert!(!reservation_holds_funding(&empty, SystemTime::now()));
+        for root in [failed, prepared, empty] {
+            fs::remove_dir_all(root).expect("clean up");
+        }
+    }
 }

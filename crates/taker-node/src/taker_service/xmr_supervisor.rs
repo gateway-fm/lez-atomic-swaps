@@ -327,9 +327,9 @@ pub(super) fn xmr_taker_view(
             return view(
                 Phase::Offered,
                 1,
-                State::AttentionRequired,
+                State::Expired,
                 None,
-                Some("xmr_lez_lock_window_closed"),
+                None,
                 "lez_lock_window_closed",
             );
         }
@@ -348,13 +348,14 @@ pub(super) fn xmr_taker_view(
         );
     }
     if now_ms >= windows.punish_ms {
-        // Tag 16 is valid only in [R, P): the Maker may now punish.
+        // Tag 16 is valid only in [R, P): the LEZ is the Maker's to take by
+        // its punishment, and nothing the Taker does changes that.
         return view(
             Phase::MakerRecoveryAvailable,
             10,
-            State::AttentionRequired,
+            State::Punished,
             None,
-            Some("xmr_refund_window_closed"),
+            None,
             "punish_open",
         );
     }
@@ -2639,8 +2640,12 @@ mod tests {
             closing.available_action,
             Some(TakerTerminalActionV1::Refund)
         );
+        // From P the LEZ is the Maker's to take: terminal, nothing offered,
+        // nothing to attend to.
         let punished = at(&progress, WINDOWS.punish_ms);
-        assert_eq!(punished.state, State::AttentionRequired);
+        assert_eq!(punished.state, State::Punished);
+        assert!(punished.state.is_terminal());
+        assert_eq!(punished.attention_reason, None);
         assert_eq!(punished.available_action, None);
         progress.refund_submitted = Some("ef".repeat(32));
         assert_eq!(
@@ -2659,9 +2664,14 @@ mod tests {
         use TakerSwapStateV1 as State;
         let mut progress = record();
         progress.initialized = effect(250_000);
+        // Proven never funded past the cutoff (or never sent): the take
+        // expired, a terminal state.
+        progress.lock_unfunded = true;
         let missed = xmr_taker_view(&progress, WINDOWS, WINDOWS.funding_cutoff_ms);
-        assert_eq!(missed.state, State::AttentionRequired);
-        assert_eq!(missed.attention_reason, Some("xmr_lez_lock_window_closed"));
+        assert_eq!(missed.state, State::Expired);
+        assert!(missed.state.is_terminal());
+        assert_eq!(missed.attention_reason, None);
+        progress.lock_unfunded = false;
         progress.funded = effect(WINDOWS.funding_cutoff_ms + 1);
         progress.monero_funding_transaction = Some("cd".repeat(32));
         assert_eq!(
@@ -2841,10 +2851,7 @@ mod tests {
             unclaimed.available_action,
             Some(TakerTerminalActionV1::Refund)
         );
-        assert_eq!(
-            at(&progress, WINDOWS.punish_ms).attention_reason,
-            Some("xmr_refund_window_closed")
-        );
+        assert_eq!(at(&progress, WINDOWS.punish_ms).state, State::Punished);
         // A claim final before R and seen after P is still swept.
         progress.maker_claim = Some(maker_claim(WINDOWS.refund_ms - 1));
         for now in [120_000, WINDOWS.refund_ms, WINDOWS.punish_ms + 1] {

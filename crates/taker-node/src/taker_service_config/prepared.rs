@@ -550,6 +550,14 @@ pub(super) fn build_initiation_context(
     )
     .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?;
     let mut prepared_by_offer = BTreeMap::new();
+    // The swaps the registry admitted: a persisted preparation of one of them
+    // wins over another preparation of the same offer (a take that lost).
+    let admitted: std::collections::BTreeSet<Box<str>> = registry
+        .list_initiations()
+        .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?
+        .into_iter()
+        .map(|facts| facts.swap_id().as_str().into())
+        .collect();
 
     for (expected_pair, configured) in configuration.entries() {
         let entry = load_prepared_entry(
@@ -592,17 +600,7 @@ pub(super) fn build_initiation_context(
                 chat_socket,
                 true,
             ) {
-                Ok(entry) => {
-                    if prepared_by_offer
-                        .insert(configured.offer_id.as_str().into(), entry)
-                        .is_some()
-                    {
-                        eprintln!(
-                            "taker: persisted swap {} duplicates an offer; keeping the newest",
-                            configured.swap_id.as_str()
-                        );
-                    }
-                }
+                Ok(entry) => restore_prepared(&mut prepared_by_offer, entry, &admitted),
                 Err(error) => eprintln!(
                     "taker: persisted swap {} no longer loads ({error}); skipped",
                     configured.swap_id.as_str()
@@ -623,9 +621,7 @@ pub(super) fn build_initiation_context(
             // reported and skipped.
             for configured in role.persisted_entries() {
                 match role.load_entry(&configured) {
-                    Ok(entry) => {
-                        prepared_by_offer.insert(configured.offer_id.as_str().into(), entry);
-                    }
+                    Ok(entry) => restore_prepared(&mut prepared_by_offer, entry, &admitted),
                     Err(error) => eprintln!(
                         "taker: persisted ZEC swap {} no longer loads ({error:#}); skipped",
                         configured.swap_id.as_str()
@@ -649,9 +645,7 @@ pub(super) fn build_initiation_context(
             // As the Zcash swaps above.
             for configured in role.persisted_entries() {
                 match role.load_entry(&configured) {
-                    Ok(entry) => {
-                        prepared_by_offer.insert(configured.offer_id.as_str().into(), entry);
-                    }
+                    Ok(entry) => restore_prepared(&mut prepared_by_offer, entry, &admitted),
                     Err(error) => eprintln!(
                         "taker: persisted XMR swap {} no longer loads ({error:#}); skipped",
                         configured.swap_id.as_str()
@@ -676,6 +670,53 @@ pub(super) fn build_initiation_context(
         #[cfg(feature = "pair-xmr")]
         dynamic_xmr,
     })
+}
+
+/// Puts one persisted preparation back under its offer. Two preparations of
+/// one offer (concurrent takes of it, one of which lost) keep the one the
+/// registry admitted; between two unadmitted ones the first read stays. The
+/// other is reported and left out, so a restart never swaps an admitted swap
+/// for a losing preparation.
+fn restore_prepared(
+    prepared_by_offer: &mut BTreeMap<Box<str>, PreparedTakerInitiationV1>,
+    entry: PreparedTakerInitiationV1,
+    admitted: &std::collections::BTreeSet<Box<str>>,
+) {
+    let key: Box<str> = entry.offer_id().as_str().into();
+    let (kept, dropped) = match prepared_by_offer.remove(&key) {
+        None => (entry, None),
+        Some(existing)
+            if replaces_restored(
+                existing.swap_id().as_str(),
+                entry.swap_id().as_str(),
+                admitted,
+            ) =>
+        {
+            (entry, Some(existing))
+        }
+        Some(existing) => (existing, Some(entry)),
+    };
+    if let Some(dropped) = dropped {
+        eprintln!(
+            "taker: persisted swap {} duplicates offer {} of swap {}; keeping {}",
+            dropped.swap_id().as_str(),
+            key,
+            kept.swap_id().as_str(),
+            kept.swap_id().as_str()
+        );
+    }
+    prepared_by_offer.insert(key, kept);
+}
+
+/// Whether a restored preparation of `candidate` replaces the one of
+/// `existing` for the same offer: only an admitted one replaces an
+/// unadmitted one.
+fn replaces_restored(
+    existing: &str,
+    candidate: &str,
+    admitted: &std::collections::BTreeSet<Box<str>>,
+) -> bool {
+    !admitted.contains(existing) && admitted.contains(candidate)
 }
 
 /// Loads one prepared entry, revalidating every bound file against its
@@ -1096,5 +1137,21 @@ mod legacy_start_tests {
             ),
             ["legacy-open", "legacy-unscheduled"]
         );
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::replaces_restored;
+
+    /// Two persisted preparations of one offer: the admitted swap is kept,
+    /// in whichever order the directories are read (it used to be the last
+    /// one read, which could be a take that lost).
+    #[test]
+    fn a_restart_keeps_the_admitted_preparation_of_an_offer() {
+        let admitted = ["admitted".into()].into_iter().collect();
+        assert!(replaces_restored("lost", "admitted", &admitted));
+        assert!(!replaces_restored("admitted", "lost", &admitted));
+        assert!(!replaces_restored("lost-a", "lost-b", &admitted));
     }
 }

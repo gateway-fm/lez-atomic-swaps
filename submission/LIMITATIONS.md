@@ -149,15 +149,12 @@ The Taker Node:
 
 - A sweep it has started and cannot prove unsent is marked in doubt and never
   sent again; recovering the Monero from it is by hand, and no tool does it.
-- Its status view has no expired or punished state for a Monero swap: a swap
-  whose lock window closed reads `Offered` with `xmr_lez_lock_window_closed`,
-  a punished one `MakerRecoveryAvailable` with `xmr_refund_window_closed`,
-  and neither becomes terminal.
 
 The sidecar:
 
-- Its request store holds at most 4,096 entries (`MAX_STORE_ENTRIES`) and
-  evicts none: when full it refuses new requests.
+- Its request store holds at most 4,096 entries (`MAX_STORE_ENTRIES`). When
+  full it evicts a read, then the oldest settled submission; a store full of
+  preparations and submissions in flight refuses new requests.
 
 ## M6 boundary
 

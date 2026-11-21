@@ -247,6 +247,11 @@ struct PersistedEntry {
     /// and its record replays deterministically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     earlier_outcomes: Vec<PersistedOutcome>,
+    /// When the request id was first recorded, in the store's own order
+    /// (older stores lack it and read as zero, the oldest): the capacity
+    /// rule evicts settled submissions oldest first.
+    #[serde(default)]
+    sequence: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -485,6 +490,7 @@ impl DurableStore {
                 self.ensure_capacity()?;
                 Vec::new()
             };
+        let sequence = self.sequence_of(context.request_id.as_str());
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
@@ -499,6 +505,7 @@ impl DurableStore {
                     },
                 )),
                 earlier_outcomes,
+                sequence,
             },
         );
         self.persist().map_err(|_| OperationFailure::internal())
@@ -533,6 +540,7 @@ impl DurableStore {
                 earlier
             })
             .unwrap_or_default();
+        let sequence = self.sequence_of(context.request_id.as_str());
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
@@ -541,17 +549,68 @@ impl DurableStore {
                 replay_request,
                 outcome,
                 earlier_outcomes,
+                sequence,
             },
         );
         self.persist().map_err(|_| OperationFailure::internal())
     }
 
-    fn ensure_capacity(&self) -> Result<(), OperationFailure> {
-        if self.persisted.entries.len() >= MAX_STORE_ENTRIES {
-            Err(OperationFailure::internal())
-        } else {
-            Ok(())
+    /// The sequence of `request_id`: its own when recorded, else the next.
+    fn sequence_of(&self, request_id: &str) -> u64 {
+        self.persisted.entries.get(request_id).map_or_else(
+            || {
+                self.persisted
+                    .entries
+                    .values()
+                    .map(|entry| entry.sequence)
+                    .max()
+                    .map_or(1, |latest| latest.saturating_add(1))
+            },
+            |entry| entry.sequence,
+        )
+    }
+
+    /// Makes room for one more request id. A full store evicts, in order:
+    /// one repeatable entry (a read, which keeps no outcome: only its id's
+    /// binding to its request goes, and a read is safe to run again), then
+    /// the oldest settled submission (a superseded transaction's: every
+    /// re-plan of a claim or punishment is a new transaction with a request
+    /// id of its own, and the current one is the newest). Preparations,
+    /// which the store restores at start, and submissions in flight are
+    /// never evicted; a store full of them refuses the request.
+    ///
+    /// Without eviction, reads with fresh ids (the Taker's clock and scan
+    /// watch) or a long run of re-plans filled the store's 4,096 entries,
+    /// and every later request of the swap was refused.
+    fn ensure_capacity(&mut self) -> Result<(), OperationFailure> {
+        if self.persisted.entries.len() < MAX_STORE_ENTRIES {
+            return Ok(());
         }
+        let repeatable = self
+            .persisted
+            .entries
+            .iter()
+            .find(|(_, entry)| matches!(entry.outcome, PersistedOutcome::Repeatable))
+            .map(|(id, _)| id.clone());
+        let evicted = repeatable.or_else(|| {
+            self.persisted
+                .entries
+                .iter()
+                .filter(|(_, entry)| {
+                    is_submission_method(&entry.method)
+                        && matches!(
+                            entry.outcome,
+                            PersistedOutcome::Success(_) | PersistedOutcome::Error(_)
+                        )
+                })
+                .min_by_key(|(_, entry)| entry.sequence)
+                .map(|(id, _)| id.clone())
+        });
+        let Some(evicted) = evicted else {
+            return Err(OperationFailure::internal());
+        };
+        self.persisted.entries.remove(&evicted);
+        Ok(())
     }
 
     #[allow(
@@ -2408,4 +2467,116 @@ fn valid_method(method: &str) -> bool {
             | METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3
             | METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3
     )
+}
+
+#[cfg(test)]
+mod store_capacity_tests {
+    use super::{
+        BTreeMap, DurableStore, MAX_STORE_ENTRIES, METHOD_OBSERVE_FINALIZED_CLOCK,
+        METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_SUBMIT_TRANSACTION, PersistedEntry,
+        PersistedOutcome, PersistedStore, STORE_SCHEMA_VERSION,
+    };
+    use lez_bridge_protocol::{Hex32, Participant, RunId, RuntimeCompatibility, RuntimeDescriptor};
+
+    fn seq(index: usize) -> u64 {
+        u64::try_from(index).expect("small index")
+    }
+
+    fn entry(method: &str, outcome: PersistedOutcome, sequence: u64) -> PersistedEntry {
+        PersistedEntry {
+            method: method.to_owned(),
+            request_sha256: "0".repeat(64),
+            replay_request: None,
+            outcome,
+            earlier_outcomes: Vec::new(),
+            sequence,
+        }
+    }
+
+    fn store(entries: BTreeMap<String, PersistedEntry>) -> DurableStore {
+        DurableStore {
+            path: std::env::temp_dir().join("lez-sidecar-capacity-unused.json"),
+            persisted: PersistedStore {
+                schema_version: STORE_SCHEMA_VERSION,
+                run_id: RunId::new("capacity-test".to_owned()).expect("run id"),
+                runtime: RuntimeDescriptor::new(
+                    Participant::Taker,
+                    RuntimeCompatibility::LeeV0_2_0,
+                    Hex32::from_bytes([1; 32]),
+                    Hex32::from_bytes([2; 32]),
+                    Hex32::from_bytes([3; 32]),
+                    Hex32::from_bytes([4; 32]),
+                    Hex32::from_bytes([5; 32]),
+                ),
+                entries,
+            },
+        }
+    }
+
+    /// A store filled with reads (the Taker's clock and scan watch, a fresh
+    /// request id each) used to refuse every later request of the swap. A
+    /// full store now evicts a read; one full of settled submissions (a long
+    /// run of re-plans) evicts the oldest; preparations and submissions in
+    /// flight are kept, and a store of only those still refuses.
+    #[test]
+    fn a_full_request_store_evicts_reads_then_old_submissions_never_preparations() {
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "prepare".to_owned(),
+            entry(
+                METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+                PersistedOutcome::Success(serde_json::json!({})),
+                1,
+            ),
+        );
+        for index in 1..MAX_STORE_ENTRIES {
+            entries.insert(
+                format!("read-{index:05}"),
+                entry(
+                    METHOD_OBSERVE_FINALIZED_CLOCK,
+                    PersistedOutcome::Repeatable,
+                    1 + seq(index),
+                ),
+            );
+        }
+        let mut reads = store(entries);
+        assert_eq!(reads.persisted.entries.len(), MAX_STORE_ENTRIES);
+        reads.ensure_capacity().expect("a read is evicted");
+        assert_eq!(reads.persisted.entries.len(), MAX_STORE_ENTRIES - 1);
+        assert!(reads.persisted.entries.contains_key("prepare"));
+
+        let settled = PersistedOutcome::Success(serde_json::json!({}));
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "prepare".to_owned(),
+            entry(METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, settled.clone(), 1),
+        );
+        for index in 1..MAX_STORE_ENTRIES {
+            entries.insert(
+                format!("submit-{index:05}"),
+                entry(METHOD_SUBMIT_TRANSACTION, settled.clone(), 10 + seq(index)),
+            );
+        }
+        let mut replans = store(entries);
+        replans
+            .ensure_capacity()
+            .expect("the oldest submission is evicted");
+        assert!(!replans.persisted.entries.contains_key("submit-00001"));
+        assert!(replans.persisted.entries.contains_key("submit-00002"));
+        assert!(replans.persisted.entries.contains_key("prepare"));
+        assert_eq!(replans.sequence_of("new"), 10 + seq(MAX_STORE_ENTRIES));
+
+        let mut entries = BTreeMap::new();
+        for index in 0..MAX_STORE_ENTRIES {
+            entries.insert(
+                format!("prepare-{index:05}"),
+                entry(
+                    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+                    settled.clone(),
+                    seq(index),
+                ),
+            );
+        }
+        assert!(store(entries).ensure_capacity().is_err());
+    }
 }

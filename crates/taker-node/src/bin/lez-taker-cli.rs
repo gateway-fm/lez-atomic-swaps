@@ -1124,8 +1124,8 @@ fn xmr_phase_words(phase: &str) -> Option<&'static str> {
              looking for it, and refunds it from the refund time if it landed"
         }
         "lez_lock_window_closed" => {
-            "your LEZ was not locked before the Maker's funding cutoff: nothing of yours is \
-             locked and this take is over"
+            "expired: your LEZ was not locked before the Maker's funding cutoff; nothing of \
+             yours is locked and this take is over"
         }
         "taker_lock_confirmed" => {
             "your LEZ is locked; waiting for the Maker's Monero and its 10 confirmations"
@@ -1148,8 +1148,8 @@ fn xmr_phase_words(phase: &str) -> Option<&'static str> {
         }
         "refunded" => "refunded: your LEZ is back",
         "punish_open" => {
-            "the refund window closed: the Maker may take your LEZ (punish); the Monero stays \
-             locked"
+            "punished: the refund window closed without a refund; your LEZ is the Maker's to \
+             take and the Monero stays locked"
         }
         _ => return None,
     })
@@ -1158,7 +1158,6 @@ fn xmr_phase_words(phase: &str) -> Option<&'static str> {
 /// Why a Monero swap needs its Taker, in plain words.
 fn xmr_attention_words(reason: &str) -> Option<&'static str> {
     Some(match reason {
-        "xmr_lez_lock_window_closed" => "the LEZ lock window closed before your LEZ was locked",
         "xmr_progress_unreadable" => {
             "the swap's progress record cannot be read: repair it from the file named in the \
              detail; a locked LEZ still needs its refund before the punish time"
@@ -1176,9 +1175,6 @@ fn xmr_attention_words(reason: &str) -> Option<&'static str> {
         "xmr_claim_sweep_in_doubt" => {
             "the Monero sweep was started and not recorded, so it is never resent: recover it \
              by hand from the wallet file named in the detail"
-        }
-        "xmr_refund_window_closed" => {
-            "the refund window closed without a refund: the Maker can punish and take your LEZ"
         }
         "xmr_refund_not_final_by_punish_time" => {
             "your refund did not land before the punish time: unless it is still found final, \
@@ -2255,12 +2251,6 @@ mod xmr_words_tests {
         let refund = Some(TakerTerminalActionV1::Refund);
         for (phase, reason, action, expected) in [
             (
-                "lez_lock_window_closed",
-                "xmr_lez_lock_window_closed",
-                None,
-                "needs you: the LEZ lock window closed before your LEZ was locked",
-            ),
-            (
                 "lez_lock_unconfirmed",
                 "xmr_lez_lock_unconfirmed",
                 None,
@@ -2287,12 +2277,6 @@ mod xmr_words_tests {
                 None,
                 "needs you: the Monero sweep was started and not recorded, so it is never \
                  resent: recover it by hand from the wallet file named in the detail",
-            ),
-            (
-                "punish_open",
-                "xmr_refund_window_closed",
-                None,
-                "needs you: the refund window closed without a refund: the Maker can punish",
             ),
             (
                 "refund_not_final",

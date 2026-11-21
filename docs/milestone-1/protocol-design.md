@@ -314,8 +314,8 @@ profile the refund window [R, P) is 280 s (P − R above).
   prints "the refund window is half over: refund now, or from the punish time
   the Maker takes your LEZ and the Monero stays locked"); from R a swap whose
   tag 14 the Maker did not answer reads `xmr_maker_did_not_claim`; from P the
-  swap is `attention_required` with `xmr_refund_window_closed`, actor phase
-  `punish_open`, and no action
+  swap is `punished`, a terminal state, actor phase `punish_open`, and no
+  action
   (`crates/taker-node/src/taker_service/xmr_supervisor.rs`, `xmr_taker_view`).
   Nothing outside the owner's own polling delivers the warning.
 
