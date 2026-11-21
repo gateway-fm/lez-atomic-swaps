@@ -1,5 +1,9 @@
 # Full regression of `86bdb8a4`, 2026-11-20
 
+A later full run, 160 of 160 at `d4475300` (the DLEQ proof-encoding fix `3e2d984b`, the
+desk wording and captions, the recording setup and the barrier test), is in
+[regression-m4-2026-11-21](../regression-m4-2026-11-21/).
+
 One run of every test of `deploy/scripts/regress.sh full` (160: `regress.sh list full`) on the
 Docker devnet with the Monero regtest chain up (`LEZ_MONERO=1`), three lanes at a time
 (`LEZ_LANES=3`), without desk recordings: run `runtime/regress/20261120T191249Z`, 2026-11-20
