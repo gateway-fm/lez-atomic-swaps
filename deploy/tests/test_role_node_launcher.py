@@ -159,6 +159,49 @@ class Launcher(unittest.TestCase):
         self.assertEqual(role['actor']['program'], str(self.payload / 'lez-btc-maker-actor'))
         self.assertEqual((root / 'delivery/maker-delivery-identity.pub').read_text(), MAKER_KEY + '\n')
 
+    def test_no_rpc_login_reaches_a_command_line(self):
+        # A recording curl: each call's arguments and the config it reads on
+        # its standard input (-K -), then the answers of the plain fake.
+        argv_log, config_log = self.tmp / 'curl-argv.log', self.tmp / 'curl-config.log'
+        executable(self.fakes / 'curl', '#!/bin/sh\n'
+                   f'printf "%s\\n" "$*" >>"{argv_log}"\n'
+                   f'case " $* " in *" -K - "*) cat >>"{config_log}";; esac\n'
+                   'for a in "$@"; do case "$a" in\n'
+                   '  *getblockhash*) echo \'{"result":"0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"}\'; exit 0;;\n'
+                   '  *getnewaddress*) echo \'{"result":"bcrt1pclaim"}\'; exit 0;;\n'
+                   '  *getblockcount*) echo \'{"result":101}\'; exit 0;;\n'
+                   '  *get_info*) echo \'{"result":{"status":"OK"}}\'; exit 0;;\n'
+                   'esac; done\nexit 22\n')
+        self.host('Linux', setpriv=False)
+        root = self.tmp / 'linux'
+        self.inputs(root / 'identity', root / 'manifest.env', root / 'cookie')
+        self.run_launcher(
+            shutil.which('bash'), 'maker',
+            LEZ_NODE_STATE_DIR=str(root / 'state'), LEZ_NODE_RUN_ROOT=str(root / 'run'),
+            LEZ_ZEC_STATE_DIR=str(root / 'zec'), LEZ_NODE_IDENTITY_DIR=str(root / 'identity'),
+            LEZ_MARKET_MANIFEST=str(root / 'manifest.env'), LEZ_BTC_RPC_COOKIE_FILE=str(root / 'cookie'),
+            LEZ_DELIVERY_DIR=str(root / 'delivery'), LEZ_BTC_CLAIM_DESTINATION='wallet', LEZ_BTC_WALLET='maker')
+        monero_login = self.tmp / 'monerod.login'
+        monero_login.write_text('monerod:pa"ss\\word\n')
+        environment = {'PATH': f'{self.fakes}:{self.tools}'}
+        for mode, login in (('probe-bitcoin', root / 'cookie'), ('probe-monero', monero_login)):
+            result = subprocess.run([shutil.which('bash'), str(LAUNCHER), mode, str(login)], env=environment,
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, (mode, result.stderr))
+        calls = argv_log.read_text()
+        # The start-up wait, the genesis, the claim address and both probes.
+        for method in ('getblockcount', 'getblockhash', 'getnewaddress', 'get_info'):
+            self.assertIn(method, calls)
+        for line in calls.splitlines():
+            self.assertIn(' -K - ', f' {line} ')
+            self.assertNotIn('--user', line)
+        for secret in ('secret', 'pa"ss', 'word'):
+            self.assertNotIn(secret, calls)
+        config = config_log.read_text().splitlines()
+        self.assertEqual(len(config), len(calls.splitlines()))
+        self.assertIn('user = "lezrpc:secret"', config)
+        self.assertIn('user = "monerod:pa\\"ss\\\\word"', config)
+
     def test_linux_defaults_are_the_container_mounts(self):
         text = LAUNCHER.read_text()
         linux = text[text.index('\nelse\n  default_state='):text.index('\nfi\n', text.index('\nelse\n  default_state='))]

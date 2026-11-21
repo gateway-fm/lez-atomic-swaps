@@ -22,12 +22,24 @@
 # variable (below).
 set -euo pipefail
 
+# `curl_login <login file> <curl arguments...>`: curl with the RPC login
+# (user:password) of <login file> as its --user, handed over in a config on
+# its standard input (-K -), never on its command line, which any local user
+# reads in ps. The login is quoted as curl's config syntax wants it.
+curl_login() {
+  local login
+  login="$(sed -e 's/[\\"]/\\&/g' "$1")"
+  shift
+  printf 'user = "%s"\n' "$login" | curl -K - "$@"
+}
+
 # `probe-bitcoin <cookie file>`: the Nodes' route-health probe for Bitcoin
 # (route-health.json, written below). The Node runs it with no environment;
 # it succeeds while Core answers over this container's forward.
 if [[ "${1:-}" == probe-bitcoin ]]; then
-  exec curl -sf --max-time 4 --user "$(cat "${2:?cookie file}")" -H 'content-type: application/json' \
+  curl_login "${2:?cookie file}" -sf --max-time 4 -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' -o /dev/null http://127.0.0.1:18443/
+  exit
 fi
 # `probe-monero <monerod login>`: the same for Monero; it succeeds while
 # monerod answers over this container's forward, with the Digest login the
@@ -36,7 +48,7 @@ fi
 # open_wallet 2-4 s, refreshes, a transfer and its mining), so a probe there
 # read a busy wallet as down and the Maker withdrew its Monero offers for good.
 if [[ "${1:-}" == probe-monero ]]; then
-  curl -sf --max-time 2 --digest --user "$(cat "${2:?monerod login}")" -H 'content-type: application/json' \
+  curl_login "${2:?monerod login}" -sf --max-time 2 --digest -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"get_info"}' http://127.0.0.1:18081/json_rpc |
     jq -e '.result.status == "OK"' >/dev/null || exit 1
   exit 0
@@ -255,7 +267,7 @@ if [[ "$chain_forwards" == 1 && "$monero_ready" == 1 ]]; then
   forward 18083 "${LEZ_XMR_WALLET_HOST:-${default_chain_host:-$role-xmr-wallet}}"
 fi
 for _ in $(seq 1 60); do
-  curl -sf --max-time 3 --user "$(cat "$cookie_src")" -H 'content-type: application/json' \
+  curl_login "$cookie_src" -sf --max-time 3 -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18443/ >/dev/null 2>&1 && break
   sleep 1
 done
@@ -349,7 +361,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
   # It is kept, so a Node restarted while Core is down still starts: the
   # Bitcoin adapter checks Core's genesis again before every Bitcoin step
   # (btc-core-adapter ensure_ready), and only the Bitcoin pair waits for Core.
-  if bitcoin_genesis="$(curl -fsS --max-time 10 --user "$(cat "$btc_state/btc-rpc-cookie")" \
+  if bitcoin_genesis="$(curl_login "$btc_state/btc-rpc-cookie" -fsS --max-time 10 \
     --header 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockhash","params":[0]}' http://127.0.0.1:18443/ | jq -er '.result')"; then
     printf '%s\n' "$bitcoin_genesis" >"$btc_state/bitcoin-genesis"
@@ -369,7 +381,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
   claim_destination="${LEZ_BTC_CLAIM_DESTINATION:-}"
   if [[ "$claim_destination" == wallet ]]; then
     if [[ ! -s "$btc_state/claim-destination" ]]; then
-      curl -fsS --max-time 10 --user "$(cat "$btc_state/btc-rpc-cookie")" \
+      curl_login "$btc_state/btc-rpc-cookie" -fsS --max-time 10 \
         --header 'content-type: application/json' \
         --data '{"jsonrpc":"2.0","id":1,"method":"getnewaddress","params":["","bech32m"]}' \
         "http://127.0.0.1:18443/wallet/${LEZ_BTC_WALLET:?claim destination needs a wallet}" \
