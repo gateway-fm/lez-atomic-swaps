@@ -83,6 +83,11 @@ const MONEROD_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// apart) and the next one resumes from its cursor.
 const SCAN_PAGE_BLOCKS: u32 = 16;
 const SCAN_PAGES_PER_DRIVE: u32 = 8;
+/// The same on a public Monero network: its windows are hours of LEZ
+/// blocks (a block every two seconds or so on the devnet), so a look for the
+/// Taker's authorisation or refund from the lock would take dozens of drives
+/// at eight pages; 64 pages are 1,024 blocks a drive.
+const PUBLIC_SCAN_PAGES_PER_DRIVE: u32 = 64;
 /// Without the cursor the Node seeds at activation (a swap provisioned
 /// before it was, or a lost file), blocks before the first drive's finalized
 /// tip where the search for the Taker's lock starts: the Taker locks right
@@ -290,9 +295,10 @@ enum Page<T> {
 fn scan_pages<T>(
     mut height: u64,
     tip: u64,
+    pages: u32,
     mut page: impl FnMut(u64, u32) -> Result<Page<T>>,
 ) -> Result<(Option<T>, u64, bool)> {
-    for _ in 0..SCAN_PAGES_PER_DRIVE {
+    for _ in 0..pages {
         if height > tip {
             break;
         }
@@ -801,6 +807,7 @@ struct LiveMaker {
     terms: XmrNativeEscrowTermsV3,
     windows: [u64; 4],
     monero_timeout: Duration,
+    scan_pages: u32,
     actor_lock: ActorHeldLock,
     workflow_lock: ActorHeldLock,
     runtime: tokio::runtime::Runtime,
@@ -820,6 +827,11 @@ impl LiveMaker {
             terms,
             windows: windows_ms(&agreement),
             monero_timeout: monero_effect_timeout(&agreement),
+            scan_pages: if agreement_monero_network(&agreement).mined_by_the_role() {
+                SCAN_PAGES_PER_DRIVE
+            } else {
+                PUBLIC_SCAN_PAGES_PER_DRIVE
+            },
             actor_lock,
             workflow_lock,
             runtime: tokio::runtime::Builder::new_current_thread()
@@ -923,7 +935,7 @@ impl LiveMaker {
         let Some((client, runtime, run_id)) = &self.lez else {
             return Err(anyhow!("the swap's LEZ sidecar is not connected"));
         };
-        let (found, height, to_tip) = scan_pages(start, tip, |height, blocks| {
+        let (found, height, to_tip) = scan_pages(start, tip, self.scan_pages, |height, blocks| {
             let request = ClassifyFinalizedNativeXmrEffectV3Request::new(
                 Self::context(run_id, "scan")?,
                 runtime.clone(),
@@ -1627,32 +1639,36 @@ mod tests {
         // 300 finalized blocks behind: one drive scans 128 and stops short of
         // the tip, so a watched effect not found there is not yet absent.
         let mut pages = Vec::new();
-        let (found, next, to_tip) = scan_pages::<()>(1, 300, |height, blocks| {
-            pages.push((height, blocks));
-            Ok(Page::Next(height + u64::from(blocks)))
-        })
-        .unwrap();
+        let (found, next, to_tip) =
+            scan_pages::<()>(1, 300, SCAN_PAGES_PER_DRIVE, |height, blocks| {
+                pages.push((height, blocks));
+                Ok(Page::Next(height + u64::from(blocks)))
+            })
+            .unwrap();
         assert_eq!((found, next, to_tip), (None, 129, false));
         assert_eq!(pages.len(), 8);
         assert_eq!(pages[7], (113, 16));
         // The next drive resumes there and reaches the tip.
         pages.clear();
-        let (found, next, to_tip) = scan_pages::<()>(next, 300, |height, blocks| {
-            pages.push((height, blocks));
-            Ok(Page::Next(height + u64::from(blocks)))
-        })
-        .unwrap();
+        let (found, next, to_tip) =
+            scan_pages::<()>(next, 300, SCAN_PAGES_PER_DRIVE, |height, blocks| {
+                pages.push((height, blocks));
+                Ok(Page::Next(height + u64::from(blocks)))
+            })
+            .unwrap();
         assert_eq!((found, next, to_tip), (None, 257, false));
-        let (found, next, to_tip) = scan_pages::<()>(next, 300, |height, blocks| {
-            Ok(Page::Next(height + u64::from(blocks)))
-        })
-        .unwrap();
+        let (found, next, to_tip) =
+            scan_pages::<()>(next, 300, SCAN_PAGES_PER_DRIVE, |height, blocks| {
+                Ok(Page::Next(height + u64::from(blocks)))
+            })
+            .unwrap();
         assert_eq!((found, next, to_tip), (None, 301, true));
         // At the tip already: nothing to ask, and the tip is reached.
-        let (found, _, to_tip) = scan_pages::<()>(301, 300, |_, _| unreachable!()).unwrap();
+        let (found, _, to_tip) =
+            scan_pages::<()>(301, 300, SCAN_PAGES_PER_DRIVE, |_, _| unreachable!()).unwrap();
         assert_eq!((found, to_tip), (None, true));
         // A found effect ends the scan where it was found.
-        let (found, at, to_tip) = scan_pages(1, 300, |height, blocks| {
+        let (found, at, to_tip) = scan_pages(1, 300, SCAN_PAGES_PER_DRIVE, |height, blocks| {
             Ok(if height == 33 {
                 Page::Found(height)
             } else {
@@ -1661,6 +1677,13 @@ mod tests {
         })
         .unwrap();
         assert_eq!((found, at, to_tip), (Some(33), 33, false));
+        // On a public network one drive scans 1,024 blocks.
+        let (found, next, to_tip) =
+            scan_pages::<()>(1, 2_000, PUBLIC_SCAN_PAGES_PER_DRIVE, |height, blocks| {
+                Ok(Page::Next(height + u64::from(blocks)))
+            })
+            .unwrap();
+        assert_eq!((found, next, to_tip), (None, 1_025, false));
     }
 
     #[test]
