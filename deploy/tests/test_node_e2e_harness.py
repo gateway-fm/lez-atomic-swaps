@@ -614,6 +614,24 @@ def probe_evidence(**changes):
     return evidence
 
 
+class ZecSlowFunding(unittest.TestCase):
+    """zec-slow-funding: what can be checked without a stack."""
+
+    def test_it_is_registered_refused_natively_and_holds_past_the_old_scan(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-slow-funding'], e2e.scenario_zec_slow_funding)
+        self.assertIn('zec-slow-funding', e2e.NATIVE_REFUSED)
+        # the second lock was once looked for at predecessor revisions 1 to 16
+        self.assertGreater(e2e.ZEC_SLOW_FUNDING_MIN_REVISION, 17)
+        self.assertGreaterEqual(e2e.ZEC_SLOW_FUNDING_HOLD_SECONDS, 60)
+        self.assertLessEqual(e2e.ZEC_SLOW_FUNDING_HOLD_SECONDS, 90)
+
+    def test_selling_zec_is_refused_before_anything_runs(self):
+        with patch.object(e2e, 'zec_taker_sells_lez', lambda: False), \
+                patch.object(e2e, 'zec_provision', lambda *a, **k: self.fail('nothing may be provisioned')):
+            with self.assertRaisesRegex(e2e.Failure, 'selling-LEZ'):
+                e2e.scenario_zec_slow_funding('1700000000')
+
+
 class MakerEarlyClaim(unittest.TestCase):
     """zec-maker-early-claim (TM-0030): what can be checked without a stack."""
 

@@ -108,6 +108,8 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-claim-collision:TakerSellsForeign"
       # selling LEZ only: the Maker's claim on the Taker's LEZ with what it holds (TM-0030)
       echo "node:zec:zec-maker-early-claim:TakerSellsLez"
+      # selling LEZ only: the Maker's Zcash funding held unmined while its journal grows past 17 revisions
+      echo "node:zec:zec-slow-funding:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
       echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"
