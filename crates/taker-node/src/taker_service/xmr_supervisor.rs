@@ -1458,6 +1458,61 @@ async fn observe_monero_locked(
     observed
 }
 
+/// The Maker's recorded funding, verified again in the swap's view-only
+/// wallet on a daemon fit to decide on: the same exact output, final and
+/// unlocked on the current chain. The caller holds the wallet-rpc lock.
+async fn verify_recorded_funding(
+    dynamic: &DynamicXmrRole,
+    files: &XmrSwapFiles,
+    facts: &XmrTakerSwapFactsV1,
+) -> Result<()> {
+    let progress = files.progress()?;
+    let recorded = progress
+        .monero_funding_transaction
+        .as_deref()
+        .context("no Monero funding is recorded")?;
+    let mut transaction = [0_u8; 32];
+    hex::decode_to_slice(recorded, &mut transaction).context("the recorded Monero funding")?;
+    let config = dynamic.config();
+    let (agreement, _, view_bytes) = files.agreement()?;
+    let (shared_name, shared_password) = shared_wallet(&facts.swap_id, &view_bytes);
+    let monerod = config.monerod()?;
+    let wallet_rpc = config.wallet_rpc()?;
+    daemon_current(&agreement, &monerod).await?;
+    let role = MoneroRegtestWalletEffects::new(&monerod, &wallet_rpc)?.with_role_wallet(
+        config.wallet_name().to_owned(),
+        config.wallet_password()?.to_string(),
+    )?;
+    let shared = MoneroRegtestWalletEffects::new(&monerod, &wallet_rpc)?
+        .with_role_wallet(shared_name, shared_password.to_string())?;
+    let verified = async {
+        shared.open_role_wallet().await?;
+        shared
+            .refresh_from_height(facts.monero_restore_height)
+            .await?;
+        let verifier = MoneroOutputVerifier::new(
+            xmr_reference_actor::agreement_monero_identity(&agreement)?,
+            &monerod,
+            &wallet_rpc,
+        )?;
+        let destination = MoneroAddress::from_str(&agreement.shared_address().address_string())
+            .context("the shared address")?;
+        let _final = verifier
+            .verify(&ExpectedMoneroOutput::new(
+                MoneroTransactionId(transaction),
+                destination,
+                agreement.body().monero().amount_piconero(),
+            )?)
+            .await
+            .context("the recorded Monero funding is no longer final and unlocked")?;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    // The role wallet is what every other user of this wallet-rpc expects.
+    let _ = role.open_role_wallet().await;
+    verified
+}
+
 /// The role's daemon is fit to decide on now
 /// ([`MoneroChainIdentityAttestor::verify_daemon_current`]): it serves the
 /// swap's Monero network (a Regtest swap's daemon is the fakechain, never the
@@ -1765,6 +1820,11 @@ pub(super) enum SweepFailure {
 pub(super) trait XmrClaimChains: Sync {
     type Authorization: Send + Sync;
 
+    /// The Maker's recorded funding output read again on the current chain:
+    /// still exact, at the required depth and unlocked, on a daemon fit to
+    /// decide on (TM-0034: a reorganisation or double spend after it was
+    /// first seen).
+    async fn funding_still_final(&self) -> Result<()>;
     /// Tag 14 as the sidecar prepares it (a replayed request: the same bytes).
     async fn prepare_authorization(&self) -> Result<Self::Authorization>;
     fn authorization_id(authorization: &Self::Authorization) -> String;
@@ -1854,8 +1914,17 @@ pub(super) async fn claim_step<C: XmrClaimChains>(
         }
         return Ok(());
     }
+    // Tag 14 publishes the Taker's claim partial, after which the Maker can
+    // take the LEZ: the funding it rests on is read again right before it is
+    // authorised and before each submission, never only the once it was seen.
+    let mut funding_checked = false;
     if progress.claim_authorization.is_none() {
         ensure_claim_authorizable(progress, windows, now_ms, admitted)?;
+        chains
+            .funding_still_final()
+            .await
+            .context("the Maker's Monero funding, read again before the claim")?;
+        funding_checked = true;
     }
     let authorization = chains.prepare_authorization().await?;
     let id = C::authorization_id(&authorization);
@@ -1869,8 +1938,23 @@ pub(super) async fn claim_step<C: XmrClaimChains>(
             "the sidecar prepared another claim authorization"
         ),
     }
+    // A funding no longer there holds the submission back; what was sent
+    // before is still looked for.
+    let mut held_back = None;
     if now_ms < windows.refund_ms {
-        chains.submit_authorization(&authorization).await?;
+        let checked = if funding_checked {
+            Ok(())
+        } else {
+            chains.funding_still_final().await
+        };
+        match checked {
+            Ok(()) => chains.submit_authorization(&authorization).await?,
+            Err(error) => {
+                held_back = Some(error.context(
+                    "the Maker's Monero funding, read again before the claim's submission",
+                ));
+            }
+        }
     }
     let cursor = progress
         .claim_scan_from
@@ -1887,7 +1971,7 @@ pub(super) async fn claim_step<C: XmrClaimChains>(
             files.update(|record| record.claim_scan_from = Some(cursor))?;
         }
     }
-    Ok(())
+    held_back.map_or(Ok(()), Err)
 }
 
 /// The sweep of one claim: sent once from a fresh wallet file, recorded as
@@ -2076,6 +2160,18 @@ impl LiveClaim {
 #[async_trait::async_trait]
 impl XmrClaimChains for LiveClaim {
     type Authorization = PreparedTransaction;
+
+    async fn funding_still_final(&self) -> Result<()> {
+        let dynamic = Arc::clone(&self.dynamic);
+        let files = self.files.clone();
+        let facts = self.facts.clone();
+        under_wallet_lock(
+            &self.dynamic,
+            Some(MONERO_STEP_BUDGET),
+            move || async move { verify_recorded_funding(&dynamic, &files, &facts).await },
+        )
+        .await
+    }
 
     async fn prepare_authorization(&self) -> Result<PreparedTransaction> {
         let (agreement, activation, _) = self.files.agreement()?;
@@ -3063,6 +3159,9 @@ mod tests {
         sweep_fails: Mutex<Option<bool>>,
         sweep_attempts: Mutex<Vec<u32>>,
         confirmed: Mutex<bool>,
+        /// The recorded funding is gone from the chain (reorganised out or
+        /// double spent) when read again.
+        funding_gone: Mutex<bool>,
     }
 
     impl StubChains {
@@ -3078,6 +3177,12 @@ mod tests {
     #[async_trait::async_trait]
     impl XmrClaimChains for StubChains {
         type Authorization = String;
+
+        async fn funding_still_final(&self) -> Result<()> {
+            self.called("funding_still_final");
+            ensure!(!*self.funding_gone.lock().unwrap(), "the funding is gone");
+            Ok(())
+        }
 
         async fn prepare_authorization(&self) -> Result<String> {
             self.called("prepare");
@@ -3380,6 +3485,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(chains.calls("submit"), 1);
+    }
+
+    /// The funding the claim rests on is read again right before tag 14 is
+    /// authorised and before each submission (TM-0034): one reorganised out
+    /// or double spent since it was first seen stops the claim, and holds
+    /// back a resubmission while what was sent is still looked for.
+    #[tokio::test]
+    async fn a_funding_gone_since_it_was_seen_stops_the_claim() {
+        let (_directory, files) = swap(&locked());
+        let chains = StubChains::default();
+        *chains.funding_gone.lock().unwrap() = true;
+        let error = step(&chains, &files, WINDOWS.refund_ms - 1, true)
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("read again before the claim"));
+        assert_eq!(chains.calls("prepare"), 0);
+        assert_eq!(chains.calls("submit"), 0);
+        assert_eq!(files.progress().unwrap().claim_authorization, None);
+
+        // Authorised and sent while the funding was there; gone at the next
+        // step: nothing is sent again, and tag 14 is still looked for.
+        let (_directory, files) = swap(&locked());
+        let chains = StubChains::default();
+        step(&chains, &files, 100_000, true).await.unwrap();
+        assert_eq!(chains.calls("funding_still_final"), 1);
+        assert_eq!(chains.calls("submit"), 1);
+        *chains.funding_gone.lock().unwrap() = true;
+        assert!(step(&chains, &files, 100_000, false).await.is_err());
+        assert_eq!(chains.calls("submit"), 1);
+        assert_eq!(chains.calls("find_authorization"), 2);
     }
 
     /// A finalized tag 15 without an aggregate signature, or with one that
