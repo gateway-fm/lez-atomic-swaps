@@ -87,11 +87,13 @@ otherwise; the deliverables and their proof are in
 Scope:
 
 - Monero 0.18.5.1 **regtest** on the private LEZ devnet for the regression
-  and the recordings. On public Monero **Stagenet** the Nodes completed a
-  swap, refunded one (the Maker's Monero swept back) and punished one, once,
-  on 2026-11-21, with LEZ on the devnet and under an earlier 30-minute P − R
-  (the profile now has two hours; those swaps were not run again)
-  ([Stagenet guide](../docs/monero-stagenet-guide.md#the-node-driven-run-of-2026-11-21)).
+  and the recordings. On public Monero **Stagenet** the Nodes of the final
+  code completed a swap, refunded one by the Taker Node's own refund at R,
+  refunded one the Maker could not fund and punished one, once, on
+  2026-11-22, under the `PublicStagenet` windows (+10 min, +2 h, +4 h),
+  with LEZ on the devnet, public Stagenet nodes as daemons, and one operator
+  on one host ([Stagenet guide](../docs/monero-stagenet-guide.md#the-node-driven-run-of-2026-11-22),
+  [evidence](../docs/evidence/stagenet-0.4.0-2026-11-22/)).
   No Monero testnet or mainnet swap has run; the LEZ testnet waits for the
   LEZ 0.4 port (#107). LEZ v0.2.4 pins RISC Zero 3.0, which is yanked
   (GHSA-g6qg-9j8p-7j87); its `cargo-deny` exemption is an accepted risk on
