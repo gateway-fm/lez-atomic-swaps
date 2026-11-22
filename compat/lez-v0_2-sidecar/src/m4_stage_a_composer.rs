@@ -1064,7 +1064,7 @@ mod tests {
             body.body().monero().network(),
             lez_xmr_swap_sdk::MoneroAddressNetworkV1::Stagenet
         );
-        assert!(body.shared_address().address_string().starts_with('5'));
+        assert!(body.body().monero().address().starts_with('5'));
         // The same facts without a profile are the devnet's Regtest, whose
         // shared address has mainnet bytes.
         let regtest = input(serde_json::Value::Null, 7_200_000, 9_000_000);
