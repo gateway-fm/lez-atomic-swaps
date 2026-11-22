@@ -52,7 +52,7 @@ token_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/lo
 tokio = { version = "=1.53.3", features = ["io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tower = "=0.5.3"
 tower-http = { version = "=0.7.0", features = ["auth"] }
-url = "=2.5.8"
+url = "=2.5.9"
 vault_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.4" }
 wallet = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.4" }
 zeroize = "=1.9.0"
