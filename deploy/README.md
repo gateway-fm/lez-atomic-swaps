@@ -1005,6 +1005,7 @@ scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent
 scripts/btc-miner.sh       regtest mining loop
 scripts/regress.sh         the devnet regression (smoke, refunds, full) that survives finality freezes
+scripts/logos-evidence.py  what a kept Logos phase of ui-e2e.sh logos-happy shows (publishes, relay, the Maker's subscription)
 scripts/lane.sh, lanes.sh  regression lanes 2..N beside the stack (compose.lane.yaml)
 scripts/repair-indexer.sh  rebuild the indexer's database while the LEZ node keeps running
 scripts/logos-native-acceptance.sh  the packages through logosctl, outside Compose (docs/evidence/logos-native-2026-11-10)

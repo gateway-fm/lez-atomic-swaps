@@ -907,8 +907,37 @@ scenario_maker_refund() {
 }
 
 # ---- the Logos transport (compose.logos.yaml, node-entrypoint.sh) ----------------
+# What the Logos phase leaves behind, kept before the Basecamps are recreated on
+# the local transport (which discards their containers' output): under
+# <lane runtime>/evidence/logos/<stamp>-<pair>-<direction>/ each role's container
+# output since the switch (the Delivery and Chat modules log there, the relay's
+# per-message lines among them) and its Chat module log, then scripts/logos-evidence.py's summary of them: when each
+# side came online, every Taker publish with its relay outcome, when the Maker's
+# relay saw it and whether its Delivery node handed it to the Chat module, and
+# the Maker's subscription to the conversation's topic against the first
+# request's arrival.
+logos_dir=""; logos_since=""
+logos_evidence() {
+  [[ -n "$logos_dir" && -n "$logos_since" ]] || return 0
+  local role node
+  for role in maker taker; do
+    node="$container_prefix-$role-node"
+    docker logs --timestamps --since "$logos_since" "$node" >"$logos_dir/$role-container.log" 2>&1
+    docker exec "$node" sh -c "cat /var/lez/basecamp-$role-user/module_data/chat_module/*/chat_module_*.log" \
+      >"$logos_dir/$role-chat-module.log" 2>/dev/null
+  done
+  log "Logos phase kept in $logos_dir (both containers since $logos_since, both Chat module logs)"
+  python3 scripts/logos-evidence.py "$logos_dir" 2>&1 | sed 's/^/   /'
+  for role in maker taker; do
+    log "$role Delivery node: errors, warnings and peer events"
+    grep -E 'delivery_module\] (ERR|WRN)|Failed to publish|No peers|onnect(ed|ion)|[Pp]eer (added|removed|joined|left)|Started libp2p|dial|GRAFT|PRUNE|mesh' \
+      "$logos_dir/$role-container.log" | grep -v 'Max Message Size\|storeSync\|missing node key\|no subscribed peers found' | cut -c1-300 | tail -n 40 | sed 's/^/   /'
+  done
+  logos_since=""
+}
 chat_log() { # both Basecamps' Chat module lines (UTC): conversations, every message sent and received with its size
   local role
+  logos_evidence
   for role in maker taker; do
     log "$role Chat module:"
     docker exec "$container_prefix-$role-node" sh -c "cat /var/lez/basecamp-$role-user/module_data/chat_module/*/chat_module_*.log" 2>/dev/null |
@@ -928,6 +957,11 @@ transport() { # transport <logos|local>: both Basecamps recreated on that transp
     export LEZ_MAKER_DELIVERY_IDENTITY
   fi
   logos_on=1
+  if [[ "$1" == logos ]]; then
+    logos_since="$(date -u +%FT%TZ)"
+    logos_dir="$LEZ_LANE_RUNTIME/evidence/logos/$(date -u +%Y%m%dT%H%M%SZ)-$pair-$direction"
+    mkdir -p "$logos_dir"
+  fi
   log "both Basecamps recreated on the $1 transport"
   docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps maker-node </dev/null >/dev/null 2>&1 ||
     fail "recreating the Maker's Basecamp on the $1 transport"
