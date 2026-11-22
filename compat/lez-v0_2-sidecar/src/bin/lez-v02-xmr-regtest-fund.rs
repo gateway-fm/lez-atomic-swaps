@@ -117,6 +117,10 @@ async fn main() {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the funding, its mining proof and its evidence stay one auditable sequence"
+)]
 async fn execute(arguments: Arguments) -> Result<FundingEvidence> {
     validate_loopback_http_endpoint(&arguments.daemon_url)
         .context("daemon endpoint is not a literal-loopback HTTP root")?;
@@ -205,16 +209,7 @@ async fn execute(arguments: Arguments) -> Result<FundingEvidence> {
         .refresh_from_height(arguments.restore_height)
         .await
         .context("funding wallet refresh before transfer failed")?;
-    let mining = MoneroRegtestMining::prove(
-        MoneroChainIdentity::new(
-            MoneroNetwork::Regtest,
-            agreement.body().monero().genesis_hash(),
-        )
-        .context("Stage-A Monero chain identity is invalid")?,
-        &daemon,
-    )
-    .await
-    .context("the daemon is not the Regtest this tool mines")?;
+    let mining = regtest_mining(&agreement, &daemon).await?;
     let funding = funder
         .fund_shared_exact_and_confirm(
             &mining,
@@ -227,12 +222,26 @@ async fn execute(arguments: Arguments) -> Result<FundingEvidence> {
         .refresh_from_height(arguments.restore_height)
         .await
         .context("shared view-wallet refresh failed")?;
-
     evidence.attempt_state = "confirmed";
     evidence.transaction_id = Some(hex::encode(funding.transaction_id().0));
     evidence.confirmation_tip_height = Some(funding.confirmation_tip_height());
     write_evidence(&mut evidence_file, &evidence)?;
     Ok(evidence)
+}
+
+/// This tool mines its funding's confirmations: only on the Regtest daemon.
+async fn regtest_mining(
+    agreement: &XmrAgreementV1,
+    daemon: &LoopbackRpcEndpoint,
+) -> Result<MoneroRegtestMining> {
+    let identity = MoneroChainIdentity::new(
+        MoneroNetwork::Regtest,
+        agreement.body().monero().genesis_hash(),
+    )
+    .context("Stage-A Monero chain identity is invalid")?;
+    MoneroRegtestMining::prove(identity, daemon)
+        .await
+        .context("the daemon is not the Regtest this tool mines")
 }
 
 fn endpoint(
