@@ -17,8 +17,9 @@ with provenance; and no claim Logos has not made ("accepted", "audited",
 A devnet scenario is named by its `regress.sh` test id
 (`deploy/scripts/regress.sh list full`), run by `deploy/scripts/node-e2e.py`
 (`node:`) or `deploy/scripts/ui-e2e.sh` (`ui:`) on the Docker devnet with
-Monero regtest up (`LEZ_MONERO=1`). The full tier holds 175 tests, 25 of them
-Monero. The last full run is at `7b4e46da`
+Monero regtest up (`LEZ_MONERO=1`). The full tier holds 176 tests, 25 of them
+Monero; `node:zec:zec-slow-funding:TakerSellsLez` joined it after the run below.
+The last full run is at `7b4e46da`
 ([regression-0.4.0-2026-11-22-macos-arm64](evidence/regression-0.4.0-2026-11-22-macos-arm64/)):
 175 of 175, 174 on their first try; `ui:btc:logos-happy:TakerSellsForeign`
 failed on its first try and on its first rerun alone and passed on its second
