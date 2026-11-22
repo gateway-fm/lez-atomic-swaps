@@ -129,6 +129,9 @@ for compose_file in "${compose_files[@]}"; do
       done
       ;;
   esac
+  # Example values for the variables an operator must name (the Stagenet
+  # daemon and wallet-rpcs of deploy/compose.stagenet.yaml): required for real
+  # use, never defaulted, so the merged file is still checked here.
   RUN_ID=ci-quality \
   LEZ_V02_IMAGE=lez-atomic-swaps-lez-v02:ci-quality \
   LEZ_V02_SOURCE_DIR=/tmp/lez-v02-ci-quality-source \
@@ -143,6 +146,10 @@ for compose_file in "${compose_files[@]}"; do
   LEZ_MAKER_BTC_CLAIM_DESTINATION=ci-quality-maker-address \
   LEZ_TAKER_BTC_CLAIM_DESTINATION=ci-quality-taker-address \
   LEZ_CONTAINER_PREFIX=lez-ci-quality \
+  LEZ_XMR_STAGENET_NETWORK=lez-ci-quality-stagenet \
+  LEZ_XMR_STAGENET_MONEROD=ci-quality-monerod:38081 \
+  LEZ_XMR_STAGENET_MAKER_WALLET=ci-quality-maker-wallet:38083 \
+  LEZ_XMR_STAGENET_TAKER_WALLET=ci-quality-taker-wallet:38083 \
     "$compose" --project-name "lez-ci-quality-${RANDOM}" \
       "${compose_args[@]}" config --quiet
 done
