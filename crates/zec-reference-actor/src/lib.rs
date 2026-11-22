@@ -18,6 +18,20 @@ mod secure_file;
 #[cfg(feature = "test-crash-hooks")]
 mod test_crash_hook;
 
+// A release build (the release workflows and packagers set LEZ_RELEASE_BUILD)
+// carries neither the crash hooks nor the dealer test fixture, which holds
+// both parties' keys: with either feature it does not compile.
+#[cfg(feature = "test-crash-hooks")]
+const _: () = assert!(
+    option_env!("LEZ_RELEASE_BUILD").is_none(),
+    "the crash hooks (feature test-crash-hooks) are never part of a release build (LEZ_RELEASE_BUILD)"
+);
+#[cfg(feature = "dealer-fixture")]
+const _: () = assert!(
+    option_env!("LEZ_RELEASE_BUILD").is_none(),
+    "the dealer test fixture (feature dealer-fixture) is never part of a release build (LEZ_RELEASE_BUILD)"
+);
+
 pub use command::{
     ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusProjectionV1,
     ActorStatusV1, LezClaimAdmission, execute_actor_command, lez_claim_admission,

@@ -351,10 +351,19 @@ phase_rust() {
       set -euo pipefail
       cargo build --locked --bins --features "lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr$LEZ_NODE_HOOKS_FEATURE" -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
       # the dealer test fixture tools, alone: built with the others, feature
-      # unification would put the dealer into the Node and actor binaries
-      cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
-        --bin zec-local-poc-chat-finalize --bin zec-local-poc-transfer 2>&1 | tail -3
-      for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
+      # unification would put the dealer into the Node and actor binaries.
+      # Never in a release build (LEZ_RELEASE_BUILD), where they do not compile.
+      if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then
+        cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
+          --bin zec-local-poc-chat-finalize --bin zec-local-poc-transfer 2>&1 | tail -3
+      fi
+      for b in '"${bins[*]}"'; do
+        case "$b" in
+          taker-node/zec-local-poc-identity) ;;
+          taker-node/zec-local-poc-*) [[ -z "${LEZ_RELEASE_BUILD:-}" ]] || continue ;;
+        esac
+        install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"
+      done
       chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   for role in maker taker; do
     git -C "$REPO_ROOT" rev-parse HEAD > "$DEPLOY_ROOT/images/$role-node/build-source.txt"

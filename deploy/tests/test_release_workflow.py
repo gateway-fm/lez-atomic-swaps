@@ -194,6 +194,26 @@ class NoTestHooksInARelease(unittest.TestCase):
         # The release mark reaches both build containers.
         self.assertEqual(text.count('${release_build_env[@]+"${release_build_env[@]}"}'), 2)
 
+    def test_the_crash_hooks_and_the_dealer_fixture_never_reach_a_release(self):
+        # The release path builds neither feature, and under the release
+        # mark neither compiles (the same const assert as test-hooks').
+        for path in self.RELEASE_WORKFLOWS + self.PACKAGERS:
+            text = (ROOT / path).read_text()
+            for word in ('test-crash-hooks', '--features dealer-fixture'):
+                self.assertNotIn(word, text, f'{path} names {word}')
+        lib = (ROOT / 'crates/zec-reference-actor/src/lib.rs').read_text()
+        for feature in ('test-crash-hooks', 'dealer-fixture'):
+            self.assertRegex(
+                lib,
+                r'#\[cfg\(feature = "' + feature + r'"\)\]\nconst _: \(\) = assert!\(\n'
+                r'    option_env!\("LEZ_RELEASE_BUILD"\)\.is_none\(\),',
+                feature)
+        # from-scratch.sh builds the dealer's tools only outside a release.
+        text = self.FROM_SCRATCH.read_text()
+        build = text.index('--features dealer-fixture')
+        guard = text.rindex('if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then', 0, build)
+        self.assertNotIn('\n      fi\n', text[guard:build])
+
     def test_from_scratch_refuses_the_hooks_in_a_release_build(self):
         import os
         import subprocess
