@@ -49,8 +49,10 @@ const MODULE: &str = "xmr_reserve_fixture";
 const MAKER_SIGNER: u8 = 0x77;
 const TAKER_SIGNER: u8 = 0x78;
 
-/// A loopback monerod answering `on_get_block_hash` and `get_block_count`,
-/// one request per connection. It lives as long as the test process.
+/// A loopback monerod answering `on_get_block_hash`, `get_block_count` and
+/// `get_info` (the offline fakechain a Regtest role checks before it
+/// reserves), one request per connection. It lives as long as the test
+/// process.
 pub fn start_fake_monerod() -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -88,6 +90,12 @@ pub fn start_fake_monerod() -> String {
                 "get_block_count" => {
                     json!({"count": MONERO_TIP + 1, "status": "OK", "untrusted": false})
                 }
+                "get_info" => json!({
+                    "status": "OK", "untrusted": false, "nettype": "fakechain",
+                    "mainnet": false, "testnet": false, "stagenet": false, "offline": true,
+                    "incoming_connections_count": 0, "outgoing_connections_count": 0,
+                    "version": "0.18.5.1-release",
+                }),
                 _ => serde_json::Value::Null,
             };
             let response =
