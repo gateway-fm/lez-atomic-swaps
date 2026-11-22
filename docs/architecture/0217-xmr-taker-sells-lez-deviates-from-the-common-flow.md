@@ -282,8 +282,9 @@ first residual risk below.
   the devnet's profile is +10 min, +2 h, +4 h, and `PublicStagenet` admits
   no P − R under two hours
   ([Stagenet guide](../monero-stagenet-guide.md#the-windows)); the Nodes
-  completed, refunded and punished a swap there on 2026-11-21, under an
-  earlier 30-minute P − R. No Monero testnet or mainnet swap has run.
+  completed, refunded and punished a swap there under those windows on
+  2026-11-22, after a first run under an earlier 30-minute P − R. No Monero
+  testnet or mainnet swap has run.
 - **The refund and a claim the Taker cannot see.** The tip read sees what
   the sequencer has included, not its mempool. A tag 15 still in the mempool
   can no longer land when the refund goes out: tag 15 is valid only in
@@ -454,8 +455,16 @@ Stagenet nodes as daemons, ran this ADR's flow to each of its endings: swap
 tag 14, the Maker's tag 15, the Taker's sweep at ten confirmations), swap
 `8eb3c3f6…` refunded (the owner's tag 16 in [R, P), the Maker's Monero swept
 back) and swap `682c0484…` punished (tag 17 35 s after P). Its windows were
-an earlier draft's, C, R, P = +10 min, +2 h, +2.5 h, so the punishment came
-30 minutes after R, where `PublicStagenet` now requires two hours; the
-fixes made after the run were not run on Stagenet
+an earlier draft's, C, R, P = +10 min, +2 h, +2.5 h
 ([Stagenet guide](../monero-stagenet-guide.md#the-node-driven-run-of-2026-11-21)).
+On 2026-11-22, from 10:13 to 14:50 UTC, the Nodes of `f059d3fa` (the shipped
+code of the full regression's `7b4e46da`), without the devnet test hooks,
+ran it again under `PublicStagenet`'s C, R, P = +10 min, +2 h, +4 h: swap
+`13711985…` completed in 60 minutes, swap `fc596d6b…` refunded by the
+Taker Node's own tag 16 101 s after R (the Maker's Monero swept back), swap
+`5a696c9f…`, which the Maker could not fund, refunded by the Taker Node 7 s
+after R, and swap `353a4758…`, whose Taker Node was stopped through [R, P),
+punished by tag 17 23 s after P
+([Stagenet guide](../monero-stagenet-guide.md#the-node-driven-run-of-2026-11-22),
+[evidence](../evidence/stagenet-0.4.0-2026-11-22/)).
 No XMR swap has run on Monero testnet or mainnet.

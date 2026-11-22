@@ -341,8 +341,8 @@ guest itself authorises tag 17 by its signer, accounts and the P window. In
 - Regtest and Stagenet. The role configuration takes `accelerated-regtest`
   or `public-stagenet`, and refuses mainnet and testnet; only Regtest
   wallet effects mine, by a capability that exists for Regtest alone. The
-  Nodes completed, refunded and punished a swap on Stagenet on 2026-11-21
-  ([Stagenet guide](../monero-stagenet-guide.md#the-node-driven-run-of-2026-11-21));
+  Nodes completed, refunded and punished a swap on Stagenet on 2026-11-22
+  ([Stagenet guide](../monero-stagenet-guide.md#the-node-driven-run-of-2026-11-22));
   no Node has run on Monero testnet or mainnet.
 - The Taker's claim partial is withheld, not verifiably encrypted (the SDK's
   own note on `commit_taker_claim_partial`; threat TM-0019): a Taker can lock,

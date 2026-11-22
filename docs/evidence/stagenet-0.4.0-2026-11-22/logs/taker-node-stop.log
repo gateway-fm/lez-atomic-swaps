@@ -1,0 +1,6 @@
+12:33:01 stopping the Taker Node
+ Container lez-m4-stagenet-dev-taker-node Stopped 
+12:33:02 stopped: exited
+14:50:08 starting the Taker Node
+ Container lez-m4-stagenet-dev-taker-node Started 
+14:50:15 started: running
