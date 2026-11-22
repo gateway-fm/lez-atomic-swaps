@@ -223,6 +223,18 @@ The launcher and the desks:
 - The Taker's `monero_network` in its swap view comes from its role
   configuration, not from the swap's Stage A; it is only displayed, and the
   Node refuses a Stage A of another network at take time.
+- The Node launcher fixes the Monero endpoints a Node reads at loopback
+  ports 18081 (monerod) and 18083 (its wallet-rpc)
+  (`modules/lez-role-node/node-entrypoint.sh`: the role configuration it
+  writes and the loopback forwards it starts). In a container each Node has
+  its own loopback, so the devnet's lanes are unaffected; outside containers
+  two Nodes on one host, a Maker and a Taker or two of either, share one
+  loopback: both read the same two ports, and the launcher of each would
+  forward them to its own wallet-rpc, so they cannot each have a wallet-rpc
+  of their own (`LEZ_XMR_WALLET_HOST` only names where the forward goes,
+  not the port the Node reads). The ports are
+  not configurable; running both roles' Monero wallets on one host outside
+  containers is not supported.
 
 The Logos transport:
 
