@@ -223,6 +223,11 @@ fn reservation_holds_funding(root: &Path, now: std::time::SystemTime) -> bool {
         .map_or(true, |age| age < UNPREPARED_RESERVATION_HOLD)
 }
 
+/// Whether another reservation committed `funding`.
+fn funding_taken_elsewhere(funding: &ZecOutpointV1, committed: &[CandidateOutpoint]) -> bool {
+    committed.contains(&candidate(funding))
+}
+
 fn store_record(layout: &SwapLayout, record: &TakerReserveRecordV1) -> Result<()> {
     replace_private(
         &layout.root().join(RESERVE_FILE),
@@ -303,7 +308,18 @@ pub(super) async fn prepare(
     // funds Zcash, picks its own funding output first.
     let mut record =
         if let Ok(bytes) = read_private(&layout.root().join(RESERVE_FILE), MAX_RECORD_BYTES) {
-            serde_json::from_slice::<TakerReserveRecordV1>(&bytes)?
+            let record = serde_json::from_slice::<TakerReserveRecordV1>(&bytes)?;
+            // A take resumed after its hold ended may find its outpoint
+            // handed to another take meanwhile: it is not reused.
+            if let Some(funding) = record.request.taker_funding.as_ref()
+                && funding_taken_elsewhere(funding, &dynamic.committed_funding(layout.root()))
+            {
+                return Err(ZecFundingUnavailable(
+                    "this take's Zcash funding output is committed to another take".to_owned(),
+                )
+                .into());
+            }
+            record
         } else {
             let _ = fs::remove_dir_all(&role_root);
             let tip_before = zec_tip_height(&dynamic.config, &rpc).await?;
@@ -467,8 +483,28 @@ pub(super) async fn prepare(
 #[cfg(test)]
 mod tests {
     use super::{
-        PREPARED_FILE, RESERVE_FILE, UNPREPARED_RESERVATION_HOLD, reservation_holds_funding,
+        PREPARED_FILE, RESERVE_FILE, UNPREPARED_RESERVATION_HOLD, ZecOutpointV1, candidate,
+        funding_taken_elsewhere, reservation_holds_funding,
     };
+
+    /// A take resumed after its hold reuses its outpoint only while no other
+    /// take committed it meanwhile.
+    #[test]
+    fn a_resumed_take_never_reuses_an_outpoint_another_take_holds() {
+        let own = ZecOutpointV1 {
+            transaction_id: [1; 32],
+            output_index: 0,
+        };
+        let other = ZecOutpointV1 {
+            transaction_id: [2; 32],
+            output_index: 0,
+        };
+        assert!(!funding_taken_elsewhere(&own, &[candidate(&other)]));
+        assert!(funding_taken_elsewhere(
+            &own,
+            &[candidate(&other), candidate(&own)]
+        ));
+    }
     use std::fs;
     use std::time::{Duration, SystemTime};
 
