@@ -223,7 +223,9 @@ enum Answered {
 /// The role's own wallet on its wallet-rpc.
 struct RoleWallet {
     filename: String,
-    password: String,
+    /// Cleared from memory when the wallet handle is dropped; never printed
+    /// (`MoneroRegtestWalletEffects`'s `Debug` names the filename only).
+    password: zeroize::Zeroizing<String>,
 }
 
 /// Typed one-attempt wallet and Regtest-daemon effect boundary.
@@ -410,7 +412,10 @@ impl MoneroRegtestWalletEffects {
         if !password.is_empty() && !valid_credential(&password, true) {
             return Err(MoneroWalletEffectError::InvalidWalletPassword);
         }
-        self.role_wallet = Some(RoleWallet { filename, password });
+        self.role_wallet = Some(RoleWallet {
+            filename,
+            password: zeroize::Zeroizing::new(password),
+        });
         Ok(self)
     }
 
@@ -427,7 +432,7 @@ impl MoneroRegtestWalletEffects {
         read_with_retries(|| {
             self.wallet.open_wallet(
                 role_wallet.filename.clone(),
-                Some(role_wallet.password.clone()),
+                Some(role_wallet.password.to_string()),
             )
         })
         .await

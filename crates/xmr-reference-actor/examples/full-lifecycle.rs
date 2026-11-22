@@ -36,7 +36,9 @@
 //!   opens; the example leaves it open again when it ends.
 //! - `LEZ_XMR_FUNDING_WALLET_PASSWORD_FILE` \[none: no password\]: a file
 //!   holding that wallet's password.
-//! - `LEZ_XMR_EXAMPLE_SEED` \[`full-lifecycle`\]: the seed of every key.
+//! - `LEZ_XMR_EXAMPLE_SEED` \[`full-lifecycle` on regtest; none on
+//!   Stagenet\]: the seed of every key. On Stagenet it must be your own
+//!   random secret (`openssl rand -hex 32`): the run refuses the default.
 //!
 //! What runs for real, on the types the Nodes run (`xmr-reference-actor`,
 //! `lez-adaptor-role-runner`, `lez-xmr-swap-sdk`, `lez-xmr-monero-adapter`):
@@ -169,6 +171,51 @@ fn named_profile() -> XmrNamedProfileV1 {
     }
 }
 
+/// The seed every key derives from. On Regtest the public default is fine;
+/// on Stagenet the example funds a real output whose keys derive from it, so
+/// the seed must be the operator's own random secret: with the default,
+/// anyone sweeps the funded output first.
+fn example_seed(seed: Option<String>, network: MoneroNetwork) -> Result<String> {
+    const DEFAULT_SEED: &str = "full-lifecycle";
+    match (seed, network) {
+        (None, MoneroNetwork::Regtest) => Ok(DEFAULT_SEED.to_owned()),
+        (Some(seed), MoneroNetwork::Regtest) => Ok(seed),
+        (Some(seed), MoneroNetwork::Stagenet) if seed != DEFAULT_SEED && seed.len() >= 32 => {
+            Ok(seed)
+        }
+        (_, MoneroNetwork::Stagenet) => bail!(
+            "on Stagenet LEZ_XMR_EXAMPLE_SEED must be your own random secret of at least 32 \
+             characters (openssl rand -hex 32): every key of the run derives from it, and with \
+             a known seed anyone can sweep the funded output first"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use super::{MoneroNetwork, example_seed};
+
+    #[test]
+    fn stagenet_never_runs_on_the_public_default_seed() {
+        assert_eq!(
+            example_seed(None, MoneroNetwork::Regtest).unwrap(),
+            "full-lifecycle"
+        );
+        for refused in [
+            None,
+            Some("full-lifecycle".to_owned()),
+            Some("short".to_owned()),
+        ] {
+            assert!(example_seed(refused, MoneroNetwork::Stagenet).is_err());
+        }
+        let own = "ab".repeat(32);
+        assert_eq!(
+            example_seed(Some(own.clone()), MoneroNetwork::Stagenet).unwrap(),
+            own
+        );
+    }
+}
+
 fn main() -> Result<()> {
     let network = match env::var("LEZ_XMR_EXAMPLE_NETWORK").as_deref() {
         Err(_) | Ok("regtest") => MoneroNetwork::Regtest,
@@ -186,7 +233,7 @@ fn main() -> Result<()> {
 
 async fn run() -> Result<()> {
     let workdir = tempfile::TempDir::new()?;
-    let seed = env::var("LEZ_XMR_EXAMPLE_SEED").unwrap_or_else(|_| "full-lifecycle".into());
+    let seed = example_seed(env::var("LEZ_XMR_EXAMPLE_SEED").ok(), network())?;
     let monero = Monero::connect().await?;
     let monero_genesis = match &monero {
         Monero::Live(live) => live.identity.genesis_hash(),

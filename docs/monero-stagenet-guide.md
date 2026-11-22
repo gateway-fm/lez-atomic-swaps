@@ -671,15 +671,17 @@ LEZ_XMR_FUNDING_WALLET_URL=http://127.0.0.1:38083/ \
 LEZ_XMR_MONERO_LOGINS="$WORK/logins" \
 LEZ_XMR_FUNDING_WALLET=funding \
 LEZ_XMR_FUNDING_WALLET_PASSWORD_FILE="$WORK/wallet.pass" \
+LEZ_XMR_EXAMPLE_SEED="$(openssl rand -hex 32)" \
   cargo run --locked -p xmr-reference-actor --example full-lifecycle
 ```
 
 On the self-hosted route, once it is at the tip, point `LEZ_XMR_MONEROD_URL`
 at `http://127.0.0.1:38081/` with its login and `LEZ_XMR_FUNDING_WALLET_URL`
 at the wallet-rpc of route 1. The keys come from the seeded stream named by
-`LEZ_XMR_EXAMPLE_SEED` (default `full-lifecycle`): anyone who knows the seed
-can rebuild the shared spend key and sweep the output first, so set your own
-seed when the coins matter to you. The Stagenet run moves 0.02 and 0.01 XMR,
+`LEZ_XMR_EXAMPLE_SEED`: anyone who knows the seed can rebuild the shared
+spend key and sweep the output first, so on Stagenet the example refuses to
+run without a seed of your own of at least 32 characters (regtest keeps the
+default `full-lifecycle`). The Stagenet run moves 0.02 and 0.01 XMR,
 a tenth of the regtest amounts, and needs a little more than 0.03 XMR
 unlocked.
 

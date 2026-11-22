@@ -7919,10 +7919,15 @@ def xmr_restart_wallet_rpc(role: str, swap_id: str, when: str) -> dict:
     if not wait.running():
         raise wait.failure()
     login = f"/var/lib/lez/{role}/monero-rpc/monero-wallet-rpc.login"
-    answer = subprocess.run(node_command(role, [
-        "sh", "-c", 'curl -s -m 10 --digest --user "$(cat "$1")" -H content-type:application/json '
-                    '--data \'{"jsonrpc":"2.0","id":1,"method":"get_address"}\' http://127.0.0.1:18083/json_rpc', "-",
-        login]), capture_output=True, text=True, check=False).stdout
+    # The login goes to curl in a config on its standard input, never on its
+    # command line (node-entrypoint.sh's curl_login).
+    ask = r'''login=$(sed -e 's/[\\"]/\\&/g' "$1")
+case "$login" in *"
+"*) echo "a login file holds one line" >&2; exit 2 ;; esac
+printf 'user = "%s"\n' "$login" | curl -K - -s -m 10 --digest -H content-type:application/json \
+  --data '{"jsonrpc":"2.0","id":1,"method":"get_address"}' http://127.0.0.1:18083/json_rpc'''
+    answer = subprocess.run(node_command(role, ["sh", "-c", ask, "-", login]),
+                            capture_output=True, text=True, check=False).stdout
     error = (json.loads(answer).get("error") or {}).get("message") if answer else "no answer"
     log(f"  {container} is back; asked for its open wallet's address it answers "
         f"{error!r}" if error else f"  {container} is back, a wallet already open again")

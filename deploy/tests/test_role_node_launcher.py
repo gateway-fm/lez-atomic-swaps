@@ -201,6 +201,16 @@ class Launcher(unittest.TestCase):
         self.assertEqual(len(config), len(calls.splitlines()))
         self.assertIn('user = "lezrpc:secret"', config)
         self.assertIn('user = "monerod:pa\\"ss\\\\word"', config)
+        # A login of two lines would put a second line into curl's config:
+        # it is refused before curl runs.
+        two_lines = self.tmp / 'two-lines.login'
+        two_lines.write_text('monerod:secret\nurl = "http://elsewhere"\n')
+        before = argv_log.read_text()
+        result = subprocess.run([shutil.which('bash'), str(LAUNCHER), 'probe-monero', str(two_lines)],
+                                env=environment, capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('one line', result.stderr)
+        self.assertEqual(argv_log.read_text(), before)
 
     def test_linux_defaults_are_the_container_mounts(self):
         text = LAUNCHER.read_text()

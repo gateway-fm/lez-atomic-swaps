@@ -25,11 +25,15 @@ set -euo pipefail
 # `curl_login <login file> <curl arguments...>`: curl with the RPC login
 # (user:password) of <login file> as its --user, handed over in a config on
 # its standard input (-K -), never on its command line, which any local user
-# reads in ps. The login is quoted as curl's config syntax wants it.
+# reads in ps. The login is quoted as curl's config syntax wants it, and is
+# one line: a newline in it would start another config line.
 curl_login() {
   local login
   login="$(sed -e 's/[\\"]/\\&/g' "$1")"
   shift
+  case "$login" in
+    *$'\n'*|*$'\r'*) echo "a login file holds one line: user:password" >&2; return 2 ;;
+  esac
   printf 'user = "%s"\n' "$login" | curl -K - "$@"
 }
 
