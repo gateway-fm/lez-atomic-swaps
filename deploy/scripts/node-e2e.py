@@ -7104,8 +7104,11 @@ def wait_lez_time(at_ms: int, why: str, timeout: int) -> None:
 
 
 def xmr_escrow_program_id() -> str:
-    """The escrow program both Nodes' sidecars name (the market manifest's)."""
-    for line in (LANE_RUNTIME / "market-bootstrap.env").read_text().splitlines():
+    """The escrow program both Nodes' sidecars name (the market manifest's).
+    The manifest is the stack's, in RUNTIME on every lane: the lanes share
+    one LEZ chain and its one escrow deployment, and gen-config.sh and
+    bootstrap-market.sh write it to runtime/ only, never to runtime/lanes/<k>."""
+    for line in (RUNTIME / "market-bootstrap.env").read_text().splitlines():
         if line.startswith("M3_POC_LEZ_ESCROW_PROGRAM_ID="):
             return line.split("=", 1)[1].strip()
     raise Failure("the market manifest names no LEZ escrow program")

@@ -1045,6 +1045,22 @@ class CustodyCredit(unittest.TestCase):
         self.assertEqual(e2e.XMR_MAKER_OWNER_KEY, '/run-lez-identity/maker/lez-signer.key')
         self.assertIn('XMR_MAKER_OWNER_KEY, XMR_PROBE_SIGNER', inspect.getsource(e2e.xmr_escrow_probe))
 
+    def test_the_escrow_probe_reads_the_stacks_manifest_on_every_lane(self):
+        # lanes 2..N share the stack's LEZ chain and escrow; runtime/lanes/<k>
+        # holds no market-bootstrap.env (gen-config.sh, bootstrap-market.sh)
+        with tempfile.TemporaryDirectory() as root:
+            stack = pathlib.Path(root) / 'runtime'
+            lane = stack / 'lanes' / '3'
+            lane.mkdir(parents=True)
+            (stack / 'market-bootstrap.env').write_text(
+                'M3_POC_LEZ_CHANNEL_ID=x\nM3_POC_LEZ_ESCROW_PROGRAM_ID=' + 'ab' * 32 + '\n')
+            for lane_runtime in (stack, lane):
+                with patch.object(e2e, 'RUNTIME', stack), patch.object(e2e, 'LANE_RUNTIME', lane_runtime):
+                    self.assertEqual(e2e.xmr_escrow_program_id(), 'ab' * 32)
+        for script in ('gen-config.sh', 'bootstrap-market.sh'):
+            source = (SCRIPTS / script).read_text()
+            self.assertNotRegex(source, r'lanes/[^\n]*market-bootstrap\.env', script)
+
     def test_the_evidence_of_a_landed_stranger_credit_is_accepted(self):
         evidence = e2e.parse_custody_credit_evidence(0, json.dumps(credit_evidence()) + '\n', 1)
         self.assertEqual(evidence['after']['custody_balance'], 1_001)
