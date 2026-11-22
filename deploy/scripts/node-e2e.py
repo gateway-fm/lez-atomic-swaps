@@ -3899,13 +3899,18 @@ ZEC_SLOW_FUNDING_MIN_REVISION = 24
 
 def zec_maker_active_revision(swap_id: str) -> int | None:
     """The active revision of the Maker's ZEC recovery journal for `swap_id`
-    (zec_sdk_agreements in the Maker's store, read only); None before the
-    Maker has accepted the agreement."""
-    reader = ("import sqlite3,sys\n"
-              "c=sqlite3.connect('file:/var/lib/lez/maker/maker.sqlite3?mode=ro',uri=True)\n"
-              "ids={sys.argv[1], sys.argv[1].removeprefix('zec-'), 'zec-'+sys.argv[1].removeprefix('zec-')}\n"
-              "rows=[r[0] for r in c.execute(\"SELECT active_revision FROM zec_sdk_agreements WHERE local_role='maker' AND swap_id IN (%s)\""
-              " % ','.join('?'*len(ids)), sorted(ids))]\n"
+    (zec_sdk_agreements in the Maker actor's store,
+    /var/lib/lez/zec/actors/<actor>/maker/state/actor.sqlite3, read only; the
+    Node's own maker.sqlite3 keeps the agreement at revision 0); None before
+    the Maker has accepted the agreement."""
+    reader = ("import glob,sqlite3,sys\n"
+              "ids=sorted({sys.argv[1], sys.argv[1].removeprefix('zec-'), 'zec-'+sys.argv[1].removeprefix('zec-')})\n"
+              "rows=[]\n"
+              "for p in ['/var/lib/lez/maker/maker.sqlite3']+glob.glob('/var/lib/lez/zec/actors/*/maker/state/actor.sqlite3'):\n"
+              "    c=sqlite3.connect('file:'+p+'?mode=ro',uri=True)\n"
+              "    if c.execute(\"SELECT count(*) FROM sqlite_master WHERE name='zec_sdk_agreements'\").fetchone()[0]:\n"
+              "        rows+=[r[0] for r in c.execute(\"SELECT active_revision FROM zec_sdk_agreements WHERE local_role='maker'\""
+              "\" AND swap_id IN (%s)\" % ','.join('?'*len(ids)), ids)]\n"
               "print(max(rows) if rows else '')\n")
     read = subprocess.run(["docker", "exec", NODES["maker"][0], "python3", "-c", reader, swap_id],
                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
