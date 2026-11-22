@@ -3897,6 +3897,16 @@ ZEC_SLOW_FUNDING_HOLD_SECONDS = int(os.environ.get("LEZ_ZEC_SLOW_FUNDING_HOLD_SE
 ZEC_SLOW_FUNDING_MIN_REVISION = 24
 
 
+def zec_mempool_spend_of(outpoint: tuple[str, int]) -> str | None:
+    """The transaction in zebra's mempool that spends `outpoint`, if any."""
+    for txid in zebra("getrawmempool") or []:
+        raw = zebra("getrawtransaction", [txid, 1])
+        if any(vin.get("txid") == outpoint[0] and int(vin.get("vout", -1)) == outpoint[1]
+               for vin in raw.get("vin") or []):
+            return txid
+    return None
+
+
 def zec_maker_active_revision(swap_id: str) -> int | None:
     """The active revision of the Maker's ZEC recovery journal for `swap_id`
     (zec_sdk_agreements in the Maker actor's store,
@@ -3936,13 +3946,14 @@ def scenario_zec_slow_funding(stamp: str) -> dict:
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
-    # Nothing is mined until the Maker's funding waits in the mempool: selling
-    # LEZ the Taker locks LEZ first, so zebra's mempool holds nothing else.
+    # Nothing is mined until the Maker's funding, the spend of the provisioned
+    # outpoint, waits in the mempool (a mempool may also hold an earlier
+    # swap's transaction, which a reset leaves there).
     wait = Wait(f"the Maker's Zcash funding of {swap_id[:12]} in zebra's mempool (nothing mined)", zec_timeout(900))
-    pool: list = []
+    funding_txid = None
     while wait.running():
-        pool = zebra("getrawmempool")
-        if isinstance(pool, list) and pool:
+        funding_txid = zec_mempool_spend_of(outpoint)
+        if funding_txid:
             break
         view = taker_view(swap_id)
         if view["state"] in TERMINAL:
@@ -3952,7 +3963,6 @@ def scenario_zec_slow_funding(stamp: str) -> dict:
         time.sleep(2)
     else:
         raise wait.failure()
-    funding_txid = pool[0]
     start_revision = zec_maker_active_revision(swap_id)
     log(f"  the Maker's Zcash funding {funding_txid[:12]} waits in the mempool at zebra {zebra('getblockcount')}; "
         f"Maker journal revision {start_revision}; holding it unmined for {ZEC_SLOW_FUNDING_HOLD_SECONDS} s")
