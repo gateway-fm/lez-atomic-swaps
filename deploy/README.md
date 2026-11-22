@@ -814,7 +814,8 @@ forwards its loopback 18081 and 18083 there (the launcher's forwards take
 and have no password, as on regtest; the Maker's must hold unlocked Stagenet
 coins, one output per swap in flight. The windows are those of the Stagenet
 guide's sizing whatever `LEZ_TIMING_PROFILE` says: C, R, P = +600, +7200,
-+9000 s. A Node on Stagenet mines nothing: no mining capability exists for a
++14400 s (P − R is the Taker's two-hour safety window, `PublicStagenet`'s
+minimum). A Node on Stagenet mines nothing: no mining capability exists for a
 public network (`MoneroRegtestMining`), and it waits for Stagenet's miners.
 Its Maker actor attempts get 5 minutes and its Monero tools 4 (2 and 2 on
 regtest). A Maker Node pins each swap's actor program when the swap is

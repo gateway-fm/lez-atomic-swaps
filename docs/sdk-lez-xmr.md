@@ -14,7 +14,7 @@ cross-curve DLEQ and not "Ed25519 adaptor signatures", is in
 [protocol-design.md](milestone-1/protocol-design.md#xmrlez). One direction
 only: the Taker sells LEZ and locks first. The Nodes run it under the
 `AcceleratedRegtest` or the `PublicStagenet` profile; on Monero Stagenet
-they completed one swap on 2026-11-21 and ran a refunded swap (the Taker's LEZ refund, the Maker's Monero swept back) and a punished one, and the SDK and the
+they completed, refunded and punished a swap on 2026-11-21, and the SDK and the
 adapter alone ran the Monero leg of the completed swap of
 `examples/full-lifecycle.rs`, with the LEZ escrow modelled
 ([Stagenet guide](monero-stagenet-guide.md)). The crate's own documentation says it "does not claim production

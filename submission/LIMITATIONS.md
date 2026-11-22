@@ -87,8 +87,10 @@ otherwise; the deliverables and their proof are in
 Scope:
 
 - Monero 0.18.5.1 **regtest** on the private LEZ devnet for the regression
-  and the recordings. On public Monero **Stagenet** the Nodes completed one
-  swap and ran a refunded swap (the Taker's LEZ refund, the Maker's Monero swept back) and a punished one, once, on 2026-11-21, with LEZ on the devnet
+  and the recordings. On public Monero **Stagenet** the Nodes completed a
+  swap, refunded one (the Maker's Monero swept back) and punished one, once,
+  on 2026-11-21, with LEZ on the devnet and under an earlier 30-minute P − R
+  (the profile now has two hours; those swaps were not run again)
   ([Stagenet guide](../docs/monero-stagenet-guide.md#the-node-driven-run-of-2026-11-21)).
   No Monero testnet or mainnet swap has run; the LEZ testnet waits for the
   LEZ 0.4 port (#107). LEZ v0.2.4 pins RISC Zero 3.0, which is yanked
@@ -142,6 +144,16 @@ The Maker Node:
   stops, failing closed.
 - Its funding tool makes three attempts five seconds apart; a wallet-rpc
   that answers none of them ends the swap `expired` (refunded, nothing lost).
+- A funding it sent and cannot record (its daemon refused as not
+  synchronized or stale, or the output missed by its view-only wallet)
+  still lets it find and record the Taker's refund from R; the sweep back
+  runs once the funding is recorded. A funding never recorded leaves its
+  Monero at the shared address with the refund signature on LEZ, recovered
+  by hand: no tool does it.
+- A Maker may set the agreement's restore height up to three blocks above
+  the Taker's tip; one that funds fast at that height can have the Taker's
+  view-only wallet miss the output, and the swap falls back to the refund
+  (griefing at the Maker's own cost, as on regtest).
 - The id of its Monero refund sweep is written after the sweep is submitted;
   a crash between the two loses it, and the re-run finds no unspent output to
   sweep. Recovery is by hand.
@@ -150,20 +162,28 @@ The Taker Node:
 
 - A sweep it has started and cannot prove unsent is marked in doubt and never
   sent again; recovering the Monero from it is by hand, and no tool does it.
+- Its read-only Monero steps wait at most 30 s for the role's wallet-rpc and
+  take at most 2 minutes; a claim sweep has no overall bound, as one cut off
+  after its transfer would read as never sent. Every swap's refund runs
+  before any of them.
 
 On Monero Stagenet (the [Stagenet guide](../docs/monero-stagenet-guide.md#a-daemon-the-node-does-not-run)
 and TM-0033 to TM-0036):
 
 - The recorded run read public Stagenet nodes, behind a forwarder, as both
-  roles' daemons; the self-hosted node was not at the tip. A Node verifies a
-  daemon's network, sync and tip age, and each output by its view key, but
-  not that the chain is the heaviest one: a daemon that lies consistently is
-  not detected, and `monero-rpc` 0.5.1 bounds no response body.
+  roles' daemons; the self-hosted node was not at the tip. Each Node
+  verifies its daemon's network, sync and tip age before the decisions that
+  rest on it (the Maker's funding receipt; the Taker's record of the
+  funding, its tag 14 and its claim sweep), and each output by its view
+  key, but not that the chain is the heaviest one: a daemon that lies
+  consistently is not detected, and `monero-rpc` 0.5.1 bounds no response
+  body. The Maker's funding transfer and its sweeps are not preceded by the
+  sync and tip-age check.
 - Ten confirmations is a constant of the agreement, not sized to the value;
   a reorganisation past it after the Taker's authorisation takes the Monero
   side. No test reorganises a funded swap.
-- P − R of the devnet's Stagenet profile is 30 minutes: a Taker Node down
-  for longer than that from R loses its LEZ (TM-0031).
+- P − R on Stagenet is two hours (`PublicStagenet`'s minimum): a Taker
+  Node down for longer than that from R loses its LEZ (TM-0031).
 - The role wallets have no password; the Maker's needs one unlocked output
   per swap in flight (a funding's change is locked ten blocks), and a funding
   that finds none ends the swap `expired`. Fees are the wallet-rpc's default.
@@ -181,6 +201,16 @@ The sidecar:
 - Its request store holds at most 4,096 entries (`MAX_STORE_ENTRIES`). When
   full it evicts a read, then the oldest settled submission; a store full of
   preparations and submissions in flight refuses new requests.
+- Its request store's records refuse unknown fields, so a downgraded sidecar
+  refuses a store written by a newer one; entries from before the eviction
+  order all read as the same age, so the newest settled one may be evicted
+  first (the chain refuses a replay by its nonce).
+
+The launcher and the desks:
+
+- The Taker's `monero_network` in its swap view comes from its role
+  configuration, not from the swap's Stage A; it is only displayed, and the
+  Node refuses a Stage A of another network at take time.
 
 ## M6 boundary
 

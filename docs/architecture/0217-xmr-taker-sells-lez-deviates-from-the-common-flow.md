@@ -274,10 +274,11 @@ first residual risk below.
   `fast` C, R, P are +320, +720 and +1000 s after the take
   (`deploy/scripts/gen-config.sh`), which leaves the Taker a 280 s refund
   window and the Maker at most 200 s after C to claim. On Monero Stagenet
-  the devnet's profile is +10 min, +2 h, +2.5 h
+  the devnet's profile is +10 min, +2 h, +4 h, and `PublicStagenet` admits
+  no P − R under two hours
   ([Stagenet guide](../monero-stagenet-guide.md#the-windows)); the Nodes
-  completed one swap there on 2026-11-21 and ran a refunded swap (the Taker's LEZ refund, the Maker's Monero swept back) and a punished one. No Monero testnet or
-  mainnet swap has run.
+  completed, refunded and punished a swap there on 2026-11-21, under an
+  earlier 30-minute P − R. No Monero testnet or mainnet swap has run.
 - **The refund and a claim the Taker cannot see.** The tip read sees what
   the sequencer has included, not its mempool. A tag 15 still in the mempool
   can no longer land when the refund goes out: tag 15 is valid only in

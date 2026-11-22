@@ -17,9 +17,9 @@ What has run on Stagenet, and what has not:
   funded from a public faucet, and the devnet stack with both Nodes on
   Stagenet. The Nodes completed a swap there (the Maker's funding verified
   at ten confirmations, the Maker's LEZ claim, the Taker's sweep at ten
-  confirmations, 55 minutes from the take) and ran a refunded swap (the
-  Taker's LEZ refund, the Maker's Monero swept back) and a punished one
-  ([the run](#the-node-driven-run-of-2026-11-21)). The SDK example ran the
+  confirmations, 55 minutes from the take), refunded one (the Taker's LEZ
+  refund, the Maker's Monero swept back) and punished one, under an earlier
+  30-minute P − R ([the run](#the-node-driven-run-of-2026-11-21)). The SDK example ran the
   Monero leg of a completed swap alone, with the LEZ escrow modelled
   ([its run](#the-sdk-examples-run-of-2026-11-21)). CI starts the same
   `monerod` on Stagenet in every run ([below](#in-ci)).
@@ -328,7 +328,10 @@ Assumptions, for Stagenet and the devnet's LEZ:
   interval 11 blocks take more than 45 minutes in 12 % of cases.
 - LEZ finalizes in seconds on the devnet; one Maker drive and one Taker
   supervisor tick are counted at 80 s each, and a LEZ inclusion at a step of
-  20 s, as on regtest (`deploy/scripts/gen-config.sh`).
+  20 s, as on regtest (`deploy/scripts/gen-config.sh`). A supervisor sweep
+  runs every swap's refund before any Monero read, and a Monero step of the
+  Taker waits at most 30 s for its wallet-rpc and takes at most 2 minutes:
+  a public node that stalls does not hold a refund back.
 - A late Monero confirmation costs liveness, not funds: a tag 14 seen after D
   is not claimed, and the swap falls back to the Taker's refund at R, in
   which the Maker sweeps its Monero back. A Taker that cannot land its
@@ -342,19 +345,22 @@ What each window must hold:
 | C (from the take) | the take's Chat rounds, the Taker's LEZ lock final, the Maker's drive that funds (one submit-only transfer; nothing to mine) | 10 min: the regtest C (+320 s) covers the same steps with mining included |
 | (R − C)/2, from C to D | a funding sent just before C: its block and ten confirmations, the Taker's verify and tag 14 final, the Maker's drive that sees it | 55 min: 45 min of blocks (0.27 % later at the target rate) and 10 min of LEZ steps and drives; the funding of a swap is normally sent a few minutes after the take, so the blocks have C's remainder as well |
 | (R − C)/2, from D to R | the Maker's claim tool and tag 15 final | the same 55 min (the rule halves R − C); minutes are used |
-| P − R | the Taker Node's refund from R, sent again on every tick until final, and a restart of that Node | 30 min |
+| P − R | the Taker Node's refund from R, sent again on every tick until final, through an outage of that Node, its host or its LEZ sidecar | 2 h: the reviewed M1 profile's; minutes of LEZ work, the rest for the outage |
 
-`PublicStagenet` admits R − C ≥ 100 min (2 × (45 + 5)) and P − R ≥ 30 min
+`PublicStagenet` admits R − C ≥ 100 min (2 × (45 + 5)) and P − R ≥ 2 h
 (`STAGENET_MINIMUM_FUNDING_TO_REFUND_MS`, `STAGENET_MINIMUM_REFUND_TO_PUNISH_MS`
 in `crates/xmr-swap-sdk/src/agreement_v1.rs`); a role config with shorter
 windows is refused at load. The devnet's Stagenet profile
 (`LEZ_MONERO_NETWORK=stagenet`, `deploy/scripts/gen-config.sh`) is C, R,
-P = +10 min, +2 h, +2.5 h. A completed swap takes the funding's
+P = +10 min, +2 h, +4 h. A completed swap takes the funding's
 confirmations, the Maker's claim and the Taker's sweep with its own ten
 confirmations: about an hour. A refund cannot start before R, two hours
-after the take, and a punishment before P. On a network with value P − R
-must also cover how long a Taker Node may be down: 30 minutes is a
-demonstration window, not a safe one for real funds.
+after the take, and a punishment before P, four hours after it. P − R is the
+Taker's safety window: a Taker Node down for less than two hours from R
+still refunds, and a longer wait for the punishment costs the Maker only
+time. The Node-driven run of 2026-11-21 ran under an earlier draft of this
+profile, P = +2.5 h (P − R 30 minutes); its swaps show the same flow, and its
+refunded and punished swaps were not run again under the two-hour P − R.
 
 The Nodes' own timeouts on Stagenet: a Maker Monero tool runs at most
 4 minutes (2 on regtest) and a Maker actor attempt 5 (2 on regtest), as a
@@ -386,10 +392,13 @@ Stagenet that it does not on regtest:
   funding at ten confirmations, and every sweep is submitted once and
   observed.
 - **It checks a daemon that syncs.** Each role's attestor checks the
-  Stagenet genesis and the daemon's `get_info` network at take time; a
-  funding receipt also needs the daemon synchronized, at its target height,
-  and its tip its own and at most an hour old by the host clock
+  Stagenet genesis and the daemon's `get_info` network at take time; the
+  Maker's funding receipt, and the Taker's record of the funding, its tag 14
+  and its claim sweep, also need the daemon synchronized, at its target
+  height, and its tip its own and at most an hour old by the host clock
   ([below](#a-daemon-the-node-does-not-run)).
+- **It waits for nobody's Monero reads to refund.** A Taker sweep runs every
+  swap's refund first, and each Taker Monero step has a time budget.
 - **It names the network.** The Taker's swap view carries `monero_network`;
   the Taker CLI and desk name Stagenet and its waits beside the swap, and the
   desks' Monero rows say how long ten confirmations take there.
@@ -506,8 +515,9 @@ workspace (`from-scratch.sh`). The stack's images are named
 role images were the devnet's with this tree's Node binaries
 (`from-scratch.sh --only rust`), its sidecar and Stage-A planner and its
 launcher put in place, and `build-source.txt` naming the commit. Both Nodes
-then read `profile: public-stagenet` and the windows 600, 7200 and 9000 s
-in their `xmr-role.json`, and `maker_health` shows the Monero route
+then read `profile: public-stagenet` and the windows 600, 7200 and 14400 s
+in their `xmr-role.json` (600, 7200 and 9000 s in the run below, under the
+earlier draft), and `maker_health` shows the Monero route
 available once its probe reads the daemon's `get_info`.
 
 ### A swap
@@ -551,10 +561,12 @@ or anyone between the Node and it, can:
   heaviest chain. A Taker that authorises on such an output loses the
   Monero side once the Maker claims (TM-0033).
 - **Lag or stall.** A daemon behind the network makes the Maker fund late
-  or the Taker authorise late; the swap then falls back to the refund. The
+  or the Taker authorise late; the swap then falls back to the refund. Each
   Node refuses a daemon that is not synchronized, is below its target
   height, or whose tip is older (or further ahead) than an hour by the
-  host's clock.
+  host's clock: the Maker for its funding receipt and its sweep's
+  observation, the Taker before it records the Maker's funding, before tag 14
+  and before its claim sweep.
 - **Withhold.** It sees the transfers and outputs the wallet asks about and
   the Node's IP address, and can drop them.
 - **Answer badly.** `monero-rpc` 0.5.1 has no response-body limit and
@@ -564,13 +576,17 @@ or anyone between the Node and it, can:
   not.
 
 What every role verifies itself, whatever the daemon: the Stagenet genesis
-and the daemon's own `get_info` network; the exact transaction, the shared
+and the daemon's own `get_info` network, at take time and again before each
+decision; the exact transaction, the shared
 address and the amount, by the view key; zero unlock distance (a funding
 with an unlock time is refused); ten confirmations and one stable tip across
 the daemon's and the wallet's reads; that its own sweep destination is a
-Stagenet address. Ten confirmations is an agreement constant, not sized to
-any value: a reorganisation deeper than ten blocks after the Taker's
-authorisation, or a double spend of the funding on a heavier branch, takes
+Stagenet address. The Taker reads the recorded funding again, at its depth
+and unlocked on the current chain, right before tag 14 is authorised and
+before each resubmission, so a funding reorganised out or double spent
+before the claim stops it. Ten confirmations is an agreement constant, not
+sized to any value: a reorganisation deeper than ten blocks after the
+Taker's authorisation, or a double spend of the funding on a heavier branch, takes
 the Monero side of a completed swap (TM-0034). The Monero transfers pay the
 wallet-rpc's default fee, and a new output is locked for ten blocks: the
 Maker's change and the Taker's swept Monero are spendable twenty minutes or
@@ -585,7 +601,13 @@ devnet chain, both Nodes built from `8f66d11b`
 Stagenet: the Maker's daemon `node2.monerodevs.org`, the Taker's
 `node.monerodevs.org`, each behind its forwarder, the Maker's wallet-rpc on
 `stagenet.xmr-tw.org`, the Taker's on `node.sethforprivacy.com`. Times UTC;
-Monero times are block timestamps.
+Monero times are block timestamps. The windows were the earlier draft's, C,
+R, P = +10 min, +2 h, +2.5 h: the run shows the flow of each ending, and the
+punishment came 30 minutes after R where the profile now waits two hours.
+The fixes made after the run (the refund first in every sweep, the funding
+read again before tag 14, the daemon checked before each Taker decision, the
+Maker's watch for a refund while its funding is unrecorded, an authorised
+claim ending `punished` only on tag 17) were not run on Stagenet.
 
 **Swap D, completed** (`d9353027…`, 0.01 XMR for 50,000 LEZ units):
 
@@ -811,8 +833,10 @@ Stagenet keys; delete them with the volumes.
   on that route.
 - Ten confirmations is a constant of the agreement: a reorganisation deeper
   than that after the Taker's authorisation takes the Monero side (TM-0034).
-- P − R is 30 minutes on the devnet's Stagenet profile, a demonstration
-  window: a Taker Node down for longer from R loses its LEZ (TM-0031).
+- P − R is two hours on Stagenet: a Taker Node down for longer from R loses
+  its LEZ (TM-0031). The recorded Node-driven run used the earlier draft's
+  30 minutes; its refunded and punished swaps were not run again under two
+  hours.
 - The role wallets have no password; the Maker's needs one unlocked output
   per swap in flight; fees are the wallet-rpc's default (TM-0035).
 - A Maker Node pins each swap's actor program: a swap taken under one build
