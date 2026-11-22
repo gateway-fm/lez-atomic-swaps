@@ -24,10 +24,11 @@ use lez_zec_swap_sdk::{
     LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
     LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
     LezMakerLockObservationPort, LezNodeSnapshotV1, LezObservationError, LezStableTipV1,
-    LezTakerFirstLockObservationPort, MakerLockDriveOutcome, MakerLockObservationV1,
-    NegotiationChannel, NegotiationTranscriptV1, ObserveTakerFirstLockOutcome, OfferDiscovery,
-    PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
-    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
+    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
+    MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1,
+    ObserveTakerFirstLockOutcome, OfferDiscovery, PreparedFirstLockSubmissionV1,
+    TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort,
+    ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
     ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1,
     ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
     ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
@@ -201,6 +202,113 @@ async fn maker_claimant_finds_the_second_lock_past_a_re_observed_first_lock() {
         .await
         .expect("the second lock is found past the re-observed first lock");
     assert_eq!(evidence.step(), FirstLockStepV1::LezFund);
+}
+
+/// A slow Zcash funding: the Maker drives once per requeue while its own
+/// Zcash lock confirms, and every drive re-observes the Taker's LEZ lock one
+/// block deeper and commits a revision. The second lock then lands well past
+/// the 16 predecessor slots an earlier scan looked at (revision 69 on a slow
+/// host, where the Maker's LEZ claim reported `SecondLockUnavailable` until
+/// the LEZ refund). The claim must still find it.
+#[tokio::test]
+async fn maker_claimant_finds_the_second_lock_after_many_re_observations() {
+    const RE_OBSERVATIONS: u64 = 40;
+    let directory = TestDirectory::new("maker-claimant-slow-zcash");
+    let path = directory.path().join("slow.sqlite3");
+    let agreement = signed_agreement(
+        "sqlite-lez-maker-slow-zcash",
+        SwapDirection::TakerSellsLez,
+        false,
+    );
+    let swap_id = agreement.coordinator().id().clone();
+    let sdk_at = |tip_height: u64| {
+        let ports = TestPorts {
+            taker_lez: Some(
+                CanonicalLezEscrowObservationV1::validate(
+                    &agreement,
+                    &lez_taker_lock_snapshot_at(&agreement, 2, tip_height),
+                )
+                .expect("canonical taker LEZ observation"),
+            ),
+        };
+        ZecPairSdk::new(
+            Participant::Maker,
+            NoDiscovery,
+            NoNegotiation,
+            ports.clone(),
+            ports,
+            SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("open maker store"),
+        )
+    };
+
+    let mut active = sdk_at(102)
+        .activate(accept(&agreement, Participant::Maker))
+        .await
+        .expect("activate maker");
+    let _ = active
+        .observe_taker_first_lock()
+        .await
+        .expect("commit observed taker LEZ lock");
+    drop(active);
+    let mut tip = 102;
+    for _ in 0..RE_OBSERVATIONS {
+        tip += 1;
+        let mut active = sdk_at(tip)
+            .resume(&swap_id)
+            .await
+            .expect("resume maker")
+            .expect("maker swap is durable");
+        let again = active
+            .refresh_maker_funding_eligibility()
+            .await
+            .expect("re-observe the deeper taker LEZ lock");
+        assert!(
+            matches!(again, MakerFundingEligibilityOutcome::Eligible { .. }),
+            "the same lock, deeper, stays eligible: {again:?}"
+        );
+    }
+    assert_eq!(
+        reopened_source(&path, Participant::Maker)
+            .canonical_lez_funding(&agreement)
+            .await,
+        Err(SqliteCanonicalLezFundingSourceError::SecondLockUnavailable),
+        "no second lock yet"
+    );
+
+    let mut active = sdk_at(tip)
+        .resume(&swap_id)
+        .await
+        .expect("resume maker")
+        .expect("maker swap is durable");
+    let outcome = active
+        .drive_maker_lock(
+            FirstLockPlanV1::zcash(prepared(FirstLockStepV1::ZcashFund, [0x52; 32]))
+                .expect("maker Zcash plan"),
+        )
+        .await
+        .expect("drive maker second lock");
+    let MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(evidence)) =
+        outcome
+    else {
+        panic!("expected confirmed maker Zcash funding, got {outcome:?}")
+    };
+    let commit = active
+        .project_maker_lock(evidence)
+        .await
+        .expect("commit maker Zcash second lock");
+    drop(active);
+    assert_eq!(
+        commit.revision(),
+        RE_OBSERVATIONS + 2,
+        "the second lock commits after every re-observation"
+    );
+
+    let evidence = reopened_source(&path, Participant::Maker)
+        .canonical_lez_funding(&agreement)
+        .await
+        .expect("the second lock is found however late it committed");
+    assert_eq!(evidence.step(), FirstLockStepV1::LezFund);
+    assert_eq!(evidence.expected_submission_id(), &[0x31; 32]);
 }
 
 #[tokio::test]
