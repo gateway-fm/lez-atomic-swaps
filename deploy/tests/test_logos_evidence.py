@@ -55,6 +55,20 @@ class Summary(unittest.TestCase):
         self.assertIn('margin -0.010 s', text)
         self.assertIn('Maker protocols: relay=true store=false', text)
 
+    def test_a_resend_that_delivered_the_first_request_is_named(self):
+        taker = TAKER + [line('10:39:23.611', 'chat_module', 'INFO: chat_module::actions: sent 7787 bytes to c0')]
+        maker = MAKER + [
+            line('10:39:23.640', 'chat_module', 'INFO: chat_module::actions: received 7787 bytes in c0 from t'),
+            line('10:39:23.700', 'chat_module', 'INFO: chat_module::actions: sent 2305 bytes to c0'),
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            directory = pathlib.Path(root)
+            (directory / 'taker-container.log').write_text('\n'.join(taker) + '\n')
+            (directory / 'maker-container.log').write_text('\n'.join(maker) + '\n')
+            text = '\n'.join(evidence.summary(directory))
+        self.assertIn('first request: 2 copies sent before the Maker\'s first answer (10:39:22.611, 10:39:23.611)', text)
+        self.assertIn('received it at 10:39:23.640, copy 2 (a resend delivered it)', text)
+
     def test_a_missing_directory_summarises_nothing_sent(self):
         with tempfile.TemporaryDirectory() as root:
             out = evidence.summary(pathlib.Path(root) / 'absent')

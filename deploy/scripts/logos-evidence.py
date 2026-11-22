@@ -92,6 +92,20 @@ def summary(directory: pathlib.Path) -> list[str]:
                    f"Taker came online, {seconds(first) - seconds(online['maker']):.1f} s after the Maker; relay peers then: "
                    f"Taker {relay_peers(taker, first)}, Maker {relay_peers(maker, first)}")
     out.append(f"Chat: the Taker sent {len(sent)} message(s), the Maker received {len(received)}")
+    maker_sent = [when(l) for l in maker if "[chat_module]" in l and re.search(r"sent \d+ bytes", l)]
+    maker_received = [(when(l), re.search(r"received (\d+) bytes", l).group(1)) for l in maker
+                      if "[chat_module]" in l and re.search(r"received \d+ bytes", l)]
+    if sent:
+        size = sent[0][1]
+        answered = maker_sent[0] if maker_sent else None
+        copies = [stamp for stamp, length in sent
+                  if length == size and (answered is None or seconds(stamp) <= seconds(answered))]
+        first_in = next((stamp for stamp, length in maker_received if length == size), None)
+        copy = sum(1 for stamp in copies if first_in and seconds(stamp) <= seconds(first_in))
+        out.append(f"first request: {len(copies)} cop{'y' if len(copies) == 1 else 'ies'} sent before the Maker's "
+                   f"first answer ({', '.join(copies)}); the Maker's Chat module received it "
+                   + (f"at {first_in}, copy {copy}" + (" (a resend delivered it)" if copy > 1 else "")
+                      if first_in else "never"))
     for stamp, digest, topic in publishes[:8]:
         out.append(f"publish {stamp} {topic} {digest[:14]}: {outcome.get(digest, 'no outcome line')}; Maker relay "
                    f"{at_relay.get(digest, 'never')}, handed to its Chat module {handed_on.get(digest, 'no')}")
