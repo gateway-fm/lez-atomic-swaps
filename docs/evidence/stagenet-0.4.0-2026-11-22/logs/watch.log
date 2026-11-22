@@ -1,0 +1,39 @@
+10:15:24 fc596d6bb9bf taker=awaiting_second_lock actor=taker_lock_confirmed reason=None | maker=taker_lock_confirmed
+10:15:24 13711985da49 taker=awaiting_first_lock actor=lez_locking reason=None | maker=taker_lock_confirmed
+10:15:46 13711985da49 taker=awaiting_second_lock actor=taker_lock_confirmed reason=None | maker=taker_lock_confirmed
+10:29:13 fc596d6bb9bf taker=awaiting_second_lock actor=taker_lock_confirmed reason=None | maker=taker_lock_confirmed
+10:29:26 13711985da49 taker=awaiting_second_lock actor=taker_lock_confirmed reason=None | maker=taker_lock_confirmed
+10:29:26 5a696c9f16c7 taker=awaiting_first_lock actor=lez_locking reason=None | maker=queued
+10:32:53 5a696c9f16c7 taker=awaiting_first_lock actor=lez_locking reason=None | maker=taker_lock_confirmed
+10:33:17 5a696c9f16c7 taker=awaiting_second_lock actor=taker_lock_confirmed reason=None | maker=taker_lock_confirmed
+10:36:19 5a696c9f16c7 taker=awaiting_second_lock actor=taker_lock_confirmed reason=None | maker=expired
+10:38:41 fc596d6bb9bf taker=claim_available actor=both_legs_locked reason=None | maker=taker_lock_confirmed
+10:40:21 fc596d6bb9bf taker=claim_available actor=both_legs_locked reason=None | maker=both_legs_locked
+10:43:03 13711985da49 taker=claim_available actor=both_legs_locked reason=None | maker=taker_lock_confirmed
+10:44:12 13711985da49 taker=claim_in_progress actor=claim_authorizing reason=None | maker=both_legs_locked
+10:44:56 fc596d6bb9bf taker=claim_available actor=both_legs_locked reason=None | maker=both_legs_locked
+10:45:04 13711985da49 taker=claim_in_progress actor=claim_authorizing reason=None | maker=completed
+10:46:09 5a696c9f16c7 taker=awaiting_second_lock actor=taker_lock_confirmed reason=None | maker=expired
+10:46:09 353a47584840 taker=awaiting_first_lock actor=lez_locking reason=None | maker=offered
+10:50:13 13711985da49 taker=claim_in_progress actor=awaiting_maker_claim reason=None | maker=completed
+10:50:46 13711985da49 taker=claim_in_progress actor=sweeping reason=None | maker=completed
+10:53:14 353a47584840 taker=awaiting_first_lock actor=lez_locking reason=None | maker=taker_lock_confirmed
+10:57:58 353a47584840 taker=awaiting_second_lock actor=taker_lock_confirmed reason=None | maker=taker_lock_confirmed
+11:13:27 353a47584840 taker=claim_available actor=both_legs_locked reason=None | maker=both_legs_locked
+11:14:22 13711985da49 taker=completed actor=completed reason=None | maker=completed
+12:15:34 fc596d6bb9bf taker=refund_in_progress actor=refund_in_flight reason=None | maker=both_legs_locked
+12:17:26 fc596d6bb9bf taker=refund_in_progress actor=refund_in_flight reason=None | maker=maker_recovery_available
+12:24:21 fc596d6bb9bf taker=refunded actor=refunded reason=None | maker=maker_recovery_available
+12:29:04 5a696c9f16c7 taker=refund_in_progress actor=refund_in_flight reason=None | maker=expired
+12:30:09 5a696c9f16c7 taker=refunded actor=refunded reason=None | maker=expired
+12:33:05 fc596d6bb9bf taker=taker-unreadable actor=taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error re reason=None | maker=maker_recovery_available
+12:33:05 13711985da49 taker=taker-unreadable actor=taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error re reason=None | maker=completed
+12:33:05 5a696c9f16c7 taker=taker-unreadable actor=taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error re reason=None | maker=expired
+12:33:05 353a47584840 taker=taker-unreadable actor=taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error re reason=None | maker=both_legs_locked
+12:50:38 fc596d6bb9bf taker=taker-unreadable actor=taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error re reason=None | maker=refunded
+14:45:05 353a47584840 taker=taker-unreadable actor=taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error re reason=None | maker=maker_recovery_available
+14:45:22 353a47584840 taker=taker-unreadable actor=taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error re reason=None | maker=punished
+14:50:26 fc596d6bb9bf taker=refunded actor=refunded reason=None | maker=refunded
+14:50:29 13711985da49 taker=completed actor=completed reason=None | maker=completed
+14:50:30 5a696c9f16c7 taker=refunded actor=refunded reason=None | maker=expired
+14:50:31 353a47584840 taker=punished actor=punish_open reason=None | maker=punished

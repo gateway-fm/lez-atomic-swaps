@@ -1,0 +1,21 @@
+{"error":"typed Monero wallet-effect operation `refresh current wallet` failed: error sending request for url (http://127.0.0.1:18083/json_rpc)","event":"taker_xmr_supervisor_step_failed","swap_id":"fc596d6bb9bf0d8fae6b338b2c4bd5250614f892876bc56c04ed37eaa158cb8e"}
+{"error":"typed Monero wallet-effect operation `close current wallet` failed: error decoding response body: expected value at line 1 column 1","event":"taker_xmr_supervisor_step_failed","swap_id":"13711985da4955453ab61aa2803fcddab8f128dcafed0dcc1bf05bf7b110be0d"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"353a4758484012440732f09ec45cd68ee10765edb71019e01dde8559dcd4167c"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"353a4758484012440732f09ec45cd68ee10765edb71019e01dde8559dcd4167c"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"13711985da4955453ab61aa2803fcddab8f128dcafed0dcc1bf05bf7b110be0d"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"353a4758484012440732f09ec45cd68ee10765edb71019e01dde8559dcd4167c"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"13711985da4955453ab61aa2803fcddab8f128dcafed0dcc1bf05bf7b110be0d"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"353a4758484012440732f09ec45cd68ee10765edb71019e01dde8559dcd4167c"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"the Monero step took longer than 120s","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
+{"error":"typed Monero wallet-effect operation `open role wallet` failed: error sending request for url (http://127.0.0.1:18083/json_rpc)","event":"taker_xmr_supervisor_step_failed","swap_id":"5a696c9f16c74992c8af78668034c25152cfc45b0b849019225160acdca8d430"}
