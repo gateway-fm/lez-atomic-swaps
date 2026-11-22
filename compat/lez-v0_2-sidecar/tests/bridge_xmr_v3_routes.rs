@@ -253,6 +253,8 @@ struct SequencerFixture {
     lookups: Arc<AtomicUsize>,
     included_transaction: Arc<Mutex<Option<LeeTransaction>>>,
     submission_reply: SequencerSubmissionReply,
+    /// Lookups still to hold unanswered, as a stopped forwarder does.
+    held_lookups: Arc<AtomicUsize>,
 }
 
 impl SequencerFixture {
@@ -272,6 +274,10 @@ impl SequencerFixture {
     fn lookup_count(&self) -> usize {
         self.lookups.load(Ordering::SeqCst)
     }
+
+    fn hold_next_lookup(&self) {
+        self.held_lookups.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 async fn start_configurable_sequencer(
@@ -282,6 +288,7 @@ async fn start_configurable_sequencer(
         included_transaction: Arc::new(Mutex::new(None)),
         lookups: Arc::new(AtomicUsize::new(0)),
         submission_reply,
+        held_lookups: Arc::new(AtomicUsize::new(0)),
     };
     let server = ServerBuilder::default()
         .build("127.0.0.1:0")
@@ -295,9 +302,18 @@ async fn start_configurable_sequencer(
         Ok::<_, ErrorObjectOwned>(hex::encode([41_u8; 32]))
     })
     .expect("channel method");
-    rpc.register_method("getTransaction", |params, fixture, _| {
+    rpc.register_async_method("getTransaction", |params, fixture, _| async move {
         let requested: HashType = params.one()?;
         fixture.lookups.fetch_add(1, Ordering::SeqCst);
+        if fixture
+            .held_lookups
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |held| {
+                held.checked_sub(1)
+            })
+            .is_ok()
+        {
+            std::future::pending::<()>().await;
+        }
         let observed = fixture
             .included_transaction
             .lock()
@@ -1279,6 +1295,151 @@ async fn tag16_not_included_is_sent_again_until_it_lands() {
         .expect("restarted Taker stops");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
+}
+
+/// The sidecar's state directory as a SIGKILL leaves it: every file as it is
+/// on disk at that instant, the process that wrote them gone.
+fn copy_state_directory(from: &Path, to: &Path) {
+    for entry in fs::read_dir(from).expect("read state directory") {
+        let entry = entry.expect("state directory entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("entry type").is_dir() {
+            fs::create_dir(&target).expect("copy state subdirectory");
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o700))
+                .expect("private state subdirectory");
+            copy_state_directory(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).expect("copy state file");
+        }
+    }
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one tag-15 journey keeps the held lookup, the kill, the restart and the landing joined"
+)]
+async fn tag15_in_flight_at_a_kill_is_decided_again_after_the_restart() {
+    let (depositor, _) = account(31);
+    let (claimant, claimant_key) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let maker_runtime = runtime(Participant::Maker, claimant);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let maker = start_sidecar(
+        Participant::Maker,
+        claimant,
+        claimant_key.clone(),
+        &sequencer_endpoint,
+    )
+    .await;
+    let prepare_request = PrepareNativeXmrClaimV3Request::new(
+        context(Participant::Maker, "tag15-in-flight-prepare"),
+        maker_runtime.clone(),
+        xmr_terms,
+    );
+    let prepared = maker
+        .fresh_client()
+        .prepare_native_xmr_claim_v3(prepare_request.clone())
+        .await
+        .expect("prepare the exact tag-15 claim");
+    let message = Message::try_from_slice(prepared.claim.exact_message_bytes.as_slice())
+        .expect("canonical unsigned claim message");
+    let (_, claim_authority_key) = account(33);
+    let signature = Signature::new(&claim_authority_key, &message.hash());
+    let complete_request = CompleteNativeXmrClaimV3Request::new(
+        context(Participant::Maker, "tag15-in-flight-complete"),
+        maker_runtime.clone(),
+        xmr_terms,
+        prepared.claim.clone(),
+        AggregateBip340Signature::from_bytes(signature.value),
+    )
+    .expect("exact claim completion request");
+    let completed = maker
+        .fresh_client()
+        .complete_native_xmr_claim_v3(complete_request.clone())
+        .await
+        .expect("complete the exact tag-15 claim");
+    let submission = SubmitTransactionRequest::new(
+        submission_context(Participant::Maker, completed.claim.transaction_id),
+        maker_runtime,
+        completed.claim.clone(),
+    );
+
+    // The Maker's sequencer forwarder stops: the lookup before the claim's
+    // one send is never answered, and the Maker is killed while it waits.
+    fixture.hold_next_lookup();
+    assert!(
+        maker
+            .fresh_client()
+            .submit_transaction(submission.clone())
+            .await
+            .is_err(),
+        "the held submission does not answer"
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 0);
+    let killed = TempDir::new().expect("killed Maker state directory");
+    fs::set_permissions(killed.path(), fs::Permissions::from_mode(0o700))
+        .expect("private killed state directory");
+    copy_state_directory(maker.directory.path(), killed.path());
+
+    let (restarted_client, restarted_server) = try_start_sidecar_at(
+        Participant::Maker,
+        claimant,
+        claimant_key,
+        &sequencer_endpoint,
+        killed.path(),
+        Arc::new(FixedNonce),
+    )
+    .await
+    .expect("the Maker's sidecar starts again on the killed state");
+    // The claim tool runs again: the same preparation, completion and bytes.
+    assert_eq!(
+        restarted_client
+            .prepare_native_xmr_claim_v3(prepare_request)
+            .await
+            .expect("restarted preparation replays"),
+        prepared
+    );
+    assert_eq!(
+        restarted_client
+            .complete_native_xmr_claim_v3(complete_request)
+            .await
+            .expect("restarted completion replays"),
+        completed
+    );
+    // The claim can still land before R and nothing else replaces it: its
+    // in-flight marker is no answer, so the chain decides it again.
+    let submitted = restarted_client
+        .submit_transaction(submission.clone())
+        .await
+        .expect("the in-flight tag-15 claim is looked up and sent again");
+    assert_eq!(submitted.transaction_id, completed.claim.transaction_id);
+    assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 1);
+    // Once included it is already known, and nothing is sent again.
+    fixture.include_exact(&submission.transaction);
+    let landed = BridgeClient::connect(BridgeClientConfig::new(
+        restarted_server.endpoint(),
+        SidecarCapability::new(CAPABILITY).expect("client capability"),
+        RunId::new(RUN_ID).expect("run id"),
+        submission.runtime.clone(),
+        Duration::from_secs(2),
+    ))
+    .expect("bridge client")
+    .submit_transaction(submission)
+    .await
+    .expect("the landed tag-15 claim is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 1);
+
+    restarted_server
+        .stop()
+        .await
+        .expect("restarted Maker stops");
+    sequencer.stop().expect("sequencer stop");
 }
 
 #[tokio::test]

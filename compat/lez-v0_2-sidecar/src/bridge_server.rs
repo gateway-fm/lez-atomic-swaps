@@ -1680,8 +1680,14 @@ fn register_methods(
         // for it: a sequencer that admitted it and dropped it at block
         // building, or a send whose outcome is unknown, would otherwise leave
         // it unsent for good. Sending the identical bytes again is harmless:
-        // one transaction id, one nonce, included at most once.
-        let recovery = runtime.xmr_recovery_submission(&request.transaction).await;
+        // one transaction id, one nonce, included at most once. The same for
+        // the Maker's tag-15 claim: a Maker killed while its claim waited on
+        // the sequencer left an in-flight marker that would otherwise answer
+        // `unknown_submission_outcome` to every claim tool run until R
+        // (node:xmr:xmr-kill-maker, "claim tool running"); the Maker's actor
+        // asks for it only before R.
+        let recovery = runtime.xmr_recovery_submission(&request.transaction).await
+            || runtime.xmr_claim_submission(&request.transaction).await;
         let decide_again = recovery
             || runtime
                 .native_escrow_lineage_member(&request.transaction)

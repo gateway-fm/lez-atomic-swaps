@@ -3127,6 +3127,18 @@ impl NativeEscrowPlanner {
                 .is_some_and(|active| active.result.punish == *prepared)
     }
 
+    /// Whether `prepared` is the completed tag-15 claim this sidecar holds:
+    /// a claim that can still land before R and that nothing else replaces,
+    /// so its identical bytes are decided on the chain again whatever the
+    /// request journal holds for them (a send killed in flight included).
+    pub async fn xmr_claim_submission(&self, prepared: &PreparedTransaction) -> bool {
+        let state = self.state.lock().await;
+        state
+            .completed_xmr_claim_v3
+            .as_ref()
+            .is_some_and(|completed| completed.result.claim == *prepared)
+    }
+
     fn validate_claim_supersede_request(
         &self,
         active: &ActiveClaimPrepare,
