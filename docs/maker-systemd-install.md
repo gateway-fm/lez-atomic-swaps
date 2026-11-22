@@ -74,9 +74,10 @@ directory holds a role's long-lived key.
 
 ## Monero (Maker only, optional)
 
-A packaging proof, not a production recipe: the Monero lane is regtest-only today (the role
-configuration accepts only the `accelerated-regtest` profile), and these steps were checked
-statically and with stub programs only, not in the VM. The Maker unit as installed has no
+A packaging proof, not a production recipe: the role configuration accepts the
+`accelerated-regtest` and `public-stagenet` profiles and refuses Monero testnet and mainnet
+([Stagenet guide](monero-stagenet-guide.md)), and these steps were checked statically and with
+stub programs only, not in the VM. The Maker unit as installed has no
 Monero role. To give it one, with `monerod` on `127.0.0.1:18081` and the Maker's own
 `monero-wallet-rpc` on `127.0.0.1:18083` (loopback only: the Monero adapter refuses any other
 endpoint; a `socat` forward as above for a daemon elsewhere), its wallet named `maker` and

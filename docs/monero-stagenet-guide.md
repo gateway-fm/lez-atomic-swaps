@@ -801,10 +801,11 @@ Three attempts, 2026-11-21, all with the default seed, against public nodes
    **Swap 2, the refund, did not complete:** after its Stage A and Stage B
    and the modelled LEZ lock, the Maker's funding transfer was refused by
    the wallet-rpc's public node (`transaction was rejected by daemon`, no
-   reason given), and the example stopped. The refund path, the Maker
-   rebuilding the key from the Taker's refund signature and sweeping its
-   Monero back, has run on regtest only (D-2 of the
-   [M4 checklist](m4-acceptance-checklist.md)).
+   reason given), and the example stopped. In the example the refund path,
+   the Maker rebuilding the key from the Taker's refund signature and
+   sweeping its Monero back, has run on regtest only (D-2 of the
+   [M4 checklist](m4-acceptance-checklist.md)); through the Nodes it ran on
+   Stagenet in swap E2 of [the Node-driven run](#the-node-driven-run-of-2026-11-21).
 
 The self-hosted node had synced 137,850 of 2,255,265 blocks when the run
 ended.

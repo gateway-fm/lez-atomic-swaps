@@ -17,13 +17,17 @@ with provenance; and no claim Logos has not made ("accepted", "audited",
 A devnet scenario is named by its `regress.sh` test id
 (`deploy/scripts/regress.sh list full`), run by `deploy/scripts/node-e2e.py`
 (`node:`) or `deploy/scripts/ui-e2e.sh` (`ui:`) on the Docker devnet with
-Monero regtest up (`LEZ_MONERO=1`). The full tier holds 174 tests, 24 of them
-Monero. The last full run is at `d4475300`
+Monero regtest up (`LEZ_MONERO=1`). The full tier holds 175 tests, 25 of them
+Monero. The last full run committed here is at `d4475300`
 ([regression-m4-2026-11-21](evidence/regression-m4-2026-11-21/)): 160 of 160,
 each on its first try, among them 16 Monero tests, one operator running both
-parties on one host, x86_64. The 14 tests added to the tier after that run
-(eight Monero, six BTC and ZEC custody-credit tests) have not run yet; the
-rows below say which.
+parties on one host, x86_64. Fifteen tests joined the tier after that run:
+nine Monero (`xmr-taker-clock-ahead`, `xmr-punish-replans`,
+`xmr-maker-claim-without-authorization`, `xmr-maker-early-punish`,
+`xmr-unfunded-punish`, `xmr-taker-cheats`, `xmr-shared-address-dust`,
+`xmr-custody-credit`, `xmr-custody-credit-refund`) and six BTC and ZEC
+custody-credit tests; the rows below name each by its test id, and none of
+them is in the `d4475300` set.
 
 ## Where M4 stands
 
@@ -71,22 +75,22 @@ rows below say which.
 | Req | What it asks | Proof | Status |
 |---|---|---|---|
 | F3 | LEZ–XMR swaps with Ed25519 adaptor signatures, cross-curve DLEQ, spend-key share | `node:xmr:xmr-happy:TakerSellsLez`, `node:xmr:xmr-taker-refund:TakerSellsLez`, `node:xmr:xmr-maker-never-funds:TakerSellsLez`, `node:xmr:xmr-punish:TakerSellsLez` (passed at `d4475300`); the SDK tests of D-2 | Devnet, regtest, `TakerSellsLez` only; secp256k1 adaptors plus DLEQ instead of Ed25519 adaptors ([protocol design](milestone-1/protocol-design.md#xmrlez), traceability F3) |
-| F5 | Escrow claims on a valid proof, refunds after the timelock | Guest test `xmr_native_claim_refund_and_punish_are_atomic_and_disjoint`; `node:xmr:xmr-taker-refund:TakerSellsLez`, `node:xmr:xmr-taker-refund-kill:TakerSellsLez` (passed at `d4475300`); the re-sent refund on LEZ time: `node:xmr:xmr-taker-clock-ahead:TakerSellsLez` (not run yet) and the Taker supervisor unit tests named in ADR 0217 | Departure: the refund is open only in [R, P) ([ADR 0217](architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md#relation-to-rfp-003)) |
-| F6 | Both complete or both refund | `node:xmr:xmr-punish:TakerSellsLez` (passed at `d4475300`); TM-0031 on the devnet: `node:xmr:xmr-unfunded-punish:TakerSellsLez` (not run yet) | Departure by design: the punishment from P pays the Maker the LEZ and leaves the Monero locked (ADR 0217); TM-0031 and TM-0019 open |
+| F5 | Escrow claims on a valid proof, refunds after the timelock | Guest test `xmr_native_claim_refund_and_punish_are_atomic_and_disjoint`; `node:xmr:xmr-taker-refund:TakerSellsLez`, `node:xmr:xmr-taker-refund-kill:TakerSellsLez` (passed at `d4475300`); the re-sent refund on LEZ time: `node:xmr:xmr-taker-clock-ahead:TakerSellsLez` (a Taker clock 60 s ahead of LEZ time sends no refund before the finalized LEZ time reaches R) and the Taker supervisor unit tests named in ADR 0217 | Departure: the refund is open only in [R, P) ([ADR 0217](architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md#relation-to-rfp-003)) |
+| F6 | Both complete or both refund | `node:xmr:xmr-punish:TakerSellsLez` (passed at `d4475300`); TM-0031 on the devnet: `node:xmr:xmr-unfunded-punish:TakerSellsLez` (tag 17 from P on an unfunded swap pays the Maker with the Taker Node stopped through [R, P), and is refused once the running Taker Node has refunded) | Departure by design: the punishment from P pays the Maker the LEZ and leaves the Monero locked (ADR 0217); TM-0031 and TM-0019 open |
 | F7 | Native and custom tokens through ATAs | `InitializeNativeXmr` binds the native authenticated-transfer program | Native LEZ only for XMR; no token variant exists |
 | R1 | The Maker locks only after the Taker's lock is confirmed | The Maker actor funds Monero only after the Taker's lock is final and while the finalized LEZ time is before C (`drive_once` in [`xmr-maker-actor.rs`](../crates/maker-node/src/bin/xmr-maker-actor.rs)); `node:xmr:xmr-maker-never-funds:TakerSellsLez` | Code and the scenarios above; no scenario has the Maker try to fund early |
 | R2 | After the lock, on-chain data alone completes or refunds | `node:xmr:xmr-cut-after-lock:TakerSellsLez` (passed at `d4475300`) | One cut, after the lock |
 | R3 | Graceful degradation with no Monero node | `node:xmr:xmr-monerod-down:TakerSellsLez` (passed at `d4475300`) | Done on the devnet |
 | R4 | State survives restarts | `node:xmr:xmr-kill-taker:TakerSellsLez` (7 kill points), `node:xmr:xmr-kill-maker:TakerSellsLez` (6), `node:xmr:xmr-taker-refund-kill:TakerSellsLez`, `node:xmr:xmr-wallet-restart:TakerSellsLez` (passed at `d4475300`) | A Taker sweep left in doubt is recovered by hand (see the known limits) |
 | R5 | Concurrent swaps keep independent state | `node:xmr:xmr-concurrent:TakerSellsLez`, `node:xmr:mixed-three-pair:TakerSellsLez` (passed at `d4475300`) | One Taker identity per lane |
-| R6 | Timelocks allow for block variance and clock drift | The windows are LEZ times fixed in Stage A; the Taker sends its refund on finalized LEZ time, not its own clock (ADR 0217 step 7); `node:xmr:xmr-taker-clock-ahead:TakerSellsLez` (not run yet) | Regtest windows +320/+720/+1000 s on `fast`; Stagenet windows +10 min, +2 h, +4 h, derived in the [Stagenet guide](monero-stagenet-guide.md#the-windows) and admitted by `PublicStagenet` (R − C ≥ 100 min, P − R ≥ 2 h, the Taker's safety window); the Node-driven Stagenet run of 2026-11-21 ran under an earlier P − R of 30 min and was not repeated under 2 h |
+| R6 | Timelocks allow for block variance and clock drift | The windows are LEZ times fixed in Stage A; the Taker sends its refund on finalized LEZ time, not its own clock (ADR 0217 step 7); `node:xmr:xmr-taker-clock-ahead:TakerSellsLez` | Regtest windows +320/+720/+1000 s on `fast`; Stagenet windows +10 min, +2 h, +4 h, derived in the [Stagenet guide](monero-stagenet-guide.md#the-windows) and admitted by `PublicStagenet` (R − C ≥ 100 min, P − R ≥ 2 h, the Taker's safety window); the Node-driven Stagenet run of 2026-11-21 ran under an earlier P − R of 30 min and was not repeated under 2 h |
 | R8 | Delivery/Chat outage | `node:xmr:xmr-outage-before-take:TakerSellsLez`, `node:xmr:xmr-cut-after-lock:TakerSellsLez` (passed at `d4475300`) | Done on the devnet |
 | U3, U4 | Maker and Taker CLIs per pair | The Maker CLI configures, prices and publishes the Monero route in every Monero scenario; the Taker CLI's Monero rows and `balances --monero` are unit-tested in `crates/taker-node/src/bin/lez-taker-cli.rs` | No scenario drives a Monero swap through the Taker CLI |
 | U5, U6 | Maker and Taker desks per pair | `ui:xmr:xmr-happy:TakerSellsLez`, `ui:xmr:xmr-taker-refund:TakerSellsLez`, `ui:xmr:xmr-concurrent:TakerSellsLez` (passed at `d4475300`) | No desk journey punishes |
 | P1 | Compute units per operation | [lez-compute-units.md](lez-compute-units.md): tags 13, 2 and 14–17 under ImageID `ca66e0dc…` | Done |
 | S1 | Escrow on LEZ testnet 0.2 | — | Not for XMR: devnet only; the public network waits for the LEZ 0.4 port (issue #107) |
-| — | Escrow custody credited by a stranger (TM-0032) | Executor tests `compat/lez-v0.2-provisional/escrow/methods/tests/custody_dust.rs`; `node:xmr:xmr-custody-credit:TakerSellsLez`, `node:xmr:xmr-custody-credit-refund:TakerSellsLez` (not run yet) | Holds only under the new ImageID; v0.3.4 escrows can still be locked |
-| — | A cheating counterparty | `node:xmr:xmr-maker-claim-without-authorization:TakerSellsLez`, `node:xmr:xmr-maker-early-punish:TakerSellsLez`, `node:xmr:xmr-taker-cheats:TakerSellsLez`, `node:xmr:xmr-punish-replans:TakerSellsLez` (not run yet); the guest test of D-1 | The same rules are checked by guest and unit tests |
+| — | Escrow custody credited by a stranger (TM-0032) | Executor tests `compat/lez-v0.2-provisional/escrow/methods/tests/custody_dust.rs`; `node:xmr:xmr-custody-credit:TakerSellsLez`, `node:xmr:xmr-custody-credit-refund:TakerSellsLez` (a stranger's unit in the custody: the claim and the refund each pay the lot and the unit); a third party's outputs at the swap's Monero shared address: `node:xmr:xmr-shared-address-dust:TakerSellsLez` (the Taker's sweep spends only the swap's own output) | Holds only under the new ImageID; v0.3.4 escrows can still be locked |
+| — | A cheating counterparty | `node:xmr:xmr-maker-claim-without-authorization:TakerSellsLez`, `node:xmr:xmr-maker-early-punish:TakerSellsLez`, `node:xmr:xmr-taker-cheats:TakerSellsLez`, `node:xmr:xmr-punish-replans:TakerSellsLez` (tag 15 without tag 14, tag 17 before P and after the refund, tag 16 before R and after tag 15: each refused; a punishment whose nonce is taken six times still lands); the guest test of D-1 | The same rules are checked by guest and unit tests |
 
 ## Known limits
 
@@ -97,7 +101,10 @@ Node and the sidecar still do not handle.
 
 ## The evidence set
 
-`docs/evidence/regression-m4-<date>/`, in M3's and M2's shape:
+`docs/evidence/regression-m4-<date>/`, or for a run on a release version
+`docs/evidence/regression-<version>-<date>-<host>/` as for 0.3.0 to 0.3.4
+(`regression-0.4.0-<date>-macos-arm64/` on an Apple-silicon Mac), in M3's and
+M2's shape:
 `PROVENANCE.md` (the tested commit, checked against each Node container's
 `/usr/local/share/lez/build-source.txt` before and after the run; the images,
 the chains made during the run), `README.md` (what the tree is, the result,

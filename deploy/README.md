@@ -629,9 +629,11 @@ their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over
 its owner RPC); `regress.sh` runs them as `node:xmr:<scenario>:TakerSellsLez`,
 on `fast`, and leaves them out with a line on a stack without `LEZ_MONERO=1`.
 All twenty-two are in the `full` tier, none in `smoke`. The six added with
-the Node's own refund (`xmr-taker-clock-ahead` to `xmr-taker-cheats` below)
-have not run yet: they were written while the devnet was being rebuilt for
-arm64. A lot is 1 XMR for 50 000 LEZ units.
+the Node's own refund (`xmr-taker-clock-ahead` to `xmr-taker-cheats` below),
+`xmr-shared-address-dust` and the two `xmr-custody-credit` scenarios joined
+the tier after the full regression at `d4475300`
+(`docs/evidence/regression-m4-2026-11-21/`) and are not in its set. A lot is
+1 XMR for 50 000 LEZ units.
 
 ```sh
 bash scripts/regress.sh run node:xmr:xmr-happy:TakerSellsLez

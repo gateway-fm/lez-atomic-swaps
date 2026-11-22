@@ -196,16 +196,17 @@ Every abort point, from the code above:
 | Where it stops | Taker | Maker | Covered by |
 |---|---|---|---|
 | Before the Taker's lock | nothing at stake | nothing at stake; the reservation lapses after 900 s | — |
-| Taker locked; Maker never funds, or the lock is final after C | its Node refunds LEZ with tag 16 from R by itself, or on the owner's refund; a lock it has not seen final by C (it was down, its scan lagged, a submission's answer was lost) it keeps looking for until it is found or the finalized LEZ time reaches R with the escrow empty | nothing at stake; its actor ends `expired`; the share tag 16 reveals opens an empty address | `xmr-maker-never-funds` (passed with the owner's refund; now written for the Node's own refund, not run yet); the refund by itself: unit test `the_node_refunds_by_itself_from_r_without_an_owner_command`; a lock seen late: `a_lock_final_before_c_and_seen_after_c_is_found`, `a_lock_final_after_c_is_found_and_refunded_from_r`, `a_lost_submit_answer_does_not_stop_the_look_for_the_lock` |
+| Taker locked; Maker never funds, or the lock is final after C | its Node refunds LEZ with tag 16 from R by itself, or on the owner's refund; a lock it has not seen final by C (it was down, its scan lagged, a submission's answer was lost) it keeps looking for until it is found or the finalized LEZ time reaches R with the escrow empty | nothing at stake; its actor ends `expired`; the share tag 16 reveals opens an empty address | `xmr-maker-never-funds` (passed at `d4475300` with the owner's refund; since rewritten for the Node's own refund: the Maker Node is kept down until the Taker Node has refunded from R with no command); the refund by itself: unit test `the_node_refunds_by_itself_from_r_without_an_owner_command`; a lock seen late: `a_lock_final_before_c_and_seen_after_c_is_found`, `a_lock_final_after_c_is_found_and_refunded_from_r`, `a_lost_submit_answer_does_not_stop_the_look_for_the_lock` |
 | Maker funded; Taker never authorises | its Node refunds LEZ with tag 16 from R by itself, or on the owner's refund | sweeps its Monero back with the revealed share | `xmr-taker-refund`, `xmr-taker-refund-kill` (owner's refund) |
-| Taker's refund sent and dropped (its clock ahead of LEZ time, or lost by the sequencer) | sends nothing before the finalized LEZ time reaches R, then sends the same tag 16 again on every tick until it is final or LEZ time reaches P | sweeps its Monero back once tag 16 is final; punishes only with no tag 16 to the finalized tip from P | unit tests: `a_refund_accepted_and_never_included_is_sent_again_until_it_lands`, `a_host_clock_ahead_of_lez_time_does_not_send_the_refund_early`, `a_refund_not_final_at_p_says_so` (Taker supervisor), `tag16_not_included_is_sent_again_until_it_lands` (sidecar); devnet: `xmr-taker-clock-ahead`, written and not run yet |
+| Taker's refund sent and dropped (its clock ahead of LEZ time, or lost by the sequencer) | sends nothing before the finalized LEZ time reaches R, then sends the same tag 16 again on every tick until it is final or LEZ time reaches P | sweeps its Monero back once tag 16 is final; punishes only with no tag 16 to the finalized tip from P | unit tests: `a_refund_accepted_and_never_included_is_sent_again_until_it_lands`, `a_host_clock_ahead_of_lez_time_does_not_send_the_refund_early`, `a_refund_not_final_at_p_says_so` (Taker supervisor), `tag16_not_included_is_sent_again_until_it_lands` (sidecar); devnet: `xmr-taker-clock-ahead` (the Taker's clock 60 s ahead; no refund recorded as sent before the finalized LEZ time reaches R) |
 | Taker authorised (tag 14); Maker does not claim by its deadline | from R the escrow refunds from `XmrClaimAuthorized`; the Node shows `xmr_maker_did_not_claim` with `refund`; refunds with tag 16 | sweeps its Monero back with the revealed share; a Maker that claims later than its own deadline but before R gives the Taker the share instead | unit tests: `a_late_claim_authorization_is_left_to_the_takers_refund` (Maker actor), `the_claim_path_reads_in_the_status_table` (Taker supervisor); no devnet scenario holds the Maker there |
 | Maker claimed (tag 15), also when the claim is at the sequencer tip and not yet final | has the Maker's share; sweeps whenever it is back, no deadline; sends no refund, by itself or on command | has the LEZ | `xmr-happy`, `xmr-concurrent`, `xmr-kill-taker` (7 kill points, among them "waiting for the Maker's claim" and "sweeping"); unit tests `after_the_makers_claim_the_node_sweeps_and_never_refunds`, `a_maker_claim_at_the_tip_holds_the_refund_back` (Taker supervisor), `the_escrow_is_read_at_the_sequencer_tip` (sidecar) |
-| Taker Node down through [R, P), Maker funded | loses its LEZ | takes the LEZ with tag 17, re-planned past any number of taken nonces; its Monero stays locked | `xmr-punish`; re-plans and resends: unit test `a_punishment_replanned_more_than_five_times_still_lands` (sidecar); devnet: `xmr-punish-replans`, written and not run yet |
+| Taker Node down through [R, P), Maker funded | loses its LEZ | takes the LEZ with tag 17, re-planned past any number of taken nonces; its Monero stays locked | `xmr-punish`; re-plans and resends: unit test `a_punishment_replanned_more_than_five_times_still_lands` (sidecar); devnet: `xmr-punish-replans` (the punishment's nonce taken six times; it lands) |
 
 Crash and restart at each step are covered by `xmr-kill-taker`,
 `xmr-kill-maker` (6 kill points) and `xmr-taker-refund-kill`. The scenarios
-named here that are not marked "not run yet" passed in the full regression at
+named here, except those added after it (`xmr-taker-clock-ahead`,
+`xmr-punish-replans` and the four below), passed in the full regression at
 `d4475300`
 ([regression-m4-2026-11-21](../evidence/regression-m4-2026-11-21/results.tsv)),
 on the Docker devnet against Monero regtest. That run predates the Taker
@@ -216,7 +217,8 @@ rules of this ADR against a cheating party, `xmr-maker-claim-without-authorizati
 (tag 17 before P, and after the Taker's refund: refused),
 `xmr-unfunded-punish` (TM-0031 with the Taker Node stopped and running) and
 `xmr-taker-cheats` (tag 16 before R, and after tag 15: refused), are in the
-full tier and have not run yet.
+full tier (`regress.sh` ids `node:xmr:<scenario>:TakerSellsLez`) and joined it
+after that run.
 
 ### TM-0030 does not carry over
 
@@ -432,5 +434,20 @@ profile, three lanes: 160 of 160, each on its first try, among them the 16
 Monero tests of that tier
 ([`results.tsv`](../evidence/regression-m4-2026-11-21/results.tsv),
 [README](../evidence/regression-m4-2026-11-21/README.md)). The scenarios this
-ADR marks "not run yet" were added to the full tier after that run. No XMR swap
-has run on a public Monero network.
+ADR names as added after that run (`xmr-taker-clock-ahead`,
+`xmr-punish-replans`, `xmr-maker-claim-without-authorization`,
+`xmr-maker-early-punish`, `xmr-unfunded-punish`, `xmr-taker-cheats`) are not in
+that set.
+
+On public Monero Stagenet, from 2026-11-21 22:50 to 2026-11-22 01:49 UTC, the
+two Nodes, built from `8f66d11b`, with LEZ on a fresh devnet chain and public
+Stagenet nodes as daemons, ran this ADR's flow to each of its endings: swap
+`d9353027…` completed (the Maker's funding at ten confirmations, the Taker's
+tag 14, the Maker's tag 15, the Taker's sweep at ten confirmations), swap
+`8eb3c3f6…` refunded (the owner's tag 16 in [R, P), the Maker's Monero swept
+back) and swap `682c0484…` punished (tag 17 35 s after P). Its windows were
+an earlier draft's, C, R, P = +10 min, +2 h, +2.5 h, so the punishment came
+30 minutes after R, where `PublicStagenet` now requires two hours; the
+fixes made after the run were not run on Stagenet
+([Stagenet guide](../monero-stagenet-guide.md#the-node-driven-run-of-2026-11-21)).
+No XMR swap has run on Monero testnet or mainnet.

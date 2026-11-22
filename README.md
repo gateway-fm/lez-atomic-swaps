@@ -20,7 +20,10 @@ Version 0.4.0 adds Monero and LEZ (Milestone 4), in one direction, the Taker
 selling LEZ: a 2-of-2 Monero key split whose shares are revealed by MuSig2
 adaptor signatures on the LEZ escrow, bound to the Monero keys by a
 cross-curve DLEQ proof. It runs through both Nodes and both desks on Monero
-regtest and the private LEZ devnet only. The SDK is in
+regtest and the private LEZ devnet; the Nodes, without the desks, also
+completed, refunded and punished a swap once on public Monero Stagenet with
+LEZ on the devnet
+([`docs/monero-stagenet-guide.md`](docs/monero-stagenet-guide.md)). The SDK is in
 [`docs/sdk-lez-xmr.md`](docs/sdk-lez-xmr.md), the order and its departures
 from the BTC/ZEC flow in
 [ADR 0217](docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md),
@@ -245,11 +248,14 @@ licence, architecture, DCO, and security-review requirements.
 
 The current public release, v0.4.0, covers the M1 protocol foundation, the M2
 ZEC/LEZ pair, the M3 BTC/LEZ vertical slice, the M4 XMR/LEZ pair (one
-direction, the Taker selling LEZ; Monero regtest only, see
+direction, the Taker selling LEZ, see
 [`docs/sdk-lez-xmr.md`](docs/sdk-lez-xmr.md)) and the M6 Maker/Taker
-experience, on private local chains. Public-network operation is not part of
-it (release notes on the
-[release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest)).
+experience, with LEZ on private local chains. Public-network operation is not
+part of it, apart from Monero Stagenet: the Nodes completed, refunded and
+punished a swap there once, with LEZ on the devnet
+([`docs/monero-stagenet-guide.md`](docs/monero-stagenet-guide.md)). Release
+notes are on the
+[release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest).
 
 ## Contributing and security
 

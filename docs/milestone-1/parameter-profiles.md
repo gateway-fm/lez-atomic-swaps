@@ -76,8 +76,10 @@ Its state model is `LEZ lock -> XMR fund -> LEZ claim/XMR spend` or `LEZ refund
 -> maker key-share recovery/XMR spend`, following the reviewed COMIT direction.
 As built (2026-11-14), all three XMR windows are LEZ times: the maker's funding
 cutoff C, the LEZ refund time R and a punish time P, after which the maker can
-take the LEZ and the Monero stays locked; only regtest profiles exist, no
-public one ([protocol design](protocol-design.md#xmrlez)). The devnet derives
+take the LEZ and the Monero stays locked. The role configuration takes the
+`accelerated-regtest` profile or, on public Stagenet, `public-stagenet`
+(C, R, P = +10 min, +2 h, +4 h, [Stagenet guide](../monero-stagenet-guide.md#the-windows));
+no Monero testnet or mainnet profile exists ([protocol design](protocol-design.md#xmrlez)). The devnet derives
 them in `deploy/scripts/gen-config.sh` from the LEZ step S and stall T, the
 profile's Bitcoin maker lock cutoff B and margin M, and a maker actor drive
 counted at 80 s (measured with three devnet lanes busy): C = max(B + 20, 320),
