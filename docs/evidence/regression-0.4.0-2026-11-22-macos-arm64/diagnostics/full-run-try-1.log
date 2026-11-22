@@ -1,0 +1,47 @@
+
+[08:09:49] === logos-happy (TakerSellsForeign)
+
+[08:09:49] both Basecamps recreated on the logos transport
+
+[08:09:56] the Taker's Delivery node dials the Maker's at /ip4/172.29.0.11/tcp/60000/p2p/16Uiu2HAmAmJkhoxrMVDkdxovUrdJAGvccsv1dBsMKrUwgRsPEfiG
+
+[08:10:04] the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket
+   4713
+   {"delivery_sources":[{"directory":"/var/lib/lez/taker/delivery","maker_public_key":"03a3bcaa380ee1f0ce7af54fa2f83bdbbad4a55a3102eeeda907aea2d85a0a07e6","source_id":"local-maker"}],"chat_socket":"/run/lez/taker/logos-chat-proxy.sock"}
+
+[08:10:04] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[08:10:05] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [31m✗[0m taker: taking one offer prepares the real Taker BTC action
+    take rejected by the Taker Node: {"code":"initiation_execution_unavailable","message":"Taker dependency unavailable (initiation_execution_unavailable)","ok":false}
+3 passed, 1 failed
+
+[08:10:33] FAILED: step failed
+
+[08:10:33] maker Chat module:
+   2026-11-22T08:09:56.680 INFO: chat_module::actions: delivery is online
+
+[08:10:33] taker Chat module:
+   2026-11-22T08:10:03.993 INFO: chat_module::actions: delivery is online
+   2026-11-22T08:10:06.906 INFO: chat_module::actions: created direct conversation f33b6ef5f2b08c4ff88578a5f34d5b0c
+   2026-11-22T08:10:06.946 INFO: chat_module::actions: sent 9915 bytes to f33b6ef5f2b08c4ff88578a5f34d5b0c
+
+[08:10:33] the Taker Node's last lines:
+   taker BTC reservation failed: btc_reserve_v1: local RPC error -32010: Chat peer operation unavailable
+
+[08:10:33] both Basecamps recreated on the local transport
+[09:10:46]   kept maker-container.log: 210 lines, 4 Delivery dumps dropped, 2 redacted
+[09:10:46]   kept maker-node.log: 2606 lines, 0 Delivery dumps dropped, 0 redacted
+[09:10:46]   kept maker-basecamp.log: 199 lines, 4 Delivery dumps dropped, 2 redacted
+[09:10:46]   kept maker-health.json: 57 lines, 0 Delivery dumps dropped, 0 redacted
+[09:10:46]   kept taker-container.log: 192 lines, 4 Delivery dumps dropped, 2 redacted
+[09:10:46]   kept taker-node.log: 0 lines, 0 Delivery dumps dropped, 0 redacted
+[09:10:46]   kept taker-basecamp.log: 146 lines, 2 Delivery dumps dropped, 2 redacted
+[09:10:46]   kept taker-health.json: 114 lines, 0 Delivery dumps dropped, 0 redacted
