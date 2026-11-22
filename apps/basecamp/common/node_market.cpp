@@ -426,6 +426,12 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         if (attentionReason == QStringLiteral("xmr_refund_not_final_by_punish_time"))
             return {"attention_required", "Refund not final", 0,
                     "Your LEZ refund was sent and did not land before the punish time: unless your Node still finds it final, the Maker can punish and take your LEZ", "", ""};
+        if (attentionReason == QStringLiteral("xmr_watching_for_maker_claim"))
+            return {"attention_required", "Watching for the Maker's claim", 90,
+                    "The punish time passed after your claim: your Node looks for the Maker's claim, which hands you the Monero, and for its punishment", "", ""};
+        if (attentionReason == QStringLiteral("xmr_maker_claim_scan_failing"))
+            return {"attention_required", "Cannot look for the Maker's claim", 90,
+                    "Your Node cannot read LEZ for the Maker's claim: if the Maker claimed before the refund time, the Monero is yours to sweep once it can again", "", ""};
         if (nodeState == "punished")
             return {"punished", "Punished", 100,
                     "The refund window closed without a refund: your LEZ is the Maker's to take by its punishment, and the Monero stays locked", "", ""};

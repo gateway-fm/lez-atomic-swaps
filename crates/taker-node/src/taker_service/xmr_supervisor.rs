@@ -164,6 +164,16 @@ pub(super) struct XmrTakerProgressV1 {
     /// finalized LEZ time reached R with nothing in the escrow at the tip.
     #[serde(default)]
     pub(super) lock_unfunded: bool,
+    /// The Maker's punishment (tag 17), once final: past `P` a swap whose
+    /// claim was authorised ends punished only on this, never on the clock
+    /// alone, for the Maker may have claimed before `R` instead.
+    #[serde(default)]
+    pub(super) maker_punished: Option<FinalizedLezEffectV1>,
+    #[serde(default)]
+    pub(super) punish_scan_from: Option<u64>,
+    /// The last look for the Maker's claim failed.
+    #[serde(default)]
+    pub(super) maker_claim_scan_failing: bool,
 }
 
 /// The Maker's finalized claim and its aggregate signature (public: it is on
@@ -353,6 +363,26 @@ pub(super) fn xmr_taker_view(
             None,
             None,
             "lez_locking",
+        );
+    }
+    if now_ms >= windows.punish_ms
+        && progress.claim_authorization.is_some()
+        && progress.maker_punished.is_none()
+    {
+        // The claim was authorised: the Maker may have claimed before R (its
+        // tag 15 not seen yet, the Monero then the Taker's to sweep) or may
+        // punish. Until the chain shows which, the swap is not over.
+        return view(
+            Phase::MakerRecoveryAvailable,
+            10,
+            State::AttentionRequired,
+            None,
+            Some(if progress.maker_claim_scan_failing {
+                "xmr_maker_claim_scan_failing"
+            } else {
+                "xmr_watching_for_maker_claim"
+            }),
+            "punish_open",
         );
     }
     if now_ms >= windows.punish_ms {
@@ -1841,6 +1871,11 @@ pub(super) trait XmrClaimChains: Sync {
         &self,
         cursor: u64,
     ) -> Result<std::result::Result<(FinalizedLezEffectV1, Option<[u8; 64]>), u64>>;
+    /// The Maker's punishment (tag 17) once final.
+    async fn find_punishment(
+        &self,
+        cursor: u64,
+    ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>>;
     /// The signature completes the Taker's claim presignature and reveals the
     /// Maker's share, which with the Taker's opens the shared address.
     fn check_maker_claim_signature(&self, signature: [u8; 64]) -> Result<()>;
@@ -1893,26 +1928,7 @@ pub(super) async fn claim_step<C: XmrClaimChains>(
         return sweep_step(chains, files, progress, claim, now_ms).await;
     }
     if let Some(authorized) = &progress.claim_authorized {
-        let cursor = progress.claim_scan_from.unwrap_or(authorized.block_id);
-        match chains.find_maker_claim(cursor).await? {
-            Ok((finalized, signature)) => {
-                let signature =
-                    signature.context("the finalized tag-15 facts omit the aggregate signature")?;
-                chains
-                    .check_maker_claim_signature(signature)
-                    .context("the finalized tag-15 signature")?;
-                files.update(|record| {
-                    record.maker_claim = Some(XmrMakerClaimV1 {
-                        finalized,
-                        signature: hex::encode(signature),
-                    });
-                })?;
-            }
-            Err(cursor) => {
-                files.update(|record| record.claim_scan_from = Some(cursor))?;
-            }
-        }
-        return Ok(());
+        return watch_maker_claim(chains, files, windows, progress, now_ms, authorized).await;
     }
     // Tag 14 publishes the Taker's claim partial, after which the Maker can
     // take the LEZ: the funding it rests on is read again right before it is
@@ -1969,9 +1985,81 @@ pub(super) async fn claim_step<C: XmrClaimChains>(
         }
         Err(cursor) => {
             files.update(|record| record.claim_scan_from = Some(cursor))?;
+            let funded = progress.funded.as_ref().map_or(1, |funded| funded.block_id);
+            look_for_punishment(chains, files, windows, now_ms, funded).await?;
         }
     }
     held_back.map_or(Ok(()), Err)
+}
+
+/// Tag 14 is final: looks for the Maker's claim (tag 15), and from `P` for
+/// its punishment.
+async fn watch_maker_claim<C: XmrClaimChains>(
+    chains: &C,
+    files: &XmrSwapFiles,
+    windows: XmrWindows,
+    progress: &XmrTakerProgressV1,
+    now_ms: u64,
+    authorized: &FinalizedLezEffectV1,
+) -> Result<()> {
+    let cursor = progress.claim_scan_from.unwrap_or(authorized.block_id);
+    let found = match chains.find_maker_claim(cursor).await {
+        Ok(found) => {
+            if progress.maker_claim_scan_failing {
+                files.update(|record| record.maker_claim_scan_failing = false)?;
+            }
+            found
+        }
+        Err(error) => {
+            // Shown on the swap's row: past P it decides the ending.
+            files.update(|record| record.maker_claim_scan_failing = true)?;
+            return Err(error.context("look for the Maker's claim"));
+        }
+    };
+    match found {
+        Ok((finalized, signature)) => {
+            let signature =
+                signature.context("the finalized tag-15 facts omit the aggregate signature")?;
+            chains
+                .check_maker_claim_signature(signature)
+                .context("the finalized tag-15 signature")?;
+            files.update(|record| {
+                record.maker_claim = Some(XmrMakerClaimV1 {
+                    finalized,
+                    signature: hex::encode(signature),
+                });
+            })?;
+        }
+        Err(cursor) => {
+            files.update(|record| record.claim_scan_from = Some(cursor))?;
+            look_for_punishment(chains, files, windows, now_ms, authorized.block_id).await?;
+        }
+    }
+    Ok(())
+}
+
+/// From `P`, with the Maker's claim not found, looks for its punishment: tag
+/// 15 and tag 17 exclude each other on the escrow, and only tag 17 ends an
+/// authorised claim as punished.
+async fn look_for_punishment<C: XmrClaimChains>(
+    chains: &C,
+    files: &XmrSwapFiles,
+    windows: XmrWindows,
+    now_ms: u64,
+    from: u64,
+) -> Result<()> {
+    let progress = files.progress()?;
+    if now_ms < windows.punish_ms || progress.maker_punished.is_some() {
+        return Ok(());
+    }
+    match chains
+        .find_punishment(progress.punish_scan_from.unwrap_or(from))
+        .await?
+    {
+        Ok(finalized) => files.update(|record| record.maker_punished = Some(finalized))?,
+        Err(cursor) => files.update(|record| record.punish_scan_from = Some(cursor))?,
+    };
+    Ok(())
 }
 
 /// The sweep of one claim: sent once from a fresh wallet file, recorded as
@@ -2254,6 +2342,22 @@ impl XmrClaimChains for LiveClaim {
                 let signature = facts.aggregate_signature.map(|value| *value.as_bytes());
                 (finalized, signature)
             }))
+    }
+
+    async fn find_punishment(
+        &self,
+        cursor: u64,
+    ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>> {
+        Ok(self
+            .lez
+            .scan(
+                &self.terms,
+                XmrNativeEffectV3::Punish,
+                &FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+                cursor,
+            )
+            .await?
+            .map(|(finalized, _)| finalized))
     }
 
     fn check_maker_claim_signature(&self, signature: [u8; 64]) -> Result<()> {
@@ -3121,7 +3225,16 @@ mod tests {
             unclaimed.available_action,
             Some(TakerTerminalActionV1::Refund)
         );
-        assert_eq!(at(&progress, WINDOWS.punish_ms).state, State::Punished);
+        // From P it is over only once the chain shows the punishment.
+        let watching = at(&progress, WINDOWS.punish_ms);
+        assert_eq!(watching.state, State::AttentionRequired);
+        assert_eq!(
+            watching.attention_reason,
+            Some("xmr_watching_for_maker_claim")
+        );
+        let mut punished = progress.clone();
+        punished.maker_punished = effect(WINDOWS.punish_ms + 5);
+        assert_eq!(at(&punished, WINDOWS.punish_ms).state, State::Punished);
         // A claim final before R and seen after P is still swept.
         progress.maker_claim = Some(maker_claim(WINDOWS.refund_ms - 1));
         for now in [120_000, WINDOWS.refund_ms, WINDOWS.punish_ms + 1] {
@@ -3162,6 +3275,10 @@ mod tests {
         /// The recorded funding is gone from the chain (reorganised out or
         /// double spent) when read again.
         funding_gone: Mutex<bool>,
+        /// The look for the Maker's claim fails (its sidecar is down).
+        claim_scan_fails: Mutex<bool>,
+        /// The Maker's punishment is final.
+        punished: Mutex<bool>,
     }
 
     impl StubChains {
@@ -3216,9 +3333,25 @@ mod tests {
             cursor: u64,
         ) -> Result<std::result::Result<(FinalizedLezEffectV1, Option<[u8; 64]>), u64>> {
             self.called("find_maker_claim");
+            ensure!(
+                !*self.claim_scan_fails.lock().unwrap(),
+                "the sidecar is down"
+            );
             Ok(match *self.maker_claim.lock().unwrap() {
                 Some(signature) => Ok((effect(130_000).unwrap(), signature)),
                 None => Err(cursor + 1),
+            })
+        }
+
+        async fn find_punishment(
+            &self,
+            cursor: u64,
+        ) -> Result<std::result::Result<FinalizedLezEffectV1, u64>> {
+            self.called("find_punishment");
+            Ok(if *self.punished.lock().unwrap() {
+                Ok(effect(WINDOWS.punish_ms + 5).unwrap())
+            } else {
+                Err(cursor + 1)
             })
         }
 
@@ -3515,6 +3648,50 @@ mod tests {
         assert!(step(&chains, &files, 100_000, false).await.is_err());
         assert_eq!(chains.calls("submit"), 1);
         assert_eq!(chains.calls("find_authorization"), 2);
+    }
+
+    /// Past P an authorised claim is not over on the clock: a Maker that
+    /// claimed before R, its tag 15 not yet seen (the Node was down, or its
+    /// look keeps failing, which the row says), leaves the Monero to sweep;
+    /// only its punishment, once final, ends the swap punished.
+    #[tokio::test]
+    async fn past_p_an_authorised_claim_ends_on_what_the_chain_shows() {
+        let mut authorised = locked();
+        authorised.claim_authorization = Some("ab".repeat(32));
+        authorised.claim_authorized = effect(110_000);
+        let now = WINDOWS.punish_ms + 1;
+
+        // Claimed before R; the look fails past P, then recovers.
+        let (_directory, files) = swap(&authorised);
+        let chains = StubChains::default();
+        *chains.maker_claim.lock().unwrap() = Some(Some([7; 64]));
+        *chains.claim_scan_fails.lock().unwrap() = true;
+        assert!(step(&chains, &files, now, false).await.is_err());
+        let row = xmr_taker_view(&files.progress().unwrap(), WINDOWS, now);
+        assert_eq!(row.state, TakerSwapStateV1::AttentionRequired);
+        assert_eq!(row.attention_reason, Some("xmr_maker_claim_scan_failing"));
+        *chains.claim_scan_fails.lock().unwrap() = false;
+        step(&chains, &files, now, false).await.unwrap();
+        let row = xmr_taker_view(&files.progress().unwrap(), WINDOWS, now);
+        assert_eq!(row.state, TakerSwapStateV1::ClaimInProgress);
+        assert_eq!(row.actor_phase, "sweeping");
+        assert_eq!(chains.calls("find_punishment"), 0);
+
+        // Not claimed: watched until the punishment is final.
+        let (_directory, files) = swap(&authorised);
+        let chains = StubChains::default();
+        step(&chains, &files, now, false).await.unwrap();
+        let row = xmr_taker_view(&files.progress().unwrap(), WINDOWS, now);
+        assert_eq!(row.state, TakerSwapStateV1::AttentionRequired);
+        assert_eq!(row.attention_reason, Some("xmr_watching_for_maker_claim"));
+        *chains.punished.lock().unwrap() = true;
+        step(&chains, &files, now, false).await.unwrap();
+        let row = xmr_taker_view(&files.progress().unwrap(), WINDOWS, now);
+        assert_eq!(row.state, TakerSwapStateV1::Punished);
+
+        // Never authorised: the Maker cannot have claimed; punished from P.
+        let row = xmr_taker_view(&locked(), WINDOWS, now);
+        assert_eq!(row.state, TakerSwapStateV1::Punished);
     }
 
     /// A finalized tag 15 without an aggregate signature, or with one that

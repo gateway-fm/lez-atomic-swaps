@@ -585,7 +585,7 @@ when the owner is needed (`crates/taker-node/src/taker_service/xmr_supervisor.rs
 | `refund_in_flight` | `refund_in_progress` | — | tag 16 sent, not yet final; sent again, the same bytes, while the finalized LEZ time is before P |
 | `refund_not_final` | `attention_required` (`xmr_refund_not_final_by_punish_time`) | — | P passed with tag 16 sent and not seen final: one that landed before P still turns the row `refunded`; otherwise the Maker can take the LEZ |
 | `refunded` | `refunded` | — | the LEZ is back |
-| `punish_open` | `punished` | — | P passed without a refund: the Maker can take the LEZ; the Monero stays locked |
+| `punish_open` | `punished`, or `attention_required` (`xmr_watching_for_maker_claim`, or `xmr_maker_claim_scan_failing` while that look fails) | — | P passed without a refund: the Maker can take the LEZ; the Monero stays locked. After an authorised claim (tag 14) the row stays `attention_required` until the Maker's punishment (tag 17) is final: a Maker that claimed before R (tag 15 not yet seen) leaves the Monero to sweep, and the row turns `sweeping` once its claim is found |
 
 `xmr_claim_sweep_in_doubt` means a sweep was started and its outcome not
 recorded; it is **never resent**. Its `status_detail` names the wallet file

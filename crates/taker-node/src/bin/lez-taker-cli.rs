@@ -1180,6 +1180,14 @@ fn xmr_attention_words(reason: &str) -> Option<&'static str> {
             "your refund did not land before the punish time: unless it is still found final, \
              the Maker can punish and take your LEZ"
         }
+        "xmr_watching_for_maker_claim" => {
+            "the punish time passed after your claim: the Node looks for the Maker's claim, \
+             which hands you the Monero, and for its punishment"
+        }
+        "xmr_maker_claim_scan_failing" => {
+            "the Node cannot look for the Maker's claim: if the Maker claimed before the \
+             refund time, the Monero is yours to sweep once the look works again"
+        }
         _ => return None,
     })
 }
@@ -2284,6 +2292,13 @@ mod xmr_words_tests {
                 None,
                 "needs you: your refund did not land before the punish time: unless it is still \
                  found final, the Maker can punish and take your LEZ",
+            ),
+            (
+                "punish_open",
+                "xmr_maker_claim_scan_failing",
+                None,
+                "needs you: the Node cannot look for the Maker's claim: if the Maker claimed \
+                 before the refund time, the Monero is yours to sweep once the look works again",
             ),
         ] {
             let printed = words(&view(State::AttentionRequired, phase, Some(reason), action));
