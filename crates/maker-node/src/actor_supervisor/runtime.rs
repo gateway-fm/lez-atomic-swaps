@@ -1954,6 +1954,7 @@ fn known_effect_outcome(
                 | "observed"
                 | "submitted"
                 | "awaiting_observation"
+                | "refund_seen_funding_unreconciled"
                 | "reconciled"
                 | "activated"
         ),
@@ -2464,6 +2465,12 @@ mod tests {
             (
                 "awaiting_observation",
                 "taker_lock_confirmed",
+                "fund_monero",
+                false,
+            ),
+            (
+                "refund_seen_funding_unreconciled",
+                "maker_funding_in_doubt",
                 "fund_monero",
                 false,
             ),

@@ -354,10 +354,28 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
     // when the Maker reconciles it: the drive that reconciles the funding also
     // looks for the claim authorization, so the claim window does not wait a
     // drive more for it (one drive is tens of seconds on a loaded host).
-    let reconciled = facts.funding == Funding::Invoked && chains.observe_fund()?;
+    // A failing observation (a public daemon refused as not synchronized or
+    // stale, a wallet-rpc that does not answer) does not stop the drive: the
+    // Taker's refund is still looked for below.
+    let reconciled = facts.funding == Funding::Invoked
+        && chains.observe_fund().unwrap_or_else(|error| {
+            eprintln!("XMR Maker actor: the Monero funding is not reconciled yet: {error:#}");
+            false
+        });
     match facts.funding {
         Funding::NotSent => Ok("unchanged"),
-        Funding::Invoked if !reconciled => Ok("awaiting_observation"),
+        Funding::Invoked if !reconciled => {
+            // A funding that may have been sent and is not recorded yet:
+            // from R the Taker's refund (tag 16, whose signature reveals its
+            // share) is looked for and recorded all the same, and the drive
+            // that reconciles the funding activates the sweep back.
+            if chains.lez_clock()? >= facts.refund_ms
+                && matches!(chains.scan(Watched::Refund)?, Scan::Found(_))
+            {
+                return Ok("refund_seen_funding_unreconciled");
+            }
+            Ok("awaiting_observation")
+        }
         Funding::NotInvoked => {
             if facts.tag13_final_ms.is_none() {
                 return Ok(match chains.scan(Watched::TakerLock)? {
@@ -1850,6 +1868,9 @@ mod tests {
         redrives: u32,
         /// monerod does not answer.
         monero_down: bool,
+        /// The funding observer fails (its daemon is refused).
+        observe_fails: bool,
+        refund_scans: u32,
     }
 
     impl Stub {
@@ -1886,7 +1907,10 @@ mod tests {
                     None => Scan::Absent(true),
                 },
                 Watched::ClaimAuthorization if self.tag14 => Scan::Found(0),
-                Watched::Refund if self.tag16 => Scan::Found(0),
+                Watched::Refund if self.tag16 => {
+                    self.refund_scans += 1;
+                    Scan::Found(0)
+                }
                 Watched::Refund => Scan::Absent(self.refund_scan_to_tip),
                 Watched::ClaimAuthorization => Scan::Absent(true),
                 Watched::Claim => self.tag15,
@@ -1908,6 +1932,9 @@ mod tests {
         }
 
         fn observe_fund(&mut self) -> Result<bool> {
+            if self.observe_fails {
+                return Err(anyhow!("the Monero daemon is not synchronized"));
+            }
             if self.observed_funding {
                 self.durable().funding = Funding::Reconciled;
             }
@@ -2030,6 +2057,36 @@ mod tests {
             derive_status(&stub.facts().unwrap(), R).next_action,
             "refund_monero"
         );
+    }
+
+    /// A funding sent and not recorded (its observer refuses the daemon, or
+    /// misses the output) does not stop the look for the Taker's refund:
+    /// from R it is found and recorded, and the drive that reconciles the
+    /// funding activates the sweep back.
+    #[test]
+    fn an_unreconciled_funding_still_watches_for_the_takers_refund() {
+        let mut stub = Stub::new();
+        stub.lez_ms = 1_000;
+        stub.tag13 = Some(2_000);
+        assert_eq!(drive_once(&mut stub, 2_000).unwrap(), "observed");
+        assert_eq!(drive_once(&mut stub, 3_000).unwrap(), "submitted");
+        stub.observe_fails = true;
+        assert_eq!(
+            drive_once(&mut stub, 4_000).unwrap(),
+            "awaiting_observation"
+        );
+        stub.tag16 = true;
+        stub.lez_ms = R;
+        assert_eq!(
+            drive_once(&mut stub, R).unwrap(),
+            "refund_seen_funding_unreconciled"
+        );
+        assert_eq!(stub.refund_scans, 1);
+        assert!(stub.activations.is_empty());
+        stub.observe_fails = false;
+        stub.observed_funding = true;
+        assert_eq!(drive_once(&mut stub, R + 1).unwrap(), "activated");
+        assert_eq!(stub.activations, [XmrWorkflowBranch::Refund]);
     }
 
     #[test]
