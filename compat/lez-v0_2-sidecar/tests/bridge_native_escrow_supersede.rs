@@ -54,6 +54,8 @@ struct Chain {
     sends: Arc<AtomicUsize>,
     included: Arc<Mutex<Vec<LeeTransaction>>>,
     escrow_occupied: Arc<AtomicBool>,
+    /// Sends still to answer with an error, as a lost answer does.
+    failing_sends: Arc<AtomicUsize>,
 }
 
 impl Chain {
@@ -64,6 +66,7 @@ impl Chain {
             sends: Arc::new(AtomicUsize::new(0)),
             included: Arc::new(Mutex::new(Vec::new())),
             escrow_occupied: Arc::new(AtomicBool::new(false)),
+            failing_sends: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -190,6 +193,16 @@ async fn start_sequencer(chain: Chain) -> (String, jsonrpsee::server::ServerHand
     rpc.register_method("sendTransaction", |params, chain, _| {
         let transaction: LeeTransaction = params.one()?;
         chain.sends.fetch_add(1, Ordering::SeqCst);
+        if chain
+            .failing_sends
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            // The send reached the node and its answer is lost.
+            return Err(ErrorObjectOwned::owned(-32_000, "send lost", None::<()>));
+        }
         Ok::<_, ErrorObjectOwned>(transaction.hash())
     })
     .expect("send method");
@@ -645,6 +658,7 @@ async fn fund_supersession_keeps_the_initialization_and_replays_identically() {
         sends: Arc::clone(&chain.sends),
         included: Arc::clone(&chain.included),
         escrow_occupied: Arc::clone(&chain.escrow_occupied),
+        failing_sends: Arc::clone(&chain.failing_sends),
     };
     let (_, key) = account(31);
     let restarted = start_sidecar(signer, key, &endpoint, directory.path(), &restarted_chain).await;
@@ -897,6 +911,61 @@ async fn a_resubmission_after_a_journaled_acceptance_is_decided_on_the_chain_aga
         .expect("resubmission of included bytes");
     assert_eq!(known.outcome, SubmissionOutcome::AlreadyKnown);
     assert_eq!(chain.send_count(), 2);
+
+    sidecar.server.stop().await.expect("stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+/// A lock whose send's answer was lost (or whose sidecar was killed while it
+/// was in flight) is asked for again under the same request id: it is
+/// decided on the chain again, not answered `unknown_submission_outcome`
+/// from the journal for good.
+#[tokio::test]
+async fn an_unknown_lock_submission_is_decided_on_the_chain_again() {
+    let (signer, key) = account(31);
+    let (claimant, _) = account(32);
+    let chain = Chain::new();
+    let (endpoint, sequencer) = start_sequencer(chain.clone()).await;
+    let directory = secure_directory();
+    let sidecar = start_sidecar(signer, key, &endpoint, directory.path(), &chain).await;
+
+    let pair = prepare(&sidecar, signer, claimant).await;
+    let request = submit_request(signer, &pair.initialization);
+    chain.failing_sends.store(1, Ordering::SeqCst);
+    assert_remote_code(
+        sidecar.client().submit_transaction(request.clone()).await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(chain.send_count(), 1);
+
+    let again = sidecar
+        .client()
+        .submit_transaction(request.clone())
+        .await
+        .expect("the unknown lock is decided again");
+    assert_eq!(again.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(chain.send_count(), 2, "the exact bytes went out again");
+
+    // Its nonce taken meanwhile, it is named Superseded (D1) and re-planned.
+    chain.failing_sends.store(1, Ordering::SeqCst);
+    let funding = submit_request(signer, &pair.funding);
+    chain.include_exact(&pair.initialization);
+    assert_remote_code(
+        sidecar.client().submit_transaction(funding.clone()).await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    chain.set_live_nonce(FIRST_NONCE + 3);
+    let superseded = sidecar
+        .client()
+        .submit_transaction(funding)
+        .await
+        .expect("the unknown funding is decided again");
+    assert!(
+        matches!(superseded.outcome, SubmissionOutcome::Superseded { .. }),
+        "{superseded:?}"
+    );
+    assert_eq!(chain.send_count(), 3);
 
     sidecar.server.stop().await.expect("stop");
     sequencer.stop().expect("sequencer stop");

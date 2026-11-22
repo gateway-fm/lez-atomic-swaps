@@ -499,7 +499,7 @@ async fn a_refund_refused_before_its_send_is_sent_once_under_the_same_request_id
 }
 
 #[tokio::test]
-async fn a_refund_whose_send_was_reached_is_never_sent_again() {
+async fn a_refund_whose_send_was_reached_is_decided_on_the_chain_again() {
     let node = Arc::new(Node::default());
     let (node_endpoint, node_handle) = start_node(Arc::clone(&node)).await;
     let root = TestDirectory::secure();
@@ -524,19 +524,17 @@ async fn a_refund_whose_send_was_reached_is_never_sent_again() {
     );
     assert_eq!(node.sends(), 1);
 
-    // From then on the unknown outcome is replayed, also once the node
-    // would take it: one send in all.
+    // An unknown outcome is no answer: replayed, it would hold the LEZ in
+    // the escrow for good (the caller asks again only while the escrow is
+    // still refundable). The same bytes are looked up and sent again.
     node.failing_sends.store(false, Ordering::SeqCst);
-    for _ in 0..2 {
-        assert_remote_code(
-            client(server.endpoint(), descriptor.clone())
-                .submit_transaction(submission.clone())
-                .await,
-            ErrorCode::UnknownSubmissionOutcome,
-        );
-    }
-    assert_eq!(node.lookups(), 2);
-    assert_eq!(node.sends(), 1);
+    let accepted = client(server.endpoint(), descriptor.clone())
+        .submit_transaction(submission.clone())
+        .await
+        .unwrap();
+    assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(node.lookups(), 3);
+    assert_eq!(node.sends(), 2);
 
     server.stop().await.unwrap();
     node_handle.stop().unwrap();

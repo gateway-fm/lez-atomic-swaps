@@ -1069,9 +1069,10 @@ pub(super) trait XmrLockChains: Sync {
 /// One lock step; returns whether the pair's next transaction went out.
 ///
 /// Before the funding cutoff C it sends the pair's next transaction and
-/// looks for it. A send that fails, or whose answer was lost (the sidecar
-/// then answers "unknown" for that request from then on), does not stop the
-/// look: what is final is found and recorded. From C nothing is sent, but a
+/// looks for it. A send that fails, or whose answer was lost, does not stop
+/// the look: what is final is found and recorded, and the next step's send
+/// under the same request id is decided on the chain again by the sidecar
+/// (looked up, then sent once more), not answered "unknown" from its journal. From C nothing is sent, but a
 /// pair once prepared is still looked for, because a lock may land or be
 /// seen final after C (the Node was down, its scan lagged, the sequencer
 /// was slow; the escrow takes the funding until R), and a locked escrow the
@@ -1858,7 +1859,9 @@ pub(super) trait XmrClaimChains: Sync {
     /// Tag 14 as the sidecar prepares it (a replayed request: the same bytes).
     async fn prepare_authorization(&self) -> Result<Self::Authorization>;
     fn authorization_id(authorization: &Self::Authorization) -> String;
-    /// Submits it; a resubmission is the sidecar's replay, never a second send.
+    /// Submits it. A resubmission of an accepted one is the sidecar's replay;
+    /// one whose outcome is unknown (or whose sidecar stopped mid-send) is
+    /// looked up and sent again, the same bytes, only before `R`.
     async fn submit_authorization(&self, authorization: &Self::Authorization) -> Result<()>;
     async fn find_authorization(
         &self,
@@ -1896,7 +1899,9 @@ pub(super) trait XmrClaimChains: Sync {
 /// One step of the claim. Each effect is journaled in the progress record
 /// before or as it happens, so a crash anywhere resumes without repeating
 /// one: tag 14 is recorded before its first submission and from then on only
-/// replayed (and only before `R`) and followed to finality; the Maker's tag 15
+/// submitted again under its request id (only before `R`; the sidecar sends
+/// its identical bytes again only when their outcome is unknown) and followed
+/// to finality; the Maker's tag 15
 /// is recorded once final with a signature that opens the shared address; a
 /// sweep is recorded as started before it is sent, and one started and not
 /// recorded is never resent (`xmr_claim_sweep_in_doubt`).

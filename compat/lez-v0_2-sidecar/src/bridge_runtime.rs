@@ -1597,6 +1597,33 @@ impl BridgeRuntime {
         self.planner.xmr_claim_submission(prepared).await
     }
 
+    /// Whether an unknown outcome, or the in-flight marker of a submission
+    /// whose sidecar stopped mid-send, that the request journal holds for
+    /// these exact bytes is decided on the chain again (looked up, then sent
+    /// once more) instead of replayed: every owned submission whose caller
+    /// sends the same request id again, only after it observed the
+    /// transaction absent and inside its own window. That is the XMR tag-13
+    /// pair, tag 15, tag 16 and tag 17, the native escrow pair and its
+    /// re-plans, the revealing claim and its re-plans (also the Maker's
+    /// follow-up claim) and the native refund. Identical bytes carry one
+    /// transaction id and one nonce and are included at most once.
+    pub async fn submission_unknown_decided_again(&self, prepared: &PreparedTransaction) -> bool {
+        self.submission_success_decided_again(prepared).await
+            || self.planner.native_refund_submission(prepared).await
+            || self.planner.xmr_escrow_submission(prepared).await
+    }
+
+    /// Whether a success the request journal holds for these exact bytes is
+    /// decided on the chain again as well: those asked for again only once
+    /// observed absent although accepted (a sequencer that admitted them and
+    /// dropped them), and those whose nonce can be taken and re-planned.
+    pub async fn submission_success_decided_again(&self, prepared: &PreparedTransaction) -> bool {
+        self.xmr_recovery_submission(prepared).await
+            || self.xmr_claim_submission(prepared).await
+            || self.native_escrow_lineage_member(prepared).await
+            || self.revealing_claim_lineage_member(prepared).await
+    }
+
     /// Submits only exact bytes owned by this actor's active durable planner.
     ///
     /// An exact canonical lookup is performed before submission. A found byte-

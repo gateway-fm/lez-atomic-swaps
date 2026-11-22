@@ -1672,36 +1672,45 @@ fn register_methods(
         // caller observed it absent, so its journaled acceptance is decided on
         // the chain again: landed (already known), nonce taken (superseded,
         // D1) or sent again. A replayed "accepted" never reached the node
-        // (chain 35, 2026-10-29). Other submissions keep their one attempt.
-        // The same for an owned revealing claim (FINDINGS 24): a claim whose
-        // nonce another claim of this signer took is named Superseded.
-        // A recovery that can still land and that nothing else replaces (the
-        // Taker's XMR refund, tag 16) is decided again whatever was journaled
-        // for it: a sequencer that admitted it and dropped it at block
-        // building, or a send whose outcome is unknown, would otherwise leave
-        // it unsent for good. Sending the identical bytes again is harmless:
-        // one transaction id, one nonce, included at most once. The same for
-        // the Maker's tag-15 claim: a Maker killed while its claim waited on
-        // the sequencer left an in-flight marker that would otherwise answer
-        // `unknown_submission_outcome` to every claim tool run until R
-        // (node:xmr:xmr-kill-maker, "claim tool running"); the Maker's actor
-        // asks for it only before R.
-        let recovery = runtime.xmr_recovery_submission(&request.transaction).await
-            || runtime.xmr_claim_submission(&request.transaction).await;
-        let decide_again = recovery
-            || runtime
-                .native_escrow_lineage_member(&request.transaction)
-                .await
-            || runtime
-                .revealing_claim_lineage_member(&request.transaction)
-                .await;
+        // (chain 35, 2026-10-29). The same for an owned revealing claim
+        // (FINDINGS 24): a claim whose nonce another claim of this signer
+        // took is named Superseded; and for the XMR recoveries (tags 16 and
+        // 17) and the Maker's tag-15 claim.
+        // An unknown outcome, or the in-flight marker a sidecar killed
+        // mid-submission leaves, is no answer either: replayed, it would
+        // answer `unknown_submission_outcome` to every later attempt under
+        // the same request id, until the caller's window closed
+        // (node:xmr:xmr-kill-maker, "claim tool running"). Every owned
+        // submission whose caller sends its request id again, only after it
+        // observed the transaction absent and inside its own window, decides
+        // it again (BridgeRuntime::submission_unknown_decided_again); a
+        // definite refusal stays replayed. The recoveries (tags 16 and 17)
+        // decide every outcome again: a refusal of them can lift with time
+        // (a tag 16 dropped before R lands from R). Sending
+        // identical bytes again is harmless: one transaction id, one nonce,
+        // included at most once. The others (the BTC actor's witnessed and
+        // asset effects, which its own journal sends once and never asks for
+        // again, and the reference clock transaction) keep their one attempt.
+        let decide_success_again = runtime
+            .submission_success_decided_again(&request.transaction)
+            .await;
+        let failures = if runtime.xmr_recovery_submission(&request.transaction).await {
+            FailureReplay::DecideAgain
+        } else if runtime
+            .submission_unknown_decided_again(&request.transaction)
+            .await
+        {
+            FailureReplay::DecideUnknownAgain
+        } else {
+            FailureReplay::Replay
+        };
         state
             .execute_with_policy(
                 METHOD_SUBMIT_TRANSACTION,
                 &request.context,
                 &request,
-                decide_again,
-                recovery,
+                decide_success_again,
+                failures,
                 || async move {
                     runtime
                         .submit_transaction(&operation)
@@ -2212,7 +2221,11 @@ impl ServerState {
     {
         // The XMR claim authorization's node facts move, and a tag-17
         // punishment whose nonce was taken is re-planned: their journaled
-        // successes are decided again. Everything else replays.
+        // successes are decided again. The Taker's tag 14 is sent again under
+        // its request id only before R, after its supervisor re-read the
+        // Monero funding: an unknown or in-flight outcome of it is decided on
+        // the chain again (looked up, then sent once more), as for the
+        // submissions of `submit_transaction`. Everything else replays.
         self.execute_with_policy(
             method,
             context,
@@ -2222,24 +2235,27 @@ impl ServerState {
                 METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
                     | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
             ),
-            false,
+            if method == METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3 {
+                FailureReplay::DecideUnknownAgain
+            } else {
+                FailureReplay::Replay
+            },
             operation,
         )
         .await
     }
 
     /// As [`Self::execute`]; `decide_success_again` re-runs the operation for
-    /// a journaled success instead of replaying it (errors and in-flight
-    /// markers stay single-attempt, except a submission refused as
-    /// `unavailable` before its send, which is tried again, and every outcome
-    /// of a submission with `decide_failure_again`).
+    /// a journaled success instead of replaying it, and `failures` says which
+    /// journaled failures of a submission are decided again (a submission
+    /// refused as `unavailable` before its send is always tried again).
     async fn execute_with_policy<Request, Operation, Fut>(
         &self,
         method: &'static str,
         context: &MessageContext,
         request: &Request,
         decide_success_again: bool,
-        decide_failure_again: bool,
+        failures: FailureReplay,
         operation: Operation,
     ) -> Result<Value, ErrorObjectOwned>
     where
@@ -2261,8 +2277,13 @@ impl ServerState {
                     PersistedOutcome::Success(value) if decide_success_again => {
                         decided_before = Some(value.clone());
                     }
-                    PersistedOutcome::Error(_) | PersistedOutcome::SubmissionInFlight(_)
-                        if decide_failure_again && is_submission_method(method) => {}
+                    PersistedOutcome::SubmissionInFlight(_)
+                        if failures != FailureReplay::Replay && is_submission_method(method) => {}
+                    PersistedOutcome::Error(reply)
+                        if is_submission_method(method)
+                            && (failures == FailureReplay::DecideAgain
+                                || (failures == FailureReplay::DecideUnknownAgain
+                                    && reply.code == ErrorCode::UnknownSubmissionOutcome)) => {}
                     _ => return outcome.into_rpc_result(),
                 }
             }
@@ -2339,6 +2360,19 @@ impl ServerState {
         outcome.into_rpc_result()
     }
 }
+/// Which journaled failures of a submission are decided on the chain again
+/// instead of replayed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FailureReplay {
+    /// Every failure is replayed (one attempt).
+    Replay,
+    /// An unknown outcome and an in-flight marker are decided again; a
+    /// definite refusal is replayed.
+    DecideUnknownAgain,
+    /// Every failure is decided again.
+    DecideAgain,
+}
+
 fn is_submission_method(method: &str) -> bool {
     matches!(
         method,

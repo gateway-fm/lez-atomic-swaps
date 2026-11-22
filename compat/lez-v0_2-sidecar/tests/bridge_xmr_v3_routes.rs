@@ -1965,6 +1965,64 @@ async fn durable_xmr_escrow_pair_uses_actor_ordered_one_attempt_route() {
     sequencer.stopped().await;
 }
 
+/// A tag-13 transaction whose send's outcome is unknown (or whose sidecar
+/// was killed while it was in flight) is asked for again before C under its
+/// request id: it is decided on the chain again, not answered
+/// `unknown_submission_outcome` from the journal until the swap expires.
+#[tokio::test]
+async fn an_unknown_xmr_escrow_submission_is_decided_on_the_chain_again() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::WrongTransactionId).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let prepared = taker
+        .fresh_client()
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, "prepare-unknown-escrow"),
+            taker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("prepare exact durable XMR escrow pair");
+    let initialization = SubmitTransactionRequest::new(
+        submission_context(Participant::Taker, prepared.initialization.transaction_id),
+        taker_runtime,
+        prepared.initialization.clone(),
+    );
+    for sends in 1..=2 {
+        assert_remote_code(
+            taker
+                .fresh_client()
+                .submit_transaction(initialization.clone())
+                .await,
+            ErrorCode::UnknownSubmissionOutcome,
+        );
+        assert_eq!(fixture.send_count(), sends);
+        assert_eq!(fixture.lookup_count(), sends);
+    }
+    fixture.include_exact(&prepared.initialization);
+    let landed = taker
+        .fresh_client()
+        .submit_transaction(initialization)
+        .await
+        .expect("an included initialization is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 2);
+
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
 #[tokio::test]
 async fn xmr_escrow_submission_requires_the_owner_only_durable_pair() {
     let (depositor, depositor_key) = account(31);
@@ -2120,7 +2178,7 @@ async fn dedicated_xmr_authorization_already_known_uses_exact_lookup_without_sen
 }
 
 #[tokio::test]
-async fn dedicated_xmr_authorization_wrong_returned_id_is_unknown_and_replay_does_not_resend() {
+async fn dedicated_xmr_authorization_wrong_returned_id_is_unknown_and_decided_again() {
     let (depositor, depositor_key) = account(31);
     let (claimant, _) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -2158,15 +2216,26 @@ async fn dedicated_xmr_authorization_wrong_returned_id_is_unknown_and_replay_doe
     assert_eq!(fixture.lookup_count(), 1);
     assert_eq!(fixture.send_count(), 1);
 
+    // An unknown outcome is no answer: the supervisor asks again only before
+    // R, and the same bytes are looked up and sent again.
     assert_remote_code(
         taker
             .fresh_release_client()
-            .submit_native_xmr_claim_authorization_v3(request)
+            .submit_native_xmr_claim_authorization_v3(request.clone())
             .await,
         ErrorCode::UnknownSubmissionOutcome,
     );
-    assert_eq!(fixture.lookup_count(), 1);
-    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 2);
+    // Once included it is already known, and nothing is sent.
+    fixture.include_exact(&request.authorization);
+    let landed = taker
+        .fresh_release_client()
+        .submit_native_xmr_claim_authorization_v3(request)
+        .await
+        .expect("an included tag 14 is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 2);
 
     taker.server.stop().await.expect("taker stop");
     sequencer.stop().expect("sequencer stop");

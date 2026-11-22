@@ -430,8 +430,9 @@ pub(crate) enum OwnedSubmission {
 /// bytes. On Linux, an owner-only durable store can reserve those bytes before
 /// exposure. The generic submission validator admits only active, revalidated
 /// preparations. Native-XMR init, fund, and tag-16 refund submissions additionally
-/// use their transaction IDs as canonical request identities (one attempt for
-/// init and fund; the refund is sent again until it lands).
+/// use their transaction IDs as canonical request identities (init and fund
+/// are sent again only when their outcome is unknown; the refund is sent
+/// again until it lands).
 pub struct NativeEscrowPlanner {
     role: Participant,
     signer: Arc<dyn MessageSigner>,
@@ -3137,6 +3138,27 @@ impl NativeEscrowPlanner {
             .completed_xmr_claim_v3
             .as_ref()
             .is_some_and(|completed| completed.result.claim == *prepared)
+    }
+
+    /// Whether `prepared` is the native refund this sidecar holds (the ZEC
+    /// path's `lez_refund` of a native escrow): one fixed destination, one
+    /// nonce, sent only once the caller found its escrow still refundable.
+    pub async fn native_refund_submission(&self, prepared: &PreparedTransaction) -> bool {
+        let state = self.state.lock().await;
+        state
+            .active_refund
+            .as_ref()
+            .is_some_and(|active| active.result.refund == *prepared)
+    }
+
+    /// Whether `prepared` is the native-XMR escrow pair's initialization or
+    /// funding (tag 13) this sidecar holds: sent only before the funding
+    /// cutoff C, the funding only once the initialization is included.
+    pub async fn xmr_escrow_submission(&self, prepared: &PreparedTransaction) -> bool {
+        let state = self.state.lock().await;
+        state.active_xmr_escrow_v3.as_ref().is_some_and(|active| {
+            active.result.initialization == *prepared || active.result.funding == *prepared
+        })
     }
 
     fn validate_claim_supersede_request(

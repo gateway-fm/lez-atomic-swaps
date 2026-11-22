@@ -210,6 +210,21 @@ and TM-0033 to TM-0036):
 
 The sidecar:
 
+- Its request store answers a repeated request from what it journaled,
+  except for submissions whose caller asks again under the same request id
+  only after it found the transaction absent and only inside its own window:
+  the XMR tag-13 pair, tags 14 to 17, the native escrow pair and its
+  re-plans, the revealing claim and its re-plans (the Maker's follow-up claim
+  too) and the native refund (`lez_refund`). For those, an unknown outcome,
+  or the in-flight marker a sidecar killed mid-submission leaves, is decided
+  on the chain again: the exact bytes are looked up and, absent, sent once
+  more (one transaction id and one nonce, included at most once). A definite
+  refusal is still replayed, except for tags 16 and 17. The BTC reference
+  actor's witnessed and token effects keep one attempt (its own journal sends
+  each once and never asks again; a lost one falls back to observation and
+  recovery), and so does the reference clock transaction. Unit tests only;
+  no devnet scenario kills a sidecar mid-submission except
+  `xmr-kill-maker`'s "claim tool running" (tag 15).
 - Its request store holds at most 4,096 entries (`MAX_STORE_ENTRIES`). When
   full it evicts a read, then the oldest settled submission; a store full of
   preparations and submissions in flight refuses new requests.
