@@ -345,6 +345,59 @@ pub(crate) async fn verify_daemon_network(
     validate_network_info(&envelope.into_result(OPERATION)?, network)
 }
 
+/// One bounded daemon read, once more on a lost answer or a Digest 401 on
+/// another pooled connection (see the crate documentation).
+async fn daemon_read<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    operation: &'static str,
+    daemon: &LoopbackRpcEndpoint,
+    request: &'static str,
+) -> Result<T, MoneroTopologyError> {
+    let bytes = match exchange(client, operation, daemon, daemon, request).await {
+        Err(
+            MoneroTopologyError::HttpTransport
+            | MoneroTopologyError::BodyRead { .. }
+            | MoneroTopologyError::UnexpectedHttpStatus { actual: 401, .. },
+        ) => exchange(client, operation, daemon, daemon, request).await?,
+        result => result?,
+    };
+    let envelope: RpcEnvelope<T> = serde_json::from_slice(&bytes)
+        .map_err(|_| MoneroTopologyError::MalformedRpcEnvelope { operation })?;
+    envelope.into_result(operation)
+}
+
+/// Proves the daemon is fit to decide on now: it serves `network`
+/// ([`verify_daemon_network`]), and on a public network it is synchronized
+/// and its tip is recent by this host's clock, as
+/// [`MoneroTopologyVerifier::verify`] proves for a Stagenet receipt. It asks
+/// nothing of a wallet, so a role checks its daemon this way before each
+/// decision it takes on what that daemon reports.
+pub(crate) async fn verify_daemon_current(
+    daemon: &LoopbackRpcEndpoint,
+    network: MoneroNetwork,
+) -> Result<(), MoneroTopologyError> {
+    let client = reqwest::Client::builder()
+        .timeout(RPC_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|_| MoneroTopologyError::HttpClientBuild)?;
+    let info: GetInfoResult =
+        daemon_read(&client, "daemon.get_info", daemon, GET_INFO_REQUEST).await?;
+    match network {
+        MoneroNetwork::Regtest => validate_network_info(&info, network),
+        MoneroNetwork::Stagenet => {
+            validate_public_info(&info, network)?;
+            let header: GetLastBlockHeaderResult = daemon_read(
+                &client,
+                "daemon.get_last_block_header",
+                daemon,
+                GET_LAST_BLOCK_HEADER_REQUEST,
+            )
+            .await?;
+            validate_fresh_tip(&header, &info, unix_now())
+        }
+    }
+}
+
 impl fmt::Debug for MoneroTopologyVerifier<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -785,7 +838,9 @@ fn validate_fresh_tip(
 ) -> Result<(), MoneroTopologyError> {
     if header.status != "OK"
         || header.untrusted
-        || header.block_header.height.checked_add(1) != Some(info.height)
+        // A block found between the two reads moves the header one ahead.
+        || !(header.block_header.height.checked_add(1) == Some(info.height)
+            || header.block_header.height == info.height)
         || now.abs_diff(header.block_header.timestamp) > MAX_PUBLIC_TIP_AGE_SECONDS
     {
         return Err(MoneroTopologyError::DaemonTipStale);
@@ -992,10 +1047,16 @@ mod tests {
             validate_fresh_tip(&header(48_556, now - 600, false), &synced, now),
             Ok(())
         );
+        // A block found between `get_info` and the header read.
+        assert_eq!(
+            validate_fresh_tip(&header(48_557, now - 1, false), &synced, now),
+            Ok(())
+        );
         for stale in [
             header(48_556, now - MAX_PUBLIC_TIP_AGE_SECONDS - 1, false),
             header(48_556, now + MAX_PUBLIC_TIP_AGE_SECONDS + 1, false),
             header(48_555, now, false),
+            header(48_558, now, false),
             header(48_556, now, true),
         ] {
             assert_eq!(
@@ -1003,6 +1064,42 @@ mod tests {
                 Err(MoneroTopologyError::DaemonTipStale)
             );
         }
+    }
+
+    /// A role checks its daemon before each decision on what it reports: a
+    /// Regtest role refuses a daemon that is not the fakechain (the Regtest
+    /// genesis is the mainnet one), a Stagenet role one still syncing.
+    #[tokio::test]
+    async fn a_daemon_is_checked_current_for_the_roles_network() {
+        let fakechain = spawn_server("user", "password", RpcBehavior::valid()).await;
+        assert_eq!(
+            verify_daemon_current(&fakechain.endpoint, MoneroNetwork::Regtest).await,
+            Ok(())
+        );
+        assert_eq!(
+            verify_daemon_current(&fakechain.endpoint, MoneroNetwork::Stagenet).await,
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+        let mainnet = RpcBehavior {
+            info: valid_info(0, 0)
+                .replace(r#""nettype":"fakechain""#, r#""nettype":"mainnet""#)
+                .replace(r#""mainnet":false"#, r#""mainnet":true"#),
+            ..RpcBehavior::valid()
+        };
+        let mainnet = spawn_server("user", "password", mainnet).await;
+        assert_eq!(
+            verify_daemon_current(&mainnet.endpoint, MoneroNetwork::Regtest).await,
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+        let syncing = RpcBehavior {
+            info: success(STAGENET_GET_INFO),
+            ..RpcBehavior::valid()
+        };
+        let syncing = spawn_server("user", "password", syncing).await;
+        assert_eq!(
+            verify_daemon_current(&syncing.endpoint, MoneroNetwork::Stagenet).await,
+            Err(MoneroTopologyError::DaemonNotSynchronized)
+        );
     }
 
     #[derive(Clone)]

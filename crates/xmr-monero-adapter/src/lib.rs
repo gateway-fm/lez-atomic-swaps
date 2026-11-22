@@ -319,6 +319,33 @@ impl MoneroChainIdentityAttestor {
         }
     }
 
+    /// Proves the daemon is fit to decide on now: it runs the attestor's
+    /// network (as [`Self::verify_network`]), and on Stagenet it is
+    /// synchronized, not syncing, and its tip is at most
+    /// [`MAX_PUBLIC_TIP_AGE_SECONDS`] from this host's clock.
+    ///
+    /// # Errors
+    ///
+    /// [`MoneroEvidenceError::DaemonNetworkMismatch`] for a daemon of another
+    /// network or an untrusted answer; [`MoneroEvidenceError::DaemonNotCurrent`]
+    /// for one not synchronized or with a stale tip;
+    /// [`MoneroEvidenceError::Rpc`] when a bounded read fails.
+    pub async fn verify_daemon_current(&self) -> Result<(), MoneroEvidenceError> {
+        match topology::verify_daemon_current(&self.endpoint, self.network).await {
+            Ok(()) => Ok(()),
+            Err(MoneroTopologyError::DaemonNetworkMismatch) => {
+                Err(MoneroEvidenceError::DaemonNetworkMismatch)
+            }
+            Err(
+                MoneroTopologyError::DaemonNotSynchronized | MoneroTopologyError::DaemonTipStale,
+            ) => Err(MoneroEvidenceError::DaemonNotCurrent),
+            Err(error) => Err(MoneroEvidenceError::Rpc {
+                operation: "get_info",
+                source: error.into(),
+            }),
+        }
+    }
+
     /// Reads the daemon's current tip height (its block count less one).
     ///
     /// # Errors
@@ -853,6 +880,9 @@ pub enum MoneroEvidenceError {
     /// The daemon's `get_info` names another network than the configured one.
     #[error("Monero daemon does not serve the configured network")]
     DaemonNetworkMismatch,
+    /// The public daemon is not synchronized, or its tip is not recent.
+    #[error("Monero daemon is not synchronized or its tip is stale")]
+    DaemonNotCurrent,
     /// A decoded collection exceeded its post-decode `PoC` bound.
     #[error("decoded Monero `{resource}` exceeded the semantic bound {maximum}")]
     SemanticResponseBound {

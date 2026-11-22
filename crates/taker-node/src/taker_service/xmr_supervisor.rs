@@ -54,8 +54,9 @@ use lez_btc_role_lifecycle::{
 use lez_swap_core::{Phase, SwapId};
 use lez_swap_store::TakerFacadeActionV1;
 use lez_xmr_monero_adapter::{
-    ExpectedMoneroOutput, MoneroAddress, MoneroOutputVerifier, MoneroRegtestMining,
-    MoneroRegtestWalletEffects, MoneroTransactionId, MoneroWalletEffectError, MoneroWalletRpcLock,
+    ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentityAttestor,
+    MoneroOutputVerifier, MoneroRegtestMining, MoneroRegtestWalletEffects, MoneroTransactionId,
+    MoneroWalletEffectError, MoneroWalletRpcLock,
 };
 use lez_xmr_swap_sdk::{
     CrossCurveScalar, MoneroPrivateViewKey, ReconstructedMoneroSpendKey, XmrActivatedAgreementV1,
@@ -1440,6 +1441,10 @@ async fn observe_monero_locked(
             .await
             .is_ok()
         {
+            // What lets the owner claim rests on this daemon's word: it must
+            // serve the swap's network and, on a public one, be synchronized
+            // with a recent tip.
+            daemon_current(&agreement, &monerod).await?;
             files.update(|record| {
                 record.monero_funding_transaction =
                     Some(hex::encode(AsRef::<[u8]>::as_ref(&transaction)));
@@ -1451,6 +1456,21 @@ async fn observe_monero_locked(
     // The role wallet is what every other user of this wallet-rpc expects.
     let _ = role.open_role_wallet().await;
     observed
+}
+
+/// The role's daemon is fit to decide on now
+/// ([`MoneroChainIdentityAttestor::verify_daemon_current`]): it serves the
+/// swap's Monero network (a Regtest swap's daemon is the fakechain, never the
+/// mainnet whose genesis it shares) and, on Stagenet, it is synchronized with
+/// a tip at most an hour old.
+async fn daemon_current(agreement: &XmrAgreementV1, monerod: &LoopbackRpcEndpoint) -> Result<()> {
+    MoneroChainIdentityAttestor::new(
+        xmr_reference_actor::agreement_monero_network(agreement),
+        monerod,
+    )?
+    .verify_daemon_current()
+    .await
+    .context("the role's Monero daemon")
 }
 
 /// The Taker's own Monero spend share, little-endian.
@@ -2155,6 +2175,7 @@ impl XmrClaimChains for LiveClaim {
         let facts = self.facts.clone();
         let swept = under_wallet_lock(&self.dynamic, None, move || async move {
             let (agreement, _, view_bytes) = files.agreement()?;
+            daemon_current(&agreement, &dynamic.config().monerod()?).await?;
             let key = maker_claim_key(&files, &agreement, signature)?;
             let role = LiveClaim::role_wallet(&dynamic)?;
             let destination = role.primary_standard_address().await?;
@@ -4140,7 +4161,7 @@ mod tests {
     struct StalledSweep {
         files: Vec<XmrSwapFiles>,
         refund: StubRefund,
-        daemon: lez_xmr_monero_adapter::LoopbackRpcEndpoint,
+        daemon: LoopbackRpcEndpoint,
         events: Mutex<Vec<String>>,
     }
 
@@ -4168,7 +4189,7 @@ mod tests {
                 .unwrap()
                 .push(format!("tick {swap} refunded={refunded}"));
             if *swap == 0 {
-                let attestor = lez_xmr_monero_adapter::MoneroChainIdentityAttestor::new(
+                let attestor = MoneroChainIdentityAttestor::new(
                     lez_xmr_monero_adapter::MoneroNetwork::Stagenet,
                     &self.daemon,
                 )
@@ -4211,7 +4232,7 @@ mod tests {
         let sweep = StalledSweep {
             files: vec![sweeping, refunding],
             refund: StubRefund::at(WINDOWS.refund_ms),
-            daemon: lez_xmr_monero_adapter::LoopbackRpcEndpoint::new(
+            daemon: LoopbackRpcEndpoint::new(
                 &format!("http://127.0.0.1:{port}"),
                 "user",
                 "password",
