@@ -1605,23 +1605,30 @@ impl BridgeRuntime {
     /// transaction absent and inside its own window. That is the XMR tag-13
     /// pair, tag 15, tag 16 and tag 17, the native escrow pair and its
     /// re-plans, the revealing claim and its re-plans (also the Maker's
-    /// follow-up claim) and the native refund. Identical bytes carry one
+    /// follow-up claim) and the native refund (the ZEC `lez_refund` and the
+    /// BTC actor's witnessed refund alike). Identical bytes carry one
     /// transaction id and one nonce and are included at most once.
     pub async fn submission_unknown_decided_again(&self, prepared: &PreparedTransaction) -> bool {
         self.submission_success_decided_again(prepared).await
-            || self.planner.native_refund_submission(prepared).await
             || self.planner.xmr_escrow_submission(prepared).await
     }
 
     /// Whether a success the request journal holds for these exact bytes is
     /// decided on the chain again as well: those asked for again only once
     /// observed absent although accepted (a sequencer that admitted them and
-    /// dropped them), and those whose nonce can be taken and re-planned.
+    /// dropped them), and those whose nonce can be taken and re-planned. The
+    /// native refund is one: replayed as accepted, a refund the sequencer
+    /// dropped would hold the LEZ in its escrow for good. The XMR tag-13 pair
+    /// is not: its supervisor submits it on every lock step until it is final
+    /// without first finding it absent, so a decided-again acceptance would
+    /// re-broadcast it in every send-to-inclusion gap, while one the
+    /// sequencer dropped ends the swap cleanly at C with nothing locked.
     pub async fn submission_success_decided_again(&self, prepared: &PreparedTransaction) -> bool {
         self.xmr_recovery_submission(prepared).await
             || self.xmr_claim_submission(prepared).await
             || self.native_escrow_lineage_member(prepared).await
             || self.revealing_claim_lineage_member(prepared).await
+            || self.planner.native_refund_submission(prepared).await
     }
 
     /// Submits only exact bytes owned by this actor's active durable planner.

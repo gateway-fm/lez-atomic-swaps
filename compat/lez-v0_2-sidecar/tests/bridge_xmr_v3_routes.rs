@@ -255,6 +255,12 @@ struct SequencerFixture {
     submission_reply: SequencerSubmissionReply,
     /// Lookups still to hold unanswered, as a stopped forwarder does.
     held_lookups: Arc<AtomicUsize>,
+    /// Sends still to answer with a wrong transaction id (an unknown
+    /// outcome) before the reply mode applies.
+    wrong_replies: Arc<AtomicUsize>,
+    /// Another transaction every lookup finds under the requested hash: a
+    /// definite refusal.
+    foreign_inclusion: Arc<Mutex<Option<LeeTransaction>>>,
 }
 
 impl SequencerFixture {
@@ -278,6 +284,19 @@ impl SequencerFixture {
     fn hold_next_lookup(&self) {
         self.held_lookups.fetch_add(1, Ordering::SeqCst);
     }
+
+    fn answer_next_send_wrongly(&self) {
+        self.wrong_replies.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn include_foreign(&self, prepared: &PreparedTransaction) {
+        let transaction = decode_official_public_transaction(prepared.exact_bytes.as_slice())
+            .expect("official prepared transaction");
+        *self
+            .foreign_inclusion
+            .lock()
+            .expect("foreign inclusion lock") = Some(LeeTransaction::Public(transaction));
+    }
 }
 
 async fn start_configurable_sequencer(
@@ -289,6 +308,8 @@ async fn start_configurable_sequencer(
         lookups: Arc::new(AtomicUsize::new(0)),
         submission_reply,
         held_lookups: Arc::new(AtomicUsize::new(0)),
+        wrong_replies: Arc::new(AtomicUsize::new(0)),
+        foreign_inclusion: Arc::new(Mutex::new(None)),
     };
     let server = ServerBuilder::default()
         .build("127.0.0.1:0")
@@ -314,6 +335,14 @@ async fn start_configurable_sequencer(
         {
             std::future::pending::<()>().await;
         }
+        if let Some(foreign) = fixture
+            .foreign_inclusion
+            .lock()
+            .expect("foreign inclusion lock")
+            .clone()
+        {
+            return Ok::<_, ErrorObjectOwned>(Some((foreign, 1_u64)));
+        }
         let observed = fixture
             .included_transaction
             .lock()
@@ -328,6 +357,15 @@ async fn start_configurable_sequencer(
     rpc.register_method("sendTransaction", |params, fixture, _| {
         let transaction: LeeTransaction = params.one()?;
         fixture.sends.fetch_add(1, Ordering::SeqCst);
+        if fixture
+            .wrong_replies
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Ok::<_, ErrorObjectOwned>(HashType([99; 32]));
+        }
         let returned_id = match fixture.submission_reply {
             SequencerSubmissionReply::Canonical => transaction.hash(),
             SequencerSubmissionReply::WrongTransactionId => HashType([99; 32]),
@@ -1976,7 +2014,7 @@ async fn an_unknown_xmr_escrow_submission_is_decided_on_the_chain_again() {
     let xmr_terms = terms(depositor, claimant, 42);
     let taker_runtime = runtime(Participant::Taker, depositor);
     let (sequencer_endpoint, sequencer, fixture) =
-        start_configurable_sequencer(SequencerSubmissionReply::WrongTransactionId).await;
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
     let taker = start_sidecar(
         Participant::Taker,
         depositor,
@@ -1998,25 +2036,99 @@ async fn an_unknown_xmr_escrow_submission_is_decided_on_the_chain_again() {
         taker_runtime,
         prepared.initialization.clone(),
     );
-    for sends in 1..=2 {
-        assert_remote_code(
-            taker
-                .fresh_client()
-                .submit_transaction(initialization.clone())
-                .await,
-            ErrorCode::UnknownSubmissionOutcome,
-        );
-        assert_eq!(fixture.send_count(), sends);
-        assert_eq!(fixture.lookup_count(), sends);
-    }
-    fixture.include_exact(&prepared.initialization);
-    let landed = taker
+    fixture.answer_next_send_wrongly();
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(initialization.clone())
+            .await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(fixture.send_count(), 1);
+    let accepted = taker
+        .fresh_client()
+        .submit_transaction(initialization.clone())
+        .await
+        .expect("the unknown initialization is decided again and accepted");
+    assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 2);
+    // An acceptance is replayed: the supervisor submits tag 13 on every lock
+    // step until it is final, without first finding it absent, so deciding
+    // it again would re-broadcast it in every send-to-inclusion gap; one the
+    // sequencer dropped ends the swap cleanly at C, nothing locked.
+    let replayed = taker
         .fresh_client()
         .submit_transaction(initialization)
         .await
-        .expect("an included initialization is already known");
-    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+        .expect("the acceptance is replayed");
+    assert_eq!(replayed, accepted);
+    assert_eq!(fixture.lookup_count(), 2);
     assert_eq!(fixture.send_count(), 2);
+
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+/// A definite refusal of tag 14 (the sequencer holds another transaction
+/// under its hash) is still replayed under the new policy: no second lookup,
+/// no send.
+#[tokio::test]
+async fn dedicated_xmr_authorization_refused_by_name_is_still_replayed() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let authorization = prepare_owned_claim_authorization(
+        &taker,
+        taker_runtime.clone(),
+        &xmr_terms,
+        "prepare-refused-by-name",
+    )
+    .await;
+    let escrow = taker
+        .fresh_client()
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, "prepare-refused-by-name-escrow"),
+            taker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("the escrow preparation replays");
+    fixture.include_foreign(&escrow.initialization);
+    let request = SubmitNativeXmrClaimAuthorizationV3Request::new(
+        context(Participant::Taker, "submit-refused-by-name"),
+        taker_runtime,
+        xmr_terms,
+        authorization,
+    );
+    for _ in 0..2 {
+        let refused = taker
+            .fresh_release_client()
+            .submit_native_xmr_claim_authorization_v3(request.clone())
+            .await;
+        let Err(BridgeClientError::Remote(error)) = refused else {
+            panic!("expected a remote refusal, got {refused:?}");
+        };
+        assert_ne!(error.code(), ErrorCode::UnknownSubmissionOutcome);
+        assert_ne!(error.code(), ErrorCode::Unavailable);
+    }
+    assert_eq!(
+        fixture.lookup_count(),
+        1,
+        "the refusal is replayed, not decided again"
+    );
+    assert_eq!(fixture.send_count(), 0);
 
     taker.server.stop().await.expect("taker stop");
     sequencer.stop().expect("sequencer stop");

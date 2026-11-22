@@ -3140,9 +3140,12 @@ impl NativeEscrowPlanner {
             .is_some_and(|completed| completed.result.claim == *prepared)
     }
 
-    /// Whether `prepared` is the native refund this sidecar holds (the ZEC
-    /// path's `lez_refund` of a native escrow): one fixed destination, one
-    /// nonce, sent only once the caller found its escrow still refundable.
+    /// Whether `prepared` is the native refund this sidecar holds: the ZEC
+    /// path's `lez_refund` of a native escrow, or the BTC actor's witnessed
+    /// refund (`PrepareNativeRefundRequest::new_witnessed`), which takes the
+    /// same slot. One fixed destination and one nonce; a resend is always
+    /// wanted (the ZEC SDK asks again only while the escrow is refundable;
+    /// the BTC actor never asks again after an unknown outcome).
     pub async fn native_refund_submission(&self, prepared: &PreparedTransaction) -> bool {
         let state = self.state.lock().await;
         state

@@ -1688,8 +1688,12 @@ fn register_methods(
         // decide every outcome again: a refusal of them can lift with time
         // (a tag 16 dropped before R lands from R). Sending
         // identical bytes again is harmless: one transaction id, one nonce,
-        // included at most once. The others (the BTC actor's witnessed and
-        // asset effects, which its own journal sends once and never asks for
+        // included at most once. The native refund is in that class on both
+        // paths: the ZEC SDK's `lez_refund` and the BTC actor's witnessed
+        // refund share one planner slot (a resend of a refund is always
+        // wanted; the BTC actor never asks again after an unknown outcome).
+        // The others (the BTC actor's witnessed escrow and claim and its
+        // token effects, which its own journal sends once and never asks for
         // again, and the reference clock transaction) keep their one attempt.
         let decide_success_again = runtime
             .submission_success_decided_again(&request.transaction)

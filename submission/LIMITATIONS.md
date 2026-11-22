@@ -215,13 +215,20 @@ The sidecar:
   only after it found the transaction absent and only inside its own window:
   the XMR tag-13 pair, tags 14 to 17, the native escrow pair and its
   re-plans, the revealing claim and its re-plans (the Maker's follow-up claim
-  too) and the native refund (`lez_refund`). For those, an unknown outcome,
-  or the in-flight marker a sidecar killed mid-submission leaves, is decided
-  on the chain again: the exact bytes are looked up and, absent, sent once
-  more (one transaction id and one nonce, included at most once). A definite
-  refusal is still replayed, except for tags 16 and 17. The BTC reference
-  actor's witnessed and token effects keep one attempt (its own journal sends
-  each once and never asks again; a lost one falls back to observation and
+  too) and the native refund (the ZEC path's `lez_refund`, and the BTC
+  actor's witnessed LEZ refund, which takes the same sidecar slot). For
+  those, an unknown outcome, or the in-flight marker a sidecar killed
+  mid-submission leaves, is decided on the chain again: the exact bytes are
+  looked up and, absent, sent once more (one transaction id and one nonce,
+  included at most once). A journaled acceptance is decided again too for
+  all of them but the tag-13 pair, whose supervisor resubmits it on every
+  lock step without first finding it absent: one the sequencer admitted and
+  dropped ends that swap `expired` at C, nothing locked. A definite refusal
+  is still replayed, except for tags 16 and 17. On the BTC path the sidecar's
+  answer to its witnessed refund changed, but the BTC actor never asks again
+  after an unknown outcome, so its behaviour did not; its witnessed escrow,
+  claim and token effects keep one attempt in the sidecar as well (its own
+  journal sends each once; a lost one falls back to observation and
   recovery), and so does the reference clock transaction. Unit tests only;
   no devnet scenario kills a sidecar mid-submission except
   `xmr-kill-maker`'s "claim tool running" (tag 15).
