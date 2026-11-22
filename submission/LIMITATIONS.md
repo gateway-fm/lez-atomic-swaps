@@ -86,13 +86,12 @@ otherwise; the deliverables and their proof are in
 
 Scope:
 
-- Monero 0.18.5.1 **regtest** on the private LEZ devnet only. No Monero
-  stagenet, testnet or mainnet swap has run; on Stagenet only the Monero
-  leg of a completed swap has run, SDK and adapter alone with the LEZ escrow
-  modelled
-  ([Stagenet guide](../docs/monero-stagenet-guide.md)), and no Node offers a
-  window profile sized for a public network (R6); the LEZ testnet waits for the LEZ 0.4 port
-  (#107). LEZ v0.2.4 pins RISC Zero 3.0, which is yanked
+- Monero 0.18.5.1 **regtest** on the private LEZ devnet for the regression
+  and the recordings. On public Monero **Stagenet** the Nodes completed one
+  swap and ran a refunded swap (the Taker's LEZ refund, the Maker's Monero swept back) and a punished one, once, on 2026-11-21, with LEZ on the devnet
+  ([Stagenet guide](../docs/monero-stagenet-guide.md#the-node-driven-run-of-2026-11-21)).
+  No Monero testnet or mainnet swap has run; the LEZ testnet waits for the
+  LEZ 0.4 port (#107). LEZ v0.2.4 pins RISC Zero 3.0, which is yanked
   (GHSA-g6qg-9j8p-7j87); its `cargo-deny` exemption is an accepted risk on
   devnet-only software (#184), and no public-network release is made while it
   stands.
@@ -133,9 +132,11 @@ The escrow (TM-0032):
 
 The Maker Node:
 
-- It does not check the Monero network before it funds: the wallet transfer
-  checks the address type only, and monerod's network (`fakechain`) and
-  genesis are checked after the funding, when it is recorded.
+- It checks the Monero network at take time (genesis and `get_info`), and on
+  Regtest again before it funds (the mining capability needs the daemon's
+  `fakechain`); on Stagenet the funding transfer itself is not preceded by
+  another network check, and the topology check (synchronized, a fresh tip)
+  comes when the funding is recorded.
 - Its Monero RPC reads refuse a wallet with more than 4,096 available outputs
   (`MAX_AVAILABLE_OUTPUTS`): past that the Maker cannot find its output and
   stops, failing closed.
@@ -149,6 +150,31 @@ The Taker Node:
 
 - A sweep it has started and cannot prove unsent is marked in doubt and never
   sent again; recovering the Monero from it is by hand, and no tool does it.
+
+On Monero Stagenet (the [Stagenet guide](../docs/monero-stagenet-guide.md#a-daemon-the-node-does-not-run)
+and TM-0033 to TM-0036):
+
+- The recorded run read public Stagenet nodes, behind a forwarder, as both
+  roles' daemons; the self-hosted node was not at the tip. A Node verifies a
+  daemon's network, sync and tip age, and each output by its view key, but
+  not that the chain is the heaviest one: a daemon that lies consistently is
+  not detected, and `monero-rpc` 0.5.1 bounds no response body.
+- Ten confirmations is a constant of the agreement, not sized to the value;
+  a reorganisation past it after the Taker's authorisation takes the Monero
+  side. No test reorganises a funded swap.
+- P − R of the devnet's Stagenet profile is 30 minutes: a Taker Node down
+  for longer than that from R loses its LEZ (TM-0031).
+- The role wallets have no password; the Maker's needs one unlocked output
+  per swap in flight (a funding's change is locked ten blocks), and a funding
+  that finds none ends the swap `expired`. Fees are the wallet-rpc's default.
+- A Maker Node pins each swap's actor program: a swap taken under one build
+  does not run under another, so a fix of the Maker's actor does not reach
+  swaps in flight (three swaps of the run stayed unfinished on the Maker
+  side that way, their Monero at their shared addresses).
+- The restore height of the Maker's wallets comes from block timestamps
+  (the last block six hours before C); a chain whose timestamps lie by more
+  than that leaves a wallet that misses the funding, and the swap falls back
+  to the refund.
 
 The sidecar:
 

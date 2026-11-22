@@ -12,11 +12,11 @@ build on its types and do the chain work; the Monero RPC boundary is
 The protocol it serves, and why it is secp256k1 adaptor signatures plus a
 cross-curve DLEQ and not "Ed25519 adaptor signatures", is in
 [protocol-design.md](milestone-1/protocol-design.md#xmrlez). One direction
-only: the Taker sells LEZ and locks first. The Nodes run it on regtest only: the agreement knows a
-`PublicStagenet` profile, but no Node takes swaps under it. On Monero
-Stagenet the SDK and the adapter have run the Monero leg of the completed
-swap of `examples/full-lifecycle.rs`, with the LEZ escrow modelled; its
-refunded swap has run on regtest only
+only: the Taker sells LEZ and locks first. The Nodes run it under the
+`AcceleratedRegtest` or the `PublicStagenet` profile; on Monero Stagenet
+they completed one swap on 2026-11-21 and ran a refunded swap (the Taker's LEZ refund, the Maker's Monero swept back) and a punished one, and the SDK and the
+adapter alone ran the Monero leg of the completed swap of
+`examples/full-lifecycle.rs`, with the LEZ escrow modelled
 ([Stagenet guide](monero-stagenet-guide.md)). The crate's own documentation says it "does not claim production
 cryptographic acceptance"; the construction has had no third-party review.
 

@@ -270,11 +270,14 @@ first residual risk below.
   lock, let the Maker fund and never authorise; the Maker's Monero then comes
   back only if the Taker refunds, and otherwise stays locked while the Maker
   takes the LEZ.
-- **Evidence is regtest only**, with windows sized for the devnet: on `fast`
-  C, R, P are +320, +720 and +1000 s after the take
+- **Evidence is mostly regtest**, with windows sized for the devnet: on
+  `fast` C, R, P are +320, +720 and +1000 s after the take
   (`deploy/scripts/gen-config.sh`), which leaves the Taker a 280 s refund
-  window and the Maker at most 200 s after C to claim. No Monero stagenet,
-  testnet or mainnet swap has run, and no profile sized for one exists.
+  window and the Maker at most 200 s after C to claim. On Monero Stagenet
+  the devnet's profile is +10 min, +2 h, +2.5 h
+  ([Stagenet guide](../monero-stagenet-guide.md#the-windows)); the Nodes
+  completed one swap there on 2026-11-21 and ran a refunded swap (the Taker's LEZ refund, the Maker's Monero swept back) and a punished one. No Monero testnet or
+  mainnet swap has run.
 - **The refund and a claim the Taker cannot see.** The tip read sees what
   the sequencer has included, not its mempool. A tag 15 still in the mempool
   can no longer land when the refund goes out: tag 15 is valid only in

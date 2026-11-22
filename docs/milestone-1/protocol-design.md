@@ -338,12 +338,12 @@ guest itself authorises tag 17 by its signer, accounts and the P window. In
 
 ### Limits of what is built
 
-- Regtest only. The role configuration accepts only the `accelerated-regtest`
-  profile and the Monero wallet effects are regtest-only (they mine their own
-  confirmations); no Node has run on Monero stagenet, testnet or mainnet.
-  The Monero leg of a completed swap, SDK and adapter alone, has run on
-  Stagenet
-  ([Stagenet guide](../monero-stagenet-guide.md)).
+- Regtest and Stagenet. The role configuration takes `accelerated-regtest`
+  or `public-stagenet`, and refuses mainnet and testnet; only Regtest
+  wallet effects mine, by a capability that exists for Regtest alone. The
+  Nodes completed one swap on Stagenet on 2026-11-21 and ran a refunded swap (the Taker's LEZ refund, the Maker's Monero swept back) and a punished one
+  ([Stagenet guide](../monero-stagenet-guide.md#the-node-driven-run-of-2026-11-21));
+  no Node has run on Monero testnet or mainnet.
 - The Taker's claim partial is withheld, not verifiably encrypted (the SDK's
   own note on `commit_taker_claim_partial`; threat TM-0019): a Taker can lock,
   let the Maker fund, and never authorise. The Maker then gets its Monero back

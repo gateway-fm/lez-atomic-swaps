@@ -511,12 +511,17 @@ when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
 
 ### Monero (LEZ_MONERO=1)
 
-Monero swaps run on this devnet only: an offline Monero **regtest** chain on
+Monero swaps run against one of two networks, `LEZ_MONERO_NETWORK` (kept in
+`runtime.env`): `regtest` (the default), an offline Monero regtest chain on
 each lane, on x86_64 and arm64 hosts alike (the pinned release has an archive
-for each, `linux-x64` and `linux-armv8`; `stage-assets.sh` takes the host's).
-No Monero stagenet, testnet or mainnet route exists for the Nodes: their Monero role accepts
-only the `accelerated-regtest` profile. Monero Stagenet itself (the release, monerod,
-wallet-rpc, coins, the SDK's Monero leg) is in the
+for each, `linux-x64` and `linux-armv8`; `stage-assets.sh` takes the host's),
+or `stagenet`, public Monero Stagenet through the operator's own monerod and
+two wallet-rpcs, on lane 1 only ([below](#monero-stagenet-lez_monero_networkstagenet)).
+Mainnet and testnet are refused by `gen-config.sh`, the launcher and the
+Nodes' role configuration. The network is the Monero role's profile
+(`accelerated-regtest` or `public-stagenet`), which goes into Stage A: a Maker
+and a Taker of different networks never agree. Monero Stagenet itself (the
+release, monerod, wallet-rpc, coins, a Node-driven swap) is in the
 [Stagenet guide](../docs/monero-stagenet-guide.md). The protocol, its windows and the punish branch
 are in [protocol-design.md](../docs/milestone-1/protocol-design.md#xmrlez).
 
@@ -785,6 +790,38 @@ been seen on a desk. Not on the devnet yet: there is no macOS
 package for it. The Maker's systemd unit takes a Monero role from an optional
 drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with
 stub programs, not run in the VM; the Taker unit has none.
+
+### Monero Stagenet (LEZ_MONERO_NETWORK=stagenet)
+
+With `LEZ_MONERO=1 LEZ_MONERO_NETWORK=stagenet`, `up.sh` starts no lane
+monerod or wallet-rpc. The operator runs a Stagenet `monerod` and one
+`monero-wallet-rpc` per role on a Docker network of their own (the
+[Stagenet guide](../docs/monero-stagenet-guide.md) sets them up), and names
+them:
+
+| Variable | What |
+|---|---|
+| `LEZ_XMR_STAGENET_LOGINS` | directory of `monerod.login`, `maker-wallet-rpc.login`, `taker-wallet-rpc.login` (`user:password` each); `gen-config.sh` copies them beside the roles' identities, so no login is on a command line or in `runtime.env` |
+| `LEZ_XMR_STAGENET_NETWORK` | the Docker network of the daemon and the wallet-rpcs |
+| `LEZ_XMR_STAGENET_MONEROD` | the daemon's `host:port` on it, or one per role: `LEZ_XMR_STAGENET_MAKER_MONEROD`, `LEZ_XMR_STAGENET_TAKER_MONEROD` (two parties run two daemons; a public node also limits one address's connections, [Stagenet guide](../docs/monero-stagenet-guide.md#each-roles-daemon)) |
+| `LEZ_XMR_STAGENET_MAKER_WALLET`, `LEZ_XMR_STAGENET_TAKER_WALLET` | each role's wallet-rpc `host:port` |
+
+`gen-config.sh` then records `COMPOSE_FILE=compose.yaml:compose.stagenet.yaml`
+in `runtime.env`: `compose.stagenet.yaml` joins both Nodes to that network
+and sets their `LEZ_MONEROD_HOST` and `LEZ_XMR_WALLET_HOST`, and each Node
+forwards its loopback 18081 and 18083 there (the launcher's forwards take
+`host:port`). The role wallets are named after the roles (`maker`, `taker`)
+and have no password, as on regtest; the Maker's must hold unlocked Stagenet
+coins, one output per swap in flight. The windows are those of the Stagenet
+guide's sizing whatever `LEZ_TIMING_PROFILE` says: C, R, P = +600, +7200,
++9000 s. A Node on Stagenet mines nothing: no mining capability exists for a
+public network (`MoneroRegtestMining`), and it waits for Stagenet's miners.
+Its Maker actor attempts get 5 minutes and its Monero tools 4 (2 and 2 on
+regtest). A Maker Node pins each swap's actor program when the swap is
+taken: a swap taken under one build does not run under another, so the
+Nodes are not rebuilt while a swap is in flight.
+The regtest scenarios (`node-e2e.py --pair Monero`) mine and need the lane's
+monerod; they do not run on such a stack.
 
 ### A second stack on the same host
 
