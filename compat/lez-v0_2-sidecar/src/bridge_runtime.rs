@@ -648,6 +648,14 @@ impl BridgeRuntime {
         &self,
         request: &lez_bridge_protocol::PrepareNativeXmrClaimV3Request,
     ) -> Result<lez_bridge_protocol::PrepareNativeXmrClaimV3Result, BridgeRuntimeError> {
+        // TEST-ONLY (feature `test-hooks`, the devnet's xmr-kill-maker kill
+        // point "claim preparation held"): while `hold-claim-preparations`
+        // holds a count, the Maker's tag-15 preparation waits here, before
+        // anything of it is durable, for the kill that comes for it.
+        #[cfg(feature = "test-hooks")]
+        if crate::test_hooks::take("hold-claim-preparations") {
+            std::future::pending::<()>().await;
+        }
         self.planner
             .prepare_native_xmr_claim_v3(request)
             .await
@@ -1606,6 +1614,8 @@ impl BridgeRuntime {
         request: &SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
         let ownership = self.planner.validate_submission_request(request).await?;
+        #[cfg(feature = "test-hooks")]
+        self.hold_claim_submission(&request.transaction).await;
         if let OwnedSubmission::XmrFunding { initialization } = &ownership
             && !self
                 .node
@@ -1715,6 +1725,20 @@ impl BridgeRuntime {
             request.transaction.transaction_id,
             SubmissionOutcome::Accepted,
         ))
+    }
+
+    /// TEST-ONLY (feature `test-hooks`, the devnet's xmr-kill-maker kill
+    /// point "claim tool running"): while `hold-claim-submissions` holds a
+    /// count, the Maker's tag-15 claim submission waits here for good, its
+    /// in-flight marker journaled and nothing looked up or sent, for the kill
+    /// that comes for it.
+    #[cfg(feature = "test-hooks")]
+    async fn hold_claim_submission(&self, prepared: &PreparedTransaction) {
+        if self.planner.xmr_claim_submission(prepared).await
+            && crate::test_hooks::take("hold-claim-submissions")
+        {
+            std::future::pending::<()>().await;
+        }
     }
 
     /// TEST-ONLY (feature `test-hooks`, the devnet's punish re-plan

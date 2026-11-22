@@ -651,7 +651,7 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 | `xmr-punish` | the Maker funds, the Taker Node is stopped once it has verified the Monero; from P the Maker sends tag 17 at a live owner nonce other than 0 and ends `punished`; the LEZ moves to the Maker, the Monero stays at the shared address, the Taker back up reads `attention_required` (`xmr_refund_window_closed`) |
 | `xmr-concurrent` | two swaps of the same Nodes at once, one offer each; both complete; two fundings, two sweeps |
 | `xmr-kill-taker` | the Taker killed with SIGKILL at each of 7 steps (after the take, lock in flight, locked, Monero verified, claim authorised, waiting for the Maker's claim, sweeping), one fresh swap each; each completes with the owner accounts' LEZ transaction counts and the Monero moved once |
-| `xmr-kill-maker` | the Maker killed at each of 6 steps (after the take, the Taker's lock observed, its Monero funding in flight, funded, its LEZ claim tool running, its LEZ claim in flight); each completes or, killed with the Taker's lock observed or its funding in flight, may end refunded with nothing lost |
+| `xmr-kill-maker` | the Maker killed at each of 7 steps (after the take, the Taker's lock observed, its Monero funding in flight, funded, its LEZ claim in flight, its LEZ claim tool held in the claim's preparation, its LEZ claim tool held with the claim's submission journaled in flight); each completes or, killed with the Taker's lock observed or its funding in flight, may end refunded with nothing lost. The two held points use the Maker sidecar's test hooks `hold-claim-preparations` and `hold-claim-submissions` (a count of one), so the kill lands at the same step on every run |
 | `xmr-monerod-down` | the lane's monerod stopped before a take: both Nodes read the Monero route unavailable (the Maker withdraws and refuses Monero offers, the Taker refuses a take), Bitcoin's and Zcash's available; started again, a swap completes; then stopped right after a take until the Maker has seen the Taker's lock final and 60 s more, within the funding cutoff: the swap completes, or ends refunded with nothing lost. The Maker's drive asks monerod before it spends the swap's one funding and keeps it for a later drive while monerod does not answer, so an outage that ends before the cutoff leaves the funding to go out after it; one that begins while the funding tool runs (its three attempts five seconds apart) still spends it, and the swap is refunded |
 | `xmr-wallet-restart` | a role's `monero-wallet-rpc` restarted mid-swap: the Maker's after the take, the Taker's while it watches for the Monero and before its sweep; both swaps complete |
 | `xmr-outage-before-take` | Logos Chat and Delivery cut before a take: both Nodes degraded, the take refused, no swap on either Node; restored, the same request takes the offer and the swap completes |
@@ -675,9 +675,10 @@ the LEZ sidecar with its own `test-hooks`; both read files in
 `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, set by the entrypoint):
 `clock-offset-ms` (the Taker supervisor's clock offset),
 `cheat-refund-before-r` and `cheat-refund-after-claim` (a cheating Taker),
-`punish-nonce-thefts` (a count, in the Maker's sidecar). Without it neither
-is built in, and `xmr-taker-clock-ahead`, `xmr-punish-replans` and
-`xmr-taker-cheats` fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`
+`punish-nonce-thefts`, `hold-claim-preparations` and `hold-claim-submissions`
+(counts, in the Maker's sidecar). Without it neither
+is built in, and `xmr-taker-clock-ahead`, `xmr-punish-replans`,
+`xmr-taker-cheats` and `xmr-kill-maker` fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`
 (they look for the hook's name in the Taker Node's or the Maker sidecar's
 executable). So a devnet for `regress.sh full` is built with
 `LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh`.

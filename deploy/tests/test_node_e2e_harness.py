@@ -1013,6 +1013,78 @@ class XmrOwnRefundAndAdversaries(unittest.TestCase):
             self.assertEqual(read('cc' * 32, 'xmr-swap.json').returncode, 3)
 
 
+class XmrKillMakerClaimHolds(unittest.TestCase):
+    """xmr-kill-maker's two claim kill points hold the Maker's tag-15 tool in
+    its sidecar with a test hook, so the kill lands at the same step on every
+    run (it once stopped the sequencer forwarder on the Maker's phase, and the
+    tool was either still preparing or already submitting)."""
+
+    def test_the_claim_points_are_held_by_the_sidecar_and_must_complete(self):
+        points = [point for point, _ in e2e.XMR_KILL_POINTS['maker']]
+        self.assertEqual(points[-2:], ['claim preparation held', 'claim tool running'])
+        self.assertEqual(e2e.XMR_CLAIM_HOLDS, {'claim preparation held': 'hold-claim-preparations',
+                                               'claim tool running': 'hold-claim-submissions'})
+        # the claim is driven again long before R: a Taker that authorised it
+        # reads a missed claim as attention_required, never refund_available
+        self.assertFalse(set(e2e.XMR_CLAIM_HOLDS) & e2e.XMR_KILL_MAY_REFUND)
+        runtime = (REPO / 'compat/lez-v0_2-sidecar/src/bridge_runtime.rs').read_text()
+        for hook in e2e.XMR_CLAIM_HOLDS.values():
+            self.assertIn(f'crate::test_hooks::take("{hook}")', runtime)
+        self.assertNotIn('SIGSTOP', inspect.getsource(e2e.xmr_kill_point_swap_once))
+
+    def test_the_hold_is_set_for_its_swap_and_cleared_after_it_even_on_failure(self):
+        calls = []
+
+        class Stop(Exception):
+            pass
+
+        def once(stamp, role, point, reached, may_refund, hook):
+            calls.append(('swap', hook))
+            raise Stop
+
+        with patch.multiple(e2e, xmr_kill_point_swap_once=once,
+                            xmr_hook=lambda role, name, value: calls.append((role, name, value))):
+            with self.assertRaises(Stop):
+                e2e.xmr_kill_point_swap('1', 'maker', 'claim tool running', None, False)
+        self.assertEqual(calls, [('maker', 'hold-claim-submissions', '1'), ('swap', 'hold-claim-submissions'),
+                                 ('maker', 'hold-claim-submissions', None)])
+
+    def test_other_points_and_the_taker_set_no_hold(self):
+        calls = []
+        with patch.multiple(e2e, xmr_kill_point_swap_once=lambda *args: calls.append(args[-1]) or {},
+                            xmr_hook=lambda *args: calls.append(args)):
+            e2e.xmr_kill_point_swap('1', 'maker', 'funded', None, False)
+            e2e.xmr_kill_point_swap('1', 'taker', 'claim tool running', None, False)
+        self.assertEqual(calls, [None, None])
+
+    def test_the_hold_is_taken_once_its_count_reads_zero(self):
+        for returncode, stdout, taken in ((0, '0\n', True), (0, '1\n', False), (1, '', False)):
+            def fake_run(command, **_):
+                self.assertEqual(command[-1], '/var/lib/lez/maker/test-hooks/hold-claim-submissions')
+                return unittest.mock.Mock(returncode=returncode, stdout=stdout, stderr='')
+
+            with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run):
+                self.assertEqual(e2e.xmr_claim_hold_taken('hold-claim-submissions'), taken)
+
+    def test_the_maker_walk_needs_the_sidecars_claim_hooks_first(self):
+        required = []
+
+        class Stop(Exception):
+            pass
+
+        def walk(*_):
+            raise Stop
+
+        with patch.multiple(e2e, xmr_require_test_hooks=lambda role, text=None: required.append((role, text)),
+                            xmr_kill_point_swap=walk):
+            with self.assertRaises(Stop):
+                e2e.scenario_xmr_kill_walk('1', 'maker')
+            self.assertEqual(required, [('maker', 'hold-claim-preparations'), ('maker', 'hold-claim-submissions')])
+            with self.assertRaises(Stop):
+                e2e.scenario_xmr_kill_walk('1', 'taker')
+        self.assertEqual(len(required), 2)
+
+
 class CustodyCredit(unittest.TestCase):
     """The *-custody-credit scenarios (TM-0032): what can be checked without a stack."""
 

@@ -7137,12 +7137,13 @@ XMR_TEST_HOOK_BUILDS = {"taker": ("/usr/local/bin/lez-taker-node", "clock-offset
                         "maker": ("/usr/local/bin/lez-v02-bridge-poc", "punish-nonce-thefts")}
 
 
-def xmr_require_test_hooks(role: str) -> None:
+def xmr_require_test_hooks(role: str, text: str | None = None) -> None:
     """Fails the scenario at once, before any swap, unless the role's Node (the
     Taker) or sidecar (the Maker's) was built with the devnet test hooks
     (from-scratch.sh with LEZ_TEST_HOOKS=1): without them a hook file is
     ignored and the scenario would assert against an honest Node."""
-    program, text = XMR_TEST_HOOK_BUILDS[role]
+    program, built = XMR_TEST_HOOK_BUILDS[role]
+    text = text or built
     result = subprocess.run(node_command(role, ["grep", "-qa", text, program]), capture_output=True)
     if result.returncode != 0:
         raise Failure(f"the {role}'s {program.rsplit('/', 1)[-1]} has no devnet test hooks: this scenario needs "
@@ -7664,15 +7665,30 @@ XMR_KILL_POINTS = {
         ("funding in flight", lambda at: at["funding_sent"]),
         ("funded", lambda at: at["maker"] == "both_legs_locked"),
         ("claim in flight", lambda at: at["maker"] == "claim_evidence_available"),
-        ("claim tool running", lambda at: at["claim_tool_held"]),
+        ("claim preparation held", lambda at: at["claim_held"]),
+        ("claim tool running", lambda at: at["claim_held"]),
     ),
 }
 # A Maker killed while its funding tool runs may never fund (its one funding is
 # then observe-only): the Taker refunds instead, and nothing may be lost. One
-# killed while its LEZ claim tool runs drives the same claim again before R;
-# past R it leaves the claim for the Taker's refund and sweeps its Monero back.
-XMR_KILL_MAY_REFUND = {"lock observed", "funding in flight", "claim tool running"}
+# killed while its LEZ claim tool runs drives the same claim again long before
+# R (the kill comes minutes before it), so the swap must complete: the Taker,
+# having authorised the claim (tag 14), would read a missed claim as
+# attention_required (xmr_maker_did_not_claim), not refund_available.
+XMR_KILL_MAY_REFUND = {"lock observed", "funding in flight"}
 XMR_CLAIM_EVIDENCE = "tag15-claim-submission.json"
+# The claim kill points hold the Maker's tag-15 tool in its sidecar with a
+# test hook (a count of one, devnet build): the kill lands while the hold is
+# taken, so each point is the same on every run.
+#  - "claim preparation held": its preparation waits before anything of it is
+#    durable (hold-claim-preparations); the restarted Maker prepares, completes
+#    and submits the claim afresh.
+#  - "claim tool running": its submission waits after the sidecar journaled it
+#    in flight, before its lookup and send (hold-claim-submissions); the
+#    restarted Maker's sidecar decides that in-flight claim on the chain again
+#    (looked up, sent once, then already known).
+XMR_CLAIM_HOLDS = {"claim preparation held": "hold-claim-preparations",
+                   "claim tool running": "hold-claim-submissions"}
 
 
 def xmr_maker_claim_evidence_size(swap_id: str) -> int | None:
@@ -7692,56 +7708,17 @@ def xmr_maker_claim_evidence_size(swap_id: str) -> int | None:
     return int(size) if size and int(size) >= 0 else None
 
 
-# The Maker container's loopback forwarder to the LEZ sequencer (node-entrypoint.sh):
-# the one way its Node, the swap's sidecar and the claim tool reach the sequencer.
-# The sequencer itself is shared by every lane and is never paused: a paused
-# sequencer has left the devnet's finality frozen for good.
-SEQUENCER_FORWARDER = "TCP-LISTEN:3040"
+def xmr_hook_value(role: str, name: str) -> str | None:
+    """What one test hook of the role's Node holds now, None when it is unset."""
+    result = subprocess.run(node_command(role, ["cat", f"{XMR_NODE_STATE[role]}/test-hooks/{name}"]),
+                            capture_output=True, text=True, check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
-def xmr_hold_maker_claim_tool(swap_id: str) -> bool:
-    """Holds the Maker's LEZ claim tool between its reserved-empty evidence and
-    its write, so the kill lands there: the Maker container's sequencer
-    forwarder is stopped (SIGSTOP) once the claim is the Maker's next step,
-    which leaves the tool's first sidecar call (the claim's preparation reads
-    the claim authority's nonce from the sequencer) waiting, while the
-    finalized clock the actor checks first comes from the indexer, whose
-    forwarder keeps running. True with the forwarder left stopped and the
-    evidence reserved but empty; False, resumed, when the tool had already
-    written it (the point passed)."""
-    xmr_signal_maker_sequencer_forwarder("STOP")
-    try:
-        wait = Wait("the Maker's claim tool to reserve its evidence", 90)
-        while wait.running():
-            size = xmr_maker_claim_evidence_size(swap_id)
-            if size == 0:
-                log(f"  the Maker's claim tool reserved {XMR_CLAIM_EVIDENCE} and waits on its stopped sequencer forwarder")
-                return True
-            if size:
-                break
-            time.sleep(0.5)
-    except BaseException:
-        xmr_resume_maker_sequencer_forwarder()
-        raise
-    xmr_resume_maker_sequencer_forwarder()
-    return False
-
-
-def xmr_signal_maker_sequencer_forwarder(name: str) -> None:
-    """Sends SIG<name> (STOP or CONT) to the Maker container's sequencer
-    forwarder, its listener and the connections it forked (pkill -f matches
-    them all), in two passes so a connection forked during the first is
-    caught too. Only this lane's Maker container is touched."""
-    found = [subprocess.run(["docker", "exec", "-u", "root", NODES["maker"][0], "pkill", f"-{name}", "-f",
-                             SEQUENCER_FORWARDER], check=False, capture_output=True).returncode == 0 for _ in range(2)]
-    if name == "STOP" and not any(found):
-        raise Failure(f"no sequencer forwarder ({SEQUENCER_FORWARDER}) runs in {NODES['maker'][0]}")
-
-
-def xmr_resume_maker_sequencer_forwarder() -> None:
-    """Resumes the forwarder xmr_hold_maker_claim_tool stopped (a no-op once
-    resumed, or in a container started again, whose forwarder is new)."""
-    xmr_signal_maker_sequencer_forwarder("CONT")
+def xmr_claim_hold_taken(hook: str) -> bool:
+    """Whether the Maker's sidecar has taken the claim hold `hook` (its count
+    of one gone to zero): the claim tool waits there now, until the kill."""
+    return xmr_hook_value("maker", hook) == "0"
 
 
 def xmr_maker_transfer_since(unix_seconds: float) -> bool:
@@ -7758,6 +7735,20 @@ def lez_nonces() -> dict:
 
 
 def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: bool) -> dict:
+    """xmr_kill_point_swap_once, a claim kill point's hold (XMR_CLAIM_HOLDS)
+    set for its swap and cleared after it, whatever the swap's end."""
+    hook = XMR_CLAIM_HOLDS.get(point) if role == "maker" else None
+    if hook is None:
+        return xmr_kill_point_swap_once(stamp, role, point, reached, may_refund, None)
+    xmr_hook("maker", hook, "1")
+    try:
+        return xmr_kill_point_swap_once(stamp, role, point, reached, may_refund, hook)
+    finally:
+        xmr_hook("maker", hook, None)
+
+
+def xmr_kill_point_swap_once(stamp: str, role: str, point: str, reached, may_refund: bool,
+                             hook: str | None) -> dict:
     """One happy Monero swap, the role's container killed (kill_node) at
     `point`; the harness claims once the Monero is verified (after the kill
     when the kill point is that step), or refunds at the refund time where
@@ -7769,17 +7760,13 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
     nonces = lez_nonces()
     offer_id = f"offer-e2e-xmr-{stamp}"
     swap_id, windows = xmr_take(stamp, offer_id)
-    taken, killed, claimed, refunded, hold_tried = time.time(), None, False, False, False
+    taken, killed, claimed, refunded = time.time(), None, False, False
 
     def kill() -> dict:
         log(f"  kill point '{point}': taker {view['state']} (actor {view.get('actor_phase')}), maker {maker}")
-        # The held claim tool and the stopped forwarder die with the Maker's
-        # container, which starts again with a forwarder of its own.
-        try:
-            killed_node = kill_node(role)
-        finally:
-            if point == "claim tool running":
-                xmr_resume_maker_sequencer_forwarder()
+        # The held claim tool dies with the Maker's container; the hold, taken,
+        # holds nothing more.
+        killed_node = kill_node(role)
         return {"point": point, "taker_state": view["state"], "taker_actor_phase": view.get("actor_phase"),
                 "maker_phase": maker, **killed_node}
 
@@ -7796,11 +7783,11 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
                                                         f"complete after the kill at {point}")
         if killed is None and state not in TERMINAL:
             sent = point == "funding in flight" and maker == "taker_lock_confirmed" and xmr_maker_transfer_since(taken)
-            held = False
-            if point == "claim tool running" and maker == "claim_evidence_available" and not hold_tried:
-                hold_tried, held = True, xmr_hold_maker_claim_tool(swap_id)
+            held = hook is not None and maker == "claim_evidence_available" and xmr_claim_hold_taken(hook)
+            if held:
+                log(f"  the Maker's claim tool waits in its sidecar's {hook}")
             if reached({"taker": view, "maker": maker, "since_take": time.time() - taken, "funding_sent": sent,
-                        "claim_tool_held": held}):
+                        "claim_held": held}):
                 killed = kill()
                 continue
         if state == "claim_available" and not claimed and (killed or point not in {"Monero verified", "funded"}):
@@ -7839,12 +7826,12 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
         monero = {"maker_funding": funded, "taker_sweep": swept}
         if [t["amount"] for t in funded] != [XMR_FOREIGN_UNITS]:
             raise Failure(f"the Maker sent {funded} during the swap, one funding of the lot expected")
-        if point == "claim tool running":
+        if hook is not None:
             # The one tag 15 (the escrow is claimed once; LEZ moved once above),
             # recorded by the claim driven again after the kill.
             if not xmr_maker_claim_evidence_size(swap_id):
                 raise Failure(f"the Maker completed without recording its tag-15 submission ({XMR_CLAIM_EVIDENCE})")
-            log(f"  the Maker drove its stopped claim again and recorded its one tag 15")
+            log(f"  the Maker drove its held claim again and recorded its one tag 15")
     else:
         # refunded: the Taker's tag 13 (tag 16 is the refund authority's);
         # the Maker's Monero never sent, or swept back once the refund
@@ -7879,6 +7866,10 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
 def scenario_xmr_kill_walk(stamp: str, role: str) -> dict:
     """The role's container killed with SIGKILL at each of XMR_KILL_POINTS,
     one fresh happy swap per point (xmr_kill_point_swap)."""
+    if role == "maker":
+        # The claim kill points hold the claim tool with the sidecar's hooks.
+        for hook in XMR_CLAIM_HOLDS.values():
+            xmr_require_test_hooks("maker", hook)
     walked = []
     for index, (point, reached) in enumerate(XMR_KILL_POINTS[role]):
         for attempt in range(2):
