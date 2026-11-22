@@ -632,8 +632,10 @@ All twenty-two are in the `full` tier, none in `smoke`. The six added with
 the Node's own refund (`xmr-taker-clock-ahead` to `xmr-taker-cheats` below),
 `xmr-shared-address-dust` and the two `xmr-custody-credit` scenarios joined
 the tier after the full regression at `d4475300`
-(`docs/evidence/regression-m4-2026-11-21/`) and are not in its set. A lot is
-1 XMR for 50 000 LEZ units.
+(`docs/evidence/regression-m4-2026-11-21/`); all twenty-two passed on their
+first try in the full regression at `7b4e46da`
+(`docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/`). A lot is 1 XMR
+for 50 000 LEZ units.
 
 ```sh
 bash scripts/regress.sh run node:xmr:xmr-happy:TakerSellsLez
@@ -709,7 +711,10 @@ on a refund. `regress.sh full` runs all six.
 
 In the full regression of 2026-11-15 they ran across lanes 1 to 3
 (`docs/evidence/regression-m4-2026-11-15/`), on x86_64 (linux/amd64), as did
-the later M4 regressions under `docs/evidence/`. On arm64 they ran on
+the later `regression-m4-*` sets under `docs/evidence/`. The full regression
+at `7b4e46da` (`docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/`) ran
+all twenty-two and the three `ui:xmr` journeys on arm64, an Apple-silicon Mac
+on three lanes, each passing on its first try. Before it, on arm64 they ran on
 2026-11-21 on an Apple-silicon Mac with Docker Desktop 29.9 (linux/arm64
 images, the `linux-armv8` release), at `0b0ee495`: all thirteen and the three
 `ui:xmr` journeys on two lanes, 16 of 16 passed on the first try in 77 min,

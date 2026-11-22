@@ -92,9 +92,14 @@ Each deliverable with its proof and its limits:
 | Self-hosted stagenet `monerod` running in CI | The `monero-stagenet` job of [`ci.yml`](../.github/workflows/ci.yml): [`scripts/run-monero-stagenet-ci.sh`](../scripts/run-monero-stagenet-ci.sh) starts the verified `monerod --stagenet` and `monero-wallet-rpc --stagenet` and runs [`tests/stagenet_daemon.rs`](../crates/xmr-monero-adapter/tests/stagenet_daemon.rs) against them, then a bounded sync from public peers | Included; a 1,000-block prefix of the chain, no coins and no swap in CI |
 
 The regression evidence set is
-[`regression-m4-2026-11-21`](../docs/evidence/regression-m4-2026-11-21/README.md):
-the full tier at `d4475300`, 160 of 160, each on its first try, one operator
-running both parties on one host.
+[`regression-0.4.0-2026-11-22-macos-arm64`](../docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/README.md):
+the full tier at `7b4e46da`, 175 of 175, 174 on their first try and
+`ui:btc:logos-happy:TakerSellsForeign` on its second rerun (it failed on its
+first try and on its first rerun alone), all 25 Monero tests on their first
+try; an Apple-silicon Mac (linux/arm64 images), three lanes, 248 minutes, one
+operator running both parties on one host. The set before it,
+[`regression-m4-2026-11-21`](../docs/evidence/regression-m4-2026-11-21/README.md),
+is the full tier at `d4475300` on x86_64: 160 of 160, each on its first try.
 
 ## M3 — BTC/LEZ leg
 

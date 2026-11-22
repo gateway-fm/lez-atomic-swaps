@@ -224,6 +224,23 @@ The launcher and the desks:
   configuration, not from the swap's Stage A; it is only displayed, and the
   Node refuses a Stage A of another network at take time.
 
+The Logos transport:
+
+- The Bitcoin desk journey over Logos Delivery and Chat
+  (`ui:btc:logos-happy:TakerSellsForeign`) failed 2 of 3 tries on an
+  Apple-silicon Mac in the full regression at `7b4e46da`, and passed on the
+  third
+  ([regression-0.4.0-2026-11-22-macos-arm64](../docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/README.md#the-failure-and-its-reruns)).
+  Known: in both failures the Taker's Chat module sent its ~9.9 KB
+  `btc_reserve_v1` request 3 s after its Delivery node was online, the
+  Maker's Chat module never received it, and after the gateway's 25 s wait
+  the take was refused (`Chat peer operation unavailable`); nothing was
+  locked. Not known: why the message was lost, in the Delivery network's
+  start or elsewhere; the Delivery nodes' own logs of those tries were not
+  kept. No code was changed for it. The journey passed on its first try at
+  `d4475300` on x86_64, and both `ui:zec:logos-happy` journeys of the
+  `7b4e46da` run passed on their first try.
+
 Found in the M4 review, outside the Monero protocol:
 
 - A swap's LEZ sidecar keeps running, and keeps its loopback port, after the

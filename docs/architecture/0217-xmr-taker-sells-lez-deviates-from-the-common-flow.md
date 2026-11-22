@@ -196,7 +196,7 @@ Every abort point, from the code above:
 | Where it stops | Taker | Maker | Covered by |
 |---|---|---|---|
 | Before the Taker's lock | nothing at stake | nothing at stake; the reservation lapses after 900 s | — |
-| Taker locked; Maker never funds, or the lock is final after C | its Node refunds LEZ with tag 16 from R by itself, or on the owner's refund; a lock it has not seen final by C (it was down, its scan lagged, a submission's answer was lost) it keeps looking for until it is found or the finalized LEZ time reaches R with the escrow empty | nothing at stake; its actor ends `expired`; the share tag 16 reveals opens an empty address | `xmr-maker-never-funds` (passed at `d4475300` with the owner's refund; since rewritten for the Node's own refund: the Maker Node is kept down until the Taker Node has refunded from R with no command); the refund by itself: unit test `the_node_refunds_by_itself_from_r_without_an_owner_command`; a lock seen late: `a_lock_final_before_c_and_seen_after_c_is_found`, `a_lock_final_after_c_is_found_and_refunded_from_r`, `a_lost_submit_answer_does_not_stop_the_look_for_the_lock` |
+| Taker locked; Maker never funds, or the lock is final after C | its Node refunds LEZ with tag 16 from R by itself, or on the owner's refund; a lock it has not seen final by C (it was down, its scan lagged, a submission's answer was lost) it keeps looking for until it is found or the finalized LEZ time reaches R with the escrow empty | nothing at stake; its actor ends `expired`; the share tag 16 reveals opens an empty address | `xmr-maker-never-funds` (passed at `d4475300` with the owner's refund; since rewritten for the Node's own refund: the Maker Node is kept down until the Taker Node has refunded from R with no command, which passed at `7b4e46da`); the refund by itself: unit test `the_node_refunds_by_itself_from_r_without_an_owner_command`; a lock seen late: `a_lock_final_before_c_and_seen_after_c_is_found`, `a_lock_final_after_c_is_found_and_refunded_from_r`, `a_lost_submit_answer_does_not_stop_the_look_for_the_lock` |
 | Maker funded; Taker never authorises | its Node refunds LEZ with tag 16 from R by itself, or on the owner's refund | sweeps its Monero back with the revealed share | `xmr-taker-refund`, `xmr-taker-refund-kill` (owner's refund) |
 | Taker's refund sent and dropped (its clock ahead of LEZ time, or lost by the sequencer) | sends nothing before the finalized LEZ time reaches R, then sends the same tag 16 again on every tick until it is final or LEZ time reaches P | sweeps its Monero back once tag 16 is final; punishes only with no tag 16 to the finalized tip from P | unit tests: `a_refund_accepted_and_never_included_is_sent_again_until_it_lands`, `a_host_clock_ahead_of_lez_time_does_not_send_the_refund_early`, `a_refund_not_final_at_p_says_so` (Taker supervisor), `tag16_not_included_is_sent_again_until_it_lands` (sidecar); devnet: `xmr-taker-clock-ahead` (the Taker's clock 60 s ahead; no refund recorded as sent before the finalized LEZ time reaches R) |
 | Taker authorised (tag 14); Maker does not claim by its deadline | from R the escrow refunds from `XmrClaimAuthorized`; the Node shows `xmr_maker_did_not_claim` with `refund`; refunds with tag 16 | sweeps its Monero back with the revealed share; a Maker that claims later than its own deadline but before R gives the Taker the share instead | unit tests: `a_late_claim_authorization_is_left_to_the_takers_refund` (Maker actor), `the_claim_path_reads_in_the_status_table` (Taker supervisor); no devnet scenario holds the Maker there |
@@ -205,8 +205,11 @@ Every abort point, from the code above:
 
 Crash and restart at each step are covered by `xmr-kill-taker`,
 `xmr-kill-maker` (6 kill points) and `xmr-taker-refund-kill`. The scenarios
-named here, except those added after it (`xmr-taker-clock-ahead`,
-`xmr-punish-replans` and the four below), passed in the full regression at
+named here passed in the full regression at `7b4e46da`
+([regression-0.4.0-2026-11-22-macos-arm64](../evidence/regression-0.4.0-2026-11-22-macos-arm64/results.tsv)),
+each on its first try, on the Docker devnet against Monero regtest, arm64;
+all but those added after it (`xmr-taker-clock-ahead`, `xmr-punish-replans`
+and the four below) also passed in the full regression at
 `d4475300`
 ([regression-m4-2026-11-21](../evidence/regression-m4-2026-11-21/results.tsv)),
 on the Docker devnet against Monero regtest. That run predates the Taker
@@ -217,8 +220,8 @@ rules of this ADR against a cheating party, `xmr-maker-claim-without-authorizati
 (tag 17 before P, and after the Taker's refund: refused),
 `xmr-unfunded-punish` (TM-0031 with the Taker Node stopped and running) and
 `xmr-taker-cheats` (tag 16 before R, and after tag 15: refused), are in the
-full tier (`regress.sh` ids `node:xmr:<scenario>:TakerSellsLez`) and joined it
-after that run.
+full tier (`regress.sh` ids `node:xmr:<scenario>:TakerSellsLez`); they joined
+it after the `d4475300` run and passed at `7b4e46da`.
 
 ### TM-0030 does not carry over
 
@@ -429,15 +432,20 @@ rest of this flow, and TM-0006 names XMR punishment economics as open.
 
 ## Evidence
 
-The full regression at `d4475300` on the Docker devnet, Monero regtest, `fast`
-profile, three lanes: 160 of 160, each on its first try, among them the 16
-Monero tests of that tier
-([`results.tsv`](../evidence/regression-m4-2026-11-21/results.tsv),
-[README](../evidence/regression-m4-2026-11-21/README.md)). The scenarios this
-ADR names as added after that run (`xmr-taker-clock-ahead`,
+The full regression at `7b4e46da` on the Docker devnet, Monero regtest, an
+Apple-silicon Mac (linux/arm64 images), three lanes: 175 of 175, 174 on their
+first try and one Bitcoin desk journey over Logos Delivery
+(`ui:btc:logos-happy:TakerSellsForeign`) on its second rerun; all 25 Monero
+tests of that tier on their first try, among them every scenario this ADR
+names ([`results.tsv`](../evidence/regression-0.4.0-2026-11-22-macos-arm64/results.tsv),
+[README](../evidence/regression-0.4.0-2026-11-22-macos-arm64/README.md)).
+The full regression before it, at `d4475300` on x86_64: 160 of 160, each on
+its first try, among them the 16 Monero tests of that tier
+([README](../evidence/regression-m4-2026-11-21/README.md)); the scenarios
+this ADR names as added after that run (`xmr-taker-clock-ahead`,
 `xmr-punish-replans`, `xmr-maker-claim-without-authorization`,
-`xmr-maker-early-punish`, `xmr-unfunded-punish`, `xmr-taker-cheats`) are not in
-that set.
+`xmr-maker-early-punish`, `xmr-unfunded-punish`, `xmr-taker-cheats`) are not
+in that set.
 
 On public Monero Stagenet, from 2026-11-21 22:50 to 2026-11-22 01:49 UTC, the
 two Nodes, built from `8f66d11b`, with LEZ on a fresh devnet chain and public
