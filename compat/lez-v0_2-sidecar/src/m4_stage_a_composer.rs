@@ -1056,7 +1056,7 @@ mod tests {
             }
             value.to_string()
         };
-        let stagenet = input(serde_json::json!("public-stagenet"), 7_200_000, 9_000_000);
+        let stagenet = input(serde_json::json!("public-stagenet"), 7_200_000, 14_400_000);
         let wire = plan_m4_stage_a_unsigned_wire(stagenet.as_bytes()).expect("Stagenet plan");
         let body = ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wire).expect("canonical");
         assert_eq!(body.body().profile(), XmrNamedProfileV1::PublicStagenet);
@@ -1077,8 +1077,9 @@ mod tests {
             input(
                 serde_json::json!("public-stagenet"),
                 600_000 + 5_999_000,
-                9_000_000,
+                14_400_000,
             ),
+            input(serde_json::json!("public-stagenet"), 7_200_000, 9_000_000),
             input(serde_json::json!("public-mainnet"), 7_200_000, 9_000_000),
             input(serde_json::json!("mainnet"), 7_200_000, 9_000_000),
         ] {

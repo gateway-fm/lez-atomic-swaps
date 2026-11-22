@@ -677,11 +677,12 @@ xmr_punish=$(( xmr_refund + lez_step_seconds + lez_stall_seconds + timing[4] + 2
 # timing profile (docs/monero-stagenet-guide.md, "The windows"): C at +10 min
 # (the Taker's lock final and the Maker's submit-only funding), R - C twice
 # 55 min (eleven blocks and both roles' LEZ steps; PublicStagenet admits 100
-# min), P - R 30 min (the Taker's refund on LEZ alone; the profile's minimum).
+# min), P - R 2 h (the Taker's safety window for its refund, through an
+# outage of its Node; PublicStagenet admits no less).
 if [[ "$monero_network" == stagenet ]]; then
   xmr_cutoff=600
   xmr_refund=$(( xmr_cutoff + 2 * 55 * 60 ))
-  xmr_punish=$(( xmr_refund + 30 * 60 ))
+  xmr_punish=$(( xmr_refund + 2 * 60 * 60 ))
 fi
 # The Maker's actor supervisor observes a live swap's actor 5 s after each
 # attempt and retries a failed one after 30 s (the Node's defaults, kept on

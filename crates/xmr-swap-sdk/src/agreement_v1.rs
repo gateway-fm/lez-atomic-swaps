@@ -59,10 +59,13 @@ const REGTEST_MINIMUM_REFUND_TO_PUNISH_MS: u64 = 10_000;
 // so each half of R - C must hold a funding sent just before C: 11 blocks at
 // 120 s (more than 45 minutes in 0.3 % of cases at the target rate) and the
 // Taker's and Maker's LEZ steps (5 minutes). A swap whose confirmations come
-// later falls back to the Taker's refund at R, with nothing lost. P - R holds
-// only LEZ work: the Taker's refund landing, and its Node's restarts.
+// later falls back to the Taker's refund at R, with nothing lost. P - R is
+// the Taker's own safety window: its refund must land in it, through an
+// outage of its Node, its host or its LEZ sidecar, on a public network where
+// nobody else keeps those running. Two hours, the reviewed M1 profile's: a
+// longer wait for the punishment costs the Maker only time.
 const STAGENET_MINIMUM_FUNDING_TO_REFUND_MS: u64 = 2 * (45 + 5) * 60 * 1_000;
-const STAGENET_MINIMUM_REFUND_TO_PUNISH_MS: u64 = 30 * 60 * 1_000;
+const STAGENET_MINIMUM_REFUND_TO_PUNISH_MS: u64 = 2 * 60 * 60 * 1_000;
 const XMR_METADATA_VERSION_V3: u8 = 3;
 
 /// Immutable network and safety policy selected before negotiation.
@@ -4065,10 +4068,11 @@ mod tests {
     #[test]
     fn stagenet_minimum_windows_are_the_documented_sizing() {
         // docs/monero-stagenet-guide.md, "The windows": 2 x (45 + 5) minutes
-        // between C and R, 30 minutes between R and P.
+        // between C and R, two hours between R and P (the Taker's safety
+        // window is never shorter on a public network).
         let stagenet = XmrNamedProfileV1::PublicStagenet;
         assert_eq!(stagenet.minimum_funding_to_refund_ms(), 100 * 60 * 1_000);
-        assert_eq!(stagenet.minimum_refund_to_punish_ms(), 30 * 60 * 1_000);
+        assert_eq!(stagenet.minimum_refund_to_punish_ms(), 2 * 60 * 60 * 1_000);
         assert_eq!(stagenet.network(), MoneroAddressNetworkV1::Stagenet);
         let regtest = XmrNamedProfileV1::AcceleratedRegtest;
         assert_eq!(regtest.network(), MoneroAddressNetworkV1::Regtest);

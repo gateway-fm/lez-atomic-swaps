@@ -1225,7 +1225,7 @@ pub(crate) mod tests {
             json["profile"] = serde_json::json!("public-stagenet");
             json["funding_cutoff_seconds"] = serde_json::json!(600);
             json["refund_seconds"] = serde_json::json!(7_200);
-            json["punish_seconds"] = serde_json::json!(9_000);
+            json["punish_seconds"] = serde_json::json!(14_400);
         }))
         .unwrap();
         let taker = begin_xmr_taker_role(&taker_root, [TAKER_ACCOUNT; 32]).unwrap();
@@ -1541,18 +1541,20 @@ pub(crate) mod tests {
                 json["punish_seconds"] = serde_json::json!(punish);
             })
         };
-        // The devnet's Stagenet windows: C, R, P = +10 min, +2 h, +2.5 h.
-        let loaded = XmrRoleConfigV1::load(&stagenet(600, 7_200, 9_000)).unwrap();
+        // The devnet's Stagenet windows: C, R, P = +10 min, +2 h, +4 h.
+        let loaded = XmrRoleConfigV1::load(&stagenet(600, 7_200, 14_400)).unwrap();
         assert_eq!(loaded.profile(), XmrNamedProfileV1::PublicStagenet);
         assert_eq!(loaded.network(), MoneroNetwork::Stagenet);
         assert_eq!(config(&root).network(), MoneroNetwork::Regtest);
         // At the profile's minimums, and one second below each.
-        assert!(XmrRoleConfigV1::load(&stagenet(600, 600 + 6_000, 600 + 6_000 + 1_800)).is_ok());
+        assert!(XmrRoleConfigV1::load(&stagenet(600, 600 + 6_000, 600 + 6_000 + 7_200)).is_ok());
         for (cutoff, refund, punish) in [
-            (600, 600 + 5_999, 600 + 5_999 + 1_800),
-            (600, 600 + 6_000, 600 + 6_000 + 1_799),
+            (600, 600 + 5_999, 600 + 5_999 + 7_200),
+            (600, 600 + 6_000, 600 + 6_000 + 7_199),
+            // The 30-minute P - R of an earlier draft: never on a public network.
+            (600, 7_200, 7_200 + 1_800),
             // A cutoff past what a Stagenet restore height looks back over.
-            (3 * 3_600 + 1, 3 * 3_600 + 1 + 6_000, 3 * 3_600 + 1 + 7_800),
+            (3 * 3_600 + 1, 3 * 3_600 + 1 + 6_000, 3 * 3_600 + 1 + 13_200),
         ] {
             let error = XmrRoleConfigV1::load(&stagenet(cutoff, refund, punish)).unwrap_err();
             assert!(
