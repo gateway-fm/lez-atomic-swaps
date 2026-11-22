@@ -157,6 +157,28 @@ runs above possible. We would rather see the host own Delivery's lifecycle as th
 describes, with chat_module using a node the host configured and started; the patch is offered as
 a stop-gap or as a reference.
 
+## A message before its topic's subscription (private network, 2026-11-22)
+
+On the devnet's private two-node Delivery network (`compose.logos.yaml`), a desk take failed 2 of
+3 times in a regression and 2 of 15 times in diagnostic runs. With both nodes' output kept
+(`deploy/scripts/ui-e2e.sh`, summarised by `deploy/scripts/logos-evidence.py`), every failure is
+the same: the Taker creates a direct conversation, publishes the invite on the Maker's inbox
+topic and, about 40 ms later, its first message on the new conversation's topic. The Maker's
+relay receives both ("received relay message"), but its Delivery node emits `message_received`
+only for the inbox message: the Maker's `subscribe` to the conversation topic comes 2 and 10 ms
+after the message in the two failures (7 to 552 ms before it in the 13 passing runs). Both
+nodes had one relay peer, every publish was "propagated via Relay noOfPeers=1", and store is off,
+so nothing brings the message back. The subscription is queued by chat_module's
+`SdkPublisher::subscribe` (`rust-lib/src/delivery.rs`) and forwarded from the bridge's 50 ms poll
+loop (`inbound.rs`, `forward_subscriptions`). The message published on the conversation topic
+right after the invite is dropped the same way in every run.
+
+**Request (c):** subscribe to a conversation's topic before the invite is acknowledged to the
+client, or hand on `/logos-chat/1/` messages whose topic is not yet subscribed (or hold them
+briefly) so a first message on a fresh conversation is not lost. Our gateway now resends an
+unanswered request inside its 25 s wait, which hides the loss from a take but not from any other
+first message.
+
 ## Also noted
 
 - Documented in this repository (`deploy/README.md`, "Two transports") and in our operations

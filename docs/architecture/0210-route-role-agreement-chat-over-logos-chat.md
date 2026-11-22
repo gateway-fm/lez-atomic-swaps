@@ -85,7 +85,9 @@ outbox head. The outbox is limited to 64 entries, pending and in-flight requests
 to 32 each, and the Maker response replay cache to 128. An oversized Maker
 result, including an ambiguous JSON `null`, becomes a bounded dependency error
 response. The Taker request wait is
-25 seconds, strictly inside the existing 30-second owner-local caller deadline.
+25 seconds, strictly inside the existing 30-second owner-local caller deadline. Inside it the Taker sends an
+unanswered request frame again, unchanged, at 1, 2, 4, 8 and 16 s; the Maker's
+in-flight set and response cache answer the repeat without a second call.
 Unix control and proxy sockets are absolute, owned by the effective user, and
 mode 0600.
 

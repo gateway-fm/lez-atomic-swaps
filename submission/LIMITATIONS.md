@@ -226,20 +226,34 @@ The launcher and the desks:
 
 The Logos transport:
 
-- The Bitcoin desk journey over Logos Delivery and Chat
-  (`ui:btc:logos-happy:TakerSellsForeign`) failed 2 of 3 tries on an
-  Apple-silicon Mac in the full regression at `7b4e46da`, and passed on the
-  third
-  ([regression-0.4.0-2026-11-22-macos-arm64](../docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/README.md#the-failure-and-its-reruns)).
-  Known: in both failures the Taker's Chat module sent its ~9.9 KB
-  `btc_reserve_v1` request 3 s after its Delivery node was online, the
-  Maker's Chat module never received it, and after the gateway's 25 s wait
-  the take was refused (`Chat peer operation unavailable`); nothing was
-  locked. Not known: why the message was lost, in the Delivery network's
-  start or elsewhere; the Delivery nodes' own logs of those tries were not
-  kept. No code was changed for it. The journey passed on its first try at
-  `d4475300` on x86_64, and both `ui:zec:logos-happy` journeys of the
-  `7b4e46da` run passed on their first try.
+- A Logos Delivery node hands a received message to its Chat module only
+  for a content topic it has subscribed to, and a Maker subscribes to a new
+  direct conversation's topic only after its Chat client has processed the
+  Taker's invite (chat_module queues the subscription and forwards it from a
+  50 ms poll loop). A Taker request that reaches the Maker's node sooner is
+  dropped: the relay received it, the Chat module never saw it, and neither
+  Delivery (store off) nor Chat sends it again. On the devnet this is the
+  first request of a take, sent about 40 ms after the conversation is
+  created; in 15 diagnostic runs on an Apple-silicon Mac it arrived 2 and
+  10 ms before the Maker's subscription in the two that failed and 7 to
+  552 ms after it in the 13 that passed. Both sides had their relay peer in
+  every run, and message size did not matter (the failures were 7.8 KB ZEC
+  requests, while 9.9 KB BTC ones passed).
+- Workaround in our gateway: the Taker queues an unanswered request frame
+  again, the same bytes, 1, 2, 4, 8 and 16 s after its first send, inside the
+  25 s wait (`crates/node-common/src/logos_chat_gateway.rs`,
+  `REQUEST_RESEND_AFTER`). The Maker's gateway answers a repeated frame from
+  its in-flight set or its response cache, and the Maker daemon replays every
+  Chat round by its request digest, so no round runs twice; a lost answer is
+  sent again on the next resend. A take whose first request was dropped now
+  starts about 1 s later instead of failing.
+- What remains upstream: the race itself, in chat_module and Delivery. A
+  message on a conversation topic that arrives before its subscription is
+  still lost; the resend only makes the exchange recover from it. Any other
+  sender of a first message on a fresh conversation topic would meet it too;
+  in this project the Maker never sends first (it only answers), and the
+  Taker subscribes to the conversation's topic when it creates the
+  conversation, before its first request.
 
 Found in the M4 review, outside the Monero protocol:
 

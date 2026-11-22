@@ -161,6 +161,12 @@ is removed, closing the race between completion and replay.
 The Taker peer wait is 25 seconds, strictly shorter than the existing 30-second
 owner-local RPC deadline, so pending state is released and a correlated error
 can be returned before the caller abandons its connection.
+Within that wait the Taker queues an unanswered request frame again, the same
+bytes, 1, 2, 4, 8 and 16 s after its first send (`REQUEST_RESEND_AFTER`): a
+Maker's Delivery node drops a message on a conversation topic it has not yet
+subscribed to, and the first request of a take can arrive before the Maker has
+processed the Taker's invite. The in-flight mark and the response cache above
+answer the repeated frame without a second Maker call.
 An abandoned individual RPC connection is reaped without terminating the
 gateway; listener failures still follow the graceful process-shutdown path.
 
