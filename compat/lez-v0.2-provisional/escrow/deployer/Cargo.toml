@@ -27,7 +27,7 @@ sha2 = "=0.10.9"
 tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "time"] }
 toml = "=0.8.23"
 tempfile = "=3.27.0"
-url = "=2.5.8"
+url = "=2.5.9"
 zeroize = "=1.9.0"
 
 [dev-dependencies]
