@@ -1075,14 +1075,37 @@ class XmrKillMakerClaimHolds(unittest.TestCase):
         def walk(*_):
             raise Stop
 
+        cleared = []
         with patch.multiple(e2e, xmr_require_test_hooks=lambda role, text=None: required.append((role, text)),
+                            xmr_hook=lambda role, name, value: cleared.append((role, name, value)),
                             xmr_kill_point_swap=walk):
             with self.assertRaises(Stop):
                 e2e.scenario_xmr_kill_walk('1', 'maker')
             self.assertEqual(required, [('maker', 'hold-claim-preparations'), ('maker', 'hold-claim-submissions')])
+            # both holds cleared before the first swap, whatever an earlier run left
+            self.assertEqual(cleared, [('maker', 'hold-claim-preparations', None),
+                                       ('maker', 'hold-claim-submissions', None)])
             with self.assertRaises(Stop):
                 e2e.scenario_xmr_kill_walk('1', 'taker')
         self.assertEqual(len(required), 2)
+        self.assertEqual(len(cleared), 2)
+
+    def test_a_failed_cleanup_neither_masks_the_swaps_failure_nor_raises(self):
+        class Stop(Exception):
+            pass
+
+        def once(*_):
+            raise Stop
+
+        def hook(role, name, value):
+            if value is None:
+                raise subprocess.CalledProcessError(1, ['docker', 'exec'])
+
+        logged = []
+        with patch.multiple(e2e, xmr_kill_point_swap_once=once, xmr_hook=hook, log=logged.append):
+            with self.assertRaises(Stop):
+                e2e.xmr_kill_point_swap('1', 'maker', 'claim preparation held', None, False)
+        self.assertTrue(any('could not clear' in line and 'hold-claim-preparations' in line for line in logged))
 
 
 class CustodyCredit(unittest.TestCase):

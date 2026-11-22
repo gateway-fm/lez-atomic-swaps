@@ -7744,7 +7744,17 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
     try:
         return xmr_kill_point_swap_once(stamp, role, point, reached, may_refund, hook)
     finally:
+        xmr_clear_claim_hold(hook)
+
+
+def xmr_clear_claim_hold(hook: str) -> None:
+    """Clears one claim hold and never raises: a Maker container that did not
+    start again must not mask the swap's own failure. A hold it could not
+    clear is cleared at the next walk's start (scenario_xmr_kill_walk)."""
+    try:
         xmr_hook("maker", hook, None)
+    except Exception as error:  # noqa: BLE001 - cleanup only, the cause is reported
+        log(f"  could not clear the Maker's test hook {hook}: {error}")
 
 
 def xmr_kill_point_swap_once(stamp: str, role: str, point: str, reached, may_refund: bool,
@@ -7870,6 +7880,9 @@ def scenario_xmr_kill_walk(stamp: str, role: str) -> dict:
         # The claim kill points hold the claim tool with the sidecar's hooks.
         for hook in XMR_CLAIM_HOLDS.values():
             xmr_require_test_hooks("maker", hook)
+        # A hold an earlier run could not clear would park this run's claims.
+        for hook in XMR_CLAIM_HOLDS.values():
+            xmr_hook("maker", hook, None)
     walked = []
     for index, (point, reached) in enumerate(XMR_KILL_POINTS[role]):
         for attempt in range(2):
