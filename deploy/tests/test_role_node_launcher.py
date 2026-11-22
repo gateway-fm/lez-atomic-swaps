@@ -232,12 +232,13 @@ class Launcher(unittest.TestCase):
             LEZ_ZEC_STATE_DIR=str(root / 'zec'), LEZ_NODE_IDENTITY_DIR=str(root / 'identity'),
             LEZ_MARKET_MANIFEST=str(root / 'manifest.env'), LEZ_BTC_RPC_COOKIE_FILE=str(root / 'cookie'),
             LEZ_DELIVERY_DIR=str(root / 'delivery'), LEZ_BITCOIN_CORE_HOST='127.0.0.1',
-            LEZ_SEQUENCER_HOST='localhost')
+            LEZ_SEQUENCER_HOST='localhost:3040', LEZ_INDEXER_HOST='127.0.0.1:18779')
         calls = self.logged(2)
-        self.assertNotIn('TCP:127.0.0.1', calls)
+        self.assertNotIn('TCP:127.0.0.1:18443', calls)
         self.assertNotIn('TCP:localhost', calls)
+        # On loopback, but on another port: forwarded, not read on the default.
+        self.assertIn('socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:127.0.0.1:18779', calls)
         # Without setpriv the forwards still start, directly.
-        self.assertIn('socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779', calls)
         self.assertIn('socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232', calls)
         self.assertNotIn('setpriv', calls)
 

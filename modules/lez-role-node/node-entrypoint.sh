@@ -242,8 +242,10 @@ sha256_of() {
 # loopback (a systemd deployment, where both roles share one network).
 chain_forwards="${LEZ_CHAIN_FORWARDS:-1}"
 forward() { # forward <loopback port> <host>[:<port>]: the same port unless named
+  # A service already on this loopback port needs no forward; one on another
+  # loopback port does.
   case "$2" in
-    127.0.0.1|localhost|127.0.0.1:*|localhost:*) return 0 ;;
+    127.0.0.1|localhost|"127.0.0.1:$1"|"localhost:$1") return 0 ;;
   esac
   local target="$2"
   [[ "$target" == *:* ]] || target="$target:$1"
