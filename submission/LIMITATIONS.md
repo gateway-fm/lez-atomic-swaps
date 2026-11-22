@@ -246,7 +246,12 @@ The Logos transport:
   its in-flight set or its response cache, and the Maker daemon replays every
   Chat round by its request digest, so no round runs twice; a lost answer is
   sent again on the next resend. A take whose first request was dropped now
-  starts about 1 s later instead of failing.
+  goes on at the next resend that arrives after the Maker's subscription
+  instead of failing: on the devnet at `5002e330`, with the Maker's Basecamp
+  paused for 5 s while the Taker took, the first three copies arrived before
+  the subscription and were dropped, the fourth (sent 4 s after the first)
+  was answered and the swap completed; 20 runs of `ui:*:logos-happy` without
+  the pause passed with no resend needed.
 - What remains upstream: the race itself, in chat_module and Delivery. A
   message on a conversation topic that arrives before its subscription is
   still lost; the resend only makes the exchange recover from it. Any other
