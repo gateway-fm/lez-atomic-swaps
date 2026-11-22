@@ -858,6 +858,89 @@ impl SqliteZecRecoveryStore {
         })
     }
 
+    /// The Maker's committed second-lock transition, wherever in the journal it
+    /// landed.
+    ///
+    /// A swap holds at most one: the one maker lock intent closes at its
+    /// commit. Its predecessor revision is not fixed, because every deeper
+    /// re-observation of the Taker's first lock before it commits a revision
+    /// of its own. The row found is reopened through the exact-slot
+    /// [`RecoveryStore::load_maker_lock_transition`], with all its checks.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-maker store, more than one row, and every failure of the
+    /// exact-slot load.
+    pub async fn load_committed_maker_lock_transition(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<MakerLockTransitionV1>, StoreError> {
+        if self.local_participant != Participant::Maker {
+            return Err(StoreError::ZecRecoveryRoleMismatch);
+        }
+        let Some(predecessor) =
+            self.only_transition_predecessor(SecondLockTable::MakerLock, swap_id)?
+        else {
+            return Ok(None);
+        };
+        self.load_maker_lock_transition(swap_id, predecessor).await
+    }
+
+    /// The Taker's committed observation of the Maker's second lock, wherever
+    /// in the journal it landed; the Taker-side counterpart of
+    /// [`Self::load_committed_maker_lock_transition`].
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-taker store, more than one row, and every failure of the
+    /// exact-slot [`RecoveryStore::load_observed_maker_lock_transition`].
+    pub async fn load_committed_observed_maker_lock_transition(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<ObservedMakerLockTransitionV1>, StoreError> {
+        if self.local_participant != Participant::Taker {
+            return Err(StoreError::ZecRecoveryRoleMismatch);
+        }
+        let Some(predecessor) =
+            self.only_transition_predecessor(SecondLockTable::ObservedMakerLock, swap_id)?
+        else {
+            return Ok(None);
+        };
+        self.load_observed_maker_lock_transition(swap_id, predecessor)
+            .await
+    }
+
+    /// The predecessor revision of the single row `table` holds for this
+    /// role's swap.
+    fn only_transition_predecessor(
+        &self,
+        table: SecondLockTable,
+        swap_id: &SwapId,
+    ) -> Result<Option<u64>, StoreError> {
+        let sql = match table {
+            SecondLockTable::MakerLock => {
+                "SELECT predecessor_revision FROM zec_sdk_maker_lock_transitions
+                 WHERE local_role = ?1 AND swap_id = ?2 LIMIT 2"
+            }
+            SecondLockTable::ObservedMakerLock => {
+                "SELECT predecessor_revision FROM zec_sdk_observed_maker_lock_transitions
+                 WHERE local_role = ?1 AND swap_id = ?2 LIMIT 2"
+            }
+        };
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(sql)?;
+        let predecessors = statement
+            .query_map(params![self.role_name(), swap_id.as_str()], |row| {
+                row.get::<_, i64>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        match predecessors.as_slice() {
+            [] => Ok(None),
+            [predecessor] => Ok(Some(revision_from_sql(*predecessor)?)),
+            _ => Err(StoreError::InvalidZecRecoveryState),
+        }
+    }
+
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {
         self.connection
             .lock()
@@ -3320,6 +3403,16 @@ fn load_agreement_row(
         )
         .optional()
         .map_err(StoreError::from)
+}
+
+/// The two second-lock transition tables a claim reopens from. Each names its
+/// own fixed SELECT statement, so no SQL text is ever assembled at run time.
+#[derive(Clone, Copy)]
+enum SecondLockTable {
+    /// The Maker's own second-lock transitions.
+    MakerLock,
+    /// The Taker's observations of the Maker's second lock.
+    ObservedMakerLock,
 }
 
 /// The two lock-intent tables a re-plan can restage. Each names its own fixed
