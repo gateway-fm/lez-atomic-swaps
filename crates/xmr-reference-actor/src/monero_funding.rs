@@ -179,10 +179,11 @@ pub async fn fund_maker_monero(
     let _lock = rpc.lock().context(MoneroFundingNotSent)?;
     // Regtest's daemon proves it is the fakechain before this tool mines; on
     // a public network there is no mining capability at all.
-    let mining = MoneroRegtestMining::where_the_role_mines(identity, rpc.daemon())
-        .await
-        .context("prove the Monero daemon's network")
-        .context(MoneroFundingNotSent)?;
+    let mining = prove_mining(
+        || MoneroRegtestMining::where_the_role_mines(identity, rpc.daemon()),
+        FUNDING_RETRY_PAUSE,
+    )
+    .await?;
     let role = rpc.role_effects().context(MoneroFundingNotSent)?;
     // The role wallet is open from here on, under the lock: the transfer and
     // the shared wallet's restore do not open it once more (an open takes the
@@ -250,6 +251,42 @@ pub async fn fund_maker_monero(
     recorded?
         .context("the confirmed Monero funding is not yet observable")
         .map(Some)
+}
+
+/// The daemon's proof of its network, attempted as the transfer is: nothing
+/// is sent before it, so a `get_info` lost on a busy monerod is tried again
+/// and never spends the swap's one funding while attempts remain.
+async fn prove_mining<F, Fut>(
+    mut prove: F,
+    pause: std::time::Duration,
+) -> Result<Option<MoneroRegtestMining>>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<
+            Output = Result<
+                Option<MoneroRegtestMining>,
+                lez_xmr_monero_adapter::MoneroRegtestMiningError,
+            >,
+        >,
+{
+    let mut attempt = 1;
+    loop {
+        match prove().await {
+            Ok(mining) => return Ok(mining),
+            Err(error) if attempt < FUNDING_ATTEMPTS => {
+                eprintln!(
+                    "Maker Monero funding: {error}; nothing was sent (attempt {attempt} of {FUNDING_ATTEMPTS}); trying again"
+                );
+                attempt += 1;
+                std::thread::sleep(pause);
+            }
+            Err(error) => {
+                return Err(anyhow::Error::new(error)
+                    .context("prove the Monero daemon's network")
+                    .context(MoneroFundingNotSent));
+            }
+        }
+    }
 }
 
 /// Returns the funding observer's evidence digest once the Maker's funding is
@@ -583,6 +620,48 @@ mod tests {
         XMR_MAKER_FUNDING_RECEIPT_FILE, record_funding_files, recorded_funding_files,
     };
     use crate::canonical_json_bytes;
+
+    /// A daemon read lost before the transfer is tried again within the
+    /// funding's attempts, and only their end spends the one funding.
+    #[tokio::test]
+    async fn a_lost_network_proof_is_tried_again_before_the_funding_is_spent() {
+        use lez_xmr_monero_adapter::MoneroRegtestMiningError;
+        let calls = std::cell::Cell::new(0);
+        let proven = super::prove_mining(
+            || {
+                calls.set(calls.get() + 1);
+                let failed = calls.get() == 1;
+                async move {
+                    if failed {
+                        Err(MoneroRegtestMiningError::DaemonIsNotRegtest)
+                    } else {
+                        Ok(None)
+                    }
+                }
+            },
+            std::time::Duration::ZERO,
+        )
+        .await;
+        assert!(proven.unwrap().is_none());
+        assert_eq!(calls.get(), 2);
+
+        calls.set(0);
+        let refused = super::prove_mining(
+            || {
+                calls.set(calls.get() + 1);
+                async { Err(MoneroRegtestMiningError::DaemonIsNotRegtest) }
+            },
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(calls.get(), super::FUNDING_ATTEMPTS);
+        assert!(
+            refused
+                .downcast_ref::<super::MoneroFundingNotSent>()
+                .is_some()
+        );
+    }
 
     fn receipt(tip: u64) -> MoneroReceiptEvidenceV2 {
         MoneroReceiptEvidenceV2 {
