@@ -3971,8 +3971,8 @@ def zec_dynamic_fund_taker() -> None:
 
 def taker_has_take_time_swap(swap_id: str) -> bool:
     """Whether the Taker Node agreed `swap_id` at take time (zec_reserve_v1)."""
-    found = subprocess.run(["docker", "exec", NODES["taker"][0], "sh", "-c",
-                            f"grep -l '\"{swap_id}\"' /var/lib/lez/taker/btc/swaps/*/zec-taker-prepared.json"],
+    found = subprocess.run(node_command("taker", ["sh", "-c",
+                            f"grep -l '\"{swap_id}\"' /var/lib/lez/taker/btc/swaps/*/zec-taker-prepared.json"]),
                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     return found.returncode == 0 and bool(found.stdout.strip())
 
@@ -3989,7 +3989,7 @@ def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
               "    r=json.load(open(p.replace('zec-taker-prepared.json','zec-taker-reserve.json')))\n"
               "    print(json.dumps({'receipt_output':e['receipt_output'],'response':r['response'],"
               "'taker_funding':r['request']['taker_funding'],'offer_id':r['request']['offer_id']}))\n")
-    read = subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", reader, swap_id],
+    read = subprocess.run(node_command("taker", ["python3", "-c", reader, swap_id]),
                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     # A desk journey may have the Taker's Node stopped (zec-survivor): the
     # facts read once are kept on the host and reused.
