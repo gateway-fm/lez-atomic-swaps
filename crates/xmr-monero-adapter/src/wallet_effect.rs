@@ -23,6 +23,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::num::NonZeroU64;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use lez_xmr_swap_sdk::{MoneroPrivateViewKey, MoneroSharedAddressV1, ReconstructedMoneroSpendKey};
 use monero_rpc::monero::util::address::AddressType;
@@ -182,6 +183,33 @@ impl MoneroWalletRpcLock {
         file.lock()
             .map_err(|_| MoneroWalletEffectError::WalletRpcLock)?;
         Ok(Self { _file: file })
+    }
+
+    /// Like [`Self::acquire`], but waits at most `wait` for the holder: a
+    /// caller with other work to do (a refund deadline) never queues behind
+    /// a stalled wallet-rpc user without a bound.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the file cannot be opened or locked, or with
+    /// [`MoneroWalletEffectError::WalletRpcLock`] once `wait` has passed.
+    pub fn acquire_within(path: &Path, wait: Duration) -> Result<Self, MoneroWalletEffectError> {
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
+            .map_err(|_| MoneroWalletEffectError::WalletRpcLock)?;
+        let deadline = Instant::now() + wait;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { _file: file }),
+                Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(_) => return Err(MoneroWalletEffectError::WalletRpcLock),
+            }
+        }
     }
 }
 
@@ -1267,6 +1295,25 @@ fn validate_wallet_filename(filename: &str) -> Result<(), MoneroWalletEffectErro
 mod tests {
     use super::*;
     use monero_rpc::monero::{Network, PublicKey};
+
+    #[test]
+    fn a_bounded_wallet_lock_gives_up_behind_a_holder() {
+        let path = std::env::temp_dir().join(format!(
+            "lez-xmr-wallet-lock-test-{}.lock",
+            std::process::id()
+        ));
+        let held = MoneroWalletRpcLock::acquire(&path).expect("first holder");
+        let started = Instant::now();
+        assert!(matches!(
+            MoneroWalletRpcLock::acquire_within(&path, Duration::from_millis(300)),
+            Err(MoneroWalletEffectError::WalletRpcLock)
+        ));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(held);
+        let _again = MoneroWalletRpcLock::acquire_within(&path, Duration::from_millis(300))
+            .expect("free once the holder is done");
+        let _ = std::fs::remove_file(&path);
+    }
 
     fn address(address_type: AddressType) -> Address {
         let mut spend = [0_u8; 32];

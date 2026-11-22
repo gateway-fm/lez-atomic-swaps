@@ -83,6 +83,13 @@ const SWEEP_RETRY_FIRST_MS: u64 = 15_000;
 const SWEEP_RETRY_MAX_MS: u64 = 15 * 60_000;
 /// Bounded finalized-history scans per effect and tick.
 const SCANS_PER_TICK: usize = 8;
+/// How long a Monero step waits for the role's wallet-rpc lock, and how long
+/// a read-only Monero step (an observation, a re-verification, a sweep's
+/// confirmation) may take in all. A public daemon or wallet-rpc that stalls
+/// costs a swap's step this much at most; every swap's refund has already run
+/// in the sweep before any Monero step ([`sweep_refunds_first`]).
+const MONERO_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+const MONERO_STEP_BUDGET: std::time::Duration = std::time::Duration::from_mins(2);
 
 /// One process writes progress records; the supervisor and the owner's refund
 /// both update them, one read-modify-write at a time.
@@ -1348,11 +1355,27 @@ async fn observe_monero(
     let restored = progress.shared_wallet_restored;
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
-        let _lock = MoneroWalletRpcLock::acquire(&dynamic.wallet_lock_file()?)?;
-        handle.block_on(observe_monero_locked(&dynamic, &files, &facts, restored))
+        let _lock =
+            MoneroWalletRpcLock::acquire_within(&dynamic.wallet_lock_file()?, MONERO_LOCK_WAIT)?;
+        handle.block_on(within_monero_budget(
+            MONERO_STEP_BUDGET,
+            observe_monero_locked(&dynamic, &files, &facts, restored),
+        ))
     })
     .await
     .context("the Monero observation thread")?
+}
+
+/// `work` within `budget`; past it the work is dropped (its connections
+/// closed, the wallet-rpc lock released) and the step fails, to run again on
+/// a later sweep.
+async fn within_monero_budget<T>(
+    budget: std::time::Duration,
+    work: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    tokio::time::timeout(budget, work)
+        .await
+        .map_err(|_| anyhow::anyhow!("the Monero step took longer than {budget:?}"))?
 }
 
 async fn observe_monero_locked(
@@ -1962,8 +1985,14 @@ fn sweep_not_sent(error: &MoneroWalletEffectError) -> bool {
 }
 
 /// Runs `work` on a blocking thread under the role's wallet-rpc lock (a
-/// blocking file lock), as the Monero observation does.
-async fn under_wallet_lock<T, F, Fut>(dynamic: &Arc<DynamicXmrRole>, work: F) -> Result<T>
+/// blocking file lock, waited for at most [`MONERO_LOCK_WAIT`]), as the
+/// Monero observation does; within `budget` when one is given. A sweep has
+/// none: a sweep cut off after its transfer would read as never sent.
+async fn under_wallet_lock<T, F, Fut>(
+    dynamic: &Arc<DynamicXmrRole>,
+    budget: Option<std::time::Duration>,
+    work: F,
+) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce() -> Fut + Send + 'static,
@@ -1972,8 +2001,11 @@ where
     let lock_file = dynamic.wallet_lock_file()?;
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
-        let _lock = MoneroWalletRpcLock::acquire(&lock_file)?;
-        handle.block_on(work())
+        let _lock = MoneroWalletRpcLock::acquire_within(&lock_file, MONERO_LOCK_WAIT)?;
+        match budget {
+            Some(budget) => handle.block_on(within_monero_budget(budget, work())),
+            None => handle.block_on(work()),
+        }
     })
     .await
     .context("the Monero wallet thread")?
@@ -2121,7 +2153,7 @@ impl XmrClaimChains for LiveClaim {
         let dynamic = Arc::clone(&self.dynamic);
         let files = self.files.clone();
         let facts = self.facts.clone();
-        let swept = under_wallet_lock(&self.dynamic, move || async move {
+        let swept = under_wallet_lock(&self.dynamic, None, move || async move {
             let (agreement, _, view_bytes) = files.agreement()?;
             let key = maker_claim_key(&files, &agreement, signature)?;
             let role = LiveClaim::role_wallet(&dynamic)?;
@@ -2165,24 +2197,28 @@ impl XmrClaimChains for LiveClaim {
     async fn mine(&self) -> Result<()> {
         let dynamic = Arc::clone(&self.dynamic);
         let files = self.files.clone();
-        under_wallet_lock(&self.dynamic, move || async move {
-            let (agreement, _, _) = files.agreement()?;
-            let config = dynamic.config();
-            // Regtest only: on a public network no mining capability exists,
-            // and the sweep's confirmations are its miners'.
-            let Some(mining) = MoneroRegtestMining::where_the_role_mines(
-                xmr_reference_actor::agreement_monero_identity(&agreement)?,
-                &config.monerod()?,
-            )
-            .await?
-            else {
-                return Ok(());
-            };
-            let role = LiveClaim::role_wallet(&dynamic)?;
-            role.mine_confirmations(&mining, role.primary_standard_address().await?)
-                .await?;
-            Ok(())
-        })
+        under_wallet_lock(
+            &self.dynamic,
+            Some(MONERO_STEP_BUDGET),
+            move || async move {
+                let (agreement, _, _) = files.agreement()?;
+                let config = dynamic.config();
+                // Regtest only: on a public network no mining capability exists,
+                // and the sweep's confirmations are its miners'.
+                let Some(mining) = MoneroRegtestMining::where_the_role_mines(
+                    xmr_reference_actor::agreement_monero_identity(&agreement)?,
+                    &config.monerod()?,
+                )
+                .await?
+                else {
+                    return Ok(());
+                };
+                let role = LiveClaim::role_wallet(&dynamic)?;
+                role.mine_confirmations(&mining, role.primary_standard_address().await?)
+                    .await?;
+                Ok(())
+            },
+        )
         .await
     }
 
@@ -2191,32 +2227,36 @@ impl XmrClaimChains for LiveClaim {
         let files = self.files.clone();
         let facts = self.facts.clone();
         let sweep = sweep.clone();
-        under_wallet_lock(&self.dynamic, move || async move {
-            let (agreement, _, _) = files.agreement()?;
-            let config = dynamic.config();
-            let role = LiveClaim::role_wallet(&dynamic)?;
-            let destination =
-                MoneroAddress::from_str(&role.primary_standard_address().await?.to_string())
-                    .context("the role wallet's address")?;
-            role.refresh_from_height(facts.monero_restore_height)
-                .await?;
-            let mut transaction = [0_u8; 32];
-            hex::decode_to_slice(&sweep.transaction, &mut transaction)
-                .context("the recorded sweep")?;
-            let verifier = MoneroOutputVerifier::new(
-                xmr_reference_actor::agreement_monero_identity(&agreement)?,
-                &config.monerod()?,
-                &config.wallet_rpc()?,
-            )?;
-            Ok(verifier
-                .verify(&ExpectedMoneroOutput::new(
-                    MoneroTransactionId(transaction),
-                    destination,
-                    sweep.received_piconero,
-                )?)
-                .await
-                .is_ok())
-        })
+        under_wallet_lock(
+            &self.dynamic,
+            Some(MONERO_STEP_BUDGET),
+            move || async move {
+                let (agreement, _, _) = files.agreement()?;
+                let config = dynamic.config();
+                let role = LiveClaim::role_wallet(&dynamic)?;
+                let destination =
+                    MoneroAddress::from_str(&role.primary_standard_address().await?.to_string())
+                        .context("the role wallet's address")?;
+                role.refresh_from_height(facts.monero_restore_height)
+                    .await?;
+                let mut transaction = [0_u8; 32];
+                hex::decode_to_slice(&sweep.transaction, &mut transaction)
+                    .context("the recorded sweep")?;
+                let verifier = MoneroOutputVerifier::new(
+                    xmr_reference_actor::agreement_monero_identity(&agreement)?,
+                    &config.monerod()?,
+                    &config.wallet_rpc()?,
+                )?;
+                Ok(verifier
+                    .verify(&ExpectedMoneroOutput::new(
+                        MoneroTransactionId(transaction),
+                        destination,
+                        sweep.received_piconero,
+                    )?)
+                    .await
+                    .is_ok())
+            },
+        )
         .await
     }
 }
@@ -2240,11 +2280,13 @@ fn lez_in_flight(progress: &XmrTakerProgressV1, windows: XmrWindows, now_ms: u64
 /// One supervision step of one swap, by its status. While another of the
 /// Taker's Monero swaps has an owner transaction in flight (`owner_busy`),
 /// the swap prepares no new one of its own: it waits for the next sweep.
+/// `refunded`: its refund step already ran in this sweep's first pass.
 async fn tick_swap(
     dynamic: &Arc<DynamicXmrRole>,
     files: &XmrSwapFiles,
     admitted: Option<TakerFacadeActionV1>,
     owner_busy: bool,
+    refunded: bool,
 ) -> Result<()> {
     let facts = files.facts()?;
     let progress = files.progress()?;
@@ -2262,6 +2304,7 @@ async fn tick_swap(
             admitted,
             dynamic.automatic_refund(),
             owner_busy,
+            refunded,
         )
         .await
     };
@@ -2331,6 +2374,7 @@ async fn settle_step<CC: XmrClaimChains, RC: XmrRefundChains>(
     admitted: Option<TakerFacadeActionV1>,
     automatic: bool,
     owner_busy: bool,
+    refund_ran: bool,
 ) -> Result<()> {
     let progress = files.progress()?;
     let revision = xmr_taker_view(&progress, windows, now_ms).revision;
@@ -2345,12 +2389,14 @@ async fn settle_step<CC: XmrClaimChains, RC: XmrRefundChains>(
         _ => Ok(()),
     };
     let progress = files.progress()?;
-    if !refund_runs(
-        &progress,
-        revision,
-        admitted == Some(TakerFacadeActionV1::Refund),
-        automatic,
-    ) {
+    if refund_ran
+        || !refund_runs(
+            &progress,
+            revision,
+            admitted == Some(TakerFacadeActionV1::Refund),
+            automatic,
+        )
+    {
         return claimed;
     }
     let refunded = refund_step(refund, files, windows, &progress).await;
@@ -2392,23 +2438,74 @@ async fn supervise_once(state: &TakerServiceState) {
             in_flight.insert(prepared.swap_id().as_str().to_owned());
         }
     }
-    for prepared in swaps {
-        let Some(binding) = prepared.execution().receipt_binding() else {
-            continue;
-        };
-        let admitted = match super::lifecycle::lookup_admitted_action_for_swap(
-            &initiation,
-            prepared.swap_id(),
-        )
-        .await
+    let sweep = LiveSweep {
+        initiation: &initiation,
+        dynamic,
+        in_flight: Mutex::new(in_flight),
+    };
+    sweep_refunds_first(&sweep, &swaps).await;
+}
+
+/// The two passes of one sweep over the bound swaps, one seam so their order
+/// is tested with the swaps stubbed.
+#[async_trait::async_trait]
+pub(super) trait XmrSweep: Sync {
+    type Swap: Sync;
+    /// The refund step alone, on LEZ alone, of a swap whose refund runs now
+    /// (`refund_runs`); whether it ran.
+    async fn refund_first(&self, swap: &Self::Swap) -> bool;
+    /// The swap's whole tick: its Monero steps and claim, and its refund
+    /// unless `refunded` (it ran in the first pass).
+    async fn tick(&self, swap: &Self::Swap, refunded: bool);
+}
+
+/// One sweep: every swap's refund first, then every swap's tick. From `R`
+/// the refund is the step with a deadline (tag 16 lands only before `P`),
+/// and a swap's Monero reads may each take the full time-outs of a public
+/// daemon that stalls: so no refund waits behind any Monero I/O, its own
+/// swap's or another's.
+pub(super) async fn sweep_refunds_first<S: XmrSweep>(sweep: &S, swaps: &[S::Swap]) {
+    let mut refunded = Vec::with_capacity(swaps.len());
+    for swap in swaps {
+        refunded.push(sweep.refund_first(swap).await);
+    }
+    for (swap, refunded) in swaps.iter().zip(refunded) {
+        sweep.tick(swap, refunded).await;
+    }
+}
+
+/// The sweep in the Node.
+struct LiveSweep<'a> {
+    initiation: &'a Arc<Mutex<crate::ConfiguredTakerInitiationContext>>,
+    dynamic: Arc<DynamicXmrRole>,
+    in_flight: Mutex<std::collections::BTreeSet<String>>,
+}
+
+impl LiveSweep<'_> {
+    async fn admitted(
+        &self,
+        prepared: &crate::PreparedTakerInitiationV1,
+    ) -> Option<TakerFacadeActionV1> {
+        match super::lifecycle::lookup_admitted_action_for_swap(self.initiation, prepared.swap_id())
+            .await
         {
             Ok(Some(admission)) => Some(admission.action()),
             _ => None,
-        };
+        }
+    }
+
+    /// The swap's route actor, under its actor lock when `lock` says so for
+    /// its progress (the refund and the claim read the adaptor material:
+    /// they run under that lock, as an owner's action does).
+    async fn load(
+        &self,
+        prepared: &crate::PreparedTakerInitiationV1,
+        lock: impl FnOnce(&XmrTakerProgressV1) -> bool + Send + 'static,
+    ) -> Option<(RouteActor, Option<lez_swap_store::ActorHeldLock>)> {
+        let binding = prepared.execution().receipt_binding()?;
         let receipt = prepared.execution().receipt_output().to_path_buf();
         let actor_root = prepared.execution().actor_root().to_path_buf();
         let swap_id = prepared.swap_id().clone();
-        let automatic = dynamic.automatic_refund();
         let loaded = tokio::task::spawn_blocking(move || {
             let actor = RouteActor::load_for_monitor(
                 lez_swap_core::Pair::Monero,
@@ -2419,13 +2516,11 @@ async fn supervise_once(state: &TakerServiceState) {
                 binding.identity().device(),
                 binding.identity().inode(),
             )?;
-            // The refund and the claim read the adaptor material: they run
-            // under the swap's actor lock, as an owner's action does.
-            let claiming = actor
+            let locked = actor
                 .xmr_files()
                 .and_then(|files| files.progress().ok())
-                .is_some_and(|progress| drives_adaptor_material(&progress, automatic));
-            let held = if admitted.is_some() || claiming {
+                .is_some_and(|progress| lock(&progress));
+            let held = if locked {
                 Some(lez_swap_store::ActorHeldLock::acquire_for(
                     actor.swap_id(),
                     actor.state_db(),
@@ -2436,41 +2531,99 @@ async fn supervise_once(state: &TakerServiceState) {
             Ok::<_, anyhow::Error>((actor, held))
         })
         .await;
-        let Ok(Ok((actor, _held))) = loaded else {
-            continue;
+        match loaded {
+            Ok(Ok(loaded)) => Some(loaded),
+            _ => None,
+        }
+    }
+}
+
+fn report_step_failure(swap_id: &str, error: &anyhow::Error) {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "event": "taker_xmr_supervisor_step_failed",
+            "swap_id": swap_id,
+            "error": format!("{error:#}"),
+        })
+    );
+}
+
+#[async_trait::async_trait]
+impl XmrSweep for LiveSweep<'_> {
+    type Swap = crate::PreparedTakerInitiationV1;
+
+    async fn refund_first(&self, prepared: &crate::PreparedTakerInitiationV1) -> bool {
+        let admitted = self.admitted(prepared).await;
+        let automatic = self.dynamic.automatic_refund();
+        let refund_admitted = admitted == Some(TakerFacadeActionV1::Refund);
+        let runs = move |progress: &XmrTakerProgressV1, windows: XmrWindows| {
+            let revision = xmr_taker_view(progress, windows, now_ms()).revision;
+            refund_runs(progress, revision, refund_admitted, automatic)
+        };
+        let Some((actor, held)) = self
+            .load(prepared, move |progress| {
+                // The windows are read again below; any refund row is locked.
+                progress.funded.is_some() && progress.refunded.is_none()
+            })
+            .await
+        else {
+            return false;
         };
         let Some(files) = actor.xmr_files() else {
-            continue;
+            return false;
         };
-        let owner_busy = in_flight
-            .iter()
-            .any(|swap| swap != prepared.swap_id().as_str());
-        let ticked = tick_swap(&dynamic, files, admitted, owner_busy).await;
+        let (Ok(facts), Ok(progress)) = (files.facts(), files.progress()) else {
+            return false;
+        };
+        let windows = XmrWindows::of(&facts);
+        if held.is_none() || !runs(&progress, windows) {
+            return false;
+        }
+        let refunded = async {
+            let refund = LiveRefund::connect(&self.dynamic, files, &facts)?;
+            refund_step(&refund, files, windows, &progress).await
+        }
+        .await;
+        if let Err(error) = refunded {
+            report_step_failure(prepared.swap_id().as_str(), &error);
+        }
+        true
+    }
+
+    async fn tick(&self, prepared: &crate::PreparedTakerInitiationV1, refunded: bool) {
+        let admitted = self.admitted(prepared).await;
+        let automatic = self.dynamic.automatic_refund();
+        let owner = admitted.is_some();
+        let Some((actor, _held)) = self
+            .load(prepared, move |progress| {
+                owner || drives_adaptor_material(progress, automatic)
+            })
+            .await
+        else {
+            return;
+        };
+        let Some(files) = actor.xmr_files() else {
+            return;
+        };
+        let swap_id = prepared.swap_id().as_str().to_owned();
+        let owner_busy = self
+            .in_flight
+            .lock()
+            .is_ok_and(|in_flight| in_flight.iter().any(|swap| *swap != swap_id));
+        let ticked = tick_swap(&self.dynamic, files, admitted, owner_busy, refunded).await;
         let now = now_ms();
-        match files.facts().and_then(|facts| {
-            Ok(lez_in_flight(
-                &files.progress()?,
-                XmrWindows::of(&facts),
-                now,
-            ))
-        }) {
-            Ok(true) => {
-                in_flight.insert(prepared.swap_id().as_str().to_owned());
+        if let (Ok(progress), Ok(facts), Ok(mut in_flight)) =
+            (files.progress(), files.facts(), self.in_flight.lock())
+        {
+            if lez_in_flight(&progress, XmrWindows::of(&facts), now) {
+                in_flight.insert(swap_id.clone());
+            } else {
+                in_flight.remove(&swap_id);
             }
-            Ok(false) => {
-                in_flight.remove(prepared.swap_id().as_str());
-            }
-            Err(_) => {}
         }
         if let Err(error) = ticked {
-            eprintln!(
-                "{}",
-                serde_json::json!({
-                    "event": "taker_xmr_supervisor_step_failed",
-                    "swap_id": prepared.swap_id().as_str(),
-                    "error": format!("{error:#}"),
-                })
-            );
+            report_step_failure(&swap_id, &error);
         }
     }
 }
@@ -3486,7 +3639,7 @@ mod tests {
         automatic: bool,
     ) -> Result<()> {
         settle_step(
-            claim, refund, files, WINDOWS, now, admitted, automatic, false,
+            claim, refund, files, WINDOWS, now, admitted, automatic, false, false,
         )
         .await
     }
@@ -3970,6 +4123,7 @@ mod tests {
                 admitted,
                 automatic,
                 owner_busy,
+                false,
             )
             .await
             .unwrap();
@@ -3978,6 +4132,106 @@ mod tests {
         let mut progress = locked();
         progress.refund_submitted = Some("16".repeat(32));
         assert!(!lez_in_flight(&progress, WINDOWS, WINDOWS.refund_ms));
+    }
+
+    /// A sweep whose first swap's Monero daemon stalls: the second swap,
+    /// past R, sends its refund before any Monero read of the sweep starts,
+    /// and the stalled read ends at its budget, not at the daemon's will.
+    struct StalledSweep {
+        files: Vec<XmrSwapFiles>,
+        refund: StubRefund,
+        daemon: lez_xmr_monero_adapter::LoopbackRpcEndpoint,
+        events: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl XmrSweep for StalledSweep {
+        type Swap = usize;
+
+        async fn refund_first(&self, swap: &usize) -> bool {
+            let files = &self.files[*swap];
+            let progress = files.progress().unwrap();
+            let revision = xmr_taker_view(&progress, WINDOWS, WINDOWS.refund_ms).revision;
+            if !refund_runs(&progress, revision, false, true) {
+                return false;
+            }
+            refund_step(&self.refund, files, WINDOWS, &progress)
+                .await
+                .unwrap();
+            self.events.lock().unwrap().push(format!("refund {swap}"));
+            true
+        }
+
+        async fn tick(&self, swap: &usize, refunded: bool) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("tick {swap} refunded={refunded}"));
+            if *swap == 0 {
+                let attestor = lez_xmr_monero_adapter::MoneroChainIdentityAttestor::new(
+                    lez_xmr_monero_adapter::MoneroNetwork::Stagenet,
+                    &self.daemon,
+                )
+                .unwrap();
+                let read = within_monero_budget(std::time::Duration::from_millis(500), async {
+                    attestor.discover().await.map_err(anyhow::Error::from)
+                })
+                .await;
+                assert!(read.is_err());
+                self.events
+                    .lock()
+                    .unwrap()
+                    .push("stalled read ended".into());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stalled_monero_daemon_never_holds_back_a_refund() {
+        // A daemon that accepts and never answers.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream);
+            }
+        });
+        // Swap 0 sweeps the Maker's claim (Monero I/O, no refund); swap 1 is
+        // past R with nothing claimed: its refund is due.
+        let mut claimed = locked();
+        claimed.claim_authorization = Some("14".repeat(32));
+        claimed.claim_authorized = effect(30_000);
+        claimed.maker_claim = Some(XmrMakerClaimV1 {
+            finalized: effect(40_000).unwrap(),
+            signature: "15".repeat(64),
+        });
+        let (_first, sweeping) = swap(&claimed);
+        let (_second, refunding) = swap(&locked());
+        let sweep = StalledSweep {
+            files: vec![sweeping, refunding],
+            refund: StubRefund::at(WINDOWS.refund_ms),
+            daemon: lez_xmr_monero_adapter::LoopbackRpcEndpoint::new(
+                &format!("http://127.0.0.1:{port}"),
+                "user",
+                "password",
+            )
+            .unwrap(),
+            events: Mutex::default(),
+        };
+        let started = std::time::Instant::now();
+        sweep_refunds_first(&sweep, &[0, 1]).await;
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        assert_eq!(sweep.refund.calls("submit"), 1);
+        assert_eq!(
+            *sweep.events.lock().unwrap(),
+            [
+                "refund 1",
+                "tick 0 refunded=false",
+                "stalled read ended",
+                "tick 1 refunded=true",
+            ]
+        );
     }
 
     /// A sweep that sends nothing (`RestoredBalanceMismatch` is one: no
