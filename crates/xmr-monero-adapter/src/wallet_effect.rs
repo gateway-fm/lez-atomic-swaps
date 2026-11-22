@@ -213,6 +213,13 @@ impl MoneroWalletRpcLock {
     }
 }
 
+/// Whether the wallet-rpc answered a transfer whose outcome is looked up.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Answered {
+    Yes,
+    No,
+}
+
 /// The role's own wallet on its wallet-rpc.
 struct RoleWallet {
     filename: String,
@@ -257,14 +264,19 @@ enum RawCallError {
     /// call (a 401 after every Digest attempt, among them).
     NotRun(String),
     /// It may have run the method: the answer was lost or cut off, came with
-    /// a 5xx status, was not a JSON-RPC answer, or was a JSON-RPC error.
+    /// a 5xx status, or was not a JSON-RPC answer.
     MayHaveRun(String),
+    /// It answered the call with a JSON-RPC error: the wallet-rpc process
+    /// that ran (or refused) it is the one a lookup then reads.
+    ErrorReply(String),
 }
 
 impl fmt::Display for RawCallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotRun(cause) | Self::MayHaveRun(cause) => formatter.write_str(cause),
+            Self::NotRun(cause) | Self::MayHaveRun(cause) | Self::ErrorReply(cause) => {
+                formatter.write_str(cause)
+            }
         }
     }
 }
@@ -342,7 +354,7 @@ impl RawWalletRpc {
         let mut reply: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|error| RawCallError::MayHaveRun(format!("{method}: {error}")))?;
         if let Some(error) = reply.get("error") {
-            return Err(RawCallError::MayHaveRun(format!(
+            return Err(RawCallError::ErrorReply(format!(
                 "{method}: wallet-rpc error: {error}"
             )));
         }
@@ -560,8 +572,19 @@ impl MoneroRegtestWalletEffects {
                     cause: bounded_cause(&cause),
                 });
             }
+            // The wallet-rpc answered: it ran the transfer to an error, or
+            // refused it, and the lookup reads the same process's record.
+            Err(RawCallError::ErrorReply(cause)) => {
+                return self
+                    .look_up_transfer(destination, amount, &cause, Answered::Yes)
+                    .await;
+            }
+            // Lost on the way: a wallet-rpc restarted meanwhile may have
+            // relayed the transfer and lost its unsaved record of it.
             Err(RawCallError::MayHaveRun(cause)) => {
-                return self.look_up_transfer(destination, amount, &cause).await;
+                return self
+                    .look_up_transfer(destination, amount, &cause, Answered::No)
+                    .await;
             }
         };
         let Some(transaction_id) = transaction_hash(&reply["tx_hash"]) else {
@@ -570,6 +593,7 @@ impl MoneroRegtestWalletEffects {
                     destination,
                     amount,
                     "transfer answer has no transaction hash",
+                    Answered::No,
                 )
                 .await;
         };
@@ -582,11 +606,18 @@ impl MoneroRegtestWalletEffects {
     /// Resolves a transfer whose outcome is unknown (`cause`) from the open
     /// wallet's outgoing and pending transfers: the one paying exactly
     /// `amount` to `destination` is the funding.
+    ///
+    /// An empty lookup proves nothing was sent only after the wallet-rpc
+    /// answered the transfer with a JSON-RPC error (`Answered::Yes`). After an
+    /// answer lost on the way, the wallet-rpc may have relayed the transfer
+    /// and restarted without its record: the funding stays in doubt, for the
+    /// observer to find on the chain.
     async fn look_up_transfer(
         &self,
         destination: Address,
         amount: NonZeroU64,
         cause: &str,
+        answered: Answered,
     ) -> Result<MoneroTransactionId, MoneroWalletEffectError> {
         let in_doubt = |lookup: String| MoneroWalletEffectError::Rpc {
             operation: OP_FUND_EXACT_TRANSFER,
@@ -636,12 +667,17 @@ impl MoneroRegtestWalletEffects {
         found.sort_unstable();
         found.dedup();
         match found.as_slice() {
-            [] => Err(MoneroWalletEffectError::RequestNotSent {
+            [] if answered == Answered::Yes => Err(MoneroWalletEffectError::RequestNotSent {
                 operation: OP_FUND_EXACT_TRANSFER,
                 cause: bounded_cause(&format!(
                     "{cause}; the wallet holds no transfer of the amount to the destination"
                 )),
             }),
+            [] => Err(in_doubt(
+                "lookup: no transfer of the amount to the destination yet, after an answer \
+                 lost on the way"
+                    .to_owned(),
+            )),
             [transaction_id] => Ok((*transaction_id).into()),
             _ => Err(in_doubt(
                 "lookup: several transfers of the amount to the destination".to_owned(),
@@ -1215,10 +1251,12 @@ fn raw_call_error(operation: &'static str) -> impl FnOnce(RawCallError) -> Moner
             operation,
             cause: bounded_cause(&cause),
         },
-        RawCallError::MayHaveRun(cause) => MoneroWalletEffectError::Rpc {
-            operation,
-            cause: bounded_cause(&cause),
-        },
+        RawCallError::MayHaveRun(cause) | RawCallError::ErrorReply(cause) => {
+            MoneroWalletEffectError::Rpc {
+                operation,
+                cause: bounded_cause(&cause),
+            }
+        }
     }
 }
 
@@ -2264,6 +2302,13 @@ mod tests {
         wallet_answer(method)
     }
 
+    fn wallet_that_refused_the_transfer(method: &str) -> serde_json::Value {
+        if method == "transfer" {
+            return serde_json::json!({ "error": { "code": -4, "message": "not enough unlocked money" } });
+        }
+        wallet_that_sent_nothing(method)
+    }
+
     fn wallet_whose_lookup_fails(method: &str) -> serde_json::Value {
         if method == "get_transfers" {
             return serde_json::json!({ "error": { "code": -1, "message": "wallet is busy" } });
@@ -2343,8 +2388,30 @@ mod tests {
         );
         assert_eq!(daemon.methods(), ["generateblocks"]);
 
+        // Lost, and nothing in the wallet's record: a wallet-rpc restarted
+        // meanwhile may have relayed it and lost its record, so it is in
+        // doubt, never sent again.
         let nothing = FakeRpc::spawn_losing(wallet_that_sent_nothing, "transfer", 1).await;
         let failed = effects(&daemon, &nothing)
+            .fund_exact_and_confirm(&mining(&daemon), address(AddressType::Standard), 5_000)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&failed, MoneroWalletEffectError::Rpc { operation, .. }
+                if *operation == OP_FUND_EXACT_TRANSFER),
+            "{failed}"
+        );
+        assert!(!failed.funding_not_sent());
+        assert_eq!(
+            nothing.methods(),
+            ["get_address", "transfer", "get_transfers"]
+        );
+
+        // Answered with a JSON-RPC error, and nothing in the same process's
+        // record: nothing was sent.
+        let refused = FakeRpc::spawn(wallet_that_refused_the_transfer).await;
+        let failed = effects(&daemon, &refused)
             .fund_exact_and_confirm(&mining(&daemon), address(AddressType::Standard), 5_000)
             .await
             .map(|_| ())
@@ -2355,10 +2422,6 @@ mod tests {
             "{failed}"
         );
         assert!(failed.funding_not_sent());
-        assert_eq!(
-            nothing.methods(),
-            ["get_address", "transfer", "get_transfers"]
-        );
 
         let unknown = FakeRpc::spawn_losing(wallet_whose_lookup_fails, "transfer", 1).await;
         let failed = effects(&daemon, &unknown)
