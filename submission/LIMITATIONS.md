@@ -157,6 +157,15 @@ The Maker Node:
 - The id of its Monero refund sweep is written after the sweep is submitted;
   a crash between the two loses it, and the re-run finds no unspent output to
   sweep. Recovery is by hand.
+- A manual refund (`maker_actor_refund_v1`) is queued without a check that
+  it applies. Queued on a Monero swap whose actor is still watching for the
+  Taker's authorisation or refund (`observe_claim_or_refund`), it becomes a
+  recovery the actor refuses, as no branch is chosen yet; the request stays
+  queued and is retried for good, the actor's drive does not run again, and
+  the Maker can miss its claim window or the Taker's refund.
+- Its swap history (`swap_history`) shows `Offered` for a Monero swap that is
+  punished, expired or whose funding is in doubt: the swap phases have no
+  such state, and only an active actor's phase replaces the aggregate's.
 
 The Taker Node:
 
@@ -166,6 +175,9 @@ The Taker Node:
   take at most 2 minutes; a claim sweep has no overall bound, as one cut off
   after its transfer would read as never sent. Every swap's refund runs
   before any of them.
+- It records a claim sweep as in doubt before it takes the wallet lock and
+  creates the sweep's wallet file; a crash in between leaves a sweep that
+  never went out marked in doubt, recovered by hand like one that did.
 
 On Monero Stagenet (the [Stagenet guide](../docs/monero-stagenet-guide.md#a-daemon-the-node-does-not-run)
 and TM-0033 to TM-0036):
@@ -211,6 +223,24 @@ The launcher and the desks:
 - The Taker's `monero_network` in its swap view comes from its role
   configuration, not from the swap's Stage A; it is only displayed, and the
   Node refuses a Stage A of another network at take time.
+
+Found in the M4 review, outside the Monero protocol:
+
+- A swap's LEZ sidecar keeps running, and keeps its loopback port, after the
+  swap ends, on both Nodes and for every pair; a recorded port is never
+  reused, so a Node takes at most as many swaps over its life as its role
+  configuration's sidecar port range holds.
+- The Taker desk offers **Refund** on a Zcash swap from the Taker's
+  confirmed lock on, while the Maker is still in time to fund and before the
+  refund can be sent (issue #182). A refund requested then waits for its
+  time; if the Maker funds meanwhile, the swap can end refunded on both
+  sides where it could have completed. No funds are at risk. Bitcoin and
+  Monero swaps offer Refund only once it is the Taker's next step.
+- The Docker stack's Basecamp containers default their VNC password to
+  `lezswap` unless `VNC_PASSWORD` is set (`deploy/images/basecamp-ui/entrypoint.sh`,
+  `deploy/compose.yaml`; the testnet overlay `deploy/compose.testnet.yaml`
+  uses the same image); the VNC ports are bound to `127.0.0.1`. The systemd
+  and macOS packages run no VNC.
 
 ## M6 boundary
 
