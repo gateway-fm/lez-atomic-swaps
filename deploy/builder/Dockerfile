@@ -63,6 +63,19 @@ RUN mkdir -p "$LEZ_TOOLS/rapidsnark" && tmp="$(mktemp -d)" \
     && find "$tmp/r" -name '*.a' -exec cp {} "$LEZ_TOOLS/rapidsnark/" \; \
     && echo "$RAPIDSNARK_LIB_SHA256  $LEZ_TOOLS/rapidsnark/librapidsnark.a" | sha256sum -c --strict --quiet \
     && rm -rf "$tmp"
+# RISC Zero's recursion circuit archive. risc0-circuit-recursion's build.rs
+# (feature `prove`: r0vm, cargo-risczero) downloads it from RISC Zero's bucket,
+# which stopped serving it on 2026-11-23, unless RECURSION_SRC_PATH names a
+# copy with the SHA-256 it pins. The same bytes come from this project's
+# build-inputs-1 release, checked here; every later build in the image, and
+# every `docker run` of it, finds them through RECURSION_SRC_PATH. The same
+# pin as scripts/from-scratch.sh (RISC0_RECURSION_ZKR_URL and _SHA256).
+ARG RISC0_RECURSION_ZKR_URL=https://github.com/gateway-fm/lez-atomic-swaps/releases/download/build-inputs-1/risc0-recursion-zkr-744b999f0a35b3c86753311c7efb2a0054be21727095cf105af6ee7d3f4d8849.zip
+ARG RISC0_RECURSION_ZKR_SHA256=744b999f0a35b3c86753311c7efb2a0054be21727095cf105af6ee7d3f4d8849
+ENV RECURSION_SRC_PATH=/opt/lez-tools/risc0-recursion-zkr.zip
+RUN curl -fsSL --retry 3 "$RISC0_RECURSION_ZKR_URL" -o "$RECURSION_SRC_PATH" \
+    && echo "$RISC0_RECURSION_ZKR_SHA256  $RECURSION_SRC_PATH" | sha256sum -c --strict --quiet \
+    && chmod 0444 "$RECURSION_SRC_PATH"
 # rzup and cargo-risczero from crates.io, r0vm from the risc0 tag (no arm64
 # release assets exist); the registries used for the installs are dropped.
 RUN cargo +1.96.0 install rzup --version "$RZUP_VERSION" --locked --root "$LEZ_TOOLS" \
