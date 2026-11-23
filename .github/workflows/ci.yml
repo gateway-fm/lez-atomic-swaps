@@ -48,6 +48,7 @@ jobs:
         include:
           - shard: provisional LEZ v0.2
             manifests: compat/lez-v0.2-provisional/Cargo.toml
+            cache: lint-provisional-lez-v02
           - shard: provisional escrow guest, methods and deployer
             manifests: >-
               compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
@@ -67,11 +68,28 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        id: toolchain
         with:
           toolchain: 1.96.0
           components: rustfmt, clippy
       - name: Install the smart-card library the LEZ v0.2.4 wallet crate links
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libpcsclite-dev
+      # Third-party build output only: the prune step removes this shard's
+      # own crates before any Cargo command, so they are linted from source.
+      - name: Restore this shard's Cargo registry and dependency builds
+        id: cargo-cache
+        if: matrix.cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/check-all
+          key: ${{ matrix.cache }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0.2-provisional/Cargo.lock') }}
+      - name: Prune the restored Cargo target of this shard's own crates
+        if: matrix.cache
+        run: ./scripts/ci-cargo-cache-prune.sh target/check-all compat/lez-v0.2-provisional/Cargo.toml
       - name: Lint this shard's workspaces
         env:
           MANIFESTS: ${{ matrix.manifests }}
@@ -83,6 +101,24 @@ jobs:
             args+=(--workspace "$manifest")
           done
           ./scripts/check-all.sh --separate --rust-only "${args[@]}"
+      - name: Prune this shard's own crates before saving
+        id: cargo-prune
+        if: matrix.cache && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        env:
+          CI_CACHE_MAX_GIB: "2"
+        run: |
+          echo "fits=true" >>"$GITHUB_OUTPUT"
+          ./scripts/ci-cargo-cache-prune.sh target/check-all compat/lez-v0.2-provisional/Cargo.toml
+      - name: Save this shard's Cargo registry and dependency builds
+        if: matrix.cache && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/check-all
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   ci-quality:
     name: shell, workflow, Dockerfile, and Compose quality
@@ -160,9 +196,24 @@ jobs:
           node-version: 24.22.3
           cache: npm
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        id: toolchain
         with:
           toolchain: 1.96.0
           components: rustfmt, clippy
+      # Third-party build output only: the prune step removes the workspace's
+      # own crates before any Cargo command, so they build and test from source.
+      - name: Restore the Cargo registry and dependency builds
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: rust-workspace-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
+      - name: Prune the restored Cargo target of the workspace's own crates
+        run: ./scripts/ci-cargo-cache-prune.sh target Cargo.toml
       - name: Install pinned Node tooling
         run: npm ci
       - name: Audit Node tooling dependencies
@@ -218,6 +269,24 @@ jobs:
           --exclude lez-xmr-swap-sdk
       - run: ./scripts/check-requirements-traceability.sh
       - run: ./scripts/check-architecture-diagrams.sh
+      - name: Prune the workspace's own crates before saving
+        id: cargo-prune
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        env:
+          CI_CACHE_MAX_GIB: "4"
+        run: |
+          echo "fits=true" >>"$GITHUB_OUTPUT"
+          ./scripts/ci-cargo-cache-prune.sh target Cargo.toml
+      - name: Save the Cargo registry and dependency builds
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   basecamp-ui:
     name: Maker and Taker Basecamp integration
@@ -227,13 +296,44 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Only the store paths cache.nixos.org does not serve are cached (the
+      # Chat and Delivery modules, the Logos SDK builds, vendored crates);
+      # the two checks and two catalog packages the test builds never are.
+      # Only a push to main saves, so a pull request restores main's cache.
+      - name: Restore the Basecamp Nix build dependencies
+        id: basecamp-nix-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/basecamp-nix-store/store.nar.gz
+          key: basecamp-nix-store-${{ runner.os }}-${{ runner.arch }}-nix-2.30.2-${{ hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh') }}
+          restore-keys: |
+            basecamp-nix-store-${{ runner.os }}-${{ runner.arch }}-nix-2.30.2-
+      # NIX_CONFIG authenticates Nix's github: fetches. It reaches the
+      # container by name only (not on the command line), and Nix keeps it out
+      # of every derivation, so the store archive cannot hold it.
       - name: Run both role packages in the official Basecamp test harness
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
+          BASECAMP_NIX_CACHE_SAVE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.basecamp-nix-cache.outputs.cache-hit != 'true' }}
         run: >-
+          mkdir -p "${RUNNER_TEMP}/basecamp-nix-store" &&
           docker run --rm
           --volume "${GITHUB_WORKSPACE}:/repo:ro"
+          --volume "${RUNNER_TEMP}/basecamp-nix-store:/cache"
+          --env BASECAMP_NIX_CACHE_SAVE
+          --env NIX_CONFIG
           --workdir /repo
           nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21
-          bash /repo/scripts/test-m6-basecamp-integration.sh
+          bash -euo pipefail -c
+          'bash /repo/scripts/ci-basecamp-nix-store-cache.sh import
+          && bash /repo/scripts/test-m6-basecamp-integration.sh
+          && bash /repo/scripts/ci-basecamp-nix-store-cache.sh export'
+      - name: Save the Basecamp Nix build dependencies
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.basecamp-nix-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/basecamp-nix-store/store.nar.gz
+          key: ${{ steps.basecamp-nix-cache.outputs.cache-primary-key }}
 
   dependencies:
     name: dependency vulnerabilities, licenses, bans, and sources
@@ -318,8 +418,10 @@ jobs:
       CARGO_BUILD_JOBS: "2"
       CARGO_DENY_ARCHIVE_SHA256: f1f8eedc2a3ac297c540873f93785d4104b102c0079506b2a6b3221b7ec956af
       CARGO_DENY_ARCHIVE_URL: https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.9/cargo-deny-0.19.9-x86_64-unknown-linux-musl.tar.gz
-      CARGO_HOME: /tmp/lez-v02-sidecar-cargo-${{ github.run_id }}-${{ github.run_attempt }}
-      CARGO_TARGET_DIR: /tmp/lez-v02-sidecar-target-${{ github.run_id }}-${{ github.run_attempt }}
+      # Fixed paths so that a cached target stays fresh (Cargo records
+      # absolute paths); a hosted runner runs one job at a time.
+      CARGO_HOME: /tmp/lez-v02-sidecar-cargo
+      CARGO_TARGET_DIR: /tmp/lez-v02-sidecar-target
       RAPIDSNARK_ARCHIVE_SHA256: 59bdd709eed96235de061f352893f4650c923b54b591052118593012bb1cd831
       RAPIDSNARK_ARCHIVE_URL: https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip
       RAPIDSNARK_LIB_DIR: /tmp/lez-v02-rapidsnark-${{ github.run_id }}-${{ github.run_attempt }}/rapidsnark-linux-x86_64-pic-v0.0.8/lib
@@ -330,11 +432,26 @@ jobs:
       - name: Install checksum-pinned ripgrep
         run: ./scripts/install-ci-ripgrep.sh
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        id: toolchain
         with:
           toolchain: 1.96.0
           components: clippy, rustfmt
       - name: Install the smart-card library the LEZ v0.2.4 wallet crate links
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libpcsclite-dev
+      # Third-party build output and the locked sources only. The advisory
+      # database is not cached: cargo-deny fetches it fresh on every run.
+      - name: Restore the sidecar Cargo registry and dependency builds
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/lez-v02-sidecar-cargo/registry/index
+            /tmp/lez-v02-sidecar-cargo/registry/cache
+            /tmp/lez-v02-sidecar-cargo/git/db
+            /tmp/lez-v02-sidecar-target
+          key: lez-v02-sidecar-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0_2-sidecar/Cargo.lock') }}
+      - name: Prune the restored Cargo target of the sidecar's own crates
+        run: ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml
       - name: Provision checksum-verified sidecar native and audit inputs
         run: |
           set -euo pipefail
@@ -374,6 +491,24 @@ jobs:
             advisories
       - name: Verify LEZ v0.2 sidecar with Cargo offline
         run: ./scripts/verify-lez-v02-sidecar.sh
+      - name: Prune the sidecar's own crates before saving
+        id: cargo-prune
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        env:
+          CI_CACHE_MAX_GIB: "3"
+        run: |
+          echo "fits=true" >>"$GITHUB_OUTPUT"
+          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml
+      - name: Save the sidecar Cargo registry and dependency builds
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/lez-v02-sidecar-cargo/registry/index
+            /tmp/lez-v02-sidecar-cargo/registry/cache
+            /tmp/lez-v02-sidecar-cargo/git/db
+            /tmp/lez-v02-sidecar-target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   lez-v02-provisional:
     name: provisional LEZ v0.2 compatibility
@@ -382,10 +517,12 @@ jobs:
     env:
       CARGO_BUILD_JOBS: "2"
       RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
-      CARGO_TARGET_DIR: /tmp/lez-v02-provisional-target-${{ github.run_id }}-${{ github.run_attempt }}
-      LEZ_V02_GUEST_TARGET_DIR: /tmp/lez-v02-provisional-guest-target-${{ github.run_id }}-${{ github.run_attempt }}
-      LEZ_V02_ARTIFACT_TARGET_DIR: /tmp/lez-v02-provisional-artifact-target-${{ github.run_id }}-${{ github.run_attempt }}
-      LEZ_V02_TOOL_DIR: /tmp/lez-v02-provisional-tools-${{ github.run_id }}-${{ github.run_attempt }}
+      # Fixed paths so that cached tools and targets stay valid (rzup and
+      # Cargo record absolute paths); a hosted runner runs one job at a time.
+      CARGO_TARGET_DIR: /tmp/lez-v02-provisional-target
+      LEZ_V02_GUEST_TARGET_DIR: /tmp/lez-v02-provisional-guest-target
+      LEZ_V02_ARTIFACT_TARGET_DIR: /tmp/lez-v02-provisional-artifact-target
+      LEZ_V02_TOOL_DIR: /tmp/lez-v02-provisional-tools
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -393,12 +530,84 @@ jobs:
       - name: Install checksum-pinned ripgrep
         run: ./scripts/install-ci-ripgrep.sh
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        id: toolchain
         with:
           toolchain: 1.96.0
           components: clippy, rustfmt
       - name: Install the smart-card library the LEZ v0.2.4 wallet crate links
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libpcsclite-dev
-      - run: ./scripts/verify-lez-v02-provisional.sh
+      # rzup, the Risc0 Rust toolchain, r0vm, cargo-risczero and the circuits,
+      # as the verifier installs them. Every pin is in the verifier, so the key
+      # hashes it; the verifier checks each tool's version on every run.
+      - name: Restore the provisional LEZ v0.2 Risc0 tools
+        id: tools-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/lez-v02-provisional-tools
+            !/tmp/lez-v02-provisional-tools/cargo-home/registry
+            !/tmp/lez-v02-provisional-tools/cargo-home/git
+          key: lez-v02-provisional-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}
+      # Third-party build output only. The prune step removes every crate of
+      # the four workspaces and every guest build before Cargo runs, so the
+      # Docker guest build and both ImageID checks run from source each time.
+      - name: Restore the provisional LEZ v0.2 Cargo registry and dependency builds
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            /tmp/lez-v02-provisional-target
+            /tmp/lez-v02-provisional-guest-target
+            /tmp/lez-v02-provisional-artifact-target
+            !/tmp/lez-v02-provisional-artifact-target/riscv-guest
+            !/tmp/lez-v02-provisional-artifact-target/docker-guest-source
+          key: lez-v02-provisional-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0.2-provisional/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/methods/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock') }}
+      - name: Prune the restored Cargo targets of the workspaces' own crates and guest builds
+        run: |
+          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
+          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
+          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
+      # rzup's GitHub release requests; the verifier hands it to rzup alone.
+      - name: Verify the provisional LEZ v0.2 graph and the escrow guest
+        env:
+          RZUP_GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-lez-v02-provisional.sh
+      - name: Save the provisional LEZ v0.2 Risc0 tools
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/lez-v02-provisional-tools
+            !/tmp/lez-v02-provisional-tools/cargo-home/registry
+            !/tmp/lez-v02-provisional-tools/cargo-home/git
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
+      - name: Prune the workspaces' own crates and guest builds before saving
+        id: cargo-prune
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        env:
+          CI_CACHE_MAX_GIB: "4"
+        run: |
+          echo "fits=true" >>"$GITHUB_OUTPUT"
+          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
+          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
+          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
+      - name: Save the provisional LEZ v0.2 Cargo registry and dependency builds
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            /tmp/lez-v02-provisional-target
+            /tmp/lez-v02-provisional-guest-target
+            /tmp/lez-v02-provisional-artifact-target
+            !/tmp/lez-v02-provisional-artifact-target/riscv-guest
+            !/tmp/lez-v02-provisional-artifact-target/docker-guest-source
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   bitcoin-core-regtest:
     name: isolated Bitcoin Core 31.1 Regtest MuSig2 adaptor P2TR spend

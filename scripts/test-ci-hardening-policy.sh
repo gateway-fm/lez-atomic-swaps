@@ -153,11 +153,129 @@ require_fixed 'npm run test:m6:prototype' "$ci_workflow"
 require_fixed 'npm run test:m6:basecamp:contract' "$ci_workflow"
 require_fixed 'Maker and Taker Basecamp integration' "$ci_workflow"
 require_fixed 'bash /repo/scripts/test-m6-basecamp-integration.sh' "$ci_workflow"
+# The per-role catalog flakes take the Chat revision the aggregate lock pins,
+# so evaluating them asks the GitHub API for no tag.
+[[ -x scripts/basecamp-chat-module-ref.sh ]] || fail "scripts/basecamp-chat-module-ref.sh must remain executable"
+require_fixed '--override-input chat_module "$chat_module_ref"' scripts/test-m6-basecamp-integration.sh
 require_fixed 'nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21' "$ci_workflow"
 require_fixed 'cargo fmt --all --check' "$ci_workflow"
 require_fixed 'cargo clippy --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo test --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
+
+# Build caches (actions/cache restore and save, never the combined action,
+# which would also save from pull requests). Only a push to main saves, so a
+# pull request, a fork's included, only restores what main saved. Every key
+# names what it was built from; the steps below keep guest builds and the
+# repository's own crates out of every Cargo cache.
+readonly cache_restore='uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
+readonly cache_save='uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
+readonly cargo_prune='scripts/ci-cargo-cache-prune.sh'
+readonly nix_store_cache='scripts/ci-basecamp-nix-store-cache.sh'
+readonly expected_cache_restores=6
+readonly expected_cache_saves=6
+[[ -x "$cargo_prune" && -x "$nix_store_cache" ]] || fail "cache scripts must remain executable"
+for workflow in "$ci_workflow" "$public_workflow"; do
+  ! rg -q 'uses: actions/cache@' "$workflow" \
+    || fail "$workflow uses actions/cache, which saves from pull requests; use restore and save"
+done
+[[ "$(rg -Fc -- "$cache_restore" "$ci_workflow")" == "$expected_cache_restores" ]] \
+  || fail "expected $expected_cache_restores pinned cache restores in $ci_workflow"
+[[ "$(rg -Fc -- "$cache_save" "$ci_workflow")" == "$expected_cache_saves" ]] \
+  || fail "expected $expected_cache_saves pinned cache saves in $ci_workflow"
+[[ "$(rg -c 'uses: actions/cache/' "$ci_workflow")" == "$((expected_cache_restores + expected_cache_saves))" ]] \
+  || fail "every cache step in $ci_workflow must use the pinned restore or save"
+unguarded_saves="$(awk '
+  /^      - / { if (step ~ /actions\/cache\/save@/ && step !~ /if: (matrix\.cache && )?github\.event_name == .push. && github\.ref == .refs\/heads\/main. && steps\.[a-z-]+\.outputs\.cache-hit != .true./) print step; step = "" }
+  { step = step $0 "\n" }
+  END { if (step ~ /actions\/cache\/save@/ && step !~ /github\.ref == .refs\/heads\/main./) print step }
+' "$ci_workflow")"
+[[ -z "$unguarded_saves" ]] || fail "a cache save runs outside a push to main: ${unguarded_saves}"
+while IFS= read -r key; do
+  [[ "$key" == *'steps.'*'.outputs.cache-primary-key }}' || "$key" == *'hashFiles('* ]] \
+    || fail "cache key does not hash its inputs: $key"
+  [[ "$key" == *'cache-primary-key'* || "$key" == *'runner.os'*'runner.arch'* ]] \
+    || fail "cache key does not name the runner: $key"
+done < <(rg '^ +key: ' "$ci_workflow")
+[[ "$(rg -Fc 'rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 4 ]] \
+  || fail "every Cargo cache key must name the rustc version and hash the lock files"
+require_fixed "key: lez-v02-provisional-tools-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}" "$ci_workflow"
+require_fixed "hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh')" "$ci_workflow"
+! rg -q 'advisory-db|/bin$' "$ci_workflow" \
+  || fail "the cargo-deny advisory database and Cargo bin directories are never cached"
+[[ "$(rg -Fc "steps.cargo-prune.outputs.fits == 'true'" "$ci_workflow")" == 4 \
+  && "$(rg -Fc 'CI_CACHE_MAX_GIB: ' "$ci_workflow")" == 4 ]] \
+  || fail "every Cargo cache save must be bounded by CI_CACHE_MAX_GIB"
+require_fixed 'echo "fits=false" >>"$GITHUB_OUTPUT"' "$cargo_prune"
+# Each Cargo cache is pruned after its restore and before Cargo runs.
+for target in 'target Cargo.toml' \
+  'target/check-all compat/lez-v0.2-provisional/Cargo.toml' \
+  '/tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml' \
+  '/tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml' \
+  '/tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml' \
+  '/tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml'; do
+  [[ "$(rg -Fc -- "./scripts/ci-cargo-cache-prune.sh ${target}" "$ci_workflow")" == 2 ]] \
+    || fail "$ci_workflow must prune ${target%% *} after the restore and before the save"
+done
+provisional_order="$(rg -n -F -e 'Restore the provisional LEZ v0.2 Cargo registry' \
+  -e 'ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target' \
+  -e 'run: ./scripts/verify-lez-v02-provisional.sh' "$ci_workflow" | cut -d: -f1 | head -n 3 | paste -sd ' ' -)"
+read -r restore_line prune_line verify_line <<<"$provisional_order"
+(( restore_line < prune_line && prune_line < verify_line )) \
+  || fail "the provisional guest builds must be pruned after the restore and before the verifier"
+for excluded in riscv-guest docker-guest-source; do
+  [[ "$(rg -Fxc -- "            !/tmp/lez-v02-provisional-artifact-target/${excluded}" "$ci_workflow")" == 2 ]] \
+    || fail "the provisional restore and save must both exclude ${excluded}"
+done
+require_fixed 'rm -rf -- "${target_dir}/riscv-guest" "${target_dir}/docker-guest-source" "${target_dir}/doc"' "$cargo_prune"
+require_fixed '-name riscv-guest' "$cargo_prune"
+require_fixed "cargo metadata --no-deps --format-version 1 --manifest-path \"\$manifest\"" "$cargo_prune"
+# The Nix archive never holds an output the Basecamp test builds.
+require_fixed "bash /repo/scripts/ci-basecamp-nix-store-cache.sh import" "$ci_workflow"
+require_fixed "bash /repo/scripts/ci-basecamp-nix-store-cache.sh export" "$ci_workflow"
+require_fixed 'nix-store --query --outputs "${root_drvs[@]}" | sort -u >"$tested"' "$nix_store_cache"
+require_fixed '| grep -v '"'"'\.drv$'"'"' | sort -u | comm -23 - "$tested" >"$candidates"' "$nix_store_cache"
+require_fixed 'if [[ -n "$(comm -12 "$closure" "$tested")" ]]; then' "$nix_store_cache"
+
+# GitHub fetches are authenticated with the job's own token, so the shared
+# unauthenticated API budget cannot fail a run: rzup's release requests
+# (rzup reads GITHUB_TOKEN) and Nix's github: inputs (NIX_CONFIG
+# access-tokens). The token goes to the steps that need it, never to a job,
+# and is never printed.
+steps_lacking() { # steps_lacking <workflow> <ERE a step runs> <fixed line it needs>
+  awk -v pattern="$2" -v needle="$3" '
+    function check() { if (step ~ pattern && index(step, needle) == 0) print first }
+    /^      - / { check(); step = ""; first = $0 }
+    /^  [A-Za-z0-9_-]+:$/ { check(); step = ""; first = "" }
+    { step = step $0 "\n" }
+    END { check() }
+  ' "$1"
+}
+readonly rzup_token_env='          RZUP_GITHUB_TOKEN: ${{ github.token }}'
+readonly nix_token_env='          NIX_CONFIG: access-tokens = github.com=${{ github.token }}'
+for workflow in .github/workflows/*.yml; do
+  lacking="$(steps_lacking "$workflow" 'run: [.]/scripts/verify-lez-v02-provisional[.]sh|rzup install' "$rzup_token_env")"
+  [[ -z "$lacking" ]] || fail "$workflow runs rzup without RZUP_GITHUB_TOKEN: ${lacking}"
+  lacking="$(steps_lacking "$workflow" 'nixos/nix:[^\n]*\n[^\n]*bash|NIX_IMAGE" |from-scratch[.]sh [^\n]*--only (nix|build:[a-z-]*-module|build:role-node-modules)' "$nix_token_env")"
+  [[ -z "$lacking" ]] || fail "$workflow evaluates flakes without NIX_CONFIG access-tokens: ${lacking}"
+  ! rg -q -- '-e NIX_CONFIG=|--env NIX_CONFIG=|(echo|printf|tee)[^#]*(RZUP_GITHUB_TOKEN|NIX_CONFIG|github\.token)' "$workflow" \
+    || fail "$workflow prints a token or puts it on a command line"
+  ! rg -q '^ +GITHUB_TOKEN: \$\{\{ (github\.token|secrets\.GITHUB_TOKEN) \}\}$' "$workflow" \
+    || fail "$workflow exposes GITHUB_TOKEN to a whole step; pass RZUP_GITHUB_TOKEN to rzup alone"
+done
+require_fixed '          --env NIX_CONFIG' "$ci_workflow"
+[[ "$(rg -Fc -- '-e NIX_CONFIG' deploy/scripts/from-scratch.sh)" == 4 ]] \
+  || fail "every Nix container of from-scratch.sh must receive NIX_CONFIG by name"
+[[ "$(rg -Fc -- '-e LGX_FLAKE -e NIX_CONFIG "$NIX_IMAGE"' .github/workflows/release-packages.yml)" == 2 ]] \
+  || fail "the release-packages lgx containers must receive NIX_CONFIG by name"
+require_fixed 'rzup_github_token="${RZUP_GITHUB_TOKEN:-}"' "$provisional_verifier"
+require_fixed 'unset RZUP_GITHUB_TOKEN' "$provisional_verifier"
+require_fixed 'GITHUB_TOKEN="$rzup_github_token" "$rzup_bin" install "$@"' "$provisional_verifier"
+[[ "$(rg -Fc '"$rzup_bin" install' "$provisional_verifier")" == 2 ]] \
+  || fail "$provisional_verifier must install through rzup_install only"
+! rg -q 'set -x|set -o xtrace|(echo|printf)[^#]*(rzup_github_token|RZUP_GITHUB_TOKEN|NIX_CONFIG)' \
+  "$provisional_verifier" deploy/scripts/from-scratch.sh scripts/test-m6-basecamp-integration.sh "$nix_store_cache" \
+  || fail "a script that receives a token traces or prints it"
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
 readonly cargo_deny_policy='advisories bans licenses sources'
@@ -329,6 +447,43 @@ require_fixed 'cargo risczero build --manifest-path escrow/methods/guest/Cargo.t
 if rg -Fq 'cargo test --locked --manifest-path "$guest_manifest"' "$provisional_verifier"; then
   fail "zkVM guest verifier must not build a host unit-test harness"
 fi
+
+# RISC Zero's recursion circuit archive comes from this project's
+# build-inputs-1 release, always checked against the SHA-256 the crate and
+# LEZ's flake pin; RISC Zero's bucket is never fetched from.
+readonly zkr_sha256='744b999f0a35b3c86753311c7efb2a0054be21727095cf105af6ee7d3f4d8849'
+readonly zkr_url="https://github.com/gateway-fm/lez-atomic-swaps/releases/download/build-inputs-1/risc0-recursion-zkr-${zkr_sha256}.zip"
+readonly builder_dockerfile="deploy/builder/Dockerfile"
+require_fixed "readonly RISC0_RECURSION_ZKR_SHA256=${zkr_sha256}" deploy/scripts/from-scratch.sh
+require_fixed "readonly RISC0_RECURSION_ZKR_URL=${zkr_url}" deploy/scripts/from-scratch.sh
+require_fixed 'nix-store --check-validity \$zkr 2>/dev/null || nix store prefetch-file --name $RISC0_RECURSION_ZKR_SHA256.zip \\' deploy/scripts/from-scratch.sh
+require_fixed '--expected-hash sha256:$RISC0_RECURSION_ZKR_SHA256 $RISC0_RECURSION_ZKR_URL' deploy/scripts/from-scratch.sh
+require_fixed '--expected-hash "sha256:$zkr_sha256" "$(pin RISC0_RECURSION_ZKR_URL)"' deploy/scripts/build-darwin-packages.sh
+require_fixed 'zkr_sha256="$(pin RISC0_RECURSION_ZKR_SHA256)"' deploy/scripts/build-darwin-packages.sh
+require_fixed "ARG RISC0_RECURSION_ZKR_URL=${zkr_url}" "$builder_dockerfile"
+require_fixed "ARG RISC0_RECURSION_ZKR_SHA256=${zkr_sha256}" "$builder_dockerfile"
+require_fixed 'ENV RECURSION_SRC_PATH=/opt/lez-tools/risc0-recursion-zkr.zip' "$builder_dockerfile"
+require_fixed 'echo "$RISC0_RECURSION_ZKR_SHA256  $RECURSION_SRC_PATH" | sha256sum -c --strict --quiet' "$builder_dockerfile"
+# the archive is in place before the first Cargo build of the image
+[[ "$(rg -n 'ENV RECURSION_SRC_PATH=' "$builder_dockerfile" | cut -d: -f1)" -lt "$(rg -n 'cargo \+1\.96\.0 install' "$builder_dockerfile" | head -1 | cut -d: -f1)" ]] \
+  || fail "$builder_dockerfile must set RECURSION_SRC_PATH before it builds r0vm and cargo-risczero"
+! rg -n 'risc0-artifacts\.s3' .github scripts deploy --glob '!scripts/test-ci-hardening-policy.sh' \
+  || fail "a build fetches from RISC Zero's bucket; take the build-inputs-1 copy by SHA-256"
+
+# The builder image is published for both Linux architectures as one
+# multi-platform image, pinned by one digest that every consumer pulls.
+readonly builder_workflow=".github/workflows/builder-image.yml"
+require_fixed '          - arch: arm64' "$builder_workflow"
+require_fixed '            runner: ubuntu-24.04-arm' "$builder_workflow"
+require_fixed '          - arch: amd64' "$builder_workflow"
+require_fixed '            runner: ubuntu-24.04' "$builder_workflow"
+require_fixed 'docker buildx imagetools create -t "$tag" "$tag-arm64" "$tag-amd64"' "$builder_workflow"
+require_fixed '[[ "$platforms" == "linux/amd64 linux/arm64" ]]' "$builder_workflow"
+rg -qx 'ghcr\.io/gateway-fm/lez-atomic-swaps/lez-builder@sha256:[0-9a-f]{64}' deploy/builder/image.lock \
+  && [[ "$(wc -l < deploy/builder/image.lock)" -eq 1 ]] \
+  || fail "deploy/builder/image.lock must hold exactly one pinned lez-builder digest"
+! rg -n 'docker build[^\n]*deploy/builder|-t lez-builder:local' .github/workflows --glob '!builder-image.yml' \
+  || fail "a release workflow builds the builder image; pull the digest pinned in deploy/builder/image.lock"
 
 if rg -Uq $'readonly REPOSITORY_ROOT\nREPOSITORY_ROOT=|readonly repository_root\nrepository_root=' scripts; then
   fail "a shell wrapper assigns a variable only after marking it readonly"

@@ -17,7 +17,7 @@ name: release-packages
 #             the same from-scratch.sh steps release-images.yml runs, and
 #             uploads them unpinned as lgx-<variant>
 #   darwin    builds the darwin-arm64 variant of the two desks, lez_swap_node,
-#             both role packages and lez_core on macos-14 (Apple silicon)
+#             both role packages and lez_core on macos-15 (Apple silicon)
 #             with build-darwin-packages.sh, uploaded as lgx-darwin-arm64.
 #             lez_network and lez_indexer_module stay Linux-only: the LEZ
 #             network's operator desk is not installed in a party's Basecamp,
@@ -102,23 +102,13 @@ jobs:
           submodules: true
       - name: Free runner disk
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      # The pinned builder image (deploy/builder/image.lock) is one
+      # multi-platform image: from-scratch.sh pulls it by digest and gets the
+      # runner's architecture, prover toolchain included.
       - name: Registry login for the pinned builder image
-        if: matrix.variant == 'linux-arm64'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
-      # The pinned builder image (deploy/builder/image.lock) is arm64-only. On
-      # amd64 it is built here from the same Dockerfile with the x86_64
-      # rapidsnark release; from-scratch.sh finds it under its local name and
-      # pulls nothing. The prover toolchain layer takes about two hours.
-      - name: Builder image (linux-amd64)
-        if: matrix.variant == 'linux-amd64'
-        run: |
-          docker build -q -t lez-builder:local \
-            --build-arg RAPIDSNARK_URL=https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip \
-            --build-arg RAPIDSNARK_LIB_SHA256=d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423 \
-            --build-arg GCC_TRIPLE=x86_64-linux-gnu \
-            deploy/builder
       - name: Pinned sources
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
       - name: Node binaries and actors
@@ -126,14 +116,20 @@ jobs:
       - name: LEZ sidecar
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:sidecar
       - name: lez_indexer_module and lez_core (LEZ v0.2.4 + builder/patches)
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: |
           deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:indexer-module
           deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:wallet-module
       - name: lez_swap_node and the role Node plugins
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: |
           deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:swap-node-module
           deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:role-node-modules
       - name: The desks, Chat and Delivery (lgx-portable)
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only nix
       # The sidecar beside the Node binaries, as the stage phase puts it there.
       - name: Package lez_maker_node and lez_taker_node
@@ -179,7 +175,7 @@ jobs:
   darwin:
     name: packages (darwin-arm64)
     needs: ci-gate
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 240
     permissions:
       contents: read
@@ -236,6 +232,8 @@ jobs:
             "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$version/blockchain_module-$version.lgx"
           echo "$sum  $RUNNER_TEMP/blockchain_module.lgx" | sha256sum -c -
       - name: Merge each package's variants
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p _merged
@@ -253,7 +251,7 @@ jobs:
           done
           SH
           docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/merge.sh:/merge.sh:ro" \
-            -e LGX_FLAKE "$NIX_IMAGE" sh /merge.sh
+            -e LGX_FLAKE -e NIX_CONFIG "$NIX_IMAGE" sh /merge.sh
           sudo chown -R "$(id -u):$(id -g)" _merged
       # Logos's chat_module 0.2.2 release asset (checked against its sha256),
       # its Delivery dependency pinned to the desks' 0.2.x: the desks require
@@ -278,6 +276,7 @@ jobs:
           cat _pinned/packages.tsv
       - name: Verify and lay out the catalog's release assets
         env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
           LINUX: '["linux-amd64","linux-arm64"]'
           ALL: '["darwin-arm64","linux-amd64","linux-arm64"]'
         run: |
@@ -291,7 +290,7 @@ jobs:
           done
           SH
           docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/verify.sh:/verify.sh:ro" \
-            -e LGX_FLAKE "$NIX_IMAGE" sh /verify.sh
+            -e LGX_FLAKE -e NIX_CONFIG "$NIX_IMAGE" sh /verify.sh
           sudo chown -R "$(id -u):$(id -g)" _pinned
           chat="$(jq -r .version _pinned/chat_module.manifest.json)"
           delivery="$(jq -r '.dependencies[] | select(.name == "delivery_module") | .version' _pinned/chat_module.manifest.json)"

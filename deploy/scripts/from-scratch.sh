@@ -216,11 +216,14 @@ phase_sources() {
 # Builds run in the pinned Nix image with a persistent store volume. The image's
 # own /nix seeds the volume on first use; /bin/sh is relinked because the
 # image's link can predate the store the volume carries.
+# NIX_CONFIG passes through by name to every Nix container: CI sets it to
+# `access-tokens = github.com=<the job token>` so github: fetches are not
+# rate limited; it never appears on a command line or in the store.
 nix_build() { # nix_build <output-link-name> <flake-ref> [extra nix args...]
   local name="$1" ref="$2"; shift 2
   docker run --rm -v lez-nix-store-arm:/nix -v "$REPO_ROOT:/workspace:ro" \
     -v "$BASECAMP_SRC:/src/basecamp:ro" -v "$ASSETS/.nix-out:/out" \
-    -e NIX_CURL_FLAGS='--user-agent lez-from-scratch/1.0' "$NIX_IMAGE" bash -c '
+    -e NIX_CURL_FLAGS='--user-agent lez-from-scratch/1.0' -e NIX_CONFIG "$NIX_IMAGE" bash -c '
       set -e
       [[ -x /bin/sh ]] || ln -sf "$(ls -d /nix/store/*-bash-5*/bin/bash | head -1)" /bin/sh
       # Unsandboxed builds refuse to start while a stray HOME from an earlier
@@ -347,8 +350,8 @@ phase_rust() {
 builder_run() { # builder_run [docker run flags...] -- <bash script>
   local flags=() triple=aarch64-linux-gnu
   while [[ "$1" != "--" ]]; do flags+=("$1"); shift; done; shift
-  # The image is this host's architecture (an amd64 one is built with the
-  # x86_64 rapidsnark and GCC_TRIPLE: .github/workflows/release-packages.yml).
+  # The image is this host's architecture (the pinned image is published for
+  # linux/arm64 and linux/amd64: .github/workflows/builder-image.yml).
   case "$(uname -m)" in x86_64|amd64) triple=x86_64-linux-gnu ;; esac
   docker run --rm -v "$REPO_ROOT:/workspace" -v "$LEZ_SOURCE:/lez-source" -v "$PROVISION:/provision" \
     -v lez-build-cargo:/cache/cargo -v lez-build-target:/cache/target \
@@ -447,6 +450,17 @@ readonly LEZ_WALLET_MODULE_COMMIT=acf0cd501b262c4c15969e3735e85318297b85bf
 readonly BLOCKCHAIN_MODULE_VERSION=0.2.4
 readonly BLOCKCHAIN_MODULE_SHA256=31819f06aa0639874fa0257f58c24e1add6fce2b489c843b64905e28f59f0c84
 readonly LEZ_NIX_IMAGE="nixos/nix:2.24.10@sha256:a09d508c2e46d3a4c7205ff3fa0d506d626a5a966c31e879df7efe737e22f003"
+# RISC Zero's recursion circuit archive, which LEZ's flake fetches as a
+# fixed-output derivation (fetchurl by SHA-256) from RISC Zero's bucket. The
+# bucket stopped serving it on 2026-11-23; the same bytes are an asset of this
+# project's build-inputs-1 release. build_logos_module puts them into the Nix
+# store first, checked against this SHA-256 and under the name the flake's
+# fetchurl gives them, so the derivation finds its output present and every
+# derivation and output stays as it was. deploy/builder/Dockerfile (for
+# risc0-circuit-recursion's build.rs) and build-darwin-packages.sh take the
+# same pin.
+readonly RISC0_RECURSION_ZKR_SHA256=744b999f0a35b3c86753311c7efb2a0054be21727095cf105af6ee7d3f4d8849
+readonly RISC0_RECURSION_ZKR_URL=https://github.com/gateway-fm/lez-atomic-swaps/releases/download/build-inputs-1/risc0-recursion-zkr-744b999f0a35b3c86753311c7efb2a0054be21727095cf105af6ee7d3f4d8849.zip
 submodule_at() { # submodule_at <path> <commit>: fail closed on a missing or moved submodule
   local got; got="$(git -C "$REPO_ROOT/$1" rev-parse HEAD 2>/dev/null || true)"
   [[ "$got" == "$2" ]] || fail "$1 is at ${got:-nothing}, expected $2 (git submodule update --init $1)"
@@ -461,7 +475,7 @@ build_logos_module() { # build_logos_module <out-name> <module submodule> <modul
   log "building $name (LEZ v0.2.4 + builder/patches/$4) as a portable lgx in nix (~40 min cold)"
   # The provision tree may belong to root (a builder container made it), so the
   # output directory and the stamp are written from inside the container.
-  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" -e NIX_CONFIG \
     -v "$REPO_ROOT/third_party/logos-execution-zone:/up/lez:ro" -v "$REPO_ROOT/$modpath:/up/mod:ro" -v "$patches:/patches:ro" \
     "$LEZ_NIX_IMAGE" sh -euc "
       echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
@@ -471,12 +485,20 @@ build_logos_module() { # build_logos_module <out-name> <module submodule> <modul
       for p in /patches/*.patch; do
         case \$(basename \$p) in 0001-lez-*) (cd /tmp/src/lez && git apply \$p) ;; *) (cd /tmp/src/mod && git apply \$p) ;; esac
       done
+      zkr=\$(nix-store --print-fixed-path sha256 $RISC0_RECURSION_ZKR_SHA256 $RISC0_RECURSION_ZKR_SHA256.zip)
+      nix-store --check-validity \$zkr 2>/dev/null || nix store prefetch-file --name $RISC0_RECURSION_ZKR_SHA256.zip \\
+        --expected-hash sha256:$RISC0_RECURSION_ZKR_SHA256 $RISC0_RECURSION_ZKR_URL
       # The Cargo git dependencies are fetched one repository at a time and a
       # fetch can fail (\"Cannot find Git revision ... in ref\", seen for
       # iden3/ffiasm and EspressoSystems/jellyfish on an empty store); what was
-      # fetched stays in the store, so the next attempt goes further.
+      # fetched stays in the store, so the next attempt goes further. A failed
+      # attempt prints its whole log.
       for attempt in 1 2 3 4; do
-        nix build -L path:/tmp/src/mod#lgx-portable --override-input logos-execution-zone path:/tmp/src/lez --out-link /tmp/lgx 2>&1 | tail -3
+        if nix build -L path:/tmp/src/mod#lgx-portable --override-input logos-execution-zone path:/tmp/src/lez --out-link /tmp/lgx >/tmp/nix-build.log 2>&1; then
+          tail -3 /tmp/nix-build.log
+        else
+          echo \"--- nix build of $name, attempt \$attempt, failed; its log: ---\"; cat /tmp/nix-build.log
+        fi
         [ -e /tmp/lgx ] && break
         echo \"nix build of $name: attempt \$attempt produced no package\"
       done
@@ -496,11 +518,13 @@ build_swap_node_module() {
   stamp="$(cd "$REPO_ROOT/modules/lez-swap-node" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
   [[ -f "$out/lez_swap_node.lgx" && "$(cat "$out/source.stamp" 2>/dev/null)" == "$stamp" ]] && return 0
   log "building lez_swap_node (modules/lez-swap-node) as a portable lgx in nix"
-  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" -e NIX_CONFIG \
     -v "$REPO_ROOT/modules/lez-swap-node:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
       echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
       rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod -cf - . | tar -C /tmp/src/mod -xf -
-      nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx 2>&1 | tail -3
+      nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx >/tmp/nix-build.log 2>&1 \\
+        || { echo '--- nix build of lez_swap_node failed; its log: ---'; cat /tmp/nix-build.log; exit 1; }
+      tail -3 /tmp/nix-build.log
       mkdir -p /provision/lez_swap_node; cp -L /tmp/lgx/*.lgx /provision/lez_swap_node/lez_swap_node.lgx
       printf '%s\\n' '$stamp' > /provision/lez_swap_node/source.stamp"
 }
@@ -517,11 +541,13 @@ build_role_node_modules() {
     stamp="$(cd "$REPO_ROOT/modules/lez-$role-node" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
     [[ -f "$out/$name-plugin.lgx" && "$(cat "$out/source.stamp" 2>/dev/null)" == "$stamp" ]] && continue
     log "building $name (modules/lez-$role-node) as a portable lgx in nix"
-    docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+    docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" -e NIX_CONFIG \
       -v "$REPO_ROOT/modules/lez-$role-node:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
         echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
         rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod -cf - . | tar -C /tmp/src/mod -xf -
-        nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx 2>&1 | tail -3
+        nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx >/tmp/nix-build.log 2>&1 \\
+          || { echo '--- nix build of $name failed; its log: ---'; cat /tmp/nix-build.log; exit 1; }
+        tail -3 /tmp/nix-build.log
         mkdir -p /provision/$name; cp -L /tmp/lgx/*.lgx /provision/$name/$name-plugin.lgx
         printf '%s\\n' '$stamp' > /provision/$name/source.stamp"
   done
