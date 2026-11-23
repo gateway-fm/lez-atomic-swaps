@@ -71,7 +71,7 @@ class PackagesWorkflow(unittest.TestCase):
 
     def test_darwin_variants_build_on_apple_silicon_and_feed_the_merge(self):
         darwin = self.job('darwin')
-        self.assertIn('runs-on: macos-14', darwin)
+        self.assertIn('runs-on: macos-15', darwin)
         self.assertIn('deploy/scripts/build-darwin-packages.sh --out _out', darwin)
         self.assertIn('name: lgx-darwin-arm64', darwin)
         self.assertIn('xcodebuild -downloadComponent MetalToolchain', darwin)

@@ -17,7 +17,7 @@ name: release-packages
 #             the same from-scratch.sh steps release-images.yml runs, and
 #             uploads them unpinned as lgx-<variant>
 #   darwin    builds the darwin-arm64 variant of the two desks, lez_swap_node,
-#             both role packages and lez_core on macos-14 (Apple silicon)
+#             both role packages and lez_core on macos-15 (Apple silicon)
 #             with build-darwin-packages.sh, uploaded as lgx-darwin-arm64.
 #             lez_network and lez_indexer_module stay Linux-only: the LEZ
 #             network's operator desk is not installed in a party's Basecamp,
@@ -175,7 +175,7 @@ jobs:
   darwin:
     name: packages (darwin-arm64)
     needs: ci-gate
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 240
     permissions:
       contents: read
