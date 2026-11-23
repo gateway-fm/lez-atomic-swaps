@@ -101,7 +101,8 @@ the rzup version and the rapidsnark release digest.
 
 The builder image therefore carries the toolchain (`/opt/lez-tools`) and is
 itself published: `.github/workflows/builder-image.yml` builds
-`deploy/builder` for linux/arm64 and pushes
+`deploy/builder` for linux/arm64 and linux/amd64, each on a native runner,
+and pushes them as one multi-platform image
 `ghcr.io/gateway-fm/lez-atomic-swaps/lez-builder`; `deploy/builder/image.lock`
 pins the digest every consumer pulls, and updating it is a reviewed commit.
 `from-scratch.sh` pulls the pinned image (or builds it locally from the same

@@ -1,11 +1,15 @@
 name: builder-image
 
-# Publishes deploy/builder as ghcr.io/<repo>/lez-builder for linux/arm64: the
-# ephemeral build image with the pinned prover toolchain baked in. Nothing in
-# it depends on this repository, so it is rebuilt only when the Dockerfile or
-# this workflow changes (or by hand), and every consumer pulls it by the digest
-# recorded in deploy/builder/image.lock. Updating that file is a reviewed
-# commit: this job prints the digest; it never edits the repository.
+# Publishes deploy/builder as ghcr.io/<repo>/lez-builder for linux/arm64 and
+# linux/amd64: the ephemeral build image with the pinned prover toolchain
+# baked in. Each architecture is built on its own native runner and pushed as
+# sha-<commit>-<arch>; the manifest job joins the two into one multi-platform
+# image, sha-<commit>, so a `docker pull` of its digest takes the host's
+# architecture. Nothing in the image depends on this repository, so it is
+# rebuilt only when the Dockerfile or this workflow changes (or by hand), and
+# every consumer pulls it by the digest recorded in deploy/builder/image.lock.
+# Updating that file is a reviewed commit: the manifest job prints the digest;
+# no job edits the repository.
 #
 # The package is created private on first push: make it public once in the
 # repository's package settings so from-scratch.sh can pull it anonymously.
@@ -36,8 +40,16 @@ env:
 
 jobs:
   build:
-    name: build and push lez-builder (arm64)
-    runs-on: ubuntu-24.04-arm
+    name: build and push lez-builder (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 300
     permissions:
       contents: read
@@ -51,27 +63,54 @@ jobs:
       - name: Build
         env:
           SHORT_SHA: ${{ github.sha }}
-        run: docker build -t "$IMAGE:sha-${SHORT_SHA:0:7}" deploy/builder
+          ARCH: ${{ matrix.arch }}
+        run: docker build --platform "linux/$ARCH" -t "$IMAGE:sha-${SHORT_SHA:0:7}-$ARCH" deploy/builder
       - name: Versions the image carries
         env:
           SHORT_SHA: ${{ github.sha }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          docker run --rm "$IMAGE:sha-${SHORT_SHA:0:7}" bash -c \
-            '/opt/lez-tools/bin/rzup --version; /opt/lez-tools/bin/r0vm --version; /opt/lez-tools/bin/cargo-risczero risczero --version; sha256sum /opt/lez-tools/rapidsnark/librapidsnark.a; cargo +1.96.0 --version; cargo +1.94.0 --version'
-      - name: Push and record the digest
+          docker run --rm "$IMAGE:sha-${SHORT_SHA:0:7}-$ARCH" bash -c \
+            'dpkg --print-architecture; /opt/lez-tools/bin/rzup --version; /opt/lez-tools/bin/r0vm --version; /opt/lez-tools/bin/cargo-risczero risczero --version; sha256sum /opt/lez-tools/rapidsnark/librapidsnark.a "$RECURSION_SRC_PATH"; cargo +1.96.0 --version; cargo +1.94.0 --version'
+      - name: Push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHORT_SHA: ${{ github.sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          docker push "$IMAGE:sha-${SHORT_SHA:0:7}-$ARCH"
+          docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:sha-${SHORT_SHA:0:7}-$ARCH"
+
+  manifest:
+    name: multi-platform lez-builder and its digest
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Join both architectures and record the digest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHORT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
-          docker push "$IMAGE:sha-${SHORT_SHA:0:7}"
-          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:sha-${SHORT_SHA:0:7}")"
+          tag="$IMAGE:sha-${SHORT_SHA:0:7}"
+          docker buildx imagetools create -t "$tag" "$tag-arm64" "$tag-amd64"
+          docker buildx imagetools inspect "$tag"
+          platforms="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' \
+            | jq -r '[.manifests[].platform | select(.os != "unknown") | "\(.os)/\(.architecture)"] | sort | join(" ")')"
+          [[ "$platforms" == "linux/amd64 linux/arm64" ]] || { echo "$tag carries $platforms" >&2; exit 1; }
+          digest="$IMAGE@$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' | jq -r .digest)"
           echo "pinned reference for deploy/builder/image.lock:"
           echo "$digest"
           {
-            echo "## lez-builder published"
+            echo "## lez-builder published (linux/arm64, linux/amd64)"
             echo
             echo "Put this line in \`deploy/builder/image.lock\` (a reviewed commit):"
             echo

@@ -102,23 +102,13 @@ jobs:
           submodules: true
       - name: Free runner disk
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      # The pinned builder image (deploy/builder/image.lock) is one
+      # multi-platform image: from-scratch.sh pulls it by digest and gets the
+      # runner's architecture, prover toolchain included.
       - name: Registry login for the pinned builder image
-        if: matrix.variant == 'linux-arm64'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
-      # The pinned builder image (deploy/builder/image.lock) is arm64-only. On
-      # amd64 it is built here from the same Dockerfile with the x86_64
-      # rapidsnark release; from-scratch.sh finds it under its local name and
-      # pulls nothing. The prover toolchain layer takes about two hours.
-      - name: Builder image (linux-amd64)
-        if: matrix.variant == 'linux-amd64'
-        run: |
-          docker build -q -t lez-builder:local \
-            --build-arg RAPIDSNARK_URL=https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip \
-            --build-arg RAPIDSNARK_LIB_SHA256=d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423 \
-            --build-arg GCC_TRIPLE=x86_64-linux-gnu \
-            deploy/builder
       - name: Pinned sources
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
       - name: Node binaries and actors

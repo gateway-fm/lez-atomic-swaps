@@ -49,17 +49,29 @@ RUN curl -fsSL https://sh.rustup.rs -o /tmp/rustup.sh \
 # digest) and scripts/verify-lez-v02-provisional.sh (rzup, cargo-risczero).
 # from-scratch.sh seeds provision/data/tools-arm and rapidsnark-arm from
 # /opt/lez-tools, and every version is checked again where it is used.
+# The image is built for linux/arm64 and linux/amd64 (builder-image.yml); the
+# build platform picks the rapidsnark release and the GCC include directory.
 ARG RISC0_TAG=v3.0.5
 ARG RZUP_VERSION=0.5.1
-ARG RAPIDSNARK_URL=https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-aarch64-pic-v0.0.8.zip
-ARG RAPIDSNARK_LIB_SHA256=43553a6ae796621c63837829fb8b35c46cd8f0ffdb1d88f3761eb10ddbe59657
-ARG GCC_TRIPLE=aarch64-linux-gnu
+ARG RAPIDSNARK_RELEASE=https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8
+ARG RAPIDSNARK_ARM64_LIB_SHA256=43553a6ae796621c63837829fb8b35c46cd8f0ffdb1d88f3761eb10ddbe59657
+ARG RAPIDSNARK_AMD64_LIB_SHA256=d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423
+ARG TARGETARCH
 ENV LEZ_TOOLS=/opt/lez-tools \
     RAPIDSNARK_LIB_DIR=/opt/lez-tools/rapidsnark \
-    BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/${GCC_TRIPLE}/13/include
+    BINDGEN_EXTRA_CLANG_ARGS=-I/opt/lez-tools/gcc-include
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-RUN mkdir -p "$LEZ_TOOLS/rapidsnark" && tmp="$(mktemp -d)" \
-    && curl -fsSL "$RAPIDSNARK_URL" -o "$tmp/r.zip" && unzip -qo "$tmp/r.zip" -d "$tmp/r" \
+RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
+    && case "$arch" in \
+         arm64) triple=aarch64-linux-gnu; asset=rapidsnark-linux-aarch64-pic-v0.0.8.zip; RAPIDSNARK_LIB_SHA256="$RAPIDSNARK_ARM64_LIB_SHA256" ;; \
+         amd64) triple=x86_64-linux-gnu; asset=rapidsnark-linux-x86_64-pic-v0.0.8.zip; RAPIDSNARK_LIB_SHA256="$RAPIDSNARK_AMD64_LIB_SHA256" ;; \
+         *) echo "no rapidsnark release for $arch" >&2; exit 1 ;; \
+       esac \
+    && [[ "$(dpkg --print-architecture)" == "$arch" ]] \
+    && mkdir -p "$LEZ_TOOLS/rapidsnark" && ln -s "/usr/lib/gcc/$triple/13/include" "$LEZ_TOOLS/gcc-include" \
+    && [[ -f "$LEZ_TOOLS/gcc-include/stddef.h" ]] \
+    && tmp="$(mktemp -d)" \
+    && curl -fsSL "$RAPIDSNARK_RELEASE/$asset" -o "$tmp/r.zip" && unzip -qo "$tmp/r.zip" -d "$tmp/r" \
     && find "$tmp/r" -name '*.a' -exec cp {} "$LEZ_TOOLS/rapidsnark/" \; \
     && echo "$RAPIDSNARK_LIB_SHA256  $LEZ_TOOLS/rapidsnark/librapidsnark.a" | sha256sum -c --strict --quiet \
     && rm -rf "$tmp"

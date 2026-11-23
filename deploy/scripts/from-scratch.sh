@@ -350,8 +350,8 @@ phase_rust() {
 builder_run() { # builder_run [docker run flags...] -- <bash script>
   local flags=() triple=aarch64-linux-gnu
   while [[ "$1" != "--" ]]; do flags+=("$1"); shift; done; shift
-  # The image is this host's architecture (an amd64 one is built with the
-  # x86_64 rapidsnark and GCC_TRIPLE: .github/workflows/release-packages.yml).
+  # The image is this host's architecture (the pinned image is published for
+  # linux/arm64 and linux/amd64: .github/workflows/builder-image.yml).
   case "$(uname -m)" in x86_64|amd64) triple=x86_64-linux-gnu ;; esac
   docker run --rm -v "$REPO_ROOT:/workspace" -v "$LEZ_SOURCE:/lez-source" -v "$PROVISION:/provision" \
     -v lez-build-cargo:/cache/cargo -v lez-build-target:/cache/target \
