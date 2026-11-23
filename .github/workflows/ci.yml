@@ -308,8 +308,12 @@ jobs:
           key: basecamp-nix-store-${{ runner.os }}-${{ runner.arch }}-nix-2.30.2-${{ hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh') }}
           restore-keys: |
             basecamp-nix-store-${{ runner.os }}-${{ runner.arch }}-nix-2.30.2-
+      # NIX_CONFIG authenticates Nix's github: fetches. It reaches the
+      # container by name only (not on the command line), and Nix keeps it out
+      # of every derivation, so the store archive cannot hold it.
       - name: Run both role packages in the official Basecamp test harness
         env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
           BASECAMP_NIX_CACHE_SAVE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.basecamp-nix-cache.outputs.cache-hit != 'true' }}
         run: >-
           mkdir -p "${RUNNER_TEMP}/basecamp-nix-store" &&
@@ -317,6 +321,7 @@ jobs:
           --volume "${GITHUB_WORKSPACE}:/repo:ro"
           --volume "${RUNNER_TEMP}/basecamp-nix-store:/cache"
           --env BASECAMP_NIX_CACHE_SAVE
+          --env NIX_CONFIG
           --workdir /repo
           nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21
           bash -euo pipefail -c
@@ -565,7 +570,11 @@ jobs:
           ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
           ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
           ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
-      - run: ./scripts/verify-lez-v02-provisional.sh
+      # rzup's GitHub release requests; the verifier hands it to rzup alone.
+      - name: Verify the provisional LEZ v0.2 graph and the escrow guest
+        env:
+          RZUP_GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-lez-v02-provisional.sh
       - name: Save the provisional LEZ v0.2 Risc0 tools
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tools-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

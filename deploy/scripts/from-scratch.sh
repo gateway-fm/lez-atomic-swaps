@@ -216,11 +216,14 @@ phase_sources() {
 # Builds run in the pinned Nix image with a persistent store volume. The image's
 # own /nix seeds the volume on first use; /bin/sh is relinked because the
 # image's link can predate the store the volume carries.
+# NIX_CONFIG passes through by name to every Nix container: CI sets it to
+# `access-tokens = github.com=<the job token>` so github: fetches are not
+# rate limited; it never appears on a command line or in the store.
 nix_build() { # nix_build <output-link-name> <flake-ref> [extra nix args...]
   local name="$1" ref="$2"; shift 2
   docker run --rm -v lez-nix-store-arm:/nix -v "$REPO_ROOT:/workspace:ro" \
     -v "$BASECAMP_SRC:/src/basecamp:ro" -v "$ASSETS/.nix-out:/out" \
-    -e NIX_CURL_FLAGS='--user-agent lez-from-scratch/1.0' "$NIX_IMAGE" bash -c '
+    -e NIX_CURL_FLAGS='--user-agent lez-from-scratch/1.0' -e NIX_CONFIG "$NIX_IMAGE" bash -c '
       set -e
       [[ -x /bin/sh ]] || ln -sf "$(ls -d /nix/store/*-bash-5*/bin/bash | head -1)" /bin/sh
       # Unsandboxed builds refuse to start while a stray HOME from an earlier
@@ -461,7 +464,7 @@ build_logos_module() { # build_logos_module <out-name> <module submodule> <modul
   log "building $name (LEZ v0.2.4 + builder/patches/$4) as a portable lgx in nix (~40 min cold)"
   # The provision tree may belong to root (a builder container made it), so the
   # output directory and the stamp are written from inside the container.
-  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" -e NIX_CONFIG \
     -v "$REPO_ROOT/third_party/logos-execution-zone:/up/lez:ro" -v "$REPO_ROOT/$modpath:/up/mod:ro" -v "$patches:/patches:ro" \
     "$LEZ_NIX_IMAGE" sh -euc "
       echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
@@ -496,7 +499,7 @@ build_swap_node_module() {
   stamp="$(cd "$REPO_ROOT/modules/lez-swap-node" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
   [[ -f "$out/lez_swap_node.lgx" && "$(cat "$out/source.stamp" 2>/dev/null)" == "$stamp" ]] && return 0
   log "building lez_swap_node (modules/lez-swap-node) as a portable lgx in nix"
-  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" -e NIX_CONFIG \
     -v "$REPO_ROOT/modules/lez-swap-node:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
       echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
       rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod -cf - . | tar -C /tmp/src/mod -xf -
@@ -517,7 +520,7 @@ build_role_node_modules() {
     stamp="$(cd "$REPO_ROOT/modules/lez-$role-node" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
     [[ -f "$out/$name-plugin.lgx" && "$(cat "$out/source.stamp" 2>/dev/null)" == "$stamp" ]] && continue
     log "building $name (modules/lez-$role-node) as a portable lgx in nix"
-    docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+    docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" -e NIX_CONFIG \
       -v "$REPO_ROOT/modules/lez-$role-node:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
         echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
         rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod -cf - . | tar -C /tmp/src/mod -xf -

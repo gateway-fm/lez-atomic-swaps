@@ -126,14 +126,20 @@ jobs:
       - name: LEZ sidecar
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:sidecar
       - name: lez_indexer_module and lez_core (LEZ v0.2.4 + builder/patches)
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: |
           deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:indexer-module
           deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:wallet-module
       - name: lez_swap_node and the role Node plugins
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: |
           deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:swap-node-module
           deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:role-node-modules
       - name: The desks, Chat and Delivery (lgx-portable)
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only nix
       # The sidecar beside the Node binaries, as the stage phase puts it there.
       - name: Package lez_maker_node and lez_taker_node
@@ -236,6 +242,8 @@ jobs:
             "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$version/blockchain_module-$version.lgx"
           echo "$sum  $RUNNER_TEMP/blockchain_module.lgx" | sha256sum -c -
       - name: Merge each package's variants
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p _merged
@@ -253,7 +261,7 @@ jobs:
           done
           SH
           docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/merge.sh:/merge.sh:ro" \
-            -e LGX_FLAKE "$NIX_IMAGE" sh /merge.sh
+            -e LGX_FLAKE -e NIX_CONFIG "$NIX_IMAGE" sh /merge.sh
           sudo chown -R "$(id -u):$(id -g)" _merged
       # Logos's chat_module 0.2.2 release asset (checked against its sha256),
       # its Delivery dependency pinned to the desks' 0.2.x: the desks require
@@ -278,6 +286,7 @@ jobs:
           cat _pinned/packages.tsv
       - name: Verify and lay out the catalog's release assets
         env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
           LINUX: '["linux-amd64","linux-arm64"]'
           ALL: '["darwin-arm64","linux-amd64","linux-arm64"]'
         run: |
@@ -291,7 +300,7 @@ jobs:
           done
           SH
           docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/verify.sh:/verify.sh:ro" \
-            -e LGX_FLAKE "$NIX_IMAGE" sh /verify.sh
+            -e LGX_FLAKE -e NIX_CONFIG "$NIX_IMAGE" sh /verify.sh
           sudo chown -R "$(id -u):$(id -g)" _pinned
           chat="$(jq -r .version _pinned/chat_module.manifest.json)"
           delivery="$(jq -r '.dependencies[] | select(.name == "delivery_module") | .version' _pinned/chat_module.manifest.json)"

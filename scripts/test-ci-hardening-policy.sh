@@ -237,6 +237,46 @@ require_fixed 'nix-store --query --outputs "${root_drvs[@]}" | sort -u >"$tested
 require_fixed '| grep -v '"'"'\.drv$'"'"' | sort -u | comm -23 - "$tested" >"$candidates"' "$nix_store_cache"
 require_fixed 'if [[ -n "$(comm -12 "$closure" "$tested")" ]]; then' "$nix_store_cache"
 
+# GitHub fetches are authenticated with the job's own token, so the shared
+# unauthenticated API budget cannot fail a run: rzup's release requests
+# (rzup reads GITHUB_TOKEN) and Nix's github: inputs (NIX_CONFIG
+# access-tokens). The token goes to the steps that need it, never to a job,
+# and is never printed.
+steps_lacking() { # steps_lacking <workflow> <ERE a step runs> <fixed line it needs>
+  awk -v pattern="$2" -v needle="$3" '
+    function check() { if (step ~ pattern && index(step, needle) == 0) print first }
+    /^      - / { check(); step = ""; first = $0 }
+    /^  [A-Za-z0-9_-]+:$/ { check(); step = ""; first = "" }
+    { step = step $0 "\n" }
+    END { check() }
+  ' "$1"
+}
+readonly rzup_token_env='          RZUP_GITHUB_TOKEN: ${{ github.token }}'
+readonly nix_token_env='          NIX_CONFIG: access-tokens = github.com=${{ github.token }}'
+for workflow in .github/workflows/*.yml; do
+  lacking="$(steps_lacking "$workflow" 'run: [.]/scripts/verify-lez-v02-provisional[.]sh|rzup install' "$rzup_token_env")"
+  [[ -z "$lacking" ]] || fail "$workflow runs rzup without RZUP_GITHUB_TOKEN: ${lacking}"
+  lacking="$(steps_lacking "$workflow" 'nixos/nix:[^\n]*\n[^\n]*bash|NIX_IMAGE" |from-scratch[.]sh [^\n]*--only (nix|build:[a-z-]*-module|build:role-node-modules)' "$nix_token_env")"
+  [[ -z "$lacking" ]] || fail "$workflow evaluates flakes without NIX_CONFIG access-tokens: ${lacking}"
+  ! rg -q -- '-e NIX_CONFIG=|--env NIX_CONFIG=|(echo|printf|tee)[^#]*(RZUP_GITHUB_TOKEN|NIX_CONFIG|github\.token)' "$workflow" \
+    || fail "$workflow prints a token or puts it on a command line"
+  ! rg -q '^ +GITHUB_TOKEN: \$\{\{ (github\.token|secrets\.GITHUB_TOKEN) \}\}$' "$workflow" \
+    || fail "$workflow exposes GITHUB_TOKEN to a whole step; pass RZUP_GITHUB_TOKEN to rzup alone"
+done
+require_fixed '          --env NIX_CONFIG' "$ci_workflow"
+[[ "$(rg -Fc -- '-e NIX_CONFIG' deploy/scripts/from-scratch.sh)" == 4 ]] \
+  || fail "every Nix container of from-scratch.sh must receive NIX_CONFIG by name"
+[[ "$(rg -Fc -- '-e LGX_FLAKE -e NIX_CONFIG "$NIX_IMAGE"' .github/workflows/release-packages.yml)" == 2 ]] \
+  || fail "the release-packages lgx containers must receive NIX_CONFIG by name"
+require_fixed 'rzup_github_token="${RZUP_GITHUB_TOKEN:-}"' "$provisional_verifier"
+require_fixed 'unset RZUP_GITHUB_TOKEN' "$provisional_verifier"
+require_fixed 'GITHUB_TOKEN="$rzup_github_token" "$rzup_bin" install "$@"' "$provisional_verifier"
+[[ "$(rg -Fc '"$rzup_bin" install' "$provisional_verifier")" == 2 ]] \
+  || fail "$provisional_verifier must install through rzup_install only"
+! rg -q 'set -x|set -o xtrace|(echo|printf)[^#]*(rzup_github_token|RZUP_GITHUB_TOKEN|NIX_CONFIG)' \
+  "$provisional_verifier" deploy/scripts/from-scratch.sh scripts/test-m6-basecamp-integration.sh "$nix_store_cache" \
+  || fail "a script that receives a token traces or prints it"
+
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
 readonly cargo_deny_policy='advisories bans licenses sources'
 readonly expected_cargo_deny_steps=8
