@@ -46,3 +46,12 @@ eae01e88bf88471250a8d5762052d771368fca50:deploy/scripts/market-bootstrap.sh:gene
 29b9c3cf891cc717907c824a3c58ab62c508d913:crates/xmr-swap-sdk/tests/cross_curve_vectors.rs:generic-api-key:123
 46997898f454ada33b4d8feefc4db8c24db5a820:fuzz/corpus/xmr_reserve_wire/reserve-request.json:generic-api-key:1
 46997898f454ada33b4d8feefc4db8c24db5a820:fuzz/corpus/xmr_reserve_wire/reserve-response.json:generic-api-key:1
+
+# The regression harness keeps both Nodes' logs for a try that did not pass and
+# redacts secret-shaped values in them; its unit test feeds it two made-up
+# values (the base64 of "secret-value-for-test" and a counting hex string) and
+# asserts they are gone. Test input, no key that guards anything. The commit is
+# on the Milestone 4 branch; the scan reads every branch the checkout fetches.
+582d6c476abf523056935d6d1068519ffa5d0ff2:deploy/tests/test_node_e2e_harness.py:generic-api-key:518
+582d6c476abf523056935d6d1068519ffa5d0ff2:deploy/tests/test_node_e2e_harness.py:generic-api-key:519
+582d6c476abf523056935d6d1068519ffa5d0ff2:deploy/tests/test_node_e2e_harness.py:generic-api-key:526
