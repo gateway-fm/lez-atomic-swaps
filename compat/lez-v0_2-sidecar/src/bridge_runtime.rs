@@ -883,6 +883,15 @@ impl BridgeRuntime {
         &self,
         request: &lez_bridge_protocol::PrepareRevealingClaimRequest,
     ) -> Result<lez_bridge_protocol::PrepareRevealingClaimResult, BridgeRuntimeError> {
+        // TEST-ONLY (feature `test-hooks`, the devnet's zec-kill-maker-claim
+        // kill point "claim preparation held"): while
+        // `hold-claim-preparations` holds a count, the revealing claim's
+        // preparation waits here, before anything of it is durable, for the
+        // kill that comes for it.
+        #[cfg(feature = "test-hooks")]
+        if crate::test_hooks::take("hold-claim-preparations") {
+            std::future::pending::<()>().await;
+        }
         self.planner
             .prepare_revealing_claim(request)
             .await
@@ -1551,6 +1560,8 @@ impl BridgeRuntime {
         request: &SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
         let ownership = self.planner.validate_submission_request(request).await?;
+        #[cfg(feature = "test-hooks")]
+        self.hold_claim_submission(&request.transaction).await;
         if let OwnedSubmission::XmrFunding { initialization } = &ownership
             && !self
                 .node
@@ -1654,6 +1665,20 @@ impl BridgeRuntime {
             request.transaction.transaction_id,
             SubmissionOutcome::Accepted,
         ))
+    }
+
+    /// TEST-ONLY (feature `test-hooks`, the devnet's zec-kill-maker-claim
+    /// kill point "claim submission in flight"): while
+    /// `hold-claim-submissions` holds a count, a revealing claim's
+    /// submission waits here for good, its in-flight marker journaled and
+    /// nothing looked up or sent, for the kill that comes for it.
+    #[cfg(feature = "test-hooks")]
+    async fn hold_claim_submission(&self, prepared: &PreparedTransaction) {
+        if self.revealing_claim_lineage_member(prepared).await
+            && crate::test_hooks::take("hold-claim-submissions")
+        {
+            std::future::pending::<()>().await;
+        }
     }
 
     /// Whether either account a native escrow initialization creates (the

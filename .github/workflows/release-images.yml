@@ -53,6 +53,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # A release build: from-scratch.sh refuses to build the devnet's test hooks
+  # under it, and the sidecar does not compile them with it
+  # (deploy/tests/test_release_workflow.py, NoTestHooksInARelease).
+  LEZ_RELEASE_BUILD: "1"
   LEZ_IMAGE_PREFIX: ghcr.io/${{ github.repository }}/lez
   LEZ_WORKSPACE: ${{ github.workspace }}/../lez-ws
 
