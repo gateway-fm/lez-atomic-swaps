@@ -69,6 +69,10 @@ scripts/zec-provision.sh --direction …, which also recreates both Nodes, then
                                          funded escrow's custody; the swap still settles
                                          and the ending's recipient gets the lot and the
                                          unit (TM-0032)
+    node-e2e.py --pair Zcash zec-kill-maker-claim (TakerSellsLez): the Maker killed
+                                         with its LEZ claim held in its sidecar, at its
+                                         preparation and in flight; both swaps complete
+                                         (issue #187; needs LEZ_TEST_HOOKS=1)
 
 The ZEC refund windows come from the agreement, not the timing profile. Selling
 LEZ, the refund journeys provision their corridor under
@@ -202,7 +206,8 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 # container: a native Node reaches the chains directly, with nothing to cut.
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
-                  "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding"}
+                  "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding",
+                  "zec-kill-maker-claim"}
 HEALTH = {"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
 MINER = f"{PREFIX}-btc-miner"
 # The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
@@ -5352,6 +5357,157 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
     return {**summary, "taker_terminal_state": taker["state"]}
 
 
+# ---- zec-kill-maker-claim: the Maker killed with its LEZ claim held (issue #187) ----
+# Selling LEZ, once the Taker has claimed the Maker's Zcash (revealing the
+# preimage), the Maker's actor claims the Taker's LEZ through its ZEC sidecar:
+# it prepares the revealing claim (ClaimNative) and submits it. Two points,
+# one fresh swap each, hold that claim in the Maker's sidecar with a test hook
+# (a count of one, a devnet built with LEZ_TEST_HOOKS=1), and the Maker's
+# container is killed with SIGKILL while the hold is taken:
+#  - "claim preparation held": the preparation waits before anything of it is
+#    durable (hold-claim-preparations); the restarted Maker prepares and
+#    submits the claim afresh.
+#  - "claim submission in flight": the submission waits after the sidecar's
+#    request journal holds its in-flight marker, before its lookup and send
+#    (hold-claim-submissions). The restarted Maker asks for the same claim
+#    under the same request id; its sidecar must decide the in-flight
+#    marker on the chain again (looked up, sent once) instead of answering
+#    unknown_submission_outcome from the journal until the claim window
+#    closes, which leaves the Taker with the Zcash and, from the LEZ refund
+#    time, its LEZ back: the Maker loses both legs.
+# Each swap must complete on both Nodes with the LEZ lot paid to the Maker.
+ZEC_MAKER_STATE = "/var/lib/lez/maker"
+ZEC_SIDECAR_PROGRAM = "/usr/local/bin/lez-v02-bridge-poc"
+ZEC_CLAIM_HOLDS = (("claim preparation held", "hold-claim-preparations"),
+                   ("claim submission in flight", "hold-claim-submissions"))
+TEST_HOOK_SCRIPT = ('set -eu; mkdir -p "$1"; chmod 0700 "$1"; '
+                    'if [ -n "$3" ]; then printf "%s\\n" "$3" > "$1/$2.tmp"; mv "$1/$2.tmp" "$1/$2"; '
+                    'else rm -f "$1/$2"; fi')
+
+
+def maker_test_hook(name: str, value: str | None) -> None:
+    """Sets (`value`) or clears (None) one test hook of the Maker's sidecars,
+    read on its next use (no restart)."""
+    node_run("maker", "sh", "-c", TEST_HOOK_SCRIPT, "hook", f"{ZEC_MAKER_STATE}/test-hooks", name, value or "")
+    log(f"  maker test hook {name}: {value if value is not None else 'cleared'}")
+
+
+def maker_test_hook_value(name: str) -> str | None:
+    """What one test hook of the Maker holds now, None when it is unset."""
+    result = subprocess.run(node_command("maker", ["cat", f"{ZEC_MAKER_STATE}/test-hooks/{name}"]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def require_sidecar_test_hooks(hook: str) -> None:
+    """Fails the scenario at once, before any swap, unless the Maker's sidecar
+    was built with the devnet test hooks (from-scratch.sh with
+    LEZ_TEST_HOOKS=1): without them a hook file is ignored and nothing is
+    held."""
+    result = subprocess.run(node_command("maker", ["grep", "-qa", hook, ZEC_SIDECAR_PROGRAM]),
+                            capture_output=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"the Maker's {ZEC_SIDECAR_PROGRAM.rsplit('/', 1)[-1]} has no devnet test hooks: this scenario "
+                      "needs the devnet built with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh)")
+
+
+def kill_node(role: str) -> dict:
+    """The role's container killed with SIGKILL, not stopped: the Node and its
+    sidecars go down together, none of them given a chance to clean up.
+    Asserts the container exited by the signal (exit code 137, not killed for
+    memory), then starts it again."""
+    container, _ = NODES[role]
+    log(f"  killing {container} with SIGKILL")
+    docker("kill", "--signal", "KILL", container)
+    state = json.loads(subprocess.run(["docker", "inspect", container, "--format", "{{json .State}}"],
+                                      capture_output=True, text=True, check=True).stdout)
+    if state.get("Running") or state.get("ExitCode") != 137 or state.get("OOMKilled"):
+        raise Failure(f"{container} did not exit by SIGKILL: running {state.get('Running')}, exit code "
+                      f"{state.get('ExitCode')}, OOMKilled {state.get('OOMKilled')}")
+    log(f"  {container} exited by SIGKILL (exit code 137, not OOM-killed); starting it again")
+    docker("start", container)
+    wait_healthy(role)
+    return {"container": container, "exit_code": state["ExitCode"], "oom_killed": state["OOMKilled"],
+            "finished_at": state.get("FinishedAt")}
+
+
+def zec_kill_maker_claim_point(stamp: str, point: str, hook: str) -> dict:
+    """One fresh swap: the Maker's LEZ claim held at `hook`, the Maker killed
+    while it is held, the swap carried to completed on both Nodes."""
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    before = lez_balances()
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                          describe=zec_flow())
+    maker_test_hook(hook, "1")
+    try:
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                       "swap_id": swap_id,
+                                                       "expected_generation": view["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')}); the Maker's LEZ claim "
+            f"is to wait in its sidecar's {hook}")
+        wait = Wait(f"the Maker's sidecar to take the hold {hook} on {swap_id[:12]}", 900)
+        while wait.running():
+            if maker_test_hook_value(hook) == "0":
+                break
+            if maker_phase(swap_id) == "completed":
+                raise Failure(f"the Maker completed {swap_id[:12]} with {hook} set: its LEZ claim was never held")
+            wait.note(maker_phase(swap_id), lambda: f"maker {maker_phase(swap_id)}, hook {maker_test_hook_value(hook)}")
+            time.sleep(3)
+        else:
+            raise wait.failure()
+        at = {"point": point, "hook": hook, "taker_state": taker_view(swap_id)["state"],
+              "maker_phase": maker_phase(swap_id)}
+        log(f"  kill point '{point}': the Maker's LEZ claim waits in its sidecar; taker {at['taker_state']}, "
+            f"maker {at['maker_phase']}")
+        killed = kill_node("maker")
+    finally:
+        maker_test_hook(hook, None)
+    # The Taker holds the Zcash; the restarted Maker must claim the LEZ.
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait = Wait(f"the restarted Maker to claim the LEZ of {swap_id[:12]} and complete", 900)
+    while wait.running():
+        view = maker_view(swap_id)
+        phase = maker_phase(swap_id)
+        if view.get("schedule_state") == "terminal":
+            break
+        wait.note((phase, view.get("schedule_state")), f"maker {phase} (schedule {view.get('schedule_state')})")
+        time.sleep(5)
+    else:
+        raise wait.failure()
+    if maker_phase(swap_id) != "completed":
+        raise Failure(f"after the kill at '{point}' the Maker ended {swap_id[:12]} {maker_phase(swap_id)}, "
+                      "not completed: its LEZ claim was never sent again")
+    wait_completed(swap_id, timeout=300)
+    maker_claims = zec_maker_claim_operations(swap_id, since)
+    if "lez_followup_claim" not in maker_claims:
+        raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
+                      "not its LEZ follow-up claim")
+    settled = assert_lez_settled(before, taker_view(swap_id)["state"], maker_phase(swap_id))
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "kill": {**at, **killed}, "maker_claim_operations": maker_claims, **settled}
+
+
+def scenario_zec_kill_maker_claim(stamp: str) -> dict:
+    """Issue #187 on the devnet: the Maker killed at each of ZEC_CLAIM_HOLDS
+    while its LEZ follow-up claim is held in its sidecar, one fresh swap per
+    point (zec_kill_maker_claim_point)."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-kill-maker-claim is a selling-LEZ scenario: the Maker claims the Taker's LEZ last")
+    for _, hook in ZEC_CLAIM_HOLDS:
+        require_sidecar_test_hooks(hook)
+    # A hold an earlier run could not clear would park this run's claims.
+    for _, hook in ZEC_CLAIM_HOLDS:
+        maker_test_hook(hook, None)
+    walked = [zec_kill_maker_claim_point(f"{stamp}k{index}", point, hook)
+              for index, (point, hook) in enumerate(ZEC_CLAIM_HOLDS)]
+    log("  the Maker killed at " + "; ".join(f"{w['kill']['point']} → completed" for w in walked))
+    return {"points": walked}
+
+
 # ---- a stranger's credit to a funded escrow's custody (TM-0032) -------------------
 # LEZ lets anyone raise the balance of any initialised account, so a third
 # party can send LEZ to the custody account of a funded swap whenever it
@@ -5569,6 +5725,7 @@ CUSTODY_CREDIT_SCENARIOS = {
 ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
     "zec-slow-funding": scenario_zec_slow_funding,
+    "zec-kill-maker-claim": scenario_zec_kill_maker_claim,
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,

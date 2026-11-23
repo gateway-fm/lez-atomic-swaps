@@ -99,6 +99,8 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-maker-early-claim:TakerSellsLez"
       # selling LEZ only: the Maker's Zcash funding held unmined while its journal grows past 17 revisions
       echo "node:zec:zec-slow-funding:TakerSellsLez"
+      # selling LEZ only: the Maker killed with its LEZ claim held in its sidecar (a devnet built with LEZ_TEST_HOOKS=1)
+      echo "node:zec:zec-kill-maker-claim:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # a stranger's credit to a funded escrow's custody (TM-0032): the swap still settles,
       # the ending's recipient gets the lot and the credit; refunds refund the Taker's LEZ
@@ -312,6 +314,8 @@ expected_seconds() { # expected_seconds <test>
   if [[ -z "$seconds" ]]; then
     case "$1" in
       *late-claim-unmined*) seconds=1800 ;;
+      # two swaps, the Maker killed and started again in each
+      *zec-kill-maker-claim*) seconds=700 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;
       *) seconds=250 ;;

@@ -546,6 +546,47 @@ class ZecSlowFunding(unittest.TestCase):
                 e2e.scenario_zec_slow_funding('1700000000')
 
 
+class ZecKillMakerClaim(unittest.TestCase):
+    """zec-kill-maker-claim (issue #187): what can be checked without a stack."""
+
+    def test_it_is_registered_refused_natively_and_holds_both_claim_points(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-kill-maker-claim'], e2e.scenario_zec_kill_maker_claim)
+        self.assertIn('zec-kill-maker-claim', e2e.NATIVE_REFUSED)
+        self.assertEqual([hook for _, hook in e2e.ZEC_CLAIM_HOLDS],
+                         ['hold-claim-preparations', 'hold-claim-submissions'])
+        runtime = (REPO / 'compat/lez-v0_2-sidecar/src/bridge_runtime.rs').read_text()
+        for _, hook in e2e.ZEC_CLAIM_HOLDS:
+            self.assertIn(f'crate::test_hooks::take("{hook}")', runtime)
+
+    def test_selling_zec_is_refused_before_anything_runs(self):
+        with patch.object(e2e, 'zec_taker_sells_lez', lambda: False), \
+                patch.object(e2e, 'require_sidecar_test_hooks', lambda *_: self.fail('nothing may be checked')):
+            with self.assertRaisesRegex(e2e.Failure, 'selling-LEZ'):
+                e2e.scenario_zec_kill_maker_claim('1700000000')
+
+    def test_a_sidecar_without_the_hooks_fails_at_once_naming_the_build(self):
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), \
+                patch.object(e2e.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 1, b'', b'')):
+            with self.assertRaisesRegex(e2e.Failure, 'LEZ_TEST_HOOKS=1'):
+                e2e.require_sidecar_test_hooks('hold-claim-submissions')
+
+    def test_a_hook_is_written_whole_in_the_makers_state_and_cleared(self):
+        with tempfile.TemporaryDirectory() as root:
+            hooks = f'{root}/test-hooks'
+            for value in ('1', ''):
+                subprocess.run(['sh', '-c', e2e.TEST_HOOK_SCRIPT, 'hook', hooks, 'hold-claim-submissions', value],
+                               check=True)
+                path = pathlib.Path(hooks, 'hold-claim-submissions')
+                self.assertEqual(path.read_text() if path.exists() else None, '1\n' if value else None)
+            self.assertEqual(os.stat(hooks).st_mode & 0o777, 0o700)
+        self.assertEqual(e2e.ZEC_MAKER_STATE, '/var/lib/lez/maker')
+        entrypoint = (REPO / 'modules/lez-role-node/node-entrypoint.sh').read_text()
+        self.assertIn('export LEZ_TEST_HOOKS_DIR="$state/test-hooks"', entrypoint)
+        # before the ZEC sidecars start, which read it
+        self.assertLess(entrypoint.index('export LEZ_TEST_HOOKS_DIR'),
+                        entrypoint.index('node_helper "$bin/lez-v02-bridge-poc"'))
+
+
 class MakerEarlyClaim(unittest.TestCase):
     """zec-maker-early-claim (TM-0030): what can be checked without a stack."""
 

@@ -356,6 +356,34 @@ all six tests.
 | `zec-custody-credit` (both directions) | `zec-happy` with the credit, as `btc-custody-credit` |
 | `zec-custody-credit-refund` (TakerSellsLez) | `zec-taker-refund` with the credit, as `btc-custody-credit-refund` |
 
+**The Maker killed with its LEZ claim in flight (issue #187).**
+`zec-kill-maker-claim` (TakerSellsLez) takes two swaps. In each, once the
+Taker has claimed the Maker's Zcash, the Maker's ZEC sidecar holds the
+Maker's LEZ follow-up claim with a test hook and the Maker's container is
+killed with SIGKILL while it is held, then started again: first at "claim
+preparation held" (`hold-claim-preparations`: before anything of the claim
+is durable), then at "claim submission in flight" (`hold-claim-submissions`:
+after the sidecar's request journal holds the submission's in-flight marker,
+before its lookup and send). Each swap must complete on both Nodes with the
+LEZ lot paid to the Maker. At the second point the restarted Maker asks for
+the same claim under the same request id, and its sidecar decides the
+in-flight marker on the chain again (looked up, sent once) rather than
+answering `unknown_submission_outcome` from its journal.
+
+The hooks are files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, which the
+entrypoint exports before it starts the ZEC sidecars), counts read by the
+sidecar on its next use. They exist only in a sidecar built with the feature
+`test-hooks`: `LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh` builds it so,
+the default build does not, and `zec-kill-maker-claim` fails at once, before
+any swap, naming `LEZ_TEST_HOOKS=1`, on a devnet built without it (it looks
+for the hook's name in the Maker's sidecar executable). So a devnet for
+`regress.sh full` is built with `LEZ_TEST_HOOKS=1`. No release has the hooks:
+the release workflows and the role packagers never name the feature or
+`LEZ_TEST_HOOKS`, they mark their builds with `LEZ_RELEASE_BUILD`, under
+which `from-scratch.sh` refuses `LEZ_TEST_HOOKS=1`, and the sidecar's hook
+module holds a compile-time assertion that `LEZ_RELEASE_BUILD` is unset
+(`deploy/tests/test_release_workflow.py`, `NoTestHooksInARelease`).
+
 Each long wait logs its state, LEZ's finalized height and the sequencer's tip when
 the state changes and at least once a minute, and a timeout names what it waited
 for and what it saw last; `regress.sh` writes both heights on each try's start and
