@@ -448,6 +448,43 @@ if rg -Fq 'cargo test --locked --manifest-path "$guest_manifest"' "$provisional_
   fail "zkVM guest verifier must not build a host unit-test harness"
 fi
 
+# RISC Zero's recursion circuit archive comes from this project's
+# build-inputs-1 release, always checked against the SHA-256 the crate and
+# LEZ's flake pin; RISC Zero's bucket is never fetched from.
+readonly zkr_sha256='744b999f0a35b3c86753311c7efb2a0054be21727095cf105af6ee7d3f4d8849'
+readonly zkr_url="https://github.com/gateway-fm/lez-atomic-swaps/releases/download/build-inputs-1/risc0-recursion-zkr-${zkr_sha256}.zip"
+readonly builder_dockerfile="deploy/builder/Dockerfile"
+require_fixed "readonly RISC0_RECURSION_ZKR_SHA256=${zkr_sha256}" deploy/scripts/from-scratch.sh
+require_fixed "readonly RISC0_RECURSION_ZKR_URL=${zkr_url}" deploy/scripts/from-scratch.sh
+require_fixed 'nix-store --check-validity \$zkr 2>/dev/null || nix store prefetch-file --name $RISC0_RECURSION_ZKR_SHA256.zip \\' deploy/scripts/from-scratch.sh
+require_fixed '--expected-hash sha256:$RISC0_RECURSION_ZKR_SHA256 $RISC0_RECURSION_ZKR_URL' deploy/scripts/from-scratch.sh
+require_fixed '--expected-hash "sha256:$zkr_sha256" "$(pin RISC0_RECURSION_ZKR_URL)"' deploy/scripts/build-darwin-packages.sh
+require_fixed 'zkr_sha256="$(pin RISC0_RECURSION_ZKR_SHA256)"' deploy/scripts/build-darwin-packages.sh
+require_fixed "ARG RISC0_RECURSION_ZKR_URL=${zkr_url}" "$builder_dockerfile"
+require_fixed "ARG RISC0_RECURSION_ZKR_SHA256=${zkr_sha256}" "$builder_dockerfile"
+require_fixed 'ENV RECURSION_SRC_PATH=/opt/lez-tools/risc0-recursion-zkr.zip' "$builder_dockerfile"
+require_fixed 'echo "$RISC0_RECURSION_ZKR_SHA256  $RECURSION_SRC_PATH" | sha256sum -c --strict --quiet' "$builder_dockerfile"
+# the archive is in place before the first Cargo build of the image
+[[ "$(rg -n 'ENV RECURSION_SRC_PATH=' "$builder_dockerfile" | cut -d: -f1)" -lt "$(rg -n 'cargo \+1\.96\.0 install' "$builder_dockerfile" | head -1 | cut -d: -f1)" ]] \
+  || fail "$builder_dockerfile must set RECURSION_SRC_PATH before it builds r0vm and cargo-risczero"
+! rg -n 'risc0-artifacts\.s3' .github scripts deploy --glob '!scripts/test-ci-hardening-policy.sh' \
+  || fail "a build fetches from RISC Zero's bucket; take the build-inputs-1 copy by SHA-256"
+
+# The builder image is published for both Linux architectures as one
+# multi-platform image, pinned by one digest that every consumer pulls.
+readonly builder_workflow=".github/workflows/builder-image.yml"
+require_fixed '          - arch: arm64' "$builder_workflow"
+require_fixed '            runner: ubuntu-24.04-arm' "$builder_workflow"
+require_fixed '          - arch: amd64' "$builder_workflow"
+require_fixed '            runner: ubuntu-24.04' "$builder_workflow"
+require_fixed 'docker buildx imagetools create -t "$tag" "$tag-arm64" "$tag-amd64"' "$builder_workflow"
+require_fixed '[[ "$platforms" == "linux/amd64 linux/arm64" ]]' "$builder_workflow"
+rg -qx 'ghcr\.io/gateway-fm/lez-atomic-swaps/lez-builder@sha256:[0-9a-f]{64}' deploy/builder/image.lock \
+  && [[ "$(wc -l < deploy/builder/image.lock)" -eq 1 ]] \
+  || fail "deploy/builder/image.lock must hold exactly one pinned lez-builder digest"
+! rg -n 'docker build[^\n]*deploy/builder|-t lez-builder:local' .github/workflows --glob '!builder-image.yml' \
+  || fail "a release workflow builds the builder image; pull the digest pinned in deploy/builder/image.lock"
+
 if rg -Uq $'readonly REPOSITORY_ROOT\nREPOSITORY_ROOT=|readonly repository_root\nrepository_root=' scripts; then
   fail "a shell wrapper assigns a variable only after marking it readonly"
 fi
