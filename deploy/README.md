@@ -336,6 +336,26 @@ self-hosted `lez-stack` runner).
 | `maker-refund` | the Taker never claims; the Maker refunds LEZ after `refund_at`, then the Taker refunds Bitcoin |
 | `refund-then-maker-lock` | the Taker's refund is admitted with the Maker's lock on chain but unobserved (asserted on the Taker's view), then the lock appears; the Taker's observer refunds unaided, the Maker refunds too, and both parties' balances on both chains are back less the locker's Bitcoin fees |
 
+**A stranger's credit to the custody (TM-0032).** LEZ lets anyone pay into
+any initialised account, so a third party can send LEZ to a funded escrow's
+custody at a moment it chooses. Each of these runs its pair's own scenario
+unchanged while `lez-v02-custody-credit-probe`, a test-only tool the devnet
+Maker image carries beside the claim probe, runs in a throwaway container
+from the Maker's image in the stack sequencer's network namespace, waits for
+the swap's escrow to be funded and then sends one unit to its custody from
+`heartbeat-echo-02` (funded at genesis, held by neither party; its key reaches
+the probe on stdin). The swap must end as its scenario says, and
+`assert_lez_settled` allows exactly that unit more to the ending's recipient:
+the claimant on a claim, the depositor on a refund. `regress.sh full` runs
+all six tests.
+
+| Scenario | What it proves |
+|---|---|
+| `btc-custody-credit` (both directions) | `happy` with the credit: the swap completes, the LEZ claimant gets the lot and the unit |
+| `btc-custody-credit-refund` (TakerSellsLez) | `taker-refund` with the credit: the Taker refunds its LEZ and gets the unit too |
+| `zec-custody-credit` (both directions) | `zec-happy` with the credit, as `btc-custody-credit` |
+| `zec-custody-credit-refund` (TakerSellsLez) | `zec-taker-refund` with the credit, as `btc-custody-credit-refund` |
+
 Each long wait logs its state, LEZ's finalized height and the sequencer's tip when
 the state changes and at least once a minute, and a timeout names what it waited
 for and what it saw last; `regress.sh` writes both heights on each try's start and

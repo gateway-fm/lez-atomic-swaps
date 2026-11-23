@@ -62,6 +62,13 @@ scripts/zec-provision.sh --direction …, which also recreates both Nodes, then
                                          account is funded (the deferred vault claim), the
                                          next drive locks and the swap completes. Needs a
                                          chain created with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+    node-e2e.py btc-custody-credit, --pair Zcash zec-custody-credit, and each
+      one's -refund variant (TakerSellsLez): the pair's
+                                         happy (or Taker refund) scenario while a stranger
+                                         (heartbeat-echo-02) sends one LEZ unit to the
+                                         funded escrow's custody; the swap still settles
+                                         and the ending's recipient gets the lot and the
+                                         unit (TM-0032)
 
 The ZEC refund windows come from the agreement, not the timing profile. Selling
 LEZ, the refund journeys provision their corridor under
@@ -118,6 +125,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import threading
@@ -378,6 +386,14 @@ def node_command(role: str, argv: list[str]) -> list[str]:
     if not NATIVE_RUN_ROOT:
         return ["docker", "exec", NODES[role][0], *argv]
     return [node_path(role, part) for part in argv]
+
+
+def node_command_stdin(role: str, argv: list[str]) -> list[str]:
+    """node_command for a command that reads the caller's stdin (`input=`):
+    `docker exec` passes stdin on only with -i, and without it the command
+    reads an empty stdin."""
+    command = node_command(role, argv)
+    return [*command[:2], "-i", *command[2:]] if not NATIVE_RUN_ROOT else command
 
 
 def node_run(role: str, *argv: str) -> None:
@@ -3796,6 +3812,39 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
             "restart_point": restart_point, "taker_schedule_after_restart": sorted(classes)}
 
 
+def lez_balances() -> dict:
+    return {role: lez_account_balance(lez_owner_account(role)) for role in ("maker", "taker")}
+
+
+def assert_lez_settled(before: dict, taker_state: str, maker_phase_end: str, surplus: dict | None = None) -> dict:
+    """A Zcash swap's LEZ leg to the unit: the lot moved when both Nodes say
+    completed, nothing moved when they say refunded. `surplus` ({role: units})
+    is what a stranger's credit to the custody adds to the ending's recipient;
+    unset, it is the running custody credit's (custody_credit_surplus), {} without one."""
+    if taker_state not in {"completed", "refunded"} or (maker_phase_end == "completed") != (taker_state == "completed"):
+        raise Failure(f"the Nodes disagree: Taker {taker_state}, Maker {maker_phase_end}")
+    # The balances are the indexer's, which serves finalized state only, while
+    # the Nodes conclude on sequencer inclusion (lez_claim_observation.rs): a
+    # claim included just before the read can still be unfinalized. Wait until
+    # LEZ is final through the sequencer's tip as of now.
+    tip = lez_rpc_number(STACK_SEQUENCER_URL, "getLastBlockId")
+    if isinstance(tip, int):
+        started = time.time()
+        wait_lez_final_through(tip, timing_profile(), "the swap's last LEZ transaction")
+        log(f"  LEZ is final through block {tip} after {time.time() - started:.0f}s")
+    else:
+        log("  the sequencer's tip is unreadable; reading the balances without waiting")
+    deltas = {role: balance - before[role] for role, balance in lez_balances().items()}
+    want = {role: amounts["lez_units"] for role, amounts in
+            expected_settlement(taker_state, REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
+    for role, units in (custody_credit_surplus(taker_state) if surplus is None else surplus).items():
+        want[role] += units
+    if deltas != want:
+        raise Failure(f"the LEZ balances moved {deltas}, a {taker_state} swap moves {want}")
+    log(f"  settled {taker_state}: LEZ moved {deltas} as both Nodes say")
+    return {"lez_before": before, "lez_deltas": deltas, "outcome": taker_state}
+
+
 def scenario_zec_survivor(stamp: str) -> dict:
     """ZEC analogue of `survivor`: the Taker Node stopped right after its Zcash
     claim was broadcast; the Maker completes alone (its follow-up observes the
@@ -5184,6 +5233,220 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
     return {**summary, "taker_terminal_state": taker["state"]}
 
 
+# ---- a stranger's credit to a funded escrow's custody (TM-0032) -------------------
+# LEZ lets anyone raise the balance of any initialised account, so a third
+# party can send LEZ to the custody account of a funded swap whenever it
+# likes. The *-custody-credit scenarios run a pair's own scenario unchanged
+# while the test-only probe (compat/lez-v0_2-sidecar/src/bin/
+# lez-v02-custody-credit-probe.rs, carried by the devnet Maker image) waits in
+# the Maker's container for the swap's escrow to be funded and then credits
+# its custody from the heartbeat's recipient account (heartbeat-echo-02: funded
+# at genesis, only ever paid to, held by neither party). The swap must still
+# settle, and the ending's recipient gets the lot and the credit: the claimant
+# on a claim, the depositor on a refund. assert_lez_settled allows exactly that
+# surplus, to exactly that party, while a credit is recorded.
+CUSTODY_CREDIT_PROBE = "/usr/local/bin/lez-v02-custody-credit-probe"
+CUSTODY_CREDIT_UNITS = 1
+CUSTODY_CREDIT_WALLET = "heartbeat-echo-02"
+# Where the probe's key is written inside the Maker's container (owner-only,
+# the Node's run directory) for the length of the probe.
+CUSTODY_CREDIT_KEY = "/run/lez/maker/custody-credit-probe.key"
+CUSTODY_CREDIT: dict = {}  # the running credit: depositor role, units, thread, evidence, error
+
+
+def escrow_program_id() -> str:
+    """The pinned escrow program the stack deployed: LEZ_ESCROW_PROGRAM_ID as
+    start.sh exports it, else the provisional verifier's pin, as start.sh reads it."""
+    pinned = os.environ.get("LEZ_ESCROW_PROGRAM_ID", "")
+    if not pinned:
+        verifier = (DEPLOY_ROOT.parent / "scripts" / "verify-lez-v02-provisional.sh").read_text()
+        found = re.search(r'^\s*expected_image_id="([0-9a-f]{64})"', verifier, re.MULTILINE)
+        pinned = found.group(1) if found else ""
+    if not re.fullmatch(r"[0-9a-f]{64}", pinned):
+        raise Failure("no pinned escrow program id (LEZ_ESCROW_PROGRAM_ID or scripts/verify-lez-v02-provisional.sh)")
+    return pinned
+
+
+def custody_credit_key() -> bytes:
+    """The stranger's key: the heartbeat recipient's, from the market root."""
+    market_root = next((line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                        if line.startswith("LEZ_MARKET_ROOT=")), "")
+    path = pathlib.Path(market_root) / "identities" / CUSTODY_CREDIT_WALLET / "lez-signer.key"
+    if not market_root or not path.is_file():
+        raise Failure(f"no key for the stranger's account {CUSTODY_CREDIT_WALLET} under the market root ({path})")
+    return path.read_bytes()
+
+
+def custody_credit_depositor() -> str:
+    """The role whose LEZ the swap's escrow holds: the Taker when it sells LEZ."""
+    return "taker" if REVERSE else "maker"
+
+
+def parse_custody_credit_evidence(returncode: int, stdout: str, units: int) -> dict:
+    """The probe's evidence line, checked: the credit landed (custody up by
+    exactly `units`, escrow still Funded) and was sent by a non-party."""
+    if not stdout.strip():
+        raise Failure(f"the custody credit probe gave no evidence: exit {returncode}")
+    evidence = json.loads(stdout.strip().splitlines()[-1])
+    if evidence.get("schema") != "lez_v02_custody_credit_probe_v1" or evidence.get("test_only") is not True:
+        raise Failure(f"the custody credit probe's evidence has another schema: {str(evidence)[:200]}")
+    before, after = evidence["before"], evidence["after"]
+    if returncode == 3 or not evidence["credit_landed"]:
+        raise Failure(f"the stranger's credit did not land: sequencer {evidence['submission']['decision']}, custody "
+                      f"{before['custody_balance']} → {after['custody_balance']}, escrow {before['status']} → "
+                      f"{after['status']}")
+    if returncode != 0:
+        raise Failure(f"the custody credit probe failed: exit {returncode}")
+    if evidence["credit_amount"] != units or after["custody_balance"] != before["custody_balance"] + units:
+        raise Failure(f"the probe credited {evidence['credit_amount']} units, custody "
+                      f"{before['custody_balance']} → {after['custody_balance']}; {units} expected")
+    if evidence["sender_is_party"]:
+        raise Failure("the probe's key is a party of the swap: the credit is not a stranger's")
+    if before["custody_balance"] < evidence["escrow_amount"]:
+        raise Failure(f"the escrow was not funded when credited: custody {before['custody_balance']}, "
+                      f"lot {evidence['escrow_amount']}")
+    return evidence
+
+
+def custody_credit_probe_container() -> list[str]:
+    """`docker run` of a throwaway container from the Maker's image in the
+    stack sequencer's network namespace (the probe takes only a literal-loopback
+    sequencer URL), reading the key on stdin. Not the Maker's own container:
+    the refund scenarios stop the Maker Node while the probe waits, and a
+    stopped container kills what runs in it."""
+    image = subprocess.run(["docker", "inspect", "--format", "{{.Config.Image}}", NODES["maker"][0]],
+                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL).stdout.strip()
+    if not image:
+        raise Failure(f"cannot read the image of {NODES['maker'][0]}")
+    sequencer = f"{os.environ.get('LEZ_STACK_PREFIX', 'lez')}-sequencer"
+    return ["docker", "run", "--rm", "-i", "--name", f"{PREFIX}-custody-credit-probe",
+            "--network", f"container:{sequencer}", "--user", "4713:4713", "--entrypoint", "sh", image, "-c",
+            f'umask 077 && cat > {CUSTODY_CREDIT_CONTAINER_KEY} && exec "$@"', "probe"]
+
+
+# The key's path in the throwaway probe container (custody_credit_probe_container).
+CUSTODY_CREDIT_CONTAINER_KEY = "/tmp/custody-credit-probe.key"
+
+
+def run_custody_credit_probe(depositor: str, units: int, timeout: int) -> dict:
+    """Runs the probe (it waits until the depositor's new escrow is Funded,
+    then credits its custody) with the stranger's key: in a throwaway
+    container from the Maker's image, which gets the key on stdin
+    (custody_credit_probe_container), or beside a native Maker Node with the
+    key written into its run directory and removed again."""
+    native = bool(NATIVE_RUN_ROOT)
+    key_file = CUSTODY_CREDIT_KEY if native else CUSTODY_CREDIT_CONTAINER_KEY
+    argv = [CUSTODY_CREDIT_PROBE, "--sequencer-url", "http://127.0.0.1:3040/",
+            "--escrow-program-id", escrow_program_id(), "--depositor", lez_owner_account(depositor),
+            "--private-key-file", key_file, "--amount", str(units),
+            "--wait-funded-seconds", str(timeout), "--observe-seconds", "60"]
+    log(f"  custody credit: waiting for the {depositor}'s escrow to be funded, then {units} unit(s) from "
+        f"{CUSTODY_CREDIT_WALLET}: {' '.join(argv)}")
+    if not native:
+        container = custody_credit_probe_container()
+        remove = ["docker", "rm", "-f", f"{PREFIX}-custody-credit-probe"]
+        subprocess.run(remove, capture_output=True, check=False, stdin=subprocess.DEVNULL, timeout=60)
+        try:
+            result = subprocess.run([*container, *argv], input=custody_credit_key().decode(), capture_output=True,
+                                    text=True, check=False, timeout=timeout + 300)
+        finally:
+            # a probe whose client timed out keeps running in its container
+            subprocess.run(remove, capture_output=True, check=False, stdin=subprocess.DEVNULL, timeout=60)
+    else:
+        install = subprocess.run(node_command_stdin("maker", ["sh", "-c", f"umask 077 && cat > {key_file}"]),
+                                 input=custody_credit_key(), capture_output=True, check=False, timeout=60)
+        if install.returncode != 0:
+            raise Failure(f"could not write the stranger's key beside the Maker Node: {install.stderr[-200:]!r}")
+        try:
+            result = subprocess.run(node_command("maker", argv), capture_output=True, text=True, check=False,
+                                    stdin=subprocess.DEVNULL, timeout=timeout + 300)
+        finally:
+            subprocess.run(node_command("maker", ["rm", "-f", key_file]), capture_output=True, check=False,
+                           stdin=subprocess.DEVNULL, timeout=60)
+    for line in result.stderr.strip().splitlines():
+        log(f"    probe stderr: {line}")
+    evidence = parse_custody_credit_evidence(result.returncode, result.stdout, units)
+    log(f"  custody credit: {units} unit(s) to {evidence['custody_account'][:12]}… in block "
+        f"{evidence['included_in_block']}; custody {evidence['before']['custody_balance']} → "
+        f"{evidence['after']['custody_balance']} (lot {evidence['escrow_amount']}), escrow {evidence['after']['status']}")
+    return evidence
+
+
+def start_custody_credit(units: int = CUSTODY_CREDIT_UNITS, timeout: int = 3600) -> None:
+    """Starts the probe beside the scenario, before its take, so it sees the
+    swap's escrow transactions as they come."""
+    depositor = custody_credit_depositor()
+    CUSTODY_CREDIT.clear()
+    CUSTODY_CREDIT.update({"depositor": depositor, "units": units, "evidence": None, "error": None})
+
+    def credit() -> None:
+        try:
+            CUSTODY_CREDIT["evidence"] = run_custody_credit_probe(depositor, units, timeout)
+        except Exception as error:  # reported by custody_credit_evidence
+            CUSTODY_CREDIT["error"] = error
+
+    CUSTODY_CREDIT["thread"] = threading.Thread(target=credit, name="custody-credit", daemon=True)
+    CUSTODY_CREDIT["thread"].start()
+
+
+def custody_credit_evidence() -> dict | None:
+    """The running credit's evidence once the probe is done; None when no
+    scenario credits. A credit that failed fails the scenario."""
+    if not CUSTODY_CREDIT:
+        return None
+    CUSTODY_CREDIT["thread"].join()
+    if CUSTODY_CREDIT["error"] is not None:
+        raise Failure(f"the stranger's custody credit failed: {CUSTODY_CREDIT['error']}")
+    return CUSTODY_CREDIT["evidence"]
+
+
+def custody_credit_surplus(outcome: str) -> dict:
+    """{role: units} the recorded credit adds to a `outcome` swap's LEZ
+    deltas: the claimant's on a completed swap, the depositor's on a refunded
+    one; {} when no credit is recorded."""
+    if custody_credit_evidence() is None:
+        return {}
+    depositor = CUSTODY_CREDIT["depositor"]
+    recipient = depositor if outcome == "refunded" else ("maker" if depositor == "taker" else "taker")
+    return {recipient: CUSTODY_CREDIT["units"]}
+
+
+def with_custody_credit(scenario, refund: bool):
+    """`scenario` with a stranger's credit to the swap's custody once its
+    escrow is funded; the swap must still end completed (or, with `refund`,
+    refunded), and the ending's recipient must get the lot and the credit."""
+    def run_credited(stamp: str) -> dict:
+        if refund and not REVERSE:
+            raise Failure("a custody-credit refund scenario refunds the Taker's LEZ: run it with --direction TakerSellsLez")
+        before = lez_balances()
+        start_custody_credit()
+        try:
+            result = scenario(stamp)
+            evidence = custody_credit_evidence()
+            swap_id = result["swap_id"]
+            taker_state = taker_view(swap_id).get("state")
+            want = "refunded" if refund else "completed"
+            if taker_state != want:
+                raise Failure(f"the credited swap ended {taker_state} on the Taker, {want} expected")
+            lez = assert_lez_settled(before, taker_state, maker_phase(swap_id))
+        finally:
+            CUSTODY_CREDIT.clear()
+        return {**result, "custody_credit": evidence, "custody_credit_lez": lez}
+    return run_credited
+
+
+CUSTODY_CREDIT_SCENARIOS = {
+    "SCENARIOS": {
+        "btc-custody-credit": with_custody_credit(scenario_happy, refund=False),
+        "btc-custody-credit-refund": with_custody_credit(scenario_taker_refund, refund=True),
+    },
+    "ZEC_SCENARIOS": {
+        "zec-custody-credit": with_custody_credit(scenario_zec_happy, refund=False),
+        "zec-custody-credit-refund": with_custody_credit(scenario_zec_taker_refund, refund=True),
+    },
+}
+
+
 ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
     "zec-taker-refund": scenario_zec_taker_refund,
@@ -5224,6 +5487,10 @@ SCENARIOS = {
     "regenerated-config": scenario_regenerated_config,
     "tampered-config": scenario_tampered_config,
 }
+
+# The custody-credit scenarios (TM-0032), defined with their helpers above.
+SCENARIOS.update(CUSTODY_CREDIT_SCENARIOS["SCENARIOS"])
+ZEC_SCENARIOS.update(CUSTODY_CREDIT_SCENARIOS["ZEC_SCENARIOS"])
 
 
 def heartbeat_status() -> dict | None:
