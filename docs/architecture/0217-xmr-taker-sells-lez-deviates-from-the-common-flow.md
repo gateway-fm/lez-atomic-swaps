@@ -204,10 +204,14 @@ Every abort point, from the code above:
 | Taker Node down through [R, P), Maker funded | loses its LEZ | takes the LEZ with tag 17, re-planned past any number of taken nonces; its Monero stays locked | `xmr-punish`; re-plans and resends: unit test `a_punishment_replanned_more_than_five_times_still_lands` (sidecar); devnet: `xmr-punish-replans` (the punishment's nonce taken six times; it lands) |
 
 Crash and restart at each step are covered by `xmr-kill-taker`,
-`xmr-kill-maker` (6 kill points) and `xmr-taker-refund-kill`. The scenarios
-named here passed in the full regression at `7b4e46da`
+`xmr-kill-maker` (7 kill points, two of them with the Maker's claim held in
+its sidecar) and `xmr-taker-refund-kill`. The scenarios named here passed in
+the full regression at `27526e2f`
+([regression-0.4.0-2026-11-23-macos-arm64](../evidence/regression-0.4.0-2026-11-23-macos-arm64/results.tsv)),
+each on its first try, on the Docker devnet against Monero regtest, arm64, as
+they did at `7b4e46da`
 ([regression-0.4.0-2026-11-22-macos-arm64](../evidence/regression-0.4.0-2026-11-22-macos-arm64/results.tsv)),
-each on its first try, on the Docker devnet against Monero regtest, arm64;
+where `xmr-kill-maker` had six kill points;
 all but those added after it (`xmr-taker-clock-ahead`, `xmr-punish-replans`
 and the four below) also passed in the full regression at
 `d4475300`
@@ -433,14 +437,18 @@ rest of this flow, and TM-0006 names XMR punishment economics as open.
 
 ## Evidence
 
-The full regression at `7b4e46da` on the Docker devnet, Monero regtest, an
-Apple-silicon Mac (linux/arm64 images), three lanes: 175 of 175, 174 on their
-first try and one Bitcoin desk journey over Logos Delivery
-(`ui:btc:logos-happy:TakerSellsForeign`) on its second rerun; all 25 Monero
-tests of that tier on their first try, among them every scenario this ADR
-names ([`results.tsv`](../evidence/regression-0.4.0-2026-11-22-macos-arm64/results.tsv),
-[README](../evidence/regression-0.4.0-2026-11-22-macos-arm64/README.md)).
-The full regression before it, at `d4475300` on x86_64: 160 of 160, each on
+The full regression at `27526e2f` on the Docker devnet, Monero regtest, an
+Apple-silicon Mac (linux/arm64 images), three lanes: 176 of 176, each on its
+first try; all 25 Monero tests of that tier, among them every scenario this
+ADR names, `xmr-kill-maker` with seven kill points
+([`results.tsv`](../evidence/regression-0.4.0-2026-11-23-macos-arm64/results.tsv),
+[README](../evidence/regression-0.4.0-2026-11-23-macos-arm64/README.md)).
+The one before it, at `7b4e46da`, same host: 175 of 175, 174 on their first
+try and one Bitcoin desk journey over Logos Delivery
+(`ui:btc:logos-happy:TakerSellsForeign`) on its second rerun, all 25 Monero
+tests on their first try
+([README](../evidence/regression-0.4.0-2026-11-22-macos-arm64/README.md)).
+The full regression before those, at `d4475300` on x86_64: 160 of 160, each on
 its first try, among them the 16 Monero tests of that tier
 ([README](../evidence/regression-m4-2026-11-21/README.md)); the scenarios
 this ADR names as added after that run (`xmr-taker-clock-ahead`,
