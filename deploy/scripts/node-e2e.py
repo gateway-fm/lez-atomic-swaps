@@ -4882,6 +4882,12 @@ ZEC_SLOW_FUNDING_HOLD_SECONDS = int(os.environ.get("LEZ_ZEC_SLOW_FUNDING_HOLD_SE
 # The second-lock lookup once covered predecessor revisions 1 to 16 only, so
 # the hold must carry the Maker's journal well past revision 17.
 ZEC_SLOW_FUNDING_MIN_REVISION = 24
+# The journal grows with the Maker's drives, whose pace depends on the host
+# (24 revisions in 75 s on one host, 21 on another): past the hold the funding
+# stays unmined until the journal is past the minimum, at most this long in
+# all. Nothing is mined meanwhile, so the Zcash refund height does not come
+# nearer; the LEZ refund time is minutes further.
+ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS = 240
 
 
 def zec_mempool_spend_of(outpoint: tuple[str, int]) -> str | None:
@@ -4919,10 +4925,12 @@ def zec_maker_active_revision(swap_id: str) -> int | None:
 
 def scenario_zec_slow_funding(stamp: str) -> dict:
     """Selling LEZ, the Maker's Zcash funding confirms slowly: it is held in
-    zebra's mempool, nothing mined, for ZEC_SLOW_FUNDING_HOLD_SECONDS, while
-    the Maker drives at its requeue and re-observes the Taker's LEZ lock one
-    block deeper on each drive, committing a revision each time. The hold must
-    carry the Maker's journal past ZEC_SLOW_FUNDING_MIN_REVISION. Then the
+    zebra's mempool, nothing mined, for ZEC_SLOW_FUNDING_HOLD_SECONDS and on
+    until the Maker's journal is past ZEC_SLOW_FUNDING_MIN_REVISION (at most
+    ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS in all), while the Maker drives at its
+    requeue and re-observes the Taker's LEZ lock one block deeper on each
+    drive, committing a revision each time. The hold must carry the Maker's
+    journal past ZEC_SLOW_FUNDING_MIN_REVISION. Then the
     funding is mined, and the Maker's LEZ claim must still find its second
     lock: the Taker claims the Zcash, the Maker claims the LEZ with the
     revealed preimage, and both Nodes complete."""
@@ -4955,19 +4963,22 @@ def scenario_zec_slow_funding(stamp: str) -> dict:
         f"Maker journal revision {start_revision}; holding it unmined for {ZEC_SLOW_FUNDING_HOLD_SECONDS} s")
     held = time.time()
     samples = []
-    while time.time() - held < ZEC_SLOW_FUNDING_HOLD_SECONDS:
+    while time.time() - held < ZEC_SLOW_FUNDING_HOLD_SECONDS or (
+            time.time() - held < ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS
+            and (samples[-1] if samples else start_revision or 0) < ZEC_SLOW_FUNDING_MIN_REVISION):
         time.sleep(10)
         if funding_txid not in (zebra("getrawmempool") or []):
             raise Failure(f"the funding {funding_txid[:12]} left the mempool during the hold although nothing was mined")
         samples.append(zec_maker_active_revision(swap_id))
         log(f"  [{time.time() - held:.0f} s held] Maker journal revision {samples[-1]}, taker "
             f"{taker_view(swap_id)['state']}, maker {maker_phase(swap_id)}")
+    held_for = round(time.time() - held)
     revision = zec_maker_active_revision(swap_id)
     if revision is None or revision < ZEC_SLOW_FUNDING_MIN_REVISION:
-        raise Failure(f"after {ZEC_SLOW_FUNDING_HOLD_SECONDS} s with the funding unmined the Maker's journal is at "
+        raise Failure(f"after {held_for} s with the funding unmined the Maker's journal is at "
                       f"revision {revision}, not past {ZEC_SLOW_FUNDING_MIN_REVISION - 1}: the hold did not reproduce "
                       "the slow funding")
-    log(f"  the hold carried the Maker's journal from revision {start_revision} to {revision}; mining the funding")
+    log(f"  the {held_for} s hold carried the Maker's journal from revision {start_revision} to {revision}; mining the funding")
     zebra_mine(1, f"the Maker's funding {funding_txid[:12]}, after the hold")
     view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=1200, corridor=corridor,
                           describe="(the funding mined after the hold)")
@@ -4989,7 +5000,7 @@ def scenario_zec_slow_funding(stamp: str) -> dict:
     log(f"  the Maker claimed the LEZ after its journal passed revision {revision} "
         f"(now {final_revision}): {maker_claims}; both Nodes completed")
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
-            "offer_id": corridor["offer_id"], "hold_seconds": ZEC_SLOW_FUNDING_HOLD_SECONDS,
+            "offer_id": corridor["offer_id"], "hold_seconds": held_for,
             "maker_revision_before_hold": start_revision, "maker_revision_at_mining": revision,
             "maker_revision_samples": samples, "maker_revision_final": final_revision,
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},

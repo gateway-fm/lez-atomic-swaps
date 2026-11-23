@@ -539,6 +539,9 @@ class ZecSlowFunding(unittest.TestCase):
         self.assertGreater(e2e.ZEC_SLOW_FUNDING_MIN_REVISION, 17)
         self.assertGreaterEqual(e2e.ZEC_SLOW_FUNDING_HOLD_SECONDS, 60)
         self.assertLessEqual(e2e.ZEC_SLOW_FUNDING_HOLD_SECONDS, 90)
+        # held further only while the journal is short of the minimum, and not for good
+        self.assertGreater(e2e.ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS, e2e.ZEC_SLOW_FUNDING_HOLD_SECONDS)
+        self.assertLessEqual(e2e.ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS, 300)
 
     def test_selling_zec_is_refused_before_anything_runs(self):
         with patch.object(e2e, 'zec_taker_sells_lez', lambda: False),                 patch.object(e2e, 'zec_provision', lambda *a, **k: self.fail('nothing may be provisioned')):
