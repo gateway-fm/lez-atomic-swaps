@@ -163,6 +163,72 @@ require_fixed 'cargo clippy --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo test --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 
+# Build caches (actions/cache restore and save, never the combined action,
+# which would also save from pull requests). Only a push to main saves, so a
+# pull request, a fork's included, only restores what main saved. Every key
+# names what it was built from; the steps below keep guest builds and the
+# repository's own crates out of every Cargo cache.
+readonly cache_restore='uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
+readonly cache_save='uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
+readonly cargo_prune='scripts/ci-cargo-cache-prune.sh'
+readonly expected_cache_restores=5
+readonly expected_cache_saves=5
+[[ -x "$cargo_prune" ]] || fail "the Cargo cache prune script must remain executable"
+for workflow in "$ci_workflow" "$public_workflow"; do
+  ! rg -q 'uses: actions/cache@' "$workflow" \
+    || fail "$workflow uses actions/cache, which saves from pull requests; use restore and save"
+done
+[[ "$(rg -Fc -- "$cache_restore" "$ci_workflow")" == "$expected_cache_restores" ]] \
+  || fail "expected $expected_cache_restores pinned cache restores in $ci_workflow"
+[[ "$(rg -Fc -- "$cache_save" "$ci_workflow")" == "$expected_cache_saves" ]] \
+  || fail "expected $expected_cache_saves pinned cache saves in $ci_workflow"
+[[ "$(rg -c 'uses: actions/cache/' "$ci_workflow")" == "$((expected_cache_restores + expected_cache_saves))" ]] \
+  || fail "every cache step in $ci_workflow must use the pinned restore or save"
+unguarded_saves="$(awk '
+  /^      - / { if (step ~ /actions\/cache\/save@/ && step !~ /if: (matrix\.cache && )?github\.event_name == .push. && github\.ref == .refs\/heads\/main. && steps\.[a-z-]+\.outputs\.cache-hit != .true./) print step; step = "" }
+  { step = step $0 "\n" }
+  END { if (step ~ /actions\/cache\/save@/ && step !~ /github\.ref == .refs\/heads\/main./) print step }
+' "$ci_workflow")"
+[[ -z "$unguarded_saves" ]] || fail "a cache save runs outside a push to main: ${unguarded_saves}"
+while IFS= read -r key; do
+  [[ "$key" == *'steps.'*'.outputs.cache-primary-key }}' || "$key" == *'hashFiles('* ]] \
+    || fail "cache key does not hash its inputs: $key"
+  [[ "$key" == *'cache-primary-key'* || "$key" == *'runner.os'*'runner.arch'* ]] \
+    || fail "cache key does not name the runner: $key"
+done < <(rg '^ +key: ' "$ci_workflow")
+[[ "$(rg -Fc 'rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 4 ]] \
+  || fail "every Cargo cache key must name the rustc version and hash the lock files"
+require_fixed "key: lez-v02-provisional-tools-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}" "$ci_workflow"
+! rg -q 'advisory-db|/bin$' "$ci_workflow" \
+  || fail "the cargo-deny advisory database and Cargo bin directories are never cached"
+[[ "$(rg -Fc "steps.cargo-prune.outputs.fits == 'true'" "$ci_workflow")" == 4 \
+  && "$(rg -Fc 'CI_CACHE_MAX_GIB: ' "$ci_workflow")" == 4 ]] \
+  || fail "every Cargo cache save must be bounded by CI_CACHE_MAX_GIB"
+require_fixed 'echo "fits=false" >>"$GITHUB_OUTPUT"' "$cargo_prune"
+# Each Cargo cache is pruned after its restore and before Cargo runs.
+for target in 'target Cargo.toml' \
+  'target/check-all compat/lez-v0.2-provisional/Cargo.toml' \
+  '/tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml' \
+  '/tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml' \
+  '/tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml' \
+  '/tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml'; do
+  [[ "$(rg -Fc -- "./scripts/ci-cargo-cache-prune.sh ${target}" "$ci_workflow")" == 2 ]] \
+    || fail "$ci_workflow must prune ${target%% *} after the restore and before the save"
+done
+provisional_order="$(rg -n -F -e 'Restore the provisional LEZ v0.2 Cargo registry' \
+  -e 'ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target' \
+  -e 'run: ./scripts/verify-lez-v02-provisional.sh' "$ci_workflow" | cut -d: -f1 | head -n 3 | paste -sd ' ' -)"
+read -r restore_line prune_line verify_line <<<"$provisional_order"
+(( restore_line < prune_line && prune_line < verify_line )) \
+  || fail "the provisional guest builds must be pruned after the restore and before the verifier"
+for excluded in riscv-guest docker-guest-source; do
+  [[ "$(rg -Fxc -- "            !/tmp/lez-v02-provisional-artifact-target/${excluded}" "$ci_workflow")" == 2 ]] \
+    || fail "the provisional restore and save must both exclude ${excluded}"
+done
+require_fixed 'rm -rf -- "${target_dir}/riscv-guest" "${target_dir}/docker-guest-source" "${target_dir}/doc"' "$cargo_prune"
+require_fixed '-name riscv-guest' "$cargo_prune"
+require_fixed "cargo metadata --no-deps --format-version 1 --manifest-path \"\$manifest\"" "$cargo_prune"
+
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
 readonly cargo_deny_policy='advisories bans licenses sources'
 readonly expected_cargo_deny_steps=8
