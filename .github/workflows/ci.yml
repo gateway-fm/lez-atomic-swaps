@@ -296,13 +296,39 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Only the store paths cache.nixos.org does not serve are cached (the
+      # Chat and Delivery modules, the Logos SDK builds, vendored crates);
+      # the two checks and two catalog packages the test builds never are.
+      # Only a push to main saves, so a pull request restores main's cache.
+      - name: Restore the Basecamp Nix build dependencies
+        id: basecamp-nix-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/basecamp-nix-store/store.nar.gz
+          key: basecamp-nix-store-${{ runner.os }}-${{ runner.arch }}-nix-2.30.2-${{ hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh') }}
+          restore-keys: |
+            basecamp-nix-store-${{ runner.os }}-${{ runner.arch }}-nix-2.30.2-
       - name: Run both role packages in the official Basecamp test harness
+        env:
+          BASECAMP_NIX_CACHE_SAVE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.basecamp-nix-cache.outputs.cache-hit != 'true' }}
         run: >-
+          mkdir -p "${RUNNER_TEMP}/basecamp-nix-store" &&
           docker run --rm
           --volume "${GITHUB_WORKSPACE}:/repo:ro"
+          --volume "${RUNNER_TEMP}/basecamp-nix-store:/cache"
+          --env BASECAMP_NIX_CACHE_SAVE
           --workdir /repo
           nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21
-          bash /repo/scripts/test-m6-basecamp-integration.sh
+          bash -euo pipefail -c
+          'bash /repo/scripts/ci-basecamp-nix-store-cache.sh import
+          && bash /repo/scripts/test-m6-basecamp-integration.sh
+          && bash /repo/scripts/ci-basecamp-nix-store-cache.sh export'
+      - name: Save the Basecamp Nix build dependencies
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.basecamp-nix-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/basecamp-nix-store/store.nar.gz
+          key: ${{ steps.basecamp-nix-cache.outputs.cache-primary-key }}
 
   dependencies:
     name: dependency vulnerabilities, licenses, bans, and sources

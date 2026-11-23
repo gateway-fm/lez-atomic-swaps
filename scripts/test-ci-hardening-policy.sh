@@ -171,9 +171,10 @@ require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 readonly cache_restore='uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
 readonly cache_save='uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
 readonly cargo_prune='scripts/ci-cargo-cache-prune.sh'
-readonly expected_cache_restores=5
-readonly expected_cache_saves=5
-[[ -x "$cargo_prune" ]] || fail "the Cargo cache prune script must remain executable"
+readonly nix_store_cache='scripts/ci-basecamp-nix-store-cache.sh'
+readonly expected_cache_restores=6
+readonly expected_cache_saves=6
+[[ -x "$cargo_prune" && -x "$nix_store_cache" ]] || fail "cache scripts must remain executable"
 for workflow in "$ci_workflow" "$public_workflow"; do
   ! rg -q 'uses: actions/cache@' "$workflow" \
     || fail "$workflow uses actions/cache, which saves from pull requests; use restore and save"
@@ -199,6 +200,7 @@ done < <(rg '^ +key: ' "$ci_workflow")
 [[ "$(rg -Fc 'rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 4 ]] \
   || fail "every Cargo cache key must name the rustc version and hash the lock files"
 require_fixed "key: lez-v02-provisional-tools-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}" "$ci_workflow"
+require_fixed "hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh')" "$ci_workflow"
 ! rg -q 'advisory-db|/bin$' "$ci_workflow" \
   || fail "the cargo-deny advisory database and Cargo bin directories are never cached"
 [[ "$(rg -Fc "steps.cargo-prune.outputs.fits == 'true'" "$ci_workflow")" == 4 \
@@ -228,6 +230,12 @@ done
 require_fixed 'rm -rf -- "${target_dir}/riscv-guest" "${target_dir}/docker-guest-source" "${target_dir}/doc"' "$cargo_prune"
 require_fixed '-name riscv-guest' "$cargo_prune"
 require_fixed "cargo metadata --no-deps --format-version 1 --manifest-path \"\$manifest\"" "$cargo_prune"
+# The Nix archive never holds an output the Basecamp test builds.
+require_fixed "bash /repo/scripts/ci-basecamp-nix-store-cache.sh import" "$ci_workflow"
+require_fixed "bash /repo/scripts/ci-basecamp-nix-store-cache.sh export" "$ci_workflow"
+require_fixed 'nix-store --query --outputs "${root_drvs[@]}" | sort -u >"$tested"' "$nix_store_cache"
+require_fixed '| grep -v '"'"'\.drv$'"'"' | sort -u | comm -23 - "$tested" >"$candidates"' "$nix_store_cache"
+require_fixed 'if [[ -n "$(comm -12 "$closure" "$tested")" ]]; then' "$nix_store_cache"
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
 readonly cargo_deny_policy='advisories bans licenses sources'
