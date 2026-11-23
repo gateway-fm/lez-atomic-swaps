@@ -539,6 +539,58 @@ async fn a_refund_refused_before_its_send_is_sent_once_under_the_same_request_id
     node_handle.stopped().await;
 }
 
+/// Issue #187: the durable store read that classifies a submission before
+/// its send fails (here the planner's reservation file cannot be opened).
+/// That decides nothing about the bytes, so it is answered `unavailable`,
+/// as a node that did not answer is, and the same request id goes through
+/// once the store reads again; it is not an invalid transaction replayed for
+/// good.
+#[tokio::test]
+async fn a_store_read_failure_before_the_send_is_tried_again_under_the_same_request_id() {
+    let node = Arc::new(Node::default());
+    let (node_endpoint, node_handle) = start_node(Arc::clone(&node)).await;
+    let root = TestDirectory::secure();
+    let (server, descriptor, submission) =
+        sidecar_with_prepared_refund(&root, &node_endpoint).await;
+
+    // A reservation entry the classifier reads on every submission, made
+    // unreadable: its open fails with EACCES.
+    let unreadable = root.path().join("xmr-current-profile-clock.v1.json");
+    fs::write(&unreadable, b"{}").unwrap();
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::File::open(&unreadable).is_ok() {
+        // Running as root, no permission makes the open fail: nothing to
+        // inject.
+        fs::remove_file(&unreadable).unwrap();
+        server.stop().await.unwrap();
+        node_handle.stop().unwrap();
+        node_handle.stopped().await;
+        return;
+    }
+    assert_remote_code(
+        client(server.endpoint(), descriptor.clone())
+            .submit_transaction(submission.clone())
+            .await,
+        ErrorCode::Unavailable,
+    );
+    assert_eq!(node.lookups(), 0, "refused before the node was asked");
+    assert_eq!(node.sends(), 0);
+
+    // The store reads again: the same request id is looked up and sent once.
+    fs::remove_file(&unreadable).unwrap();
+    let accepted = client(server.endpoint(), descriptor.clone())
+        .submit_transaction(submission.clone())
+        .await
+        .unwrap();
+    assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(node.lookups(), 1);
+    assert_eq!(node.sends(), 1);
+
+    server.stop().await.unwrap();
+    node_handle.stop().unwrap();
+    node_handle.stopped().await;
+}
+
 #[tokio::test]
 async fn a_refund_whose_send_was_reached_is_decided_on_the_chain_again() {
     let node = Arc::new(Node::default());

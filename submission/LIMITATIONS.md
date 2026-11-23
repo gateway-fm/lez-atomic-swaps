@@ -92,9 +92,13 @@ checkpoint; they do not widen the current claim.
   absent, sent once more (one transaction id and one nonce, included at most
   once); a journaled acceptance is decided again the same way. A definite
   refusal is still replayed (issue #187).
-- A submission refused as `unavailable` before its send (a node lookup did
-  not answer) is tried again under the same request id, for every
-  submission.
+- A submission refused as `unavailable` before its send is tried again under
+  the same request id, for every submission. That covers a node lookup that
+  did not answer and an I/O failure reading the sidecar's durable store while
+  it classifies the submission (a reservation file or the state directory
+  that cannot be opened or read). What the store holds (a corrupt, foreign,
+  partial or future-schema entry, a directory or file that is not the
+  sidecar's own) and bytes that do not match it stay a definite refusal.
 - On the BTC path the sidecar's answer to the witnessed refund changed, but
   the BTC actor never asks again after an unknown outcome, so its behaviour
   did not; its witnessed escrow, claim and token effects keep one attempt in

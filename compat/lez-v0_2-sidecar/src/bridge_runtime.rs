@@ -91,6 +91,17 @@ impl From<NativePrepareError> for BridgeRuntimeError {
     fn from(value: NativePrepareError) -> Self {
         match value {
             NativePrepareError::ReplanExhausted => Self::ReplanExhausted,
+            // The planner's durable store could not be read or written (an
+            // I/O failure: no descriptor, an interrupted read). Nothing was
+            // decided about the bytes, so it is the class of a node that did
+            // not answer: `unavailable`, which the request journal tries again
+            // under the same request id (issue #187), not an invalid
+            // transaction replayed for good. A store that holds something
+            // else, a corrupt or a foreign entry stays a refusal.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            NativePrepareError::DurableReservation(
+                crate::durable_reservation::DurableReservationError::Filesystem,
+            ) => Self::Unavailable,
             _ => Self::Planner,
         }
     }
