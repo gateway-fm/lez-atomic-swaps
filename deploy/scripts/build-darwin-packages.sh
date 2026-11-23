@@ -29,6 +29,7 @@
 # `nix build` (for example `--max-jobs 2 --cores 4`). lez_core takes about
 # 40 minutes on an empty store.
 set -euo pipefail
+caller="$(pwd)"  # --out is relative to where the script was called from
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 deploy="$(pwd)"
 repo="$(cd .. && pwd)"
@@ -37,7 +38,7 @@ out=""
 while (($#)); do
   case "$1" in
     --out) out="${2:?}"; shift 2 ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$deploy/scripts/build-darwin-packages.sh" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "usage: $0 --out <dir>" >&2; exit 64 ;;
   esac
 done
@@ -45,6 +46,7 @@ done
 [[ "$(uname -s)/$(uname -m)" == Darwin/arm64 ]] || { echo "build on macOS on Apple silicon (this is $(uname -s)/$(uname -m))" >&2; exit 69; }
 for tool in nix jq cargo git; do command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 66; }; done
 variant=darwin-arm64
+[[ "$out" == /* ]] || out="$caller/$out"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 

@@ -109,6 +109,15 @@ class PackagesWorkflow(unittest.TestCase):
         self.assertIn('needs: [variant, darwin]', self.PACKAGES)
         self.assertIn('"$name"-darwin-*.lgx', self.PACKAGES)
 
+    def test_darwin_packages_land_where_the_upload_looks(self):
+        # the job uploads _out from the checkout root; the script changes into
+        # deploy/ first, so a relative --out is taken from where it was called
+        script = (ROOT / 'deploy/scripts/build-darwin-packages.sh').read_text()
+        caller = script.index('caller="$(pwd)"')
+        self.assertLess(caller, script.index('cd "$(dirname "${BASH_SOURCE[0]}")/.."'))
+        self.assertLess(script.index('[[ "$out" == /* ]] || out="$caller/$out"'), script.index('mkdir -p "$out"'))
+        self.assertIn('path: _out', self.job('darwin'))
+
     def test_every_package_a_desk_installs_is_required_for_darwin(self):
         script = (ROOT / 'deploy/scripts/build-darwin-packages.sh').read_text()
         for built in ('one lez_core core', 'one lez_swap_node swap-node', 'for role in maker taker; do',
