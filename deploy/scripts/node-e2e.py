@@ -202,7 +202,7 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 # container: a native Node reaches the chains directly, with nothing to cut.
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
-                  "zec-offline-after-lock", "zec-maker-early-claim"}
+                  "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding"}
 HEALTH = {"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
 MINER = f"{PREFIX}-btc-miner"
 # The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
@@ -4872,6 +4872,125 @@ def zec_escrow_claim_probe(label: str, onchain_swap_id: str, program_id: str, pr
     return evidence
 
 
+# zec-slow-funding: the Maker's Zcash funding held unmined in zebra's mempool.
+ZEC_SLOW_FUNDING_HOLD_SECONDS = int(os.environ.get("LEZ_ZEC_SLOW_FUNDING_HOLD_SECONDS", "75"))
+# The second-lock lookup once covered predecessor revisions 1 to 16 only, so
+# the hold must carry the Maker's journal well past revision 17.
+ZEC_SLOW_FUNDING_MIN_REVISION = 24
+
+
+def zec_mempool_spend_of(outpoint: tuple[str, int]) -> str | None:
+    """The transaction in zebra's mempool that spends `outpoint`, if any."""
+    for txid in zebra("getrawmempool") or []:
+        raw = zebra("getrawtransaction", [txid, 1])
+        if any(vin.get("txid") == outpoint[0] and int(vin.get("vout", -1)) == outpoint[1]
+               for vin in raw.get("vin") or []):
+            return txid
+    return None
+
+
+def zec_maker_active_revision(swap_id: str) -> int | None:
+    """The active revision of the Maker's ZEC recovery journal for `swap_id`
+    (zec_sdk_agreements in the Maker actor's store,
+    /var/lib/lez/zec/actors/<actor>/maker/state/actor.sqlite3, read only; the
+    Node's own maker.sqlite3 keeps the agreement at revision 0); None before
+    the Maker has accepted the agreement."""
+    reader = ("import glob,sqlite3,sys\n"
+              "ids=sorted({sys.argv[1], sys.argv[1].removeprefix('zec-'), 'zec-'+sys.argv[1].removeprefix('zec-')})\n"
+              "rows=[]\n"
+              "for p in ['/var/lib/lez/maker/maker.sqlite3']+glob.glob('/var/lib/lez/zec/actors/*/maker/state/actor.sqlite3'):\n"
+              "    c=sqlite3.connect('file:'+p+'?mode=ro',uri=True)\n"
+              "    if c.execute(\"SELECT count(*) FROM sqlite_master WHERE name='zec_sdk_agreements'\").fetchone()[0]:\n"
+              "        rows+=[r[0] for r in c.execute(\"SELECT active_revision FROM zec_sdk_agreements WHERE local_role='maker'\""
+              "\" AND swap_id IN (%s)\" % ','.join('?'*len(ids)), ids)]\n"
+              "print(max(rows) if rows else '')\n")
+    read = subprocess.run(["docker", "exec", NODES["maker"][0], "python3", "-c", reader, swap_id],
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if read.returncode != 0:
+        raise Failure(f"cannot read the Maker's ZEC journal: {read.stderr.strip()[-200:]}")
+    value = read.stdout.strip()
+    return int(value) if value else None
+
+
+def scenario_zec_slow_funding(stamp: str) -> dict:
+    """Selling LEZ, the Maker's Zcash funding confirms slowly: it is held in
+    zebra's mempool, nothing mined, for ZEC_SLOW_FUNDING_HOLD_SECONDS, while
+    the Maker drives at its requeue and re-observes the Taker's LEZ lock one
+    block deeper on each drive, committing a revision each time. The hold must
+    carry the Maker's journal past ZEC_SLOW_FUNDING_MIN_REVISION. Then the
+    funding is mined, and the Maker's LEZ claim must still find its second
+    lock: the Taker claims the Zcash, the Maker claims the LEZ with the
+    revealed preimage, and both Nodes complete."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-slow-funding is a selling-LEZ scenario: the Maker funds Zcash second")
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    # Nothing is mined until the Maker's funding, the spend of the provisioned
+    # outpoint, waits in the mempool (a mempool may also hold an earlier
+    # swap's transaction, which a reset leaves there).
+    wait = Wait(f"the Maker's Zcash funding of {swap_id[:12]} in zebra's mempool (nothing mined)", zec_timeout(900))
+    funding_txid = None
+    while wait.running():
+        funding_txid = zec_mempool_spend_of(outpoint)
+        if funding_txid:
+            break
+        view = taker_view(swap_id)
+        if view["state"] in TERMINAL:
+            raise Failure(f"{swap_id[:12]} ended {view['state']} before the Maker funded")
+        wait.note(view["state"], lambda: f"taker {view['state']} | maker {maker_phase(swap_id)} | "
+                                         f"Maker journal revision {zec_maker_active_revision(swap_id)}")
+        time.sleep(2)
+    else:
+        raise wait.failure()
+    start_revision = zec_maker_active_revision(swap_id)
+    log(f"  the Maker's Zcash funding {funding_txid[:12]} waits in the mempool at zebra {zebra('getblockcount')}; "
+        f"Maker journal revision {start_revision}; holding it unmined for {ZEC_SLOW_FUNDING_HOLD_SECONDS} s")
+    held = time.time()
+    samples = []
+    while time.time() - held < ZEC_SLOW_FUNDING_HOLD_SECONDS:
+        time.sleep(10)
+        if funding_txid not in (zebra("getrawmempool") or []):
+            raise Failure(f"the funding {funding_txid[:12]} left the mempool during the hold although nothing was mined")
+        samples.append(zec_maker_active_revision(swap_id))
+        log(f"  [{time.time() - held:.0f} s held] Maker journal revision {samples[-1]}, taker "
+            f"{taker_view(swap_id)['state']}, maker {maker_phase(swap_id)}")
+    revision = zec_maker_active_revision(swap_id)
+    if revision is None or revision < ZEC_SLOW_FUNDING_MIN_REVISION:
+        raise Failure(f"after {ZEC_SLOW_FUNDING_HOLD_SECONDS} s with the funding unmined the Maker's journal is at "
+                      f"revision {revision}, not past {ZEC_SLOW_FUNDING_MIN_REVISION - 1}: the hold did not reproduce "
+                      "the slow funding")
+    log(f"  the hold carried the Maker's journal from revision {start_revision} to {revision}; mining the funding")
+    zebra_mine(1, f"the Maker's funding {funding_txid[:12]}, after the hold")
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=1200, corridor=corridor,
+                          describe="(the funding mined after the hold)")
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    if funding is None or funding[0] != funding_txid:
+        raise Failure(f"claim_available, but the block spending the provisioned outpoint is {funding}, "
+                      f"not the held funding {funding_txid[:12]}")
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                  timeout=300)
+    log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')})")
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait_completed(swap_id, timeout=600)
+    maker_claims = zec_maker_claim_operations(swap_id, since)
+    if "lez_followup_claim" not in maker_claims:
+        raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
+                      "not its LEZ follow-up claim")
+    final_revision = zec_maker_active_revision(swap_id)
+    log(f"  the Maker claimed the LEZ after its journal passed revision {revision} "
+        f"(now {final_revision}): {maker_claims}; both Nodes completed")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "offer_id": corridor["offer_id"], "hold_seconds": ZEC_SLOW_FUNDING_HOLD_SECONDS,
+            "maker_revision_before_hold": start_revision, "maker_revision_at_mining": revision,
+            "maker_revision_samples": samples, "maker_revision_final": final_revision,
+            "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
+            "maker_claim_operations": maker_claims}
+
+
 def scenario_zec_maker_early_claim(stamp: str) -> dict:
     """TM-0030, ADR 0216, on the devnet: selling LEZ, the Maker must not be able
     to claim the Taker's locked LEZ without funding Zcash, as release 0.3.2's
@@ -5449,6 +5568,7 @@ CUSTODY_CREDIT_SCENARIOS = {
 
 ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
+    "zec-slow-funding": scenario_zec_slow_funding,
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,

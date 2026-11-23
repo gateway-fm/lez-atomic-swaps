@@ -284,7 +284,14 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 104)
+        self.assertEqual(len(full), 105)
+
+    def test_full_has_the_slow_zcash_funding_selling_lez_only(self):
+        full = self.tier('full')
+        self.assertIn('node:zec:zec-slow-funding:TakerSellsLez', full)
+        self.assertNotIn('node:zec:zec-slow-funding:TakerSellsForeign', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-slow-funding:' in test], tier)
 
     def test_full_has_the_custody_credit_scenarios_once_each(self):
         full = self.tier('full')

@@ -97,6 +97,8 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-claim-collision:TakerSellsForeign"
       # selling LEZ only: the Maker's claim on the Taker's LEZ with what it holds (TM-0030)
       echo "node:zec:zec-maker-early-claim:TakerSellsLez"
+      # selling LEZ only: the Maker's Zcash funding held unmined while its journal grows past 17 revisions
+      echo "node:zec:zec-slow-funding:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # a stranger's credit to a funded escrow's custody (TM-0032): the swap still settles,
       # the ending's recipient gets the lot and the credit; refunds refund the Taker's LEZ
