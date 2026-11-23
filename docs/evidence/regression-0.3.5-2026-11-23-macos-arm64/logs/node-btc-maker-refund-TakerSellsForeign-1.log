@@ -1,0 +1,20 @@
+[14:27:06] === maker-refund (stamp 1795440426)
+[14:27:06] preflight: indexer historical reads
+[14:27:07]   indexer serves historical reads at the tip (6176)
+[14:27:07] preflight: LEZ finality check waived by request
+[14:27:07]   Maker published offer-e2e-1795440426
+[14:27:08]   Taker took offer-e2e-1795440426: swap c59f2eb0acbb (not_activated)
+[14:27:08]   Taker locked bitcoin: 0bb1cd14c19c (replay=False)
+[14:27:08]   [0 s] waiting for the Taker's c59f2eb0acbb to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 6176, tip 6184 (8 unfinalized) [heartbeat]
+[14:27:15]   [6 s] waiting for the Taker's c59f2eb0acbb to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 6176, tip 6184 (8 unfinalized) [heartbeat]
+[14:27:50]   [41 s] waiting for the Taker's c59f2eb0acbb to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 6205, tip 6215 (10 unfinalized) [heartbeat]
+[14:27:50]   Maker locked; the Taker never claims. Waiting for the Maker's refund deadline (115s after the take)
+[14:27:50]   waiting 101s for the Maker's refund deadline
+[14:27:50]   [0 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 6205, tip 6215 (10 unfinalized) [heartbeat]
+[14:28:51]   [60 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 6243, tip 6248 (5 unfinalized) [heartbeat]
+[14:29:32]   Maker refund queued: {"schema_version": 1, "swap_id": "c59f2eb0acbb0fcb35e63d96546741ab7ec944ff3c259c50d5050af4887349dc", "action": "refund", "requested_after_generation": 32, "was_
+[14:29:32]   [0 s] waiting for the Taker's refund of c59f2eb0acbb to land: taker refund_available (refund admitted) | maker maker_leg_refunded | LEZ finalized 6273, tip 6280 (7 unfinalized) [heartbeat]
+[14:29:32]   refund request admitted (attempt 1, state refund_available)
+[14:29:43]   both legs refunded
+[14:29:43]   the Bitcoin refund ebcb2f6dd6c6 is a script-path spend: three witness items
+[14:29:43] === maker-refund: passed in 157s

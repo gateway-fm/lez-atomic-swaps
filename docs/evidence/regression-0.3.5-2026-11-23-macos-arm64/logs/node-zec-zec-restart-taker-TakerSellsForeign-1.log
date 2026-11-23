@@ -1,0 +1,31 @@
+[13:46:19] === zec-restart-taker (stamp 1795437979)
+[13:46:19] preflight: indexer historical reads
+[13:46:20]   indexer serves historical reads at the tip (4360)
+[13:46:20] preflight: LEZ finality check waived by request
+[13:46:20]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[13:46:50]       taker: taker ZEC corridor zec-devnet-1795437980: sidecar listening on 127.0.0.1:19902
+[13:46:50]       taker: taker: 1 prepared ZEC entries configured
+[13:46:50]     [zec-provision 12:46:50]   maker sidecar answers on 127.0.0.1:19901
+[13:46:50]     [zec-provision 12:46:50]   taker sidecar answers on 127.0.0.1:19902
+[13:46:50]       maker_health: ready=True degraded=False
+[13:46:50]     [zec-provision 12:46:50]   Taker lists zec-devnet-offer-1795437980 ; corridor zec-devnet-1795437980 is live
+[13:46:50]   corridor zec-devnet-1795437980 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-1795437980, zebra tip 427, Zcash refund height 436
+[13:46:51]   Taker took zec-devnet-offer-1795437980: swap zec-devnet-s (not_activated)
+[13:46:51]   receipt: swap zec-devnet-swap-1795437980, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1795437980/actor/taker/actor-config.json
+[13:46:51]   [0 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker not_activated (gen 0) | actor at - | maker leased | zebra 427 | LEZ finalized 4379, tip 4382 (3 unfinalized) [heartbeat]
+[13:46:54]   [3 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 427 | LEZ finalized 4379, tip 4382 (3 unfinalized) [heartbeat]
+[13:46:57]   zebra: mined 1 block(s) → height 428 (mempool had ['32487c2d1ee8'])
+[13:47:04]   [13 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 428 | LEZ finalized 4391, tip 4398 (7 unfinalized) [heartbeat]
+[13:47:04]   restarting lez-taker-node
+[13:47:31]   after the restart the Taker's schedule reports no failure class; the supervisor resumes
+[13:47:31]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 428 | LEZ finalized 4409, tip 4414 (5 unfinalized) [heartbeat]
+[13:47:31]   zebra: mined 1 block(s) → height 429 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[13:47:32]   Taker claimed LEZ on zec-devnet-s (replay=False)
+[13:47:32]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 429 | LEZ finalized 4409, tip 4414 (5 unfinalized) [heartbeat]
+[13:47:35]   [3 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 429 | LEZ finalized 4409, tip 4414 (5 unfinalized) [heartbeat]
+[13:47:38]   zebra: mined 1 block(s) → height 430 (mempool had ['e23fb678353a'])
+[13:47:42]   [10 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker claim_evidence_available | zebra 430 | LEZ finalized 4409, tip 4414 (5 unfinalized) [heartbeat]
+[13:47:42]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 4409, tip 4414 (5 unfinalized) [heartbeat]
+[13:47:42]   [0 s] waiting for the Maker to report zec-devnet-s completed and terminal: maker claim_evidence_available (schedule leased) | LEZ finalized 4409, tip 4414 (5 unfinalized) [heartbeat]
+[13:47:45]   both Nodes report zec-devnet-s completed
+[13:47:45] === zec-restart-taker: passed in 87s

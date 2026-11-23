@@ -1,0 +1,33 @@
+Full regression of 14b05e56 (candidate 0.3.5) on macOS arm64 (Apple silicon, Docker Desktop),
+2026-11-23 11:13Z -> 13:46Z, UTC
+
+One run of every test of `deploy/scripts/regress.sh full` (106: `regress.sh list full`) from
+14b05e56, on images built from the same commit with the sidecar's devnet test hooks
+(LEZ_TEST_HOOKS=1), two lanes at a time (LEZ_LANES=2), starting on a fresh chain. One operator
+ran both parties, Maker and Taker, on one host. The packages read 0.3.5. See PROVENANCE.md.
+
+Result: 106 tests, 106 passed, each on its first try. No test was rerun. 0 frozen tries, 0
+NOT-EXERCISED, 0 timeouts, 0 failures. 2 new chains (the zec-balance-refusal tests), 1
+timing-profile switch (fast -> refund at 13:12:59Z).
+
+By kind: node:btc 35, node:zec 37, ui:btc 16, ui:zec 18. Test time summed over lanes: 16609 s;
+wall time 153 min.
+
+The new tests of 0.3.5, all passed on their first try:
+  node:zec:zec-kill-maker-claim:TakerSellsLez          206 s  (#187)
+  node:zec:zec-slow-funding:TakerSellsLez              186 s  (#186)
+  node:btc:btc-custody-credit:TakerSellsLez             76 s  (#185, TM-0032)
+  node:btc:btc-custody-credit:TakerSellsForeign         78 s
+  node:btc:btc-custody-credit-refund:TakerSellsLez     313 s
+  node:zec:zec-custody-credit:TakerSellsLez             99 s
+  node:zec:zec-custody-credit:TakerSellsForeign         97 s
+  node:zec:zec-custody-credit-refund:TakerSellsLez     538 s
+
+Each row's log is logs/<kind>-<pair>-<scenario>-<direction>-<try>.log; logs/regress.log is the
+runner's own log. results.tsv is the runner's table (test, try, verdict, seconds, finished at,
+lane, new chain); chain.tsv samples the LEZ finalized height and tip. e2e/ holds the scenarios'
+summaries, zec/ the ZEC exports.
+
+negative-proof-pre-fix-sidecar/: zec-kill-maker-claim against a Maker sidecar built from
+a77e9762 (before the #187 fix) plus the test hooks: "claim submission in flight" failed. Not a
+run of the release code. smoke/: the smoke runs on 2026-11-23 before this run.

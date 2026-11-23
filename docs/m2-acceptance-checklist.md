@@ -79,7 +79,11 @@ stack and are kept as the record of that submission shape.
   at `3b73e65b` (version 0.3.4, with the scenario `zec-maker-early-claim`)
   on an Apple-silicon Mac: 98 of 98, each on its first try, 115 minutes on
   three lanes, one operator running both parties on one host
-  (`docs/evidence/regression-0.3.4-2026-11-19-macos-arm64/`).
+  (`docs/evidence/regression-0.3.4-2026-11-19-macos-arm64/`). The 106 at
+  `14b05e56` (version 0.3.5, with the fixes for #185, #186 and #187) on an
+  Apple-silicon Mac: 106 of 106, each on its first try, 153 minutes on two
+  lanes, one operator running both parties on one host
+  (`docs/evidence/regression-0.3.5-2026-11-23-macos-arm64/`).
 - **Fixes of 0.3.5** (#185, #186, #187). The escrow accepts a custody a
   stranger credited and sweeps it all (TM-0032; ImageID `ca66e0dc…`), and the
   Nodes accept such a custody: `btc-custody-credit`,
@@ -90,7 +94,8 @@ stack and are kept as the record of that submission shape.
   and tries one refused before its send (a node lookup that did not answer,
   an I/O failure reading its store) again: `zec-kill-maker-claim`, on a
   devnet built with `LEZ_TEST_HOOKS=1`. The full tier lists 106 tests
-  (`regress.sh list full`); a full regression of 0.3.5 has not run yet.
+  (`regress.sh list full`); all 106 passed at `14b05e56`, each on its first
+  try (`docs/evidence/regression-0.3.5-2026-11-23-macos-arm64/`).
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.

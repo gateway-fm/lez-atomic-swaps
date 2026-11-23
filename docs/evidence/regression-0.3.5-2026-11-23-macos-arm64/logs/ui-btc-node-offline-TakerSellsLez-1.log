@@ -1,0 +1,20 @@
+
+[12:14:50] === node-offline (TakerSellsLez)
+
+[12:14:50] Both Nodes are held down while the maker desk stays open; it must report its Node unavailable, never connected
+  [32m✓[0m maker: a Node held down is reported unavailable, never connected
+1 passed, 0 failed
+
+[12:15:06] Both Nodes are released; the maker desk must pick its Node up again
+  [32m✓[0m maker: the Node coming back is picked up
+1 passed, 0 failed
+
+[12:15:13] Both Nodes are held down while the taker desk stays open; it must report its Node unavailable, never connected
+  [32m✓[0m taker: a Node held down is reported unavailable, never connected
+1 passed, 0 failed
+
+[12:15:30] Both Nodes are released; the taker desk must pick its Node up again
+  [32m✓[0m taker: the Node coming back is picked up
+1 passed, 0 failed
+
+[12:15:36] === node-offline (TakerSellsLez): passed in 46s

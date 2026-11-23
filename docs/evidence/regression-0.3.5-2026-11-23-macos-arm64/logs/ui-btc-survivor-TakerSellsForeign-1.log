@@ -1,0 +1,55 @@
+
+[12:23:43] === survivor (TakerSellsForeign)
+
+[12:23:43] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[12:23:46] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   b1e58c12e19ea86427a40f4ed246dc5e8169d88c2b941dd88fba0ba4ec060f27 awaiting_first_lock 0 -
+
+[12:23:49] Taker desk: lock_btc on b1e58c12e19e
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[12:23:51] Maker desk shows b1e58c12e19e at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[12:24:46] Taker desk: claim_lez on b1e58c12e19e
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[12:24:47] The Taker's Basecamp, with its Node, is stopped right after its revealing claim; the Maker Node completes the swap on its own
+
+[12:24:47] Maker desk shows b1e58c12e19e at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[12:25:24] The Taker's Basecamp is started again; its desk catches up with the completed swap
+
+[12:25:31] Taker desk shows b1e58c12e19e at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap b1e58c12e19e: runtime/lanes/2/evidence/b1e58c12e19ea86427a40f4ed246dc5e8169d88c2b941dd88fba0ba4ec060f27.json (5 effects, completed 2026-11-23T12:24:58Z)
+
+[12:25:42] === survivor (TakerSellsForeign): passed in 119s

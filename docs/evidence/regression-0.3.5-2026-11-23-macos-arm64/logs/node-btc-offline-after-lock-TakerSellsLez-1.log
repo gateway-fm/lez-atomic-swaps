@@ -1,0 +1,22 @@
+[13:42:23] === offline-after-lock (stamp 179543774302)
+[13:42:23] preflight: indexer historical reads
+[13:42:23]   indexer serves historical reads at the tip (4191)
+[13:42:23] preflight: LEZ finality check waived by request
+[13:42:24]   Maker published offer-e2e-179543774302
+[13:42:25]   Taker took offer-e2e-179543774302: swap 8b821d0ce2d5 (not_activated)
+[13:42:25]   Taker locked lez: 595daf3de046 (replay=False)
+[13:42:25]   cutting Logos Chat and Delivery, with the first lock already on chain
+[13:42:25]   the Taker's side (uid 4713) is refused: connect EACCES, list Delivery EACCES, 0 descriptors into it
+[13:42:25]   both Nodes report chat and delivery unavailable, and degraded; the Maker holds no Chat connection
+[13:42:26]   [0 s] waiting for the Taker's 8b821d0ce2d5 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 4191, tip 4197 (6 unfinalized) [heartbeat]
+[13:42:37]   [11 s] waiting for the Taker's 8b821d0ce2d5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 4191, tip 4197 (6 unfinalized) [heartbeat]
+[13:42:46]   [20 s] waiting for the Taker's 8b821d0ce2d5 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 4204, tip 4213 (9 unfinalized) [heartbeat]
+[13:42:46]   Taker claimed Bitcoin (replay=False)
+[13:42:47]   [0 s] waiting for the Taker's 8b821d0ce2d5 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 4204, tip 4213 (9 unfinalized) [heartbeat]
+[13:43:13]   [26 s] waiting for the Taker's 8b821d0ce2d5 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 4224, tip 4229 (5 unfinalized) [heartbeat]
+[13:43:14]   both Nodes report 8b821d0ce2d5 completed
+[13:43:14]   the cut held: 23 samples of the Maker's Chat socket, none with a connection; the Taker's side still refused
+[13:43:14]   the swap completed with both off-chain dependencies cut
+[13:43:14]   both dependencies are back and neither Node is degraded
+[13:43:14]   the Bitcoin claim a096235150ff is a Taproot key-path spend: one 64-byte signature, no script
+[13:43:14] === offline-after-lock: passed in 52s
