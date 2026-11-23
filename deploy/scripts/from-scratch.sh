@@ -450,6 +450,17 @@ readonly LEZ_WALLET_MODULE_COMMIT=acf0cd501b262c4c15969e3735e85318297b85bf
 readonly BLOCKCHAIN_MODULE_VERSION=0.2.4
 readonly BLOCKCHAIN_MODULE_SHA256=31819f06aa0639874fa0257f58c24e1add6fce2b489c843b64905e28f59f0c84
 readonly LEZ_NIX_IMAGE="nixos/nix:2.24.10@sha256:a09d508c2e46d3a4c7205ff3fa0d506d626a5a966c31e879df7efe737e22f003"
+# RISC Zero's recursion circuit archive, which LEZ's flake fetches as a
+# fixed-output derivation (fetchurl by SHA-256) from RISC Zero's bucket. The
+# bucket stopped serving it on 2026-11-23; the same bytes are an asset of this
+# project's build-inputs-1 release. build_logos_module puts them into the Nix
+# store first, checked against this SHA-256 and under the name the flake's
+# fetchurl gives them, so the derivation finds its output present and every
+# derivation and output stays as it was. deploy/builder/Dockerfile (for
+# risc0-circuit-recursion's build.rs) and build-darwin-packages.sh take the
+# same pin.
+readonly RISC0_RECURSION_ZKR_SHA256=744b999f0a35b3c86753311c7efb2a0054be21727095cf105af6ee7d3f4d8849
+readonly RISC0_RECURSION_ZKR_URL=https://github.com/gateway-fm/lez-atomic-swaps/releases/download/build-inputs-1/risc0-recursion-zkr-744b999f0a35b3c86753311c7efb2a0054be21727095cf105af6ee7d3f4d8849.zip
 submodule_at() { # submodule_at <path> <commit>: fail closed on a missing or moved submodule
   local got; got="$(git -C "$REPO_ROOT/$1" rev-parse HEAD 2>/dev/null || true)"
   [[ "$got" == "$2" ]] || fail "$1 is at ${got:-nothing}, expected $2 (git submodule update --init $1)"
@@ -474,6 +485,9 @@ build_logos_module() { # build_logos_module <out-name> <module submodule> <modul
       for p in /patches/*.patch; do
         case \$(basename \$p) in 0001-lez-*) (cd /tmp/src/lez && git apply \$p) ;; *) (cd /tmp/src/mod && git apply \$p) ;; esac
       done
+      zkr=\$(nix-store --print-fixed-path sha256 $RISC0_RECURSION_ZKR_SHA256 $RISC0_RECURSION_ZKR_SHA256.zip)
+      nix-store --check-validity \$zkr 2>/dev/null || nix store prefetch-file --name $RISC0_RECURSION_ZKR_SHA256.zip \\
+        --expected-hash sha256:$RISC0_RECURSION_ZKR_SHA256 $RISC0_RECURSION_ZKR_URL
       # The Cargo git dependencies are fetched one repository at a time and a
       # fetch can fail (\"Cannot find Git revision ... in ref\", seen for
       # iden3/ffiasm and EspressoSystems/jellyfish on an empty store); what was
