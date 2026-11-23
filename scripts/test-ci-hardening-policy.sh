@@ -153,6 +153,10 @@ require_fixed 'npm run test:m6:prototype' "$ci_workflow"
 require_fixed 'npm run test:m6:basecamp:contract' "$ci_workflow"
 require_fixed 'Maker and Taker Basecamp integration' "$ci_workflow"
 require_fixed 'bash /repo/scripts/test-m6-basecamp-integration.sh' "$ci_workflow"
+# The per-role catalog flakes take the Chat revision the aggregate lock pins,
+# so evaluating them asks the GitHub API for no tag.
+[[ -x scripts/basecamp-chat-module-ref.sh ]] || fail "scripts/basecamp-chat-module-ref.sh must remain executable"
+require_fixed '--override-input chat_module "$chat_module_ref"' scripts/test-m6-basecamp-integration.sh
 require_fixed 'nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21' "$ci_workflow"
 require_fixed 'cargo fmt --all --check' "$ci_workflow"
 require_fixed 'cargo clippy --locked --workspace --all-targets' "$ci_workflow"
