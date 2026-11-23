@@ -325,6 +325,11 @@ struct Node {
     release_lookup: tokio::sync::Notify,
     failing_sends: AtomicBool,
     sends: AtomicUsize,
+    /// What the lookup finds: the transaction the node holds under the
+    /// requested hash (included after a send) or another one (a definite
+    /// refusal: the sidecar reads a different transaction there).
+    included: std::sync::Mutex<Option<LeeTransaction>>,
+    included_on_send: AtomicBool,
 }
 
 impl Node {
@@ -366,7 +371,13 @@ async fn start_node(node: Arc<Node>) -> (String, jsonrpsee::server::ServerHandle
         {
             return Err(node_failure());
         }
-        Ok::<Option<(LeeTransaction, u64)>, ErrorObjectOwned>(None)
+        let found = node
+            .included
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|transaction| (transaction, 1_u64));
+        Ok::<Option<(LeeTransaction, u64)>, ErrorObjectOwned>(found)
     })
     .unwrap();
     rpc.register_method("sendTransaction", |params, node, _| {
@@ -375,7 +386,11 @@ async fn start_node(node: Arc<Node>) -> (String, jsonrpsee::server::ServerHandle
         if node.failing_sends.load(Ordering::SeqCst) {
             return Err(node_failure());
         }
-        Ok::<HashType, ErrorObjectOwned>(transaction.hash())
+        let hash = transaction.hash();
+        if node.included_on_send.load(Ordering::SeqCst) {
+            *node.included.lock().unwrap() = Some(transaction);
+        }
+        Ok::<HashType, ErrorObjectOwned>(hash)
     })
     .unwrap();
     let handle = server.start(rpc);
@@ -392,40 +407,11 @@ async fn sidecar_with_prepared_refund(
     RuntimeDescriptor,
     SubmitTransactionRequest,
 ) {
-    let (depositor, signer_key, _) = account(141);
+    let (depositor, _, _) = account(141);
     let (claimant, _, _) = account(142);
     let (authority, _, authority_key) = account(143);
-    let descriptor = runtime(depositor);
     let terms = terms(depositor, claimant, authority, &authority_key);
-    let planner = Arc::new(
-        NativeEscrowPlanner::new_durable(
-            Participant::Maker,
-            signer_key,
-            ESCROW_PROGRAM,
-            TRANSFER_PROGRAM,
-            descriptor.clone(),
-            Arc::new(CountingNonce(AtomicUsize::new(0))),
-            root.path(),
-        )
-        .unwrap(),
-    );
-    let runtime = Arc::new(BridgeRuntime::new(
-        descriptor.clone(),
-        planner,
-        Arc::new(OfficialNodeRpc::connect(node_endpoint).unwrap()),
-        Arc::new(UnusedIndexer),
-    ));
-    let server = start_bridge_server(
-        BridgeServerConfig::new(
-            RunId::new("v02-bridge-native-refund-run-0001").unwrap(),
-            BridgeServerCapability::new(BRIDGE_CAPABILITY).unwrap(),
-            root.path().join("bridge-idempotency.json"),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
-        ),
-        runtime,
-    )
-    .await
-    .unwrap();
+    let (server, descriptor) = start_refund_sidecar(root.path(), node_endpoint).await;
     let _ = client(server.endpoint(), descriptor.clone())
         .prepare_witnessed_escrow(witnessed_escrow_request(depositor, terms.clone()))
         .await
@@ -445,6 +431,46 @@ async fn sidecar_with_prepared_refund(
         refund,
     );
     (server, descriptor, submission)
+}
+
+/// The Maker sidecar of `sidecar_with_prepared_refund` on the state in
+/// `directory` (a fresh one, or one a stopped sidecar left).
+async fn start_refund_sidecar(
+    directory: &Path,
+    node_endpoint: &str,
+) -> (lez_v0_2_sidecar::BridgeServerHandle, RuntimeDescriptor) {
+    let (depositor, signer_key, _) = account(141);
+    let descriptor = runtime(depositor);
+    let planner = Arc::new(
+        NativeEscrowPlanner::new_durable(
+            Participant::Maker,
+            signer_key,
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            descriptor.clone(),
+            Arc::new(CountingNonce(AtomicUsize::new(0))),
+            directory,
+        )
+        .unwrap(),
+    );
+    let runtime = Arc::new(BridgeRuntime::new(
+        descriptor.clone(),
+        planner,
+        Arc::new(OfficialNodeRpc::connect(node_endpoint).unwrap()),
+        Arc::new(UnusedIndexer),
+    ));
+    let server = start_bridge_server(
+        BridgeServerConfig::new(
+            RunId::new("v02-bridge-native-refund-run-0001").unwrap(),
+            BridgeServerCapability::new(BRIDGE_CAPABILITY).unwrap(),
+            directory.join("bridge-idempotency.json"),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        ),
+        runtime,
+    )
+    .await
+    .unwrap();
+    (server, descriptor)
 }
 
 fn assert_remote_code<T: std::fmt::Debug>(
@@ -484,14 +510,29 @@ async fn a_refund_refused_before_its_send_is_sent_once_under_the_same_request_id
     assert_eq!(node.lookups(), 2);
     assert_eq!(node.sends(), 1);
 
-    // The acceptance is replayed as before: no lookup, no second send.
-    let replayed = client(server.endpoint(), descriptor)
+    // Asked for again, the acceptance is decided on the chain again: the
+    // sequencer dropped it (it is not found), so the same bytes go out once
+    // more; once they land they are already known and not sent.
+    let again = client(server.endpoint(), descriptor.clone())
+        .submit_transaction(submission.clone())
+        .await
+        .unwrap();
+    assert_eq!(again.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(node.lookups(), 3);
+    assert_eq!(node.sends(), 2);
+    node.included_on_send.store(true, Ordering::SeqCst);
+    let landed = client(server.endpoint(), descriptor.clone())
+        .submit_transaction(submission.clone())
+        .await
+        .unwrap();
+    assert_eq!(landed.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(node.sends(), 3);
+    let known = client(server.endpoint(), descriptor)
         .submit_transaction(submission)
         .await
         .unwrap();
-    assert_eq!(replayed, accepted);
-    assert_eq!(node.lookups(), 2);
-    assert_eq!(node.sends(), 1);
+    assert_eq!(known.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(node.sends(), 3);
 
     server.stop().await.unwrap();
     node_handle.stop().unwrap();
@@ -499,7 +540,7 @@ async fn a_refund_refused_before_its_send_is_sent_once_under_the_same_request_id
 }
 
 #[tokio::test]
-async fn a_refund_whose_send_was_reached_is_never_sent_again() {
+async fn a_refund_whose_send_was_reached_is_decided_on_the_chain_again() {
     let node = Arc::new(Node::default());
     let (node_endpoint, node_handle) = start_node(Arc::clone(&node)).await;
     let root = TestDirectory::secure();
@@ -524,19 +565,17 @@ async fn a_refund_whose_send_was_reached_is_never_sent_again() {
     );
     assert_eq!(node.sends(), 1);
 
-    // From then on the unknown outcome is replayed, also once the node
-    // would take it: one send in all.
+    // An unknown outcome is no answer: replayed, it would hold the LEZ in
+    // the escrow for good (the caller asks again only while the escrow is
+    // still refundable). The same bytes are looked up and sent again.
     node.failing_sends.store(false, Ordering::SeqCst);
-    for _ in 0..2 {
-        assert_remote_code(
-            client(server.endpoint(), descriptor.clone())
-                .submit_transaction(submission.clone())
-                .await,
-            ErrorCode::UnknownSubmissionOutcome,
-        );
-    }
-    assert_eq!(node.lookups(), 2);
-    assert_eq!(node.sends(), 1);
+    let accepted = client(server.endpoint(), descriptor.clone())
+        .submit_transaction(submission.clone())
+        .await
+        .unwrap();
+    assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(node.lookups(), 3);
+    assert_eq!(node.sends(), 2);
 
     server.stop().await.unwrap();
     node_handle.stop().unwrap();
@@ -581,6 +620,106 @@ async fn a_second_call_while_the_first_is_refused_before_its_send_sends_nothing(
         .unwrap();
     assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
     assert_eq!(node.sends(), 1);
+
+    server.stop().await.unwrap();
+    node_handle.stop().unwrap();
+    node_handle.stopped().await;
+}
+
+/// The sidecar's state directory as a SIGKILL leaves it: every file as it is
+/// on disk at that instant.
+fn copy_state_directory(from: &Path, to: &Path) {
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            fs::create_dir(&target).unwrap();
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+            copy_state_directory(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_refund_in_flight_at_a_kill_is_decided_on_the_chain_again_after_the_restart() {
+    let node = Arc::new(Node::default());
+    let (node_endpoint, node_handle) = start_node(Arc::clone(&node)).await;
+    let root = TestDirectory::secure();
+    let (server, descriptor, submission) =
+        sidecar_with_prepared_refund(&root, &node_endpoint).await;
+
+    // The lookup before the refund's one send is held, and the sidecar is
+    // killed while it waits: its journal holds the in-flight marker.
+    node.hold_next_lookup.store(true, Ordering::SeqCst);
+    let held = tokio::spawn({
+        let client = client(server.endpoint(), descriptor.clone());
+        let submission = submission.clone();
+        async move { client.submit_transaction(submission).await }
+    });
+    node.lookup_held.notified().await;
+    let killed = TestDirectory::secure();
+    copy_state_directory(root.path(), killed.path());
+    assert_eq!(node.sends(), 0);
+
+    let (restarted, descriptor) = start_refund_sidecar(killed.path(), &node_endpoint).await;
+    let accepted = client(restarted.endpoint(), descriptor.clone())
+        .submit_transaction(submission.clone())
+        .await
+        .unwrap();
+    assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(node.lookups(), 2);
+    assert_eq!(node.sends(), 1);
+
+    restarted.stop().await.unwrap();
+    held.abort();
+    node.release_lookup.notify_one();
+    node_handle.stop().unwrap();
+}
+
+#[tokio::test]
+async fn a_refund_refused_by_name_is_still_replayed_and_never_sent() {
+    let node = Arc::new(Node::default());
+    let (node_endpoint, node_handle) = start_node(Arc::clone(&node)).await;
+    let root = TestDirectory::secure();
+    let (server, descriptor, submission) =
+        sidecar_with_prepared_refund(&root, &node_endpoint).await;
+
+    // The node holds another transaction under the refund's hash: a definite
+    // refusal, not an unknown outcome.
+    let (depositor, _, _) = account(141);
+    let (claimant, _, _) = account(142);
+    let (authority, _, authority_key) = account(143);
+    let escrow = client(server.endpoint(), descriptor.clone())
+        .prepare_witnessed_escrow(witnessed_escrow_request(
+            depositor,
+            terms(depositor, claimant, authority, &authority_key),
+        ))
+        .await
+        .unwrap();
+    *node.included.lock().unwrap() = Some(LeeTransaction::Public(
+        lez_v0_2_sidecar::decode_official_public_transaction(
+            escrow.initialization.exact_bytes.as_slice(),
+        )
+        .unwrap(),
+    ));
+    for _ in 0..2 {
+        let refused = client(server.endpoint(), descriptor.clone())
+            .submit_transaction(submission.clone())
+            .await;
+        let Err(BridgeClientError::Remote(error)) = refused else {
+            panic!("expected a remote refusal, got {refused:?}");
+        };
+        assert_ne!(error.code(), ErrorCode::UnknownSubmissionOutcome);
+        assert_ne!(error.code(), ErrorCode::Unavailable);
+    }
+    assert_eq!(
+        node.lookups(),
+        1,
+        "the refusal is replayed, not decided again"
+    );
+    assert_eq!(node.sends(), 0);
 
     server.stop().await.unwrap();
     node_handle.stop().unwrap();

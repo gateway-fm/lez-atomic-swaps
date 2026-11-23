@@ -78,6 +78,30 @@ checkpoint; they do not widen the current claim.
   spends. Fee starvation, deep reorganization, and action at arbitrary deadline
   boundaries are not closed production claims.
 
+## LEZ submissions and the sidecar's request journal
+
+- The LEZ sidecar answers a repeated request from what it journaled under
+  its request id, except for the submissions whose caller asks again under
+  the same request id only after it found the transaction absent and only
+  inside its own window: the native escrow pair and its re-plans, the
+  revealing claim and its re-plans (the ZEC Maker's follow-up claim too) and
+  the native refund (the ZEC path's `lez_refund`, and the BTC actor's
+  witnessed LEZ refund, which takes the same sidecar slot). For those, an
+  unknown outcome, or the in-flight marker a sidecar killed mid-submission
+  leaves, is decided on the chain again: the exact bytes are looked up and,
+  absent, sent once more (one transaction id and one nonce, included at most
+  once); a journaled acceptance is decided again the same way. A definite
+  refusal is still replayed (issue #187).
+- A submission refused as `unavailable` before its send (a node lookup did
+  not answer) is tried again under the same request id, for every
+  submission.
+- On the BTC path the sidecar's answer to the witnessed refund changed, but
+  the BTC actor never asks again after an unknown outcome, so its behaviour
+  did not; its witnessed escrow, claim and token effects keep one attempt in
+  the sidecar (its own journal sends each once; a lost one falls back to
+  observation and recovery). So do the XMR effects and the reference clock
+  transaction.
+
 ## M6 boundary
 
 - The signed-off HTML prototypes create no daemon, wallet, or chain effects.
