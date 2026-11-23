@@ -491,9 +491,14 @@ build_logos_module() { # build_logos_module <out-name> <module submodule> <modul
       # The Cargo git dependencies are fetched one repository at a time and a
       # fetch can fail (\"Cannot find Git revision ... in ref\", seen for
       # iden3/ffiasm and EspressoSystems/jellyfish on an empty store); what was
-      # fetched stays in the store, so the next attempt goes further.
+      # fetched stays in the store, so the next attempt goes further. A failed
+      # attempt prints its whole log.
       for attempt in 1 2 3 4; do
-        nix build -L path:/tmp/src/mod#lgx-portable --override-input logos-execution-zone path:/tmp/src/lez --out-link /tmp/lgx 2>&1 | tail -3
+        if nix build -L path:/tmp/src/mod#lgx-portable --override-input logos-execution-zone path:/tmp/src/lez --out-link /tmp/lgx >/tmp/nix-build.log 2>&1; then
+          tail -3 /tmp/nix-build.log
+        else
+          echo \"--- nix build of $name, attempt \$attempt, failed; its log: ---\"; cat /tmp/nix-build.log
+        fi
         [ -e /tmp/lgx ] && break
         echo \"nix build of $name: attempt \$attempt produced no package\"
       done
@@ -517,7 +522,9 @@ build_swap_node_module() {
     -v "$REPO_ROOT/modules/lez-swap-node:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
       echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
       rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod -cf - . | tar -C /tmp/src/mod -xf -
-      nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx 2>&1 | tail -3
+      nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx >/tmp/nix-build.log 2>&1 \\
+        || { echo '--- nix build of lez_swap_node failed; its log: ---'; cat /tmp/nix-build.log; exit 1; }
+      tail -3 /tmp/nix-build.log
       mkdir -p /provision/lez_swap_node; cp -L /tmp/lgx/*.lgx /provision/lez_swap_node/lez_swap_node.lgx
       printf '%s\\n' '$stamp' > /provision/lez_swap_node/source.stamp"
 }
@@ -538,7 +545,9 @@ build_role_node_modules() {
       -v "$REPO_ROOT/modules/lez-$role-node:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
         echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
         rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod -cf - . | tar -C /tmp/src/mod -xf -
-        nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx 2>&1 | tail -3
+        nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx >/tmp/nix-build.log 2>&1 \\
+          || { echo '--- nix build of $name failed; its log: ---'; cat /tmp/nix-build.log; exit 1; }
+        tail -3 /tmp/nix-build.log
         mkdir -p /provision/$name; cp -L /tmp/lgx/*.lgx /provision/$name/$name-plugin.lgx
         printf '%s\\n' '$stamp' > /provision/$name/source.stamp"
   done
