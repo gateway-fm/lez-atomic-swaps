@@ -91,6 +91,17 @@ impl From<NativePrepareError> for BridgeRuntimeError {
     fn from(value: NativePrepareError) -> Self {
         match value {
             NativePrepareError::ReplanExhausted => Self::ReplanExhausted,
+            // The planner's durable store could not be read or written (an
+            // I/O failure: no descriptor, an interrupted read). Nothing was
+            // decided about the bytes, so it is the class of a node that did
+            // not answer: `unavailable`, which the request journal tries again
+            // under the same request id (issue #187), not an invalid
+            // transaction replayed for good. A store that holds something
+            // else, a corrupt or a foreign entry stays a refusal.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            NativePrepareError::DurableReservation(
+                crate::durable_reservation::DurableReservationError::Filesystem,
+            ) => Self::Unavailable,
             _ => Self::Planner,
         }
     }
@@ -465,13 +476,14 @@ impl BridgeRuntime {
             .checked_add(1)
             .ok_or(BridgeRuntimeError::InvalidObservation)?;
         let metadata_hash_after = account_sha256(after.metadata_account())?;
+        // The custody is not compared: anyone can credit it (TM-0032), and
+        // the unchanged metadata already proves the escrow did not move.
         let custody_hash_after = account_sha256(after.custody_account())?;
         if after.depositor_account().balance != expected_sender_balance
             || u128::from(after.depositor_account().nonce) != expected_sender_nonce
             || after.claimant_account().balance != expected_recipient_balance
             || u128::from(after.claimant_account().nonce) != preparation.recipient_before.nonce
             || metadata_hash_after != preparation.metadata_account_sha256_before
-            || custody_hash_after != preparation.custody_account_sha256_before
             || clock_after.height <= preparation.clock_before.height
             || clock_after.timestamp_ms >= preparation.exclusive_punish_at_ms
         {
@@ -871,6 +883,15 @@ impl BridgeRuntime {
         &self,
         request: &lez_bridge_protocol::PrepareRevealingClaimRequest,
     ) -> Result<lez_bridge_protocol::PrepareRevealingClaimResult, BridgeRuntimeError> {
+        // TEST-ONLY (feature `test-hooks`, the devnet's zec-kill-maker-claim
+        // kill point "claim preparation held"): while
+        // `hold-claim-preparations` holds a count, the revealing claim's
+        // preparation waits here, before anything of it is durable, for the
+        // kill that comes for it.
+        #[cfg(feature = "test-hooks")]
+        if crate::test_hooks::take("hold-claim-preparations") {
+            std::future::pending::<()>().await;
+        }
         self.planner
             .prepare_revealing_claim(request)
             .await
@@ -1439,6 +1460,8 @@ impl BridgeRuntime {
     ///
     /// Rejects every generic, unowned, malformed, or drifted transaction and
     /// reports an ambiguous one-attempt node result as unknown.
+    /// [`BridgeRuntimeError::Unavailable`] comes only from the lookups before
+    /// the send: the request journal tries such a request again.
     pub async fn submit_native_xmr_claim_authorization_v3(
         &self,
         request: &lez_bridge_protocol::SubmitNativeXmrClaimAuthorizationV3Request,
@@ -1493,6 +1516,33 @@ impl BridgeRuntime {
         )
     }
 
+    /// Whether an unknown outcome, or the in-flight marker of a submission
+    /// whose sidecar stopped mid-send, that the request journal holds for
+    /// these exact bytes is decided on the chain again (looked up, then sent
+    /// once more) instead of replayed: every owned submission whose caller
+    /// sends the same request id again, only after it observed the
+    /// transaction absent and inside its own window. That is the native
+    /// escrow pair and its re-plans, the revealing claim and its re-plans
+    /// (also the Maker's follow-up claim) and the native refund (the ZEC
+    /// `lez_refund` and the BTC actor's witnessed refund alike). Identical
+    /// bytes carry one transaction id and one nonce and are included at most
+    /// once.
+    pub async fn submission_unknown_decided_again(&self, prepared: &PreparedTransaction) -> bool {
+        self.submission_success_decided_again(prepared).await
+    }
+
+    /// Whether a success the request journal holds for these exact bytes is
+    /// decided on the chain again as well: those asked for again only once
+    /// observed absent although accepted (a sequencer that admitted them and
+    /// dropped them), and those whose nonce can be taken and re-planned. The
+    /// native refund is one: replayed as accepted, a refund the sequencer
+    /// dropped would hold the LEZ in its escrow for good.
+    pub async fn submission_success_decided_again(&self, prepared: &PreparedTransaction) -> bool {
+        self.native_escrow_lineage_member(prepared).await
+            || self.revealing_claim_lineage_member(prepared).await
+            || self.planner.native_refund_submission(prepared).await
+    }
+
     /// Submits only exact bytes owned by this actor's active durable planner.
     ///
     /// An exact canonical lookup is performed before submission. A found byte-
@@ -1503,11 +1553,15 @@ impl BridgeRuntime {
     ///
     /// Rejects unowned bytes, malformed official transactions, node failure,
     /// or an unknown one-attempt submission outcome.
+    /// [`BridgeRuntimeError::Unavailable`] comes only from the lookups before
+    /// the send: the request journal tries such a request again.
     pub async fn submit_transaction(
         &self,
         request: &SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
         let ownership = self.planner.validate_submission_request(request).await?;
+        #[cfg(feature = "test-hooks")]
+        self.hold_claim_submission(&request.transaction).await;
         if let OwnedSubmission::XmrFunding { initialization } = &ownership
             && !self
                 .node
@@ -1611,6 +1665,20 @@ impl BridgeRuntime {
             request.transaction.transaction_id,
             SubmissionOutcome::Accepted,
         ))
+    }
+
+    /// TEST-ONLY (feature `test-hooks`, the devnet's zec-kill-maker-claim
+    /// kill point "claim submission in flight"): while
+    /// `hold-claim-submissions` holds a count, a revealing claim's
+    /// submission waits here for good, its in-flight marker journaled and
+    /// nothing looked up or sent, for the kill that comes for it.
+    #[cfg(feature = "test-hooks")]
+    async fn hold_claim_submission(&self, prepared: &PreparedTransaction) {
+        if self.revealing_claim_lineage_member(prepared).await
+            && crate::test_hooks::take("hold-claim-submissions")
+        {
+            std::future::pending::<()>().await;
+        }
     }
 
     /// Whether either account a native escrow initialization creates (the
@@ -2462,12 +2530,11 @@ impl BridgeRuntime {
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        let expected_balance = if state == EscrowState::Funded {
-            terms.amount().as_u128()
-        } else {
-            0
-        };
-        if facts.custody_account().balance != expected_balance {
+        // Anyone can credit the custody (TM-0032): a funded escrow holds at
+        // least the amount, and any other state may hold a stranger's credit.
+        if state == EscrowState::Funded
+            && facts.custody_account().balance < terms.amount().as_u128()
+        {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         let metadata_facts = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
@@ -2539,12 +2606,11 @@ impl BridgeRuntime {
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        let expected_balance = if state == EscrowState::Funded {
-            terms.amount().as_u128()
-        } else {
-            0
-        };
-        if facts.custody_account().balance != expected_balance {
+        // Anyone can credit the custody (TM-0032): a funded escrow holds at
+        // least the amount, and any other state may hold a stranger's credit.
+        if state == EscrowState::Funded
+            && facts.custody_account().balance < terms.amount().as_u128()
+        {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         let metadata_facts = EscrowMetadataFacts::from_lee_v0_2_native_terms(
@@ -2726,7 +2792,7 @@ fn validate_funded_xmr_clock_state(
             != *input.custody_account_id.as_bytes()
         || facts.metadata_account().program_owner != escrow_program
         || facts.custody_account().program_owner != transfer_program
-        || facts.custody_account().balance != input.amount
+        || facts.custody_account().balance < input.amount
         || facts.depositor_account().program_owner != transfer_program
         || facts.claimant_account().program_owner != transfer_program
         || facts.depositor_account().balance == 0

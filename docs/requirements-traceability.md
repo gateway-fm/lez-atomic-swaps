@@ -59,13 +59,13 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| P1 | Compute units documented for initialise, claim, and refund against a named LEZ testnet version | Executor cycles for the BTC pair's `InitializeNativeWitnessed`/`FundNative`/`ClaimNativeWitnessed`/`RefundNative` measured against the deployed v0.2.4 escrow (ImageID `c22d61fc…`) in `escrow_cycles.rs`, which fails if the binary drifts; recorded in [docs/lez-compute-units.md](lez-compute-units.md) | Done for the BTC pair; XMR/ZEC variants M4 |
+| P1 | Compute units documented for initialise, claim, and refund against a named LEZ testnet version | Executor cycles for the BTC pair's `InitializeNativeWitnessed`/`FundNative`/`ClaimNativeWitnessed`/`RefundNative` measured on LEZ v0.2.4 against the escrow the deployment manifest pins (ImageID `ca66e0dc…`, with the custody-credit fix of TM-0032; LEZ testnet 0.2 runs the program before it, `c22d61fc…`) in `escrow_cycles.rs`, which fails if the binary drifts; recorded in [docs/lez-compute-units.md](lez-compute-units.md) | Done for the BTC pair; XMR/ZEC variants M4 |
 
 ## Supportability
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| S1 | LEZ escrow deployed/tested on testnet 0.2 | Version-pinned deployment manifest and public smoke-test transaction evidence | Devnet only: the ZEC leg settles on the deployed v0.2 escrow (ImageID `c22d61fc…`, the program the BTC leg uses) on each recreated Docker devnet chain; a public testnet-0.2 smoke transaction is not recorded. Not applicable to this release: the public LEZ testnet has moved to LEZ 0.3, which this LEZ v0.2.4 stack cannot talk to; public-network evidence is postponed to the release that ports to LEZ 0.4 (#107) |
+| S1 | LEZ escrow deployed/tested on testnet 0.2 | Version-pinned deployment manifest and public smoke-test transaction evidence | Devnet only: the BTC and ZEC legs settle on the v0.2 escrow the deployment manifest pins (ImageID `ca66e0dc…`, with the custody-credit fix of TM-0032), deployed on each recreated Docker devnet chain; LEZ testnet 0.2 holds the program before that fix (`c22d61fc…`); a public testnet-0.2 smoke transaction is not recorded. Not applicable to this release: the public LEZ testnet has moved to LEZ 0.3, which this LEZ v0.2.4 stack cannot talk to; public-network evidence is postponed to the release that ports to LEZ 0.4 (#107) |
 | S2 | Standalone LEZ sequencer E2E is included in CI | Isolated CI job boots sequencer on ephemeral resources and runs guest lifecycle suites | Planned; primitive compatibility lane exists |
 | S3 | Default-branch CI is green | Required checks run format, strict Clippy, workspace tests, traceability, dependencies, and isolated E2E | Local workflow/gates green; remote branch pending |
 | S4 | Every F/U/R/P hard requirement has a corresponding test | Traceability completeness guard plus test-report manifest rejects missing or skipped requirement IDs | Matrix guard passing; acceptance tests incomplete |

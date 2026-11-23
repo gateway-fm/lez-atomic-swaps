@@ -1,0 +1,35 @@
+[13:35:14] === zec-early-lock (stamp 1795437314)
+[13:35:14] preflight: indexer historical reads
+[13:35:15]   indexer serves historical reads at the tip (3879)
+[13:35:15] preflight: LEZ finality check waived by request
+[13:35:15]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[13:35:37]       taker: taker ZEC corridor zec-devnet-1795437315: sidecar listening on 127.0.0.1:19902
+[13:35:37]       taker: taker: 1 prepared ZEC entries configured
+[13:35:37]     [zec-provision 12:35:37]   maker sidecar answers on 127.0.0.1:19901
+[13:35:37]     [zec-provision 12:35:37]   taker sidecar answers on 127.0.0.1:19902
+[13:35:37]       maker_health: ready=True degraded=False
+[13:35:37]     [zec-provision 12:35:37]   Taker lists zec-devnet-offer-1795437315 ; corridor zec-devnet-1795437315 is live
+[13:35:37]   corridor zec-devnet-1795437315 entry 0 (deterministic-local-devnet-v7): offer zec-devnet-offer-1795437315, zebra tip 421, Zcash refund height 438
+[13:35:37]   Taker took zec-devnet-offer-1795437315: swap zec-devnet-s (not_activated)
+[13:35:37]   receipt: swap zec-devnet-swap-1795437315, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1795437315/actor/taker/actor-config.json
+[13:35:37]   cutting the Maker's indexer forwarder, its only source of LEZ finality; its sequencer forwarder stays
+[13:35:38]   [0 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker not_activated | actor at - | maker leased | zebra 421 | LEZ finalized 3898, tip 3901 (3 unfinalized) [heartbeat]
+[13:35:41]   [3 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker awaiting_first_lock | actor at offered | maker leased | zebra 421 | LEZ finalized 3898, tip 3901 (3 unfinalized) [heartbeat]
+[13:35:57]   [19 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker refund_available | actor at taker_lock_confirmed | maker offered | zebra 421 | LEZ finalized 3913, tip 3917 (4 unfinalized) [heartbeat]
+[13:35:58]   the Taker's view lists no LEZ lock effect; its actor at taker_lock_confirmed is what says it is in
+[13:35:58]   the Maker cannot read LEZ finality; watching it for 90s
+[13:37:29]   the Maker stayed at offered for 90s and funded nothing: outpoint 84b173ffda15:0 unspent, zebra's mempool empty
+[13:37:30]   the Maker can read LEZ finality again; it may now fund Zcash
+[13:37:30]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 421 | LEZ finalized 3978, tip 3982 (4 unfinalized) [heartbeat]
+[13:37:30]   zebra at 421: not mining, the Maker's Zcash funding is not out yet
+[13:37:36]   zebra: mined 1 block(s) → height 422 (mempool had ['ca068ad2b34b'])
+[13:37:40]   [9 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker taker_lock_confirmed | zebra 422 | LEZ finalized 3978, tip 3982 (4 unfinalized) [heartbeat]
+[13:37:40]   zebra: mined 1 block(s) → height 423 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[13:37:40]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[13:37:40]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 423 | LEZ finalized 3978, tip 3982 (4 unfinalized) [heartbeat]
+[13:37:40]   zebra: mined 1 block(s) → height 424 (mempool had ['f98a90cb2e3f'])
+[13:37:44]   [3 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker both_legs_locked | zebra 424 | LEZ finalized 3992, tip 3998 (6 unfinalized) [heartbeat]
+[13:37:54]   [13 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 424 | LEZ finalized 3992, tip 3998 (6 unfinalized) [heartbeat]
+[13:37:54]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 3992, tip 3998 (6 unfinalized) [heartbeat]
+[13:37:54]   both Nodes report zec-devnet-s completed
+[13:37:54] === zec-early-lock: passed in 160s

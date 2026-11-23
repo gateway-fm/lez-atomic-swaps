@@ -54,6 +54,8 @@ struct Chain {
     nonce_calls: Arc<AtomicUsize>,
     sends: Arc<AtomicUsize>,
     included: Arc<Mutex<Vec<LeeTransaction>>>,
+    /// Sends still to answer with an error, as a lost answer does.
+    failing_sends: Arc<AtomicUsize>,
 }
 
 impl Chain {
@@ -63,6 +65,7 @@ impl Chain {
             nonce_calls: Arc::new(AtomicUsize::new(0)),
             sends: Arc::new(AtomicUsize::new(0)),
             included: Arc::new(Mutex::new(Vec::new())),
+            failing_sends: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -159,6 +162,16 @@ async fn start_sequencer(chain: Chain) -> (String, jsonrpsee::server::ServerHand
     rpc.register_method("sendTransaction", |params, chain, _| {
         let transaction: LeeTransaction = params.one()?;
         chain.sends.fetch_add(1, Ordering::SeqCst);
+        if chain
+            .failing_sends
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            // The send reached the node and its answer is lost.
+            return Err(ErrorObjectOwned::owned(-32_000, "send lost", None::<()>));
+        }
         Ok::<_, ErrorObjectOwned>(transaction.hash())
     })
     .expect("send method");
@@ -461,6 +474,53 @@ async fn a_taken_claim_nonce_is_superseded_replanned_and_survives_a_restart() {
     assert_eq!(recovered.claim, replanned.claim);
 
     restarted.server.stop().await.expect("stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+/// A revealing claim (the Taker's, or the Maker's follow-up claim) whose
+/// send's answer was lost, or whose sidecar was killed while it was in
+/// flight, is asked for again under the same request id inside its window:
+/// it is decided on the chain again, not answered
+/// `unknown_submission_outcome` from the journal until the window closes.
+#[tokio::test]
+async fn an_unknown_claim_submission_is_decided_on_the_chain_again() {
+    let (signer, key) = account(53);
+    let (depositor, _) = account(54);
+    let chain = Chain::new();
+    let (endpoint, sequencer) = start_sequencer(chain.clone()).await;
+    let directory = secure_directory();
+    let sidecar = start_sidecar(signer, key, &endpoint, directory.path(), &chain).await;
+    let original = prepare_claim(&sidecar, signer, depositor).await;
+
+    chain.failing_sends.store(1, Ordering::SeqCst);
+    assert_remote_code(
+        sidecar
+            .client()
+            .submit_transaction(submit_request(signer, &original))
+            .await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(chain.send_count(), 1);
+    let again = sidecar
+        .client()
+        .submit_transaction(submit_request(signer, &original))
+        .await
+        .expect("the unknown claim is decided again");
+    assert_eq!(again.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(chain.send_count(), 2, "the exact bytes went out again");
+
+    // Landed, it is already known and not sent again.
+    chain.include_exact(&original);
+    let known = sidecar
+        .client()
+        .submit_transaction(submit_request(signer, &original))
+        .await
+        .expect("already known");
+    assert_eq!(known.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(chain.send_count(), 2);
+
+    sidecar.server.stop().await.expect("stop");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
 }

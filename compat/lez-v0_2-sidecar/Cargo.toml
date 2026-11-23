@@ -2,7 +2,7 @@
 
 [package]
 name = "lez-v0-2-sidecar"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 publish = false
 license = "MIT OR Apache-2.0"
@@ -12,6 +12,13 @@ rust-version = "1.96"
 lez-zec-escrow-v02 = { version = "=0.0.0", path = "../lez-v0.2-provisional/escrow" }
 serde_json = "=1.0.150"
 spel-client-gen = { version = "=0.6.0", git = "https://github.com/logos-co/spel.git", rev = "7f13e71f91372a32e26b71d19dbbb60532711048" }
+
+[features]
+# The devnet's test hooks (src/test_hooks.rs): holds of the revealing claim's
+# preparation and submission, read from LEZ_TEST_HOOKS_DIR. The devnet build
+# enables it only with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh); no
+# release build does.
+test-hooks = []
 
 [dependencies]
 anyhow = "=1.0.103"
@@ -45,7 +52,7 @@ token_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/lo
 tokio = { version = "=1.53.3", features = ["io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tower = "=0.5.3"
 tower-http = { version = "=0.7.0", features = ["auth"] }
-url = "=2.5.8"
+url = "=2.5.9"
 vault_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.4" }
 wallet = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.4" }
 zeroize = "=1.9.0"

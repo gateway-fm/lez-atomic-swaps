@@ -284,7 +284,32 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 98)
+        self.assertEqual(len(full), 106)
+
+    def test_full_has_the_maker_claim_kill_selling_lez_only(self):
+        full = self.tier('full')
+        self.assertIn('node:zec:zec-kill-maker-claim:TakerSellsLez', full)
+        self.assertNotIn('node:zec:zec-kill-maker-claim:TakerSellsForeign', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-kill-maker-claim:' in test], tier)
+
+    def test_full_has_the_slow_zcash_funding_selling_lez_only(self):
+        full = self.tier('full')
+        self.assertIn('node:zec:zec-slow-funding:TakerSellsLez', full)
+        self.assertNotIn('node:zec:zec-slow-funding:TakerSellsForeign', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-slow-funding:' in test], tier)
+
+    def test_full_has_the_custody_credit_scenarios_once_each(self):
+        full = self.tier('full')
+        credited = sorted(test for test in full if '-custody-credit' in test)
+        self.assertEqual(credited, sorted([
+            'node:btc:btc-custody-credit:TakerSellsLez', 'node:btc:btc-custody-credit:TakerSellsForeign',
+            'node:btc:btc-custody-credit-refund:TakerSellsLez',
+            'node:zec:zec-custody-credit:TakerSellsLez', 'node:zec:zec-custody-credit:TakerSellsForeign',
+            'node:zec:zec-custody-credit-refund:TakerSellsLez']))
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if '-custody-credit' in test], tier)
 
     def test_smoke_is_unchanged(self):
         self.assertEqual(self.tier('smoke'), [

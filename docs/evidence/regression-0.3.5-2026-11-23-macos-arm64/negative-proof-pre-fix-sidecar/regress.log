@@ -1,0 +1,7 @@
+[10:44:55] regression run: 1 tests at 14b05e56 (tree dirty:        0), results in <scratch>/smoke/negative-zec-kill-maker-claim
+[10:44:55] profile refund: a Bitcoin block every 2 s; Maker cutoff 100 s, refunds at 115 and 245 s
+[10:45:07]     node:zec:zec-kill-maker-claim:TakerSellsLez (try 1) starts: LEZ finalized 1219, tip 1224
+[11:03:38] === node:zec:zec-kill-maker-claim:TakerSellsLez (try 1): FAILED in 1111 s (+12 s before it); LEZ finalized 2084, tip 2092
+      [12:03:34] FAILED: timed out after 900 s waiting for the Taker's zec-devnet-s to reach completed (claim inclusion); last seen: taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_av
+[11:03:38] regression run: 0 of 1 passed in 18 min, 0 new chains, 0 profile switches,        0 frozen tries
+[11:03:38]   not passed: node:zec:zec-kill-maker-claim:TakerSellsLez

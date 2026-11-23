@@ -985,6 +985,29 @@ async fn multiple_occurrences_or_mutated_noncanonical_transaction_fails_closed()
     );
 }
 
+/// TM-0032: anyone can credit the custody, in the claim's own block too, so
+/// a claimed escrow is recognised whatever its custody holds afterwards.
+#[tokio::test]
+async fn claimed_escrow_is_recognised_with_a_credited_custody() {
+    let mut case = fixture();
+    let escrow_program = program_id_from_hex(case.runtime.escrow_program_id);
+    let custody = compute_custody_pda(&escrow_program, case.request.terms.swap_id().as_bytes());
+    case.accounts
+        .get_mut(&(custody.into_value(), 10))
+        .unwrap()
+        .balance = 1;
+    let observer = FinalizedWitnessedClaimObserver::new(
+        case.runtime.clone(),
+        indexer(&case, [Some(11), Some(11)]),
+    );
+    let result = observer.observe(&case.request).await.unwrap();
+    assert_eq!(
+        result.claim.metadata.status,
+        lez_bridge_protocol::EscrowState::Claimed
+    );
+    assert_eq!(result.claim.custody.balance.as_u128(), 1);
+}
+
 async fn assert_invalid_historical_state(fixture: Fixture) {
     let observer = FinalizedWitnessedClaimObserver::new(
         fixture.runtime.clone(),
@@ -1018,15 +1041,6 @@ async fn mutated_terminal_metadata_or_custody_fails_closed() {
 
     let mut case = fixture();
     mutate_metadata(&mut case, |metadata| metadata.status = EscrowStatus::Funded);
-    assert_invalid_historical_state(case).await;
-
-    let mut case = fixture();
-    let escrow_program = program_id_from_hex(case.runtime.escrow_program_id);
-    let custody = compute_custody_pda(&escrow_program, case.request.terms.swap_id().as_bytes());
-    case.accounts
-        .get_mut(&(custody.into_value(), 10))
-        .unwrap()
-        .balance = 1;
     assert_invalid_historical_state(case).await;
 
     let mut case = fixture();

@@ -84,9 +84,10 @@ class ImageContexts(unittest.TestCase):
                                     f'{context.name}: {source} is neither tracked nor staged')
         self.assertGreater(checked, 0)
 
-    def test_the_maker_image_admits_its_escrow_claim_probe(self):
+    def test_the_maker_image_admits_its_test_only_probes(self):
         rules = dockerignore_rules(IMAGES / 'maker-node')
         self.assertTrue(admitted(rules, 'lez-v02-escrow-claim-probe'))
+        self.assertTrue(admitted(rules, 'lez-v02-custody-credit-probe'))
         self.assertFalse(admitted(rules, 'lez-v02-bridge-poc'))
 
 

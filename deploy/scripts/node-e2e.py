@@ -62,6 +62,17 @@ scripts/zec-provision.sh --direction …, which also recreates both Nodes, then
                                          account is funded (the deferred vault claim), the
                                          next drive locks and the swap completes. Needs a
                                          chain created with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+    node-e2e.py btc-custody-credit, --pair Zcash zec-custody-credit, and each
+      one's -refund variant (TakerSellsLez): the pair's
+                                         happy (or Taker refund) scenario while a stranger
+                                         (heartbeat-echo-02) sends one LEZ unit to the
+                                         funded escrow's custody; the swap still settles
+                                         and the ending's recipient gets the lot and the
+                                         unit (TM-0032)
+    node-e2e.py --pair Zcash zec-kill-maker-claim (TakerSellsLez): the Maker killed
+                                         with its LEZ claim held in its sidecar, at its
+                                         preparation and in flight; both swaps complete
+                                         (issue #187; needs LEZ_TEST_HOOKS=1)
 
 The ZEC refund windows come from the agreement, not the timing profile. Selling
 LEZ, the refund journeys provision their corridor under
@@ -118,6 +129,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import threading
@@ -194,7 +206,8 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 # container: a native Node reaches the chains directly, with nothing to cut.
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
-                  "zec-offline-after-lock", "zec-maker-early-claim"}
+                  "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding",
+                  "zec-kill-maker-claim"}
 HEALTH = {"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
 MINER = f"{PREFIX}-btc-miner"
 # The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
@@ -378,6 +391,14 @@ def node_command(role: str, argv: list[str]) -> list[str]:
     if not NATIVE_RUN_ROOT:
         return ["docker", "exec", NODES[role][0], *argv]
     return [node_path(role, part) for part in argv]
+
+
+def node_command_stdin(role: str, argv: list[str]) -> list[str]:
+    """node_command for a command that reads the caller's stdin (`input=`):
+    `docker exec` passes stdin on only with -i, and without it the command
+    reads an empty stdin."""
+    command = node_command(role, argv)
+    return [*command[:2], "-i", *command[2:]] if not NATIVE_RUN_ROOT else command
 
 
 def node_run(role: str, *argv: str) -> None:
@@ -3796,6 +3817,39 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
             "restart_point": restart_point, "taker_schedule_after_restart": sorted(classes)}
 
 
+def lez_balances() -> dict:
+    return {role: lez_account_balance(lez_owner_account(role)) for role in ("maker", "taker")}
+
+
+def assert_lez_settled(before: dict, taker_state: str, maker_phase_end: str, surplus: dict | None = None) -> dict:
+    """A Zcash swap's LEZ leg to the unit: the lot moved when both Nodes say
+    completed, nothing moved when they say refunded. `surplus` ({role: units})
+    is what a stranger's credit to the custody adds to the ending's recipient;
+    unset, it is the running custody credit's (custody_credit_surplus), {} without one."""
+    if taker_state not in {"completed", "refunded"} or (maker_phase_end == "completed") != (taker_state == "completed"):
+        raise Failure(f"the Nodes disagree: Taker {taker_state}, Maker {maker_phase_end}")
+    # The balances are the indexer's, which serves finalized state only, while
+    # the Nodes conclude on sequencer inclusion (lez_claim_observation.rs): a
+    # claim included just before the read can still be unfinalized. Wait until
+    # LEZ is final through the sequencer's tip as of now.
+    tip = lez_rpc_number(STACK_SEQUENCER_URL, "getLastBlockId")
+    if isinstance(tip, int):
+        started = time.time()
+        wait_lez_final_through(tip, timing_profile(), "the swap's last LEZ transaction")
+        log(f"  LEZ is final through block {tip} after {time.time() - started:.0f}s")
+    else:
+        log("  the sequencer's tip is unreadable; reading the balances without waiting")
+    deltas = {role: balance - before[role] for role, balance in lez_balances().items()}
+    want = {role: amounts["lez_units"] for role, amounts in
+            expected_settlement(taker_state, REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
+    for role, units in (custody_credit_surplus(taker_state) if surplus is None else surplus).items():
+        want[role] += units
+    if deltas != want:
+        raise Failure(f"the LEZ balances moved {deltas}, a {taker_state} swap moves {want}")
+    log(f"  settled {taker_state}: LEZ moved {deltas} as both Nodes say")
+    return {"lez_before": before, "lez_deltas": deltas, "outcome": taker_state}
+
+
 def scenario_zec_survivor(stamp: str) -> dict:
     """ZEC analogue of `survivor`: the Taker Node stopped right after its Zcash
     claim was broadcast; the Maker completes alone (its follow-up observes the
@@ -4823,6 +4877,136 @@ def zec_escrow_claim_probe(label: str, onchain_swap_id: str, program_id: str, pr
     return evidence
 
 
+# zec-slow-funding: the Maker's Zcash funding held unmined in zebra's mempool.
+ZEC_SLOW_FUNDING_HOLD_SECONDS = int(os.environ.get("LEZ_ZEC_SLOW_FUNDING_HOLD_SECONDS", "75"))
+# The second-lock lookup once covered predecessor revisions 1 to 16 only, so
+# the hold must carry the Maker's journal well past revision 17.
+ZEC_SLOW_FUNDING_MIN_REVISION = 24
+# The journal grows with the Maker's drives, whose pace depends on the host
+# (24 revisions in 75 s on one host, 21 on another): past the hold the funding
+# stays unmined until the journal is past the minimum, at most this long in
+# all. Nothing is mined meanwhile, so the Zcash refund height does not come
+# nearer; the LEZ refund time is minutes further.
+ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS = 240
+
+
+def zec_mempool_spend_of(outpoint: tuple[str, int]) -> str | None:
+    """The transaction in zebra's mempool that spends `outpoint`, if any."""
+    for txid in zebra("getrawmempool") or []:
+        raw = zebra("getrawtransaction", [txid, 1])
+        if any(vin.get("txid") == outpoint[0] and int(vin.get("vout", -1)) == outpoint[1]
+               for vin in raw.get("vin") or []):
+            return txid
+    return None
+
+
+def zec_maker_active_revision(swap_id: str) -> int | None:
+    """The active revision of the Maker's ZEC recovery journal for `swap_id`
+    (zec_sdk_agreements in the Maker actor's store,
+    /var/lib/lez/zec/actors/<actor>/maker/state/actor.sqlite3, read only; the
+    Node's own maker.sqlite3 keeps the agreement at revision 0); None before
+    the Maker has accepted the agreement."""
+    reader = ("import glob,sqlite3,sys\n"
+              "ids=sorted({sys.argv[1], sys.argv[1].removeprefix('zec-'), 'zec-'+sys.argv[1].removeprefix('zec-')})\n"
+              "rows=[]\n"
+              "for p in ['/var/lib/lez/maker/maker.sqlite3']+glob.glob('/var/lib/lez/zec/actors/*/maker/state/actor.sqlite3'):\n"
+              "    c=sqlite3.connect('file:'+p+'?mode=ro',uri=True)\n"
+              "    if c.execute(\"SELECT count(*) FROM sqlite_master WHERE name='zec_sdk_agreements'\").fetchone()[0]:\n"
+              "        rows+=[r[0] for r in c.execute(\"SELECT active_revision FROM zec_sdk_agreements WHERE local_role='maker'\""
+              "\" AND swap_id IN (%s)\" % ','.join('?'*len(ids)), ids)]\n"
+              "print(max(rows) if rows else '')\n")
+    read = subprocess.run(["docker", "exec", NODES["maker"][0], "python3", "-c", reader, swap_id],
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if read.returncode != 0:
+        raise Failure(f"cannot read the Maker's ZEC journal: {read.stderr.strip()[-200:]}")
+    value = read.stdout.strip()
+    return int(value) if value else None
+
+
+def scenario_zec_slow_funding(stamp: str) -> dict:
+    """Selling LEZ, the Maker's Zcash funding confirms slowly: it is held in
+    zebra's mempool, nothing mined, for ZEC_SLOW_FUNDING_HOLD_SECONDS and on
+    until the Maker's journal is past ZEC_SLOW_FUNDING_MIN_REVISION (at most
+    ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS in all), while the Maker drives at its
+    requeue and re-observes the Taker's LEZ lock one block deeper on each
+    drive, committing a revision each time. The hold must carry the Maker's
+    journal past ZEC_SLOW_FUNDING_MIN_REVISION. Then the
+    funding is mined, and the Maker's LEZ claim must still find its second
+    lock: the Taker claims the Zcash, the Maker claims the LEZ with the
+    revealed preimage, and both Nodes complete."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-slow-funding is a selling-LEZ scenario: the Maker funds Zcash second")
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    # Nothing is mined until the Maker's funding, the spend of the provisioned
+    # outpoint, waits in the mempool (a mempool may also hold an earlier
+    # swap's transaction, which a reset leaves there).
+    wait = Wait(f"the Maker's Zcash funding of {swap_id[:12]} in zebra's mempool (nothing mined)", zec_timeout(900))
+    funding_txid = None
+    while wait.running():
+        funding_txid = zec_mempool_spend_of(outpoint)
+        if funding_txid:
+            break
+        view = taker_view(swap_id)
+        if view["state"] in TERMINAL:
+            raise Failure(f"{swap_id[:12]} ended {view['state']} before the Maker funded")
+        wait.note(view["state"], lambda: f"taker {view['state']} | maker {maker_phase(swap_id)} | "
+                                         f"Maker journal revision {zec_maker_active_revision(swap_id)}")
+        time.sleep(2)
+    else:
+        raise wait.failure()
+    start_revision = zec_maker_active_revision(swap_id)
+    log(f"  the Maker's Zcash funding {funding_txid[:12]} waits in the mempool at zebra {zebra('getblockcount')}; "
+        f"Maker journal revision {start_revision}; holding it unmined for {ZEC_SLOW_FUNDING_HOLD_SECONDS} s")
+    held = time.time()
+    samples = []
+    while time.time() - held < ZEC_SLOW_FUNDING_HOLD_SECONDS or (
+            time.time() - held < ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS
+            and (samples[-1] if samples else start_revision or 0) < ZEC_SLOW_FUNDING_MIN_REVISION):
+        time.sleep(10)
+        if funding_txid not in (zebra("getrawmempool") or []):
+            raise Failure(f"the funding {funding_txid[:12]} left the mempool during the hold although nothing was mined")
+        samples.append(zec_maker_active_revision(swap_id))
+        log(f"  [{time.time() - held:.0f} s held] Maker journal revision {samples[-1]}, taker "
+            f"{taker_view(swap_id)['state']}, maker {maker_phase(swap_id)}")
+    held_for = round(time.time() - held)
+    revision = zec_maker_active_revision(swap_id)
+    if revision is None or revision < ZEC_SLOW_FUNDING_MIN_REVISION:
+        raise Failure(f"after {held_for} s with the funding unmined the Maker's journal is at "
+                      f"revision {revision}, not past {ZEC_SLOW_FUNDING_MIN_REVISION - 1}: the hold did not reproduce "
+                      "the slow funding")
+    log(f"  the {held_for} s hold carried the Maker's journal from revision {start_revision} to {revision}; mining the funding")
+    zebra_mine(1, f"the Maker's funding {funding_txid[:12]}, after the hold")
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=1200, corridor=corridor,
+                          describe="(the funding mined after the hold)")
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    if funding is None or funding[0] != funding_txid:
+        raise Failure(f"claim_available, but the block spending the provisioned outpoint is {funding}, "
+                      f"not the held funding {funding_txid[:12]}")
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                  timeout=300)
+    log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')})")
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait_completed(swap_id, timeout=600)
+    maker_claims = zec_maker_claim_operations(swap_id, since)
+    if "lez_followup_claim" not in maker_claims:
+        raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
+                      "not its LEZ follow-up claim")
+    final_revision = zec_maker_active_revision(swap_id)
+    log(f"  the Maker claimed the LEZ after its journal passed revision {revision} "
+        f"(now {final_revision}): {maker_claims}; both Nodes completed")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "offer_id": corridor["offer_id"], "hold_seconds": held_for,
+            "maker_revision_before_hold": start_revision, "maker_revision_at_mining": revision,
+            "maker_revision_samples": samples, "maker_revision_final": final_revision,
+            "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
+            "maker_claim_operations": maker_claims}
+
+
 def scenario_zec_maker_early_claim(stamp: str) -> dict:
     """TM-0030, ADR 0216, on the devnet: selling LEZ, the Maker must not be able
     to claim the Taker's locked LEZ without funding Zcash, as release 0.3.2's
@@ -5184,8 +5368,375 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
     return {**summary, "taker_terminal_state": taker["state"]}
 
 
+# ---- zec-kill-maker-claim: the Maker killed with its LEZ claim held (issue #187) ----
+# Selling LEZ, once the Taker has claimed the Maker's Zcash (revealing the
+# preimage), the Maker's actor claims the Taker's LEZ through its ZEC sidecar:
+# it prepares the revealing claim (ClaimNative) and submits it. Two points,
+# one fresh swap each, hold that claim in the Maker's sidecar with a test hook
+# (a count of one, a devnet built with LEZ_TEST_HOOKS=1), and the Maker's
+# container is killed with SIGKILL while the hold is taken:
+#  - "claim preparation held": the preparation waits before anything of it is
+#    durable (hold-claim-preparations); the restarted Maker prepares and
+#    submits the claim afresh.
+#  - "claim submission in flight": the submission waits after the sidecar's
+#    request journal holds its in-flight marker, before its lookup and send
+#    (hold-claim-submissions). The restarted Maker asks for the same claim
+#    under the same request id; its sidecar must decide the in-flight
+#    marker on the chain again (looked up, sent once) instead of answering
+#    unknown_submission_outcome from the journal until the claim window
+#    closes, which leaves the Taker with the Zcash and, from the LEZ refund
+#    time, its LEZ back: the Maker loses both legs.
+# Each swap must complete on both Nodes with the LEZ lot paid to the Maker.
+ZEC_MAKER_STATE = "/var/lib/lez/maker"
+ZEC_SIDECAR_PROGRAM = "/usr/local/bin/lez-v02-bridge-poc"
+ZEC_CLAIM_HOLDS = (("claim preparation held", "hold-claim-preparations"),
+                   ("claim submission in flight", "hold-claim-submissions"))
+TEST_HOOK_SCRIPT = ('set -eu; mkdir -p "$1"; chmod 0700 "$1"; '
+                    'if [ -n "$3" ]; then printf "%s\\n" "$3" > "$1/$2.tmp"; mv "$1/$2.tmp" "$1/$2"; '
+                    'else rm -f "$1/$2"; fi')
+
+
+def maker_test_hook(name: str, value: str | None) -> None:
+    """Sets (`value`) or clears (None) one test hook of the Maker's sidecars,
+    read on its next use (no restart)."""
+    node_run("maker", "sh", "-c", TEST_HOOK_SCRIPT, "hook", f"{ZEC_MAKER_STATE}/test-hooks", name, value or "")
+    log(f"  maker test hook {name}: {value if value is not None else 'cleared'}")
+
+
+def maker_test_hook_value(name: str) -> str | None:
+    """What one test hook of the Maker holds now, None when it is unset."""
+    result = subprocess.run(node_command("maker", ["cat", f"{ZEC_MAKER_STATE}/test-hooks/{name}"]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def require_sidecar_test_hooks(hook: str) -> None:
+    """Fails the scenario at once, before any swap, unless the Maker's sidecar
+    was built with the devnet test hooks (from-scratch.sh with
+    LEZ_TEST_HOOKS=1): without them a hook file is ignored and nothing is
+    held."""
+    result = subprocess.run(node_command("maker", ["grep", "-qa", hook, ZEC_SIDECAR_PROGRAM]),
+                            capture_output=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"the Maker's {ZEC_SIDECAR_PROGRAM.rsplit('/', 1)[-1]} has no devnet test hooks: this scenario "
+                      "needs the devnet built with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh)")
+
+
+def kill_node(role: str) -> dict:
+    """The role's container killed with SIGKILL, not stopped: the Node and its
+    sidecars go down together, none of them given a chance to clean up.
+    Asserts the container exited by the signal (exit code 137, not killed for
+    memory), then starts it again."""
+    container, _ = NODES[role]
+    log(f"  killing {container} with SIGKILL")
+    docker("kill", "--signal", "KILL", container)
+    state = json.loads(subprocess.run(["docker", "inspect", container, "--format", "{{json .State}}"],
+                                      capture_output=True, text=True, check=True).stdout)
+    if state.get("Running") or state.get("ExitCode") != 137 or state.get("OOMKilled"):
+        raise Failure(f"{container} did not exit by SIGKILL: running {state.get('Running')}, exit code "
+                      f"{state.get('ExitCode')}, OOMKilled {state.get('OOMKilled')}")
+    log(f"  {container} exited by SIGKILL (exit code 137, not OOM-killed); starting it again")
+    docker("start", container)
+    wait_healthy(role)
+    return {"container": container, "exit_code": state["ExitCode"], "oom_killed": state["OOMKilled"],
+            "finished_at": state.get("FinishedAt")}
+
+
+def zec_kill_maker_claim_point(stamp: str, point: str, hook: str) -> dict:
+    """One fresh swap: the Maker's LEZ claim held at `hook`, the Maker killed
+    while it is held, the swap carried to completed on both Nodes."""
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    before = lez_balances()
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                          describe=zec_flow())
+    maker_test_hook(hook, "1")
+    try:
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                       "swap_id": swap_id,
+                                                       "expected_generation": view["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')}); the Maker's LEZ claim "
+            f"is to wait in its sidecar's {hook}")
+        wait = Wait(f"the Maker's sidecar to take the hold {hook} on {swap_id[:12]}", 900)
+        while wait.running():
+            if maker_test_hook_value(hook) == "0":
+                break
+            if maker_phase(swap_id) == "completed":
+                raise Failure(f"the Maker completed {swap_id[:12]} with {hook} set: its LEZ claim was never held")
+            wait.note(maker_phase(swap_id), lambda: f"maker {maker_phase(swap_id)}, hook {maker_test_hook_value(hook)}")
+            time.sleep(3)
+        else:
+            raise wait.failure()
+        at = {"point": point, "hook": hook, "taker_state": taker_view(swap_id)["state"],
+              "maker_phase": maker_phase(swap_id)}
+        log(f"  kill point '{point}': the Maker's LEZ claim waits in its sidecar; taker {at['taker_state']}, "
+            f"maker {at['maker_phase']}")
+        killed = kill_node("maker")
+    finally:
+        maker_test_hook(hook, None)
+    # The Taker holds the Zcash; the restarted Maker must claim the LEZ.
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait = Wait(f"the restarted Maker to claim the LEZ of {swap_id[:12]} and complete", 900)
+    while wait.running():
+        view = maker_view(swap_id)
+        phase = maker_phase(swap_id)
+        if view.get("schedule_state") == "terminal":
+            break
+        wait.note((phase, view.get("schedule_state")), f"maker {phase} (schedule {view.get('schedule_state')})")
+        time.sleep(5)
+    else:
+        raise wait.failure()
+    if maker_phase(swap_id) != "completed":
+        raise Failure(f"after the kill at '{point}' the Maker ended {swap_id[:12]} {maker_phase(swap_id)}, "
+                      "not completed: its LEZ claim was never sent again")
+    wait_completed(swap_id, timeout=300)
+    maker_claims = zec_maker_claim_operations(swap_id, since)
+    if "lez_followup_claim" not in maker_claims:
+        raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
+                      "not its LEZ follow-up claim")
+    settled = assert_lez_settled(before, taker_view(swap_id)["state"], maker_phase(swap_id))
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "kill": {**at, **killed}, "maker_claim_operations": maker_claims, **settled}
+
+
+def scenario_zec_kill_maker_claim(stamp: str) -> dict:
+    """Issue #187 on the devnet: the Maker killed at each of ZEC_CLAIM_HOLDS
+    while its LEZ follow-up claim is held in its sidecar, one fresh swap per
+    point (zec_kill_maker_claim_point)."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-kill-maker-claim is a selling-LEZ scenario: the Maker claims the Taker's LEZ last")
+    for _, hook in ZEC_CLAIM_HOLDS:
+        require_sidecar_test_hooks(hook)
+    # A hold an earlier run could not clear would park this run's claims.
+    for _, hook in ZEC_CLAIM_HOLDS:
+        maker_test_hook(hook, None)
+    walked = [zec_kill_maker_claim_point(f"{stamp}k{index}", point, hook)
+              for index, (point, hook) in enumerate(ZEC_CLAIM_HOLDS)]
+    log("  the Maker killed at " + "; ".join(f"{w['kill']['point']} → completed" for w in walked))
+    return {"points": walked}
+
+
+# ---- a stranger's credit to a funded escrow's custody (TM-0032) -------------------
+# LEZ lets anyone raise the balance of any initialised account, so a third
+# party can send LEZ to the custody account of a funded swap whenever it
+# likes. The *-custody-credit scenarios run a pair's own scenario unchanged
+# while the test-only probe (compat/lez-v0_2-sidecar/src/bin/
+# lez-v02-custody-credit-probe.rs, carried by the devnet Maker image) waits in
+# the Maker's container for the swap's escrow to be funded and then credits
+# its custody from the heartbeat's recipient account (heartbeat-echo-02: funded
+# at genesis, only ever paid to, held by neither party). The swap must still
+# settle, and the ending's recipient gets the lot and the credit: the claimant
+# on a claim, the depositor on a refund. assert_lez_settled allows exactly that
+# surplus, to exactly that party, while a credit is recorded.
+CUSTODY_CREDIT_PROBE = "/usr/local/bin/lez-v02-custody-credit-probe"
+CUSTODY_CREDIT_UNITS = 1
+CUSTODY_CREDIT_WALLET = "heartbeat-echo-02"
+# Where the probe's key is written inside the Maker's container (owner-only,
+# the Node's run directory) for the length of the probe.
+CUSTODY_CREDIT_KEY = "/run/lez/maker/custody-credit-probe.key"
+CUSTODY_CREDIT: dict = {}  # the running credit: depositor role, units, thread, evidence, error
+
+
+def escrow_program_id() -> str:
+    """The pinned escrow program the stack deployed: LEZ_ESCROW_PROGRAM_ID as
+    start.sh exports it, else the provisional verifier's pin, as start.sh reads it."""
+    pinned = os.environ.get("LEZ_ESCROW_PROGRAM_ID", "")
+    if not pinned:
+        verifier = (DEPLOY_ROOT.parent / "scripts" / "verify-lez-v02-provisional.sh").read_text()
+        found = re.search(r'^\s*expected_image_id="([0-9a-f]{64})"', verifier, re.MULTILINE)
+        pinned = found.group(1) if found else ""
+    if not re.fullmatch(r"[0-9a-f]{64}", pinned):
+        raise Failure("no pinned escrow program id (LEZ_ESCROW_PROGRAM_ID or scripts/verify-lez-v02-provisional.sh)")
+    return pinned
+
+
+def custody_credit_key() -> bytes:
+    """The stranger's key: the heartbeat recipient's, from the market root."""
+    market_root = next((line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                        if line.startswith("LEZ_MARKET_ROOT=")), "")
+    path = pathlib.Path(market_root) / "identities" / CUSTODY_CREDIT_WALLET / "lez-signer.key"
+    if not market_root or not path.is_file():
+        raise Failure(f"no key for the stranger's account {CUSTODY_CREDIT_WALLET} under the market root ({path})")
+    return path.read_bytes()
+
+
+def custody_credit_depositor() -> str:
+    """The role whose LEZ the swap's escrow holds: the Taker when it sells LEZ."""
+    return "taker" if REVERSE else "maker"
+
+
+def parse_custody_credit_evidence(returncode: int, stdout: str, units: int) -> dict:
+    """The probe's evidence line, checked: the credit landed (custody up by
+    exactly `units`, escrow still Funded) and was sent by a non-party."""
+    if not stdout.strip():
+        raise Failure(f"the custody credit probe gave no evidence: exit {returncode}")
+    evidence = json.loads(stdout.strip().splitlines()[-1])
+    if evidence.get("schema") != "lez_v02_custody_credit_probe_v1" or evidence.get("test_only") is not True:
+        raise Failure(f"the custody credit probe's evidence has another schema: {str(evidence)[:200]}")
+    before, after = evidence["before"], evidence["after"]
+    if returncode == 3 or not evidence["credit_landed"]:
+        raise Failure(f"the stranger's credit did not land: sequencer {evidence['submission']['decision']}, custody "
+                      f"{before['custody_balance']} → {after['custody_balance']}, escrow {before['status']} → "
+                      f"{after['status']}")
+    if returncode != 0:
+        raise Failure(f"the custody credit probe failed: exit {returncode}")
+    if evidence["credit_amount"] != units or after["custody_balance"] != before["custody_balance"] + units:
+        raise Failure(f"the probe credited {evidence['credit_amount']} units, custody "
+                      f"{before['custody_balance']} → {after['custody_balance']}; {units} expected")
+    if evidence["sender_is_party"]:
+        raise Failure("the probe's key is a party of the swap: the credit is not a stranger's")
+    if before["custody_balance"] < evidence["escrow_amount"]:
+        raise Failure(f"the escrow was not funded when credited: custody {before['custody_balance']}, "
+                      f"lot {evidence['escrow_amount']}")
+    return evidence
+
+
+def custody_credit_probe_container() -> list[str]:
+    """`docker run` of a throwaway container from the Maker's image in the
+    stack sequencer's network namespace (the probe takes only a literal-loopback
+    sequencer URL), reading the key on stdin. Not the Maker's own container:
+    the refund scenarios stop the Maker Node while the probe waits, and a
+    stopped container kills what runs in it."""
+    image = subprocess.run(["docker", "inspect", "--format", "{{.Config.Image}}", NODES["maker"][0]],
+                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL).stdout.strip()
+    if not image:
+        raise Failure(f"cannot read the image of {NODES['maker'][0]}")
+    sequencer = f"{os.environ.get('LEZ_STACK_PREFIX', 'lez')}-sequencer"
+    return ["docker", "run", "--rm", "-i", "--name", f"{PREFIX}-custody-credit-probe",
+            "--network", f"container:{sequencer}", "--user", "4713:4713", "--entrypoint", "sh", image, "-c",
+            f'umask 077 && cat > {CUSTODY_CREDIT_CONTAINER_KEY} && exec "$@"', "probe"]
+
+
+# The key's path in the throwaway probe container (custody_credit_probe_container).
+CUSTODY_CREDIT_CONTAINER_KEY = "/tmp/custody-credit-probe.key"
+
+
+def run_custody_credit_probe(depositor: str, units: int, timeout: int) -> dict:
+    """Runs the probe (it waits until the depositor's new escrow is Funded,
+    then credits its custody) with the stranger's key: in a throwaway
+    container from the Maker's image, which gets the key on stdin
+    (custody_credit_probe_container), or beside a native Maker Node with the
+    key written into its run directory and removed again."""
+    native = bool(NATIVE_RUN_ROOT)
+    key_file = CUSTODY_CREDIT_KEY if native else CUSTODY_CREDIT_CONTAINER_KEY
+    argv = [CUSTODY_CREDIT_PROBE, "--sequencer-url", "http://127.0.0.1:3040/",
+            "--escrow-program-id", escrow_program_id(), "--depositor", lez_owner_account(depositor),
+            "--private-key-file", key_file, "--amount", str(units),
+            "--wait-funded-seconds", str(timeout), "--observe-seconds", "60"]
+    log(f"  custody credit: waiting for the {depositor}'s escrow to be funded, then {units} unit(s) from "
+        f"{CUSTODY_CREDIT_WALLET}: {' '.join(argv)}")
+    if not native:
+        container = custody_credit_probe_container()
+        remove = ["docker", "rm", "-f", f"{PREFIX}-custody-credit-probe"]
+        subprocess.run(remove, capture_output=True, check=False, stdin=subprocess.DEVNULL, timeout=60)
+        try:
+            result = subprocess.run([*container, *argv], input=custody_credit_key().decode(), capture_output=True,
+                                    text=True, check=False, timeout=timeout + 300)
+        finally:
+            # a probe whose client timed out keeps running in its container
+            subprocess.run(remove, capture_output=True, check=False, stdin=subprocess.DEVNULL, timeout=60)
+    else:
+        install = subprocess.run(node_command_stdin("maker", ["sh", "-c", f"umask 077 && cat > {key_file}"]),
+                                 input=custody_credit_key(), capture_output=True, check=False, timeout=60)
+        if install.returncode != 0:
+            raise Failure(f"could not write the stranger's key beside the Maker Node: {install.stderr[-200:]!r}")
+        try:
+            result = subprocess.run(node_command("maker", argv), capture_output=True, text=True, check=False,
+                                    stdin=subprocess.DEVNULL, timeout=timeout + 300)
+        finally:
+            subprocess.run(node_command("maker", ["rm", "-f", key_file]), capture_output=True, check=False,
+                           stdin=subprocess.DEVNULL, timeout=60)
+    for line in result.stderr.strip().splitlines():
+        log(f"    probe stderr: {line}")
+    evidence = parse_custody_credit_evidence(result.returncode, result.stdout, units)
+    log(f"  custody credit: {units} unit(s) to {evidence['custody_account'][:12]}… in block "
+        f"{evidence['included_in_block']}; custody {evidence['before']['custody_balance']} → "
+        f"{evidence['after']['custody_balance']} (lot {evidence['escrow_amount']}), escrow {evidence['after']['status']}")
+    return evidence
+
+
+def start_custody_credit(units: int = CUSTODY_CREDIT_UNITS, timeout: int = 3600) -> None:
+    """Starts the probe beside the scenario, before its take, so it sees the
+    swap's escrow transactions as they come."""
+    depositor = custody_credit_depositor()
+    CUSTODY_CREDIT.clear()
+    CUSTODY_CREDIT.update({"depositor": depositor, "units": units, "evidence": None, "error": None})
+
+    def credit() -> None:
+        try:
+            CUSTODY_CREDIT["evidence"] = run_custody_credit_probe(depositor, units, timeout)
+        except Exception as error:  # reported by custody_credit_evidence
+            CUSTODY_CREDIT["error"] = error
+
+    CUSTODY_CREDIT["thread"] = threading.Thread(target=credit, name="custody-credit", daemon=True)
+    CUSTODY_CREDIT["thread"].start()
+
+
+def custody_credit_evidence() -> dict | None:
+    """The running credit's evidence once the probe is done; None when no
+    scenario credits. A credit that failed fails the scenario."""
+    if not CUSTODY_CREDIT:
+        return None
+    CUSTODY_CREDIT["thread"].join()
+    if CUSTODY_CREDIT["error"] is not None:
+        raise Failure(f"the stranger's custody credit failed: {CUSTODY_CREDIT['error']}")
+    return CUSTODY_CREDIT["evidence"]
+
+
+def custody_credit_surplus(outcome: str) -> dict:
+    """{role: units} the recorded credit adds to a `outcome` swap's LEZ
+    deltas: the claimant's on a completed swap, the depositor's on a refunded
+    one; {} when no credit is recorded."""
+    if custody_credit_evidence() is None:
+        return {}
+    depositor = CUSTODY_CREDIT["depositor"]
+    recipient = depositor if outcome == "refunded" else ("maker" if depositor == "taker" else "taker")
+    return {recipient: CUSTODY_CREDIT["units"]}
+
+
+def with_custody_credit(scenario, refund: bool):
+    """`scenario` with a stranger's credit to the swap's custody once its
+    escrow is funded; the swap must still end completed (or, with `refund`,
+    refunded), and the ending's recipient must get the lot and the credit."""
+    def run_credited(stamp: str) -> dict:
+        if refund and not REVERSE:
+            raise Failure("a custody-credit refund scenario refunds the Taker's LEZ: run it with --direction TakerSellsLez")
+        before = lez_balances()
+        start_custody_credit()
+        try:
+            result = scenario(stamp)
+            evidence = custody_credit_evidence()
+            swap_id = result["swap_id"]
+            taker_state = taker_view(swap_id).get("state")
+            want = "refunded" if refund else "completed"
+            if taker_state != want:
+                raise Failure(f"the credited swap ended {taker_state} on the Taker, {want} expected")
+            lez = assert_lez_settled(before, taker_state, maker_phase(swap_id))
+        finally:
+            CUSTODY_CREDIT.clear()
+        return {**result, "custody_credit": evidence, "custody_credit_lez": lez}
+    return run_credited
+
+
+CUSTODY_CREDIT_SCENARIOS = {
+    "SCENARIOS": {
+        "btc-custody-credit": with_custody_credit(scenario_happy, refund=False),
+        "btc-custody-credit-refund": with_custody_credit(scenario_taker_refund, refund=True),
+    },
+    "ZEC_SCENARIOS": {
+        "zec-custody-credit": with_custody_credit(scenario_zec_happy, refund=False),
+        "zec-custody-credit-refund": with_custody_credit(scenario_zec_taker_refund, refund=True),
+    },
+}
+
+
 ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
+    "zec-slow-funding": scenario_zec_slow_funding,
+    "zec-kill-maker-claim": scenario_zec_kill_maker_claim,
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,
@@ -5224,6 +5775,10 @@ SCENARIOS = {
     "regenerated-config": scenario_regenerated_config,
     "tampered-config": scenario_tampered_config,
 }
+
+# The custody-credit scenarios (TM-0032), defined with their helpers above.
+SCENARIOS.update(CUSTODY_CREDIT_SCENARIOS["SCENARIOS"])
+ZEC_SCENARIOS.update(CUSTODY_CREDIT_SCENARIOS["ZEC_SCENARIOS"])
 
 
 def heartbeat_status() -> dict | None:

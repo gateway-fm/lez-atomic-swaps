@@ -53,6 +53,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # A release build: from-scratch.sh refuses to build the devnet's test hooks
+  # under it, and the sidecar does not compile them with it
+  # (deploy/tests/test_release_workflow.py, NoTestHooksInARelease).
+  LEZ_RELEASE_BUILD: "1"
   LEZ_IMAGE_PREFIX: ghcr.io/${{ github.repository }}/lez
   LEZ_WORKSPACE: ${{ github.workspace }}/../lez-ws
 
@@ -143,7 +147,7 @@ jobs:
           cp deploy/images/taker-node/zec-local-poc-* _out/images/taker-node/
           # source-tree.txt: the sidecar tree it was built from, which the stage
           # phase compares with the checkout's before it stages the sidecar.
-          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-escrow-claim-probe,lez-v02-local-actor-identity,source-commit.txt,source-tree.txt} _out/sidecar/
+          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-escrow-claim-probe,lez-v02-custody-credit-probe,lez-v02-local-actor-identity,source-commit.txt,source-tree.txt} _out/sidecar/
           du -sh _out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

@@ -576,8 +576,11 @@ pub(crate) fn custody_matches(
     agreement: &ZecAgreementV1,
     custody_account: &[u8; 32],
     custody: LezCustodySnapshotV1,
-    expected_balance: u128,
+    minimum_balance: u128,
 ) -> bool {
+    // At least: anyone can credit the custody (TM-0032), and an ending pays
+    // out the whole balance, so neither a funded nor a settled custody is
+    // bound to an exact value.
     let terms = agreement.lez_terms();
     custody_account == terms.custody_account()
         && match (terms.asset(), custody) {
@@ -589,7 +592,7 @@ pub(crate) fn custody_matches(
                     program_owner,
                     balance,
                 },
-            ) => program_owner == *authenticated_transfer_program_id && balance == expected_balance,
+            ) => program_owner == *authenticated_transfer_program_id && balance >= minimum_balance,
             (
                 LezAssetV1::FungibleToken {
                     definition_account,
@@ -604,7 +607,7 @@ pub(crate) fn custody_matches(
             ) => {
                 program_owner == *token_program_id
                     && definition == *definition_account
-                    && balance == expected_balance
+                    && balance >= minimum_balance
             }
             _ => false,
         }

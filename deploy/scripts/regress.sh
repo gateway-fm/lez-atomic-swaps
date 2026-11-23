@@ -97,7 +97,15 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-claim-collision:TakerSellsForeign"
       # selling LEZ only: the Maker's claim on the Taker's LEZ with what it holds (TM-0030)
       echo "node:zec:zec-maker-early-claim:TakerSellsLez"
+      # selling LEZ only: the Maker's Zcash funding held unmined while its journal grows past 17 revisions
+      echo "node:zec:zec-slow-funding:TakerSellsLez"
+      # selling LEZ only: the Maker killed with its LEZ claim held in its sidecar (a devnet built with LEZ_TEST_HOOKS=1)
+      echo "node:zec:zec-kill-maker-claim:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
+      # a stranger's credit to a funded escrow's custody (TM-0032): the swap still settles,
+      # the ending's recipient gets the lot and the credit; refunds refund the Taker's LEZ
+      for d in "${directions[@]}"; do echo "node:btc:btc-custody-credit:$d"; echo "node:zec:zec-custody-credit:$d"; done
+      echo "node:btc:btc-custody-credit-refund:TakerSellsLez"; echo "node:zec:zec-custody-credit-refund:TakerSellsLez"
       # last: each makes its own chain, one no other test can run on
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
     *) echo "unknown tier: $1 (smoke, refunds, full)" >&2; return 64 ;;
@@ -206,7 +214,7 @@ profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile t
   local kind pair scenario direction
   IFS=: read -r kind pair scenario direction <<<"$1"
   [[ "$pair" == btc ]] || return 0
-  case "$scenario" in taker-refund|maker-refund|refund-then-maker-lock) echo refund ;; *) echo fast ;; esac
+  case "$scenario" in taker-refund|maker-refund|refund-then-maker-lock|btc-custody-credit-refund) echo refund ;; *) echo fast ;; esac
 }
 switches=0
 use_profile() { # use_profile <profile>: switch the standing stack to it unless it runs on it already
@@ -306,6 +314,8 @@ expected_seconds() { # expected_seconds <test>
   if [[ -z "$seconds" ]]; then
     case "$1" in
       *late-claim-unmined*) seconds=1800 ;;
+      # two swaps, the Maker killed and started again in each
+      *zec-kill-maker-claim*) seconds=700 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;
       *) seconds=250 ;;

@@ -1,0 +1,36 @@
+[13:35:46] === zec-offline-after-lock (stamp 179543734602)
+[13:35:46] preflight: indexer historical reads
+[13:35:46]   indexer serves historical reads at the tip (3906)
+[13:35:46] preflight: LEZ finality check waived by request
+[13:35:46]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[13:36:09]       taker: taker ZEC corridor zec-devnet-179543734602: sidecar listening on 127.0.0.1:19902
+[13:36:09]       taker: taker: 1 prepared ZEC entries configured
+[13:36:09]     [zec-provision 12:36:09]   maker sidecar answers on 127.0.0.1:19901
+[13:36:09]     [zec-provision 12:36:09]   taker sidecar answers on 127.0.0.1:19902
+[13:36:09]       maker_health: ready=True degraded=False
+[13:36:09]     [zec-provision 12:36:09]   Taker lists zec-devnet-offer-179543734602 ; corridor zec-devnet-179543734602 is live
+[13:36:09]   corridor zec-devnet-179543734602 entry 0 (deterministic-local-devnet-v7): offer zec-devnet-offer-179543734602, zebra tip 302, Zcash refund height 319
+[13:36:10]   Taker took zec-devnet-offer-179543734602: swap zec-devnet-s (not_activated)
+[13:36:10]   receipt: swap zec-devnet-swap-179543734602, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179543734602/actor/taker/actor-config.json
+[13:36:10]   [0 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the first lock confirmed): taker not_activated | actor at - | maker leased | zebra 302 | LEZ finalized 3913, tip 3917 (4 unfinalized) [heartbeat]
+[13:36:13]   [3 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the first lock confirmed): taker awaiting_first_lock | actor at offered | maker leased | zebra 302 | LEZ finalized 3913, tip 3917 (4 unfinalized) [heartbeat]
+[13:36:29]   [19 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the first lock confirmed): taker refund_available | actor at taker_lock_confirmed | maker offered | zebra 302 | LEZ finalized 3927, tip 3933 (6 unfinalized) [heartbeat]
+[13:36:29]   cutting Logos Chat and Delivery, with the first lock confirmed
+[13:36:29]   the Taker's side (uid 4713) is refused: connect EACCES, list Delivery EACCES, 0 descriptors into it
+[13:36:30]   both Nodes report chat and delivery unavailable, and degraded; the Maker holds no Chat connection
+[13:36:30]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 302 | LEZ finalized 3927, tip 3933 (6 unfinalized) [heartbeat]
+[13:36:30]   zebra at 302: not mining, the Maker's Zcash funding is not out yet
+[13:36:40]   zebra: mined 1 block(s) → height 303 (mempool had ['f2263c0ab9fd'])
+[13:36:43]   [13 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker taker_lock_confirmed | zebra 303 | LEZ finalized 3946, tip 3950 (4 unfinalized) [heartbeat]
+[13:36:43]   zebra: mined 1 block(s) → height 304 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[13:36:43]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[13:36:43]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker taker_lock_confirmed | zebra 304 | LEZ finalized 3946, tip 3950 (4 unfinalized) [heartbeat]
+[13:36:43]   zebra: mined 1 block(s) → height 305 (mempool had ['5351bb7b2b59'])
+[13:36:50]   [7 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 305 | LEZ finalized 3946, tip 3950 (4 unfinalized) [heartbeat]
+[13:37:00]   [16 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 305 | LEZ finalized 3946, tip 3950 (4 unfinalized) [heartbeat]
+[13:37:00]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 3946, tip 3950 (4 unfinalized) [heartbeat]
+[13:37:00]   both Nodes report zec-devnet-s completed
+[13:37:01]   the cut held: 14 samples of the Maker's Chat socket, none with a connection; the Taker's side still refused
+[13:37:01]   the swap completed with both off-chain dependencies cut
+[13:37:01]   both dependencies are back and neither Node is degraded
+[13:37:01] === zec-offline-after-lock: passed in 75s

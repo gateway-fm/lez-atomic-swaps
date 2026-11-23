@@ -1,0 +1,25 @@
+[14:13:43] === taker-refund (stamp 1795439623)
+[14:13:43] preflight: indexer historical reads
+[14:13:44]   indexer serves historical reads at the tip (5568)
+[14:13:44] preflight: LEZ finality check waived by request
+[14:13:44]   Maker published offer-e2e-1795439623
+[14:13:45]   Taker took offer-e2e-1795439623: swap aaf15402f169 (not_activated)
+[14:13:45]   stopping the Maker Node so it never locks Bitcoin
+[14:13:46]   Taker locked lez: 3a6bbb29dcb2 (replay=False)
+[14:13:46]   mined 124 blocks past the lock; the Maker cutoff is 100s after the take, the Taker's refund opens 245s after it
+[14:13:47]   [0 s] waiting for the Taker's refund of aaf15402f169 to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 5566, tip 5571 (5 unfinalized) [heartbeat]
+[14:13:47]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[14:13:58]   [11 s] waiting for the Taker's refund of aaf15402f169 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 5566, tip 5571 (5 unfinalized) [heartbeat]
+[14:14:40]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[14:15:00]   [73 s] waiting for the Taker's refund of aaf15402f169 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 5614, tip 5618 (4 unfinalized) [heartbeat]
+[14:15:31]   refund request admitted (attempt 11, state awaiting_second_lock)
+[14:15:42]   [115 s] waiting for the Taker's refund of aaf15402f169 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 5644, tip 5652 (8 unfinalized) [heartbeat]
+[14:16:26]   refund request replayed (attempt 16, state refund_in_progress)
+[14:16:47]   [180 s] waiting for the Taker's refund of aaf15402f169 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 5696, tip 5701 (5 unfinalized) [heartbeat]
+[14:17:20]   refund request replayed (attempt 21, state refund_in_progress)
+[14:17:53]   [246 s] waiting for the Taker's refund of aaf15402f169 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 5743, tip 5749 (6 unfinalized) [heartbeat]
+[14:18:16]   Taker refunded; Taker Node balances {'btc_trusted_sat': 524999967200, 'lez_units': 1850001} → {'btc_trusted_sat': 524999967200, 'lez_units': 1850001}
+[14:18:29]   [0 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker offered (schedule backoff) | LEZ finalized 5777, tip 5781 (4 unfinalized) [heartbeat]
+[14:18:34]   [5 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker offered (schedule leased) | LEZ finalized 5777, tip 5781 (4 unfinalized) [heartbeat]
+[14:18:45]   Maker reconciled to refunded
+[14:18:45] === taker-refund: passed in 302s

@@ -529,6 +529,67 @@ def probe_evidence(**changes):
     return evidence
 
 
+class ZecSlowFunding(unittest.TestCase):
+    """zec-slow-funding: what can be checked without a stack."""
+
+    def test_it_is_registered_refused_natively_and_holds_past_the_old_scan(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-slow-funding'], e2e.scenario_zec_slow_funding)
+        self.assertIn('zec-slow-funding', e2e.NATIVE_REFUSED)
+        # the second lock was once looked for at predecessor revisions 1 to 16
+        self.assertGreater(e2e.ZEC_SLOW_FUNDING_MIN_REVISION, 17)
+        self.assertGreaterEqual(e2e.ZEC_SLOW_FUNDING_HOLD_SECONDS, 60)
+        self.assertLessEqual(e2e.ZEC_SLOW_FUNDING_HOLD_SECONDS, 90)
+        # held further only while the journal is short of the minimum, and not for good
+        self.assertGreater(e2e.ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS, e2e.ZEC_SLOW_FUNDING_HOLD_SECONDS)
+        self.assertLessEqual(e2e.ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS, 300)
+
+    def test_selling_zec_is_refused_before_anything_runs(self):
+        with patch.object(e2e, 'zec_taker_sells_lez', lambda: False),                 patch.object(e2e, 'zec_provision', lambda *a, **k: self.fail('nothing may be provisioned')):
+            with self.assertRaisesRegex(e2e.Failure, 'selling-LEZ'):
+                e2e.scenario_zec_slow_funding('1700000000')
+
+
+class ZecKillMakerClaim(unittest.TestCase):
+    """zec-kill-maker-claim (issue #187): what can be checked without a stack."""
+
+    def test_it_is_registered_refused_natively_and_holds_both_claim_points(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-kill-maker-claim'], e2e.scenario_zec_kill_maker_claim)
+        self.assertIn('zec-kill-maker-claim', e2e.NATIVE_REFUSED)
+        self.assertEqual([hook for _, hook in e2e.ZEC_CLAIM_HOLDS],
+                         ['hold-claim-preparations', 'hold-claim-submissions'])
+        runtime = (REPO / 'compat/lez-v0_2-sidecar/src/bridge_runtime.rs').read_text()
+        for _, hook in e2e.ZEC_CLAIM_HOLDS:
+            self.assertIn(f'crate::test_hooks::take("{hook}")', runtime)
+
+    def test_selling_zec_is_refused_before_anything_runs(self):
+        with patch.object(e2e, 'zec_taker_sells_lez', lambda: False), \
+                patch.object(e2e, 'require_sidecar_test_hooks', lambda *_: self.fail('nothing may be checked')):
+            with self.assertRaisesRegex(e2e.Failure, 'selling-LEZ'):
+                e2e.scenario_zec_kill_maker_claim('1700000000')
+
+    def test_a_sidecar_without_the_hooks_fails_at_once_naming_the_build(self):
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), \
+                patch.object(e2e.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 1, b'', b'')):
+            with self.assertRaisesRegex(e2e.Failure, 'LEZ_TEST_HOOKS=1'):
+                e2e.require_sidecar_test_hooks('hold-claim-submissions')
+
+    def test_a_hook_is_written_whole_in_the_makers_state_and_cleared(self):
+        with tempfile.TemporaryDirectory() as root:
+            hooks = f'{root}/test-hooks'
+            for value in ('1', ''):
+                subprocess.run(['sh', '-c', e2e.TEST_HOOK_SCRIPT, 'hook', hooks, 'hold-claim-submissions', value],
+                               check=True)
+                path = pathlib.Path(hooks, 'hold-claim-submissions')
+                self.assertEqual(path.read_text() if path.exists() else None, '1\n' if value else None)
+            self.assertEqual(os.stat(hooks).st_mode & 0o777, 0o700)
+        self.assertEqual(e2e.ZEC_MAKER_STATE, '/var/lib/lez/maker')
+        entrypoint = (REPO / 'modules/lez-role-node/node-entrypoint.sh').read_text()
+        self.assertIn('export LEZ_TEST_HOOKS_DIR="$state/test-hooks"', entrypoint)
+        # before the ZEC sidecars start, which read it
+        self.assertLess(entrypoint.index('export LEZ_TEST_HOOKS_DIR'),
+                        entrypoint.index('node_helper "$bin/lez-v02-bridge-poc"'))
+
+
 class MakerEarlyClaim(unittest.TestCase):
     """zec-maker-early-claim (TM-0030): what can be checked without a stack."""
 
@@ -648,6 +709,196 @@ class MakerEarlyClaim(unittest.TestCase):
         self.assertIn(PROBE, (REPO / '.github/workflows/release-images.yml').read_text())
         for packager in ('package-role-node.sh', 'package-role-node-darwin.sh'):
             self.assertNotIn(PROBE, (SCRIPTS / packager).read_text())
+
+
+CREDIT_PROBE = 'lez-v02-custody-credit-probe'
+
+
+def credit_evidence(**changes):
+    before = {'sequencer_tip': 10, 'status': 'Funded', 'custody_balance': 1_000, 'sender_balance': 100_000}
+    after = {'sequencer_tip': 12, 'status': 'Funded', 'custody_balance': 1_001, 'sender_balance': 99_999}
+    evidence = {'schema': 'lez_v02_custody_credit_probe_v1', 'test_only': True, 'custody_account': 'cc' * 32,
+                'escrow_amount': 1_000, 'credit_amount': 1, 'sender_is_party': False, 'credit_landed': True,
+                'included': True, 'included_in_block': 12, 'transaction_id': 'ee' * 32,
+                'submission': {'decision': 'accepted', 'error_code': None, 'error_message': None},
+                'before': before, 'after': after}
+    evidence.update(changes)
+    return evidence
+
+
+class CustodyCredit(unittest.TestCase):
+    """The *-custody-credit scenarios (TM-0032): what can be checked without a stack."""
+
+    def tearDown(self):
+        e2e.CUSTODY_CREDIT.clear()
+
+    def record(self, depositor, units=1, evidence=None, error=None):
+        done = unittest.mock.Mock()
+        e2e.CUSTODY_CREDIT.update({'depositor': depositor, 'units': units, 'thread': done,
+                                   'evidence': credit_evidence() if evidence is None else evidence, 'error': error})
+
+    def test_four_scenarios_are_registered_with_their_pair(self):
+        self.assertEqual(sorted(name for name in e2e.SCENARIOS if 'custody-credit' in name),
+                         ['btc-custody-credit', 'btc-custody-credit-refund'])
+        self.assertEqual(sorted(name for name in e2e.ZEC_SCENARIOS if 'custody-credit' in name),
+                         ['zec-custody-credit', 'zec-custody-credit-refund'])
+
+    def test_the_evidence_of_a_landed_stranger_credit_is_accepted(self):
+        evidence = e2e.parse_custody_credit_evidence(0, json.dumps(credit_evidence()) + '\n', 1)
+        self.assertEqual(evidence['after']['custody_balance'], 1_001)
+
+    def test_a_credit_that_did_not_land_or_was_not_a_strangers_fails(self):
+        cases = [
+            (3, credit_evidence(credit_landed=False), 'did not land'),
+            (1, credit_evidence(), 'probe failed'),
+            (0, credit_evidence(credit_amount=2), 'expected'),
+            (0, credit_evidence(sender_is_party=True), 'not a stranger'),
+            (0, credit_evidence(before={'sequencer_tip': 1, 'status': 'Funded', 'custody_balance': 999,
+                                        'sender_balance': 5},
+                                after={'sequencer_tip': 2, 'status': 'Funded', 'custody_balance': 1_000,
+                                       'sender_balance': 4}), 'not funded'),
+            (0, credit_evidence(schema='lez_v02_escrow_claim_probe_v1'), 'another schema'),
+        ]
+        for returncode, evidence, message in cases:
+            with self.subTest(message), self.assertRaisesRegex(e2e.Failure, message):
+                e2e.parse_custody_credit_evidence(returncode, json.dumps(evidence), 1)
+        with self.assertRaisesRegex(e2e.Failure, 'no evidence'):
+            e2e.parse_custody_credit_evidence(1, '', 1)
+
+    def test_the_surplus_goes_to_the_claimant_on_a_claim_and_the_depositor_on_a_refund(self):
+        self.assertEqual(e2e.custody_credit_surplus('completed'), {})
+        self.record('taker')
+        self.assertEqual(e2e.custody_credit_surplus('completed'), {'maker': 1})
+        self.assertEqual(e2e.custody_credit_surplus('refunded'), {'taker': 1})
+        self.record('maker', units=3)
+        self.assertEqual(e2e.custody_credit_surplus('completed'), {'taker': 3})
+        self.assertEqual(e2e.custody_credit_surplus('refunded'), {'maker': 3})
+
+    def test_a_failed_credit_fails_the_settlement_check(self):
+        self.record('taker', error=e2e.Failure('no funded native escrow'))
+        with self.assertRaisesRegex(e2e.Failure, 'custody credit failed'):
+            e2e.custody_credit_surplus('completed')
+
+    def settle(self, after, taker_state='completed', surplus=None):
+        before = {'maker': 10_000, 'taker': 10_000}
+        with patch.object(e2e, 'REVERSE', True), patch.object(e2e, 'LEZ_UNITS', 1_000), \
+                patch.object(e2e, 'lez_rpc_number', lambda *_: None), patch.object(e2e, 'log', lambda *_: None), \
+                patch.object(e2e, 'lez_balances', lambda: after):
+            return e2e.assert_lez_settled(before, taker_state, 'completed' if taker_state == 'completed' else 'refunded',
+                                          surplus)
+
+    def test_the_settlement_allows_exactly_the_credit_to_exactly_the_recipient(self):
+        # selling LEZ, the Taker deposits: a claim pays the Maker the lot and the credit
+        self.record('taker')
+        self.assertEqual(self.settle({'maker': 11_001, 'taker': 9_000})['lez_deltas'], {'maker': 1_001, 'taker': -1_000})
+        for after in ({'maker': 11_000, 'taker': 9_000}, {'maker': 11_002, 'taker': 9_000},
+                      {'maker': 11_000, 'taker': 9_001}):
+            with self.subTest(after), self.assertRaisesRegex(e2e.Failure, 'LEZ balances moved'):
+                self.settle(after)
+        # a refund returns the lot and the credit to the Taker
+        self.assertEqual(self.settle({'maker': 10_000, 'taker': 10_001}, 'refunded')['lez_deltas'],
+                         {'maker': 0, 'taker': 1})
+
+    def test_without_a_credit_the_settlement_stays_exact(self):
+        self.assertEqual(self.settle({'maker': 11_000, 'taker': 9_000})['lez_deltas'], {'maker': 1_000, 'taker': -1_000})
+        with self.assertRaisesRegex(e2e.Failure, 'LEZ balances moved'):
+            self.settle({'maker': 11_001, 'taker': 9_000})
+        self.assertEqual(self.settle({'maker': 11_002, 'taker': 9_000}, surplus={'maker': 2})['lez_deltas'],
+                         {'maker': 1_002, 'taker': -1_000})
+
+    def test_the_key_reaches_a_throwaway_probe_container_on_stdin(self):
+        # Not the Maker's container: docker exec without -i gave the key file
+        # an empty stdin, and the refund scenarios stop the Maker's container
+        # while the probe waits, which killed a probe run in it.
+        ran = []
+
+        def fake_run(command, **kwargs):
+            ran.append((command, kwargs.get('input')))
+            if command[:2] == ['docker', 'inspect']:
+                return unittest.mock.Mock(returncode=0, stdout='lez-maker-node:local\n', stderr='')
+            if CREDIT_PROBE in ' '.join(command):
+                return unittest.mock.Mock(returncode=0, stdout=json.dumps(credit_evidence()) + '\n', stderr='')
+            return unittest.mock.Mock(returncode=0, stdout='', stderr='')
+
+        key = b'ab' * 32 + b'\n'
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.dict(os.environ, {'LEZ_STACK_PREFIX': 'lez'}), \
+                patch.object(e2e, 'log', lambda *_: None), patch.object(e2e, 'custody_credit_key', lambda: key), \
+                patch.object(e2e, 'escrow_program_id', lambda: 'bb' * 32), \
+                patch.object(e2e, 'lez_owner_account', lambda role: f'{role}-account'):
+            e2e.run_custody_credit_probe('taker', 1, 600)
+        inspect_image, stale, probe, remove = ran
+        self.assertEqual(stale[0], ['docker', 'rm', '-f', 'lez-custody-credit-probe'])
+        command = probe[0]
+        self.assertEqual(command[:4], ['docker', 'run', '--rm', '-i'])
+        self.assertEqual(command[command.index('--network') + 1], 'container:lez-sequencer')
+        self.assertIn('lez-maker-node:local', command)
+        self.assertEqual(probe[1], key.decode())
+        self.assertNotIn(key.decode().strip(), ' '.join(command))
+        for flag, value in (('--depositor', 'taker-account'), ('--escrow-program-id', 'bb' * 32),
+                            ('--private-key-file', e2e.CUSTODY_CREDIT_CONTAINER_KEY), ('--amount', '1'),
+                            ('--sequencer-url', 'http://127.0.0.1:3040/')):
+            self.assertEqual(command[command.index(flag) + 1], value)
+        self.assertEqual(remove[0], ['docker', 'rm', '-f', 'lez-custody-credit-probe'])
+        self.assertFalse([c for c, _ in ran if c[:2] == ['docker', 'exec']])
+
+    def test_the_probe_container_is_removed_when_the_probe_times_out(self):
+        ran = []
+
+        def fake_run(command, **kwargs):
+            ran.append(command)
+            if command[:2] == ['docker', 'inspect']:
+                return unittest.mock.Mock(returncode=0, stdout='lez-maker-node:local\n', stderr='')
+            if CREDIT_PROBE in ' '.join(command):
+                raise subprocess.TimeoutExpired(command, 1)
+            return unittest.mock.Mock(returncode=0, stdout='', stderr='')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'log', lambda *_: None), patch.object(e2e, 'custody_credit_key', lambda: b'k'), \
+                patch.object(e2e, 'escrow_program_id', lambda: 'bb' * 32), \
+                patch.object(e2e, 'lez_owner_account', lambda role: role):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                e2e.run_custody_credit_probe('maker', 1, 600)
+        self.assertEqual(ran[-1], ['docker', 'rm', '-f', 'lez-custody-credit-probe'])
+
+    def test_the_depositor_is_the_taker_only_when_it_sells_lez(self):
+        with patch.object(e2e, 'REVERSE', True):
+            self.assertEqual(e2e.custody_credit_depositor(), 'taker')
+        with patch.object(e2e, 'REVERSE', False):
+            self.assertEqual(e2e.custody_credit_depositor(), 'maker')
+
+    def test_a_refund_variant_selling_the_foreign_coin_refuses_before_it_starts(self):
+        scenario = e2e.with_custody_credit(lambda stamp: self.fail('the scenario may not run'), refund=True)
+        with patch.object(e2e, 'REVERSE', False), \
+                patch.object(e2e, 'start_custody_credit', lambda *_: self.fail('no credit may start')):
+            with self.assertRaisesRegex(e2e.Failure, 'TakerSellsLez'):
+                scenario('1700000000')
+
+    def test_the_escrow_program_falls_back_to_the_verifiers_pin(self):
+        verifier = (REPO / 'scripts/verify-lez-v02-provisional.sh').read_text()
+        with patch.dict(os.environ, {'LEZ_ESCROW_PROGRAM_ID': ''}):
+            self.assertIn(f'expected_image_id="{e2e.escrow_program_id()}"', verifier)
+        with patch.dict(os.environ, {'LEZ_ESCROW_PROGRAM_ID': 'cd' * 32}):
+            self.assertEqual(e2e.escrow_program_id(), 'cd' * 32)
+
+    def test_the_probe_ships_like_the_claim_probe_outside_the_role_packages(self):
+        catalog = json.loads((REPO / 'deploy/executables.json').read_text())['executables']
+        entry = next(item for item in catalog if item['target'] == CREDIT_PROBE)
+        self.assertEqual((entry['manifest'], entry['package'], entry['class'], entry['role'], entry['profiles']),
+                         ('compat/lez-v0_2-sidecar/Cargo.toml', 'lez-v0-2-sidecar', 'reference', 'maker', []))
+        source = (REPO / f'compat/lez-v0_2-sidecar/src/bin/{CREDIT_PROBE}.rs').read_text()
+        self.assertIn('TEST-ONLY', source)
+        self.assertIn('lez_v02_custody_credit_probe_v1', source)
+        from_scratch = (SCRIPTS / 'from-scratch.sh').read_text()
+        self.assertIn(f'--bin {CREDIT_PROBE}', from_scratch)
+        self.assertIn(f'install -m 0755 "$PROVISION/sidecar/{CREDIT_PROBE}" "$DEPLOY_ROOT/images/maker-node/"',
+                      from_scratch)
+        self.assertIn(f'images/maker-node/{CREDIT_PROBE}', (SCRIPTS / 'stage-assets.sh').read_text())
+        self.assertIn(f'COPY {CREDIT_PROBE} /payload/', (REPO / 'deploy/images/maker-node/Dockerfile').read_text())
+        self.assertNotIn(CREDIT_PROBE, (REPO / 'deploy/images/taker-node/Dockerfile').read_text())
+        self.assertIn(CREDIT_PROBE, (REPO / '.github/workflows/release-images.yml').read_text())
+        for packager in ('package-role-node.sh', 'package-role-node-darwin.sh'):
+            self.assertNotIn(CREDIT_PROBE, (SCRIPTS / packager).read_text())
 
 
 if __name__ == '__main__':

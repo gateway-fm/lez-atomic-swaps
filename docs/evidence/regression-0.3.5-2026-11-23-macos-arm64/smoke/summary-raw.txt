@@ -1,0 +1,15 @@
+node:zec:zec-slow-funding:TakerSellsLez rc=1 149s disk=34G tries=1
+node:zec:zec-kill-maker-claim:TakerSellsLez rc=0 232s disk=34G tries=1
+node:btc:btc-custody-credit:TakerSellsLez rc=0 64s disk=34G tries=1
+node:zec:zec-custody-credit:TakerSellsLez rc=0 106s disk=34G tries=1
+node:btc:happy:TakerSellsLez rc=0 56s disk=34G tries=1
+node:btc:happy:TakerSellsForeign rc=0 66s disk=34G tries=1
+node:zec:zec-happy:TakerSellsLez rc=0 81s disk=34G tries=1
+node:zec:zec-happy:TakerSellsForeign rc=0 91s disk=34G tries=1
+node:btc:btc-custody-credit:TakerSellsForeign rc=0 82s disk=34G tries=1
+node:btc:btc-custody-credit-refund:TakerSellsLez rc=1 152s disk=34G tries=
+node:btc:btc-custody-credit-refund:TakerSellsLez rc=0 353s disk=34G 1	PASSED	336 
+node:zec:zec-custody-credit:TakerSellsForeign rc=0 106s disk=34G 1	PASSED	97 
+node:zec:zec-custody-credit-refund:TakerSellsLez rc=0 567s disk=34G 1	PASSED	558 
+node:zec:zec-slow-funding:TakerSellsLez rc=0 179s disk=34G 1	PASSED	170 
+SMOKE-DONE

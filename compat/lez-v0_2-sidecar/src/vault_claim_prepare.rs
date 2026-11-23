@@ -425,7 +425,7 @@ impl VaultClaimPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable(&request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active = Some(ActiveClaim {
                     request,
                     result: recovered.clone(),

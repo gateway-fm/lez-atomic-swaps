@@ -2584,7 +2584,8 @@ fn validate_refund_account_facts<E: std::error::Error + 'static>(
         terms,
         state,
     );
-    let expected_balance = if state == EscrowState::Funded {
+    // At least: anyone can credit the custody (TM-0032).
+    let minimum_balance = if state == EscrowState::Funded {
         terms.amount().as_u128()
     } else {
         0
@@ -2592,7 +2593,7 @@ fn validate_refund_account_facts<E: std::error::Error + 'static>(
     if facts.metadata.hashlock() != Some(&expected_metadata)
         || facts.custody.account_id != custody_account
         || facts.custody.owner_program_id != terms.authenticated_transfer_program_id()
-        || facts.custody.balance.as_u128() != expected_balance
+        || facts.custody.balance.as_u128() < minimum_balance
     {
         return Err(NativeRefundAdapterError::InconsistentFacts);
     }
@@ -2792,7 +2793,7 @@ fn validate_found_pair<E: std::error::Error + 'static>(
         || initialization.metadata != funding.metadata
         || funding.custody.account_id != Hex32::from_bytes(*agreement.lez_terms().custody_account())
         || funding.custody.owner_program_id != terms.authenticated_transfer_program_id()
-        || funding.custody.balance.as_u128() != terms.amount().as_u128()
+        || funding.custody.balance.as_u128() < terms.amount().as_u128()
         || init_position >= fund_position
         || fund.position.height > response.tip_after.height
         || same_height_different_blocks

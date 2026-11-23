@@ -303,9 +303,10 @@ where
         {
             return Err(CurrentLezFundedEscrowError::AccountMismatch);
         }
-        // Custody holds the signed amount while funded; a claim or a refund
-        // moved it out, so only the funded state binds the value.
-        if !settled && accounts.custody.balance.as_u128() != signed.amount() {
+        // Custody holds at least the signed amount while funded (anyone can
+        // credit it, TM-0032); a claim or a refund moved it out, so only the
+        // funded state binds the value.
+        if !settled && accounts.custody.balance.as_u128() < signed.amount() {
             return Err(CurrentLezFundedEscrowError::CustodyValueMismatch);
         }
         Ok(CurrentLezFundedEscrowEvidenceV1 {

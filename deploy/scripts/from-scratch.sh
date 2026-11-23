@@ -38,6 +38,12 @@
 # (lez-build-*), outputs in the provision directory, so a rerun takes minutes.
 # No long-lived container is left behind and nothing holds the host Docker
 # socket except the reproducible guest build, for the duration of that run.
+#
+# LEZ_TEST_HOOKS=1 builds the LEZ sidecar with its devnet test hooks (feature
+# test-hooks: holds of the revealing claim's preparation and submission), which
+# zec-kill-maker-claim needs; off by default. LEZ_RELEASE_BUILD (set by the
+# release workflows) refuses it, and the sidecar built with test-hooks while
+# LEZ_RELEASE_BUILD is set does not compile.
 set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -115,6 +121,16 @@ ASSETS="$DEPLOY_ROOT/images/basecamp-ui/assets"
 
 log() { printf '\n[%s %s] %s\n' "$(date -u +%H:%M:%S)" "${PHASE:-}" "$*"; }
 fail() { echo "from-scratch failed: $*" >&2; exit 1; }
+
+# The devnet's test hooks: only on request, never in a release build.
+case "${LEZ_TEST_HOOKS:-0}" in 0|1) ;; *) fail "LEZ_TEST_HOOKS is 0 or 1, not '${LEZ_TEST_HOOKS}'" ;; esac
+if [[ "${LEZ_TEST_HOOKS:-0}" == 1 && -n "${LEZ_RELEASE_BUILD:-}" ]]; then
+  fail "LEZ_TEST_HOOKS=1 builds the devnet test hooks, which no release build (LEZ_RELEASE_BUILD) may carry"
+fi
+# The release mark goes into the sidecar's build container, where the crate
+# refuses to compile its test hooks under it.
+release_build_env=()
+[[ -z "${LEZ_RELEASE_BUILD:-}" ]] || release_build_env=(-e "LEZ_RELEASE_BUILD=$LEZ_RELEASE_BUILD")
 phase_wanted() { [[ -z "$ONLY" || "$ONLY" == "$1" || ( "$1" == build && "$ONLY" == build:* ) ]]; }
 build_step_wanted() { [[ -z "$ONLY" || "$ONLY" == build || "$ONLY" == "build:$1" ]]; }
 
@@ -570,15 +586,22 @@ sidecar_tree_stamp() {
   if git -C "$REPO_ROOT" diff --quiet HEAD -- compat/lez-v0_2-sidecar; then echo "$tree"; else echo "$tree-dirty-$dirty"; fi
 }
 
-# lez-v02-escrow-claim-probe is a test-only tool: the devnet Maker image
-# carries it beside the Node package (images/maker-node/Dockerfile) for the
-# zec-maker-early-claim scenario; no role package contains it.
+# lez-v02-escrow-claim-probe and lez-v02-custody-credit-probe are test-only
+# tools: the devnet Maker image carries them beside the Node package
+# (images/maker-node/Dockerfile) for the zec-maker-early-claim and
+# *-custody-credit scenarios; no role package contains them. With
+# LEZ_TEST_HOOKS=1 the sidecar is built with its test hooks (feature
+# test-hooks: the claim holds of zec-kill-maker-claim), which no release build
+# has.
 build_sidecar() {
-  log "building the LEZ sidecar, the identity tool and the escrow claim probe"
-  builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --bin lez-v02-bridge-poc --bin lez-v02-escrow-claim-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
+  local hooks=""
+  [[ "${LEZ_TEST_HOOKS:-0}" != 1 ]] || hooks="--features test-hooks"
+  log "building the LEZ sidecar, the identity tool and the escrow claim and custody credit probes${hooks:+ (with the devnet test hooks)}"
+  builder_run ${release_build_env[@]+"${release_build_env[@]}"} -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+      $hooks --bin lez-v02-bridge-poc --bin lez-v02-escrow-claim-probe --bin lez-v02-custody-credit-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc \
       /cache/target/sidecar/debug/lez-v02-escrow-claim-probe \
+      /cache/target/sidecar/debug/lez-v02-custody-credit-probe \
       /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
@@ -670,8 +693,9 @@ phase_stage() {
   [[ "$staged" == "$expected" ]] || fail "the staged sidecar ($PROVISION/sidecar/lez-v02-bridge-poc, tree ${staged:-unstamped}) was not built from this checkout's compat/lez-v0_2-sidecar ($expected); run from-scratch.sh --only build:sidecar first"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
-  # test-only, outside the Maker's package: the zec-maker-early-claim scenario
+  # test-only, outside the Maker's package: the zec-maker-early-claim and *-custody-credit scenarios
   install -m 0755 "$PROVISION/sidecar/lez-v02-escrow-claim-probe" "$DEPLOY_ROOT/images/maker-node/"
+  install -m 0755 "$PROVISION/sidecar/lez-v02-custody-credit-probe" "$DEPLOY_ROOT/images/maker-node/"
   for role in maker taker; do
     cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
     cp "$PROVISION/sidecar/source-tree.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-tree.txt"
