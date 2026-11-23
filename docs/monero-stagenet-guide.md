@@ -15,14 +15,16 @@ What has run on Stagenet, and what has not:
   verification, the image, a pruned self-hosted `monerod` syncing from
   public peers, a `monero-wallet-rpc` per role on public nodes, wallets
   funded from a public faucet, and the devnet stack with both Nodes on
-  Stagenet. On 2026-11-22 the Nodes of the final code, under the windows
-  below (C, R, P = +10 min, +2 h, +4 h), completed a swap there (the
+  Stagenet. On 2026-11-22 Nodes built from `f059d3fa` (the code of
+  `7b4e46da`), under the windows below (C, R, P = +10 min, +2 h, +4 h), completed a swap there (the
   Maker's funding verified at ten confirmations, the Maker's LEZ claim, the
   Taker's sweep at ten confirmations, 60 minutes from the take), refunded
   one by the Taker Node's own refund at R (the Maker's Monero swept back),
   refunded one the Maker could not fund, and punished one whose Taker Node
   was stopped through [R, P) ([the run](#the-node-driven-run-of-2026-11-22),
-  [its evidence](evidence/stagenet-0.4.0-2026-11-22/)). A first run on
+  [its evidence](evidence/stagenet-0.4.0-2026-11-22/)); the changes made
+  after `7b4e46da` (the Logos Chat resend, the ZEC second-lock lookup, the sidecar's re-decision of interrupted submissions and `url` 2.5.9) were not run on
+  Stagenet. A first run on
   2026-11-21 had done the same under an earlier 30-minute P − R
   ([that run](#the-node-driven-run-of-2026-11-21)). The SDK example ran the
   Monero leg of a completed swap alone, with the LEZ escrow modelled

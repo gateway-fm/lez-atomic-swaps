@@ -49,12 +49,13 @@ and six BTC and ZEC custody-credit tests, ran first in the `7b4e46da` run.
   recordings ran against an offline Monero 0.18.5.1 regtest chain on the
   private LEZ v0.2.4 devnet. The Nodes also take swaps on public Monero
   Stagenet (`LEZ_MONERO_NETWORK=stagenet`, the `public-stagenet` profile,
-  windows +10 min, +2 h, +4 h): on 2026-11-22, under those windows and on
-  the final code, they completed a swap there, refunded one by the Taker
-  Node's own refund at R (the Maker's Monero swept back), refunded one the
-  Maker could not fund and punished one, with LEZ on the devnet and Monero
-  through public nodes ([Stagenet guide](monero-stagenet-guide.md#the-node-driven-run-of-2026-11-22),
-  [evidence](evidence/stagenet-0.4.0-2026-11-22/)); a first run on
+  windows +10 min, +2 h, +4 h): on 2026-11-22, under those windows, Nodes
+  built from `f059d3fa` (the code of `7b4e46da`) completed a swap there,
+  refunded one by the Taker Node's own refund at R (the Maker's Monero swept
+  back), refunded one the Maker could not fund and punished one, with LEZ on
+  the devnet and Monero through public nodes ([Stagenet guide](monero-stagenet-guide.md#the-node-driven-run-of-2026-11-22),
+  [evidence](evidence/stagenet-0.4.0-2026-11-22/)); the changes made after
+  `7b4e46da` (the Logos Chat resend, the ZEC second-lock lookup, the sidecar's re-decision of interrupted submissions and `url` 2.5.9) were not run on Stagenet; a first run on
   2026-11-21 had used an earlier 30-minute P − R.
   CI runs a self-hosted Stagenet `monerod` (D-6). No Monero testnet or
   mainnet run exists. The Monero lane runs on linux/x86_64 and linux/arm64
