@@ -323,7 +323,7 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 178)
+        self.assertEqual(len(full), 179)
 
     def test_full_has_the_maker_claim_kill_selling_lez_only(self):
         full = self.tier('full')
@@ -338,6 +338,13 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-activate-after-expiry:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-activate-after-expiry:' in test], tier)
+
+    def test_full_has_the_claim_at_one_confirmation_selling_zec_only(self):
+        full = self.tier('full')
+        self.assertIn('node:zec:zec-claim-at-one-confirmation:TakerSellsForeign', full)
+        self.assertNotIn('node:zec:zec-claim-at-one-confirmation:TakerSellsLez', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-claim-at-one-confirmation:' in test], tier)
 
     def test_full_has_the_slow_zcash_funding_selling_lez_only(self):
         full = self.tier('full')

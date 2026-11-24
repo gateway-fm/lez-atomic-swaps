@@ -115,6 +115,8 @@ tier_tests() { # tier_tests <tier>
       # selling LEZ only: the Maker stopped between the take and its actor's activation, started after
       # the offer expired (a devnet built with LEZ_TEST_HOOKS=1)
       echo "node:zec:zec-activate-after-expiry:TakerSellsLez"
+      # selling ZEC, as issue #130 was found: the Claim pressed at one Zcash confirmation reads queued
+      echo "node:zec:zec-claim-at-one-confirmation:TakerSellsForeign"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
       echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"

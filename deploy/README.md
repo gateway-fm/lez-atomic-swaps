@@ -396,6 +396,17 @@ so the Maker activates after the expiry and the swap must complete on both
 Nodes as `zec-dynamic-happy`'s does. A Maker Node built without the hooks
 fails the scenario before any swap, naming `LEZ_TEST_HOOKS=1`.
 
+**A Claim pressed at one Zcash confirmation (issue #130).**
+`zec-claim-at-one-confirmation` (TakerSellsForeign in `regress.sh full`, the
+direction the issue was found in) runs `zec-happy`, but until the Taker Node
+offers the claim the harness mines only what waits in Zebra's mempool, so the
+Claim is pressed while the Zcash funding is one deep, below the actor's
+pre-reveal gate of two. The Taker Node must then report the swap
+`claim_in_progress` with the last outcome `queued`, waiting for
+`zcash_funding_confirmations` (1 of 2 required); the harness mines the second
+confirmation and the swap must complete as `zec-happy`'s does.
+`LEZ_ZEC_CLAIM_AT_ONE_CONFIRMATION=1` does the same to `zec-happy` itself.
+
 Each long wait logs its state, LEZ's finalized height and the sequencer's tip when
 the state changes and at least once a minute, and a timeout names what it waited
 for and what it saw last; `regress.sh` writes both heights on each try's start and

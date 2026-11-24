@@ -738,6 +738,92 @@ class ZecActivateAfterExpiry(unittest.TestCase):
                 e2e.require_maker_node_test_hooks('hold-zec-activations')
 
 
+class ZecClaimAtOneConfirmation(unittest.TestCase):
+    """zec-claim-at-one-confirmation (issue #130): what can be checked without a stack."""
+
+    class Stop(Exception):
+        pass
+
+    def test_it_is_registered_and_presses_the_claim_at_one_confirmation(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-claim-at-one-confirmation'],
+                      e2e.scenario_zec_claim_at_one_confirmation)
+        self.assertNotIn('zec-claim-at-one-confirmation', e2e.NATIVE_REFUSED)
+        seen = {}
+        with patch.object(e2e, 'zec_provision', lambda: {'offer_id': 'offer-1'}), \
+                patch.object(e2e, 'zec_take_or_resume', lambda offer, stamp: f'swap-of-{offer}'), \
+                patch.object(e2e, 'zec_happy_after_take',
+                             lambda stamp, since, swap_id, corridor, claim_at_one=False:
+                             seen.update(swap_id=swap_id, claim_at_one=claim_at_one) or {'swap_id': swap_id}):
+            result = e2e.scenario_zec_claim_at_one_confirmation('1700000000')
+        self.assertEqual(seen, {'swap_id': 'swap-of-offer-1', 'claim_at_one': True})
+        self.assertTrue(result['claim_pressed_at_one_confirmation'])
+
+    def test_the_happy_path_mines_only_the_mempool_and_checks_the_queue_after_the_press(self):
+        events = []
+
+        def wait_until(swap_id, config, states, **kwargs):
+            events.append(('wait', tuple(sorted(states)), kwargs.get('mine_pending_only')))
+            return {'progress_generation': 3}
+
+        def queued(swap_id, corridor):
+            events.append(('queued', swap_id))
+            raise self.Stop
+
+        corridor = {'receipt_output': 'receipt', 'zebra_tip_at_provisioning': 10,
+                    'funding_outpoints': [{'transaction_id': 'aa' * 32, 'output_index': 0}]}
+        with patch.object(e2e, 'zec_taker_actor_config', lambda receipt: {}), \
+                patch.object(e2e, 'zec_wait_until', wait_until), \
+                patch.object(e2e, 'zec_spend_of', lambda outpoint, height: ('bb' * 32, 12)), \
+                patch.object(e2e, 'call', lambda *a, **k: events.append(('claim', a[1])) or {}), \
+                patch.object(e2e, 'zec_claim_queued_at_one_confirmation', queued), \
+                patch.object(e2e, 'log', lambda *a: None):
+            with self.assertRaises(self.Stop):
+                e2e.zec_happy_after_take('1700000000', 'since', 'swap-1', corridor, claim_at_one=True)
+        self.assertEqual(events, [('wait', ('claim_available',), True), ('claim', 'taker_swap_claim_v1'),
+                                  ('queued', 'swap-1')])
+
+    def test_zec_happy_keeps_mining_the_second_confirmation_before_the_press(self):
+        events = []
+        corridor = {'receipt_output': 'receipt', 'zebra_tip_at_provisioning': 10,
+                    'funding_outpoints': [{'transaction_id': 'aa' * 32, 'output_index': 0}]}
+
+        def wait_until(swap_id, config, states, **kwargs):
+            events.append(kwargs.get('mine_pending_only'))
+            raise self.Stop
+
+        with patch.object(e2e, 'zec_taker_actor_config', lambda receipt: {}), \
+                patch.object(e2e, 'zec_wait_until', wait_until):
+            with self.assertRaises(self.Stop):
+                e2e.zec_happy_after_take('1700000000', 'since', 'swap-1', corridor, claim_at_one=False)
+        self.assertEqual(events, [False])
+
+    def test_the_queued_answer_is_required_with_both_counts_before_the_second_block(self):
+        queued = {'state': 'claim_in_progress',
+                  'last_outcome': {'outcome': 'queued', 'waiting_for': {
+                      'kind': 'zcash_funding_confirmations', 'chain': 'zcash',
+                      'confirmations': 1, 'required_confirmations': 2}}}
+        mined = []
+        for depth, view, accepted in (
+                (1, queued, True),
+                (2, queued, False),
+                (1, {**queued, 'state': 'claim_available'}, False),
+                (1, {**queued, 'last_outcome': {'outcome': 'submitted'}}, False),
+                (1, {**queued, 'last_outcome': {**queued['last_outcome'], 'waiting_for': {
+                    **queued['last_outcome']['waiting_for'], 'confirmations': 0}}}, False)):
+            mined.clear()
+            with patch.object(e2e, 'zec_funding_confirmations', lambda corridor, depth=depth: depth), \
+                    patch.object(e2e, 'taker_view', lambda swap_id, view=view: view), \
+                    patch.object(e2e, 'zebra_mine', lambda count, why: mined.append(count)), \
+                    patch.object(e2e, 'log', lambda *a: None):
+                if accepted:
+                    e2e.zec_claim_queued_at_one_confirmation('swap-1', {})
+                    self.assertEqual(mined, [1])
+                else:
+                    with self.assertRaises(e2e.Failure):
+                        e2e.zec_claim_queued_at_one_confirmation('swap-1', {})
+                    self.assertEqual(mined, [], (depth, view))
+
+
 class MakerEarlyClaim(unittest.TestCase):
     """zec-maker-early-claim (TM-0030): what can be checked without a stack."""
 

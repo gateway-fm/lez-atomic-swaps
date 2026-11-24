@@ -90,6 +90,14 @@ tests/fixtures/zec-catalog-fixture.sh --direction …, which also recreates both
                                          cleared; the Maker activates at its recorded
                                          acceptance and the swap completes (needs
                                          LEZ_TEST_HOOKS=1)
+    node-e2e.py --pair Zcash zec-claim-at-one-confirmation  zec-happy with the Claim
+                                         pressed while the Zcash funding is one deep,
+                                         below the pre-reveal gate (two): the Node
+                                         reports the claim queued with both counts,
+                                         nothing is sent, the second confirmation is
+                                         mined and the swap completes (issue #130; what
+                                         LEZ_ZEC_CLAIM_AT_ONE_CONFIRMATION=1 does to
+                                         zec-happy)
 
 The ZEC refund windows come from the agreement, not the timing profile. Selling
 LEZ, the refund journeys provision their corridor under
@@ -3350,6 +3358,7 @@ ZEC_AGREEMENT = os.environ.get("LEZ_ZEC_AGREEMENT", "take-time")
 # while the Zcash funding is one deep, below the actor's pre-reveal gate (two),
 # expects the Node to report the claim queued with both counts, and only then
 # mines the missing confirmation. Unset, the harness mines it before the press.
+# The scenario zec-claim-at-one-confirmation does the same without the variable.
 ZEC_CLAIM_AT_ONE = os.environ.get("LEZ_ZEC_CLAIM_AT_ONE_CONFIRMATION") == "1"
 ZEC_CATALOG_SCENARIOS = {"zec-regenerated-catalog", "zec-tampered-catalog"}
 # zec-maker-early-claim reads the dealer's corridor layout (the Taker's half,
@@ -3864,16 +3873,18 @@ def scenario_zec_happy(stamp: str) -> dict:
     return zec_happy_after_take(stamp, since, swap_id, corridor)
 
 
-def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict) -> dict:
+def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict,
+                         claim_at_one: bool = ZEC_CLAIM_AT_ONE) -> dict:
     """The happy ZEC swap from a take on: both locks, the one claim, completion
-    on both Nodes and the Maker's restart after it."""
+    on both Nodes and the Maker's restart after it. With `claim_at_one` the
+    Claim is pressed while the Zcash funding is one deep (issue #130)."""
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
     # The Taker's first lock and the Maker's lock, driven and observed by the
     # Taker Node's supervisor; the Node then offers the Taker its one claim,
     # the revealing one on the Maker-funded leg (Zcash selling LEZ).
     view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
-                           describe=zec_flow(), mine_pending_only=ZEC_CLAIM_AT_ONE)
+                           describe=zec_flow(), mine_pending_only=claim_at_one)
     funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
     if funding is None:
         raise Failure("claim_available, but no zebra block spends the provisioned coinbase outpoint")
@@ -3882,7 +3893,7 @@ def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict) -
                                                    "swap_id": swap_id, "expected_generation": view["progress_generation"]},
                   timeout=300)
     log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')})")
-    if ZEC_CLAIM_AT_ONE:
+    if claim_at_one:
         zec_claim_queued_at_one_confirmation(swap_id, corridor)
     # The Zcash claim (the Taker's revealing one selling LEZ, or the Maker's
     # follow-up after the Taker's revealing LEZ claim) sits in zebra's mempool
@@ -4063,6 +4074,19 @@ def scenario_zec_slow_funding(stamp: str) -> dict:
             "maker_revision_samples": samples, "maker_revision_final": final_revision,
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
             "maker_claim_operations": maker_claims}
+
+
+def scenario_zec_claim_at_one_confirmation(stamp: str) -> dict:
+    """Issue #130: zec-happy with the Claim pressed while the Zcash funding is
+    one deep. The harness mines only what waits in zebra's mempool until the
+    Node offers the claim, presses it, requires the Node's `queued` answer with
+    the required and actual confirmations, then mines the second confirmation
+    and requires completion as zec-happy does."""
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    return {**zec_happy_after_take(stamp, since, swap_id, corridor, claim_at_one=True),
+            "claim_pressed_at_one_confirmation": True}
 
 
 def zec_claim_queued_at_one_confirmation(swap_id: str, corridor: dict) -> None:
@@ -8933,6 +8957,7 @@ ZEC_SCENARIOS = {
     "zec-slow-funding": scenario_zec_slow_funding,
     "zec-kill-maker-claim": scenario_zec_kill_maker_claim,
     "zec-activate-after-expiry": scenario_zec_activate_after_expiry,
+    "zec-claim-at-one-confirmation": scenario_zec_claim_at_one_confirmation,
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,
