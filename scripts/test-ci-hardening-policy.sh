@@ -177,12 +177,12 @@ readonly cache_save='uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d
 readonly cargo_prune='scripts/ci-cargo-cache-prune.sh'
 readonly cache_gate='scripts/ci-cache-gate.sh'
 readonly nix_store_cache='scripts/ci-basecamp-nix-store-cache.sh'
-readonly expected_cache_restores=7
-readonly expected_cache_saves=7
+readonly expected_cache_restores=6
+readonly expected_cache_saves=6
 # The sum of the caps passed to ci-cache-gate.sh, in MiB: what this
 # workflow's caches may hold at once, beside the 1300 MiB other actions'
 # caches hold, within the repository's 10 GB (the budget comment in ci.yml).
-readonly cache_cap_budget_mib=7168
+readonly cache_cap_budget_mib=7104
 [[ -x "$cargo_prune" && -x "$nix_store_cache" && -x "$cache_gate" ]] || fail "cache scripts must remain executable"
 for workflow in "$ci_workflow" "$public_workflow"; do
   ! rg -q 'uses: actions/cache@' "$workflow" \
@@ -240,17 +240,17 @@ for paths in CARGO_CACHE_PATHS TOOLS_CACHE_PATHS; do
 done
 [[ "$(rg -Fxc '          path: ${{ runner.temp }}/basecamp-nix-store/store' "$ci_workflow")" == 2 ]] \
   || fail "the Basecamp Nix store restore and save must name the same directory"
-require_fixed './scripts/ci-cache-gate.sh basecamp-nix-store 2048 "${RUNNER_TEMP}/basecamp-nix-store/store"' "$ci_workflow"
+require_fixed './scripts/ci-cache-gate.sh basecamp-nix-store 384 "${RUNNER_TEMP}/basecamp-nix-store/store"' "$ci_workflow"
 while IFS= read -r key; do
   [[ "$key" == *'steps.'*'.outputs.cache-primary-key }}' || "$key" == *'hashFiles('* ]] \
     || fail "cache key does not hash its inputs: $key"
   [[ "$key" == *'cache-primary-key'* || "$key" == *'runner.os'*'runner.arch'* ]] \
     || fail "cache key does not name the runner: $key"
 done < <(rg '^ +key: ' "$ci_workflow")
-[[ "$(rg -Fc '${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 5 ]] \
+[[ "$(rg -Fc '${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 4 ]] \
   || fail "every Cargo cache key must name the debug-info setting and the rustc version and hash the lock files"
-[[ "$(rg -Fxc '      CARGO_PROFILE_DEV_DEBUG: line-tables-only' "$ci_workflow")" == 5 \
-  && "$(rg -Fxc '      CARGO_INCREMENTAL: "0"' "$ci_workflow")" == 5 ]] \
+[[ "$(rg -Fxc '      CARGO_PROFILE_DEV_DEBUG: line-tables-only' "$ci_workflow")" == 4 \
+  && "$(rg -Fxc '      CARGO_INCREMENTAL: "0"' "$ci_workflow")" == 4 ]] \
   || fail "every job with a Cargo cache must set its debug-info and incremental settings"
 require_fixed "key: lez-v02-provisional-tools-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}" "$ci_workflow"
 require_fixed "hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh')" "$ci_workflow"
@@ -260,7 +260,6 @@ require_fixed "hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 
 for target in 'target Cargo.toml' \
   'target/check-all compat/lez-v0.2-provisional/Cargo.toml' \
   '/tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml' \
-  '/tmp/lez-v02-xmr-release-service-target compat/lez-v0_2-xmr-release-service/Cargo.toml' \
   '/tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml' \
   '/tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml' \
   '/tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml'; do
