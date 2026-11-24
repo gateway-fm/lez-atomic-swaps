@@ -1442,6 +1442,7 @@ pub fn finalize_local_v0_2_chat_corridor(
         agreement_sha256,
         maker_state.join("actor.sqlite3"),
         maker_state.join("bridge.sqlite3"),
+        accepted_at,
     )
     .context("failed to encode rebound maker config")?;
     let taker_config = encode_rebound_local_v0_2_actor_config(
@@ -1451,6 +1452,7 @@ pub fn finalize_local_v0_2_chat_corridor(
         agreement_sha256,
         taker_state.join("actor.sqlite3"),
         taker_state.join("bridge.sqlite3"),
+        accepted_at,
     )
     .context("failed to encode rebound taker config")?;
     write_private_new(&maker_config_file, &maker_config)?;

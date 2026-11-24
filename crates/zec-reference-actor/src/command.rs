@@ -640,9 +640,21 @@ async fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComm
         .load_activate_material()
         .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
     let participant = config.role().sdk_participant();
+    // The agreement is accepted at the time this role accepted it, as its own
+    // provisioner recorded it in this owner-private config, not at the time
+    // the activation happens to run: a Node stopped between the take and the
+    // activation still activates after the offer expired, as every later step
+    // resumes from the recorded acceptance. A recorded time at or after the
+    // transcript's expiry is refused here as at the take. A config without
+    // one (a template, or one written before the time was recorded) is
+    // accepted at the current wall clock.
+    let accepted_at = match config.accepted_at() {
+        Some(accepted_at) => accepted_at,
+        None => trusted_wall_clock()?,
+    };
     let accepted = AcceptedZecAgreementV1::accept_wire_at(
         material.signed_agreement_wire(),
-        trusted_wall_clock()?,
+        accepted_at,
         participant,
         0,
     )

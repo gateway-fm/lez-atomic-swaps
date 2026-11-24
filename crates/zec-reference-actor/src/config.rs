@@ -7,7 +7,7 @@ use std::{
 
 use lez_bridge_client::SidecarCapability;
 use lez_bridge_protocol::{DiscoveryWindow, Hex32, Participant, RunId, RuntimeDescriptor};
-use lez_swap_core::SwapId;
+use lez_swap_core::{SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     ClaimPreimage, MAX_ZEC_AGREEMENT_RECORD_BYTES, MAX_ZEC_FUNDING_INPUTS, ProtectedClaimKey,
 };
@@ -434,6 +434,7 @@ pub struct ActorConfig {
     zebra: ZebraConfig,
     lez_discovery_window: DiscoveryWindow,
     zcash_funding_outpoints: Vec<CandidateOutpoint>,
+    accepted_at_unix_seconds: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -453,6 +454,10 @@ struct RawActorConfig {
     zebra: ZebraConfig,
     lez_discovery_window: DiscoveryWindow,
     zcash_funding_outpoints: Vec<CandidateOutpoint>,
+    /// When this role accepted the agreement, written by its own provisioner
+    /// from its own clock. A template (an agreement not accepted yet) has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accepted_at_unix_seconds: Option<u64>,
 }
 
 /// Compares exact verified config bytes with a ZEC Maker scheduler manifest.
@@ -638,12 +643,16 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
         },
         lez_discovery_window: input.lez_discovery_window,
         zcash_funding_outpoints: input.zcash_funding_outpoints,
+        accepted_at_unix_seconds: None,
     };
     serde_json::to_vec_pretty(&raw).map_err(|_| ActorConfigError::InvalidConfiguration)
 }
 
 /// Re-encodes one validated local actor around an exact new agreement and
 /// fresh mutable state locations without loading or returning any secret.
+///
+/// `accepted_at` is the time at which this role accepted the agreement; the
+/// actor activates at it, not at the time the activation happens to run.
 pub(crate) fn encode_rebound_local_v0_2_actor_config(
     source: &ActorConfig,
     swap_id: SwapId,
@@ -651,7 +660,11 @@ pub(crate) fn encode_rebound_local_v0_2_actor_config(
     agreement_sha256: Hex32,
     role_state_db: PathBuf,
     bridge_journal_db: PathBuf,
+    accepted_at: UnixSeconds,
 ) -> Result<Vec<u8>, ActorConfigError> {
+    if accepted_at.value() == 0 {
+        return Err(ActorConfigError::InvalidConfiguration);
+    }
     // A provisioned corridor: the Regtest fixture, or a public Testnet route
     // (zec-local-poc-provision never writes a Main-network actor).
     if source.zebra.identity.network == ZcashNetworkConfig::Main {
@@ -674,6 +687,7 @@ pub(crate) fn encode_rebound_local_v0_2_actor_config(
         zebra: source.zebra.clone(),
         lez_discovery_window: source.lez_discovery_window,
         zcash_funding_outpoints: source.zcash_funding_outpoints.clone(),
+        accepted_at_unix_seconds: Some(accepted_at.value()),
     };
     serde_json::to_vec_pretty(&raw).map_err(|_| ActorConfigError::InvalidConfiguration)
 }
@@ -753,6 +767,7 @@ impl ActorConfig {
             zebra: raw.zebra,
             lez_discovery_window: raw.lez_discovery_window,
             zcash_funding_outpoints: raw.zcash_funding_outpoints,
+            accepted_at_unix_seconds: raw.accepted_at_unix_seconds,
         };
         config.validate()?;
         Ok(config)
@@ -825,6 +840,13 @@ impl ActorConfig {
     #[must_use]
     pub const fn swap_id(&self) -> &SwapId {
         &self.swap_id
+    }
+
+    /// When this role accepted the agreement, as its provisioner recorded it;
+    /// `None` for a template whose agreement is not accepted yet.
+    #[must_use]
+    pub fn accepted_at(&self) -> Option<UnixSeconds> {
+        self.accepted_at_unix_seconds.map(UnixSeconds::new)
     }
 
     /// Role-local durable lifecycle database path.
@@ -946,6 +968,7 @@ impl ActorConfig {
             || self.zebra.counterparty_scan_blocks == 0
             || self.zebra.counterparty_scan_blocks > MAX_COUNTERPARTY_SCAN_BLOCKS
             || !valid_key_id(&self.claim_recovery.key_id)
+            || self.accepted_at_unix_seconds == Some(0)
         {
             return Err(ActorConfigError::InvalidConfiguration);
         }

@@ -93,7 +93,14 @@ actors in
 [`crates/zec-reference-actor`](../crates/zec-reference-actor) wrap this
 engine as one-shot processes (`activate`, `drive`, `claim`, `recover`,
 `status`); the Maker Node's supervisor and the Taker Node's lifecycle call the
-same engine in-process.
+same engine in-process. Each role's provisioner records in the actor's
+owner-private config the time at which that role accepted the agreement
+(`accepted_at_unix_seconds`), and `activate` accepts the agreement at that
+time, as `resume` does at the stored one: an activation that runs after the
+offer, and so the transcript, has expired (a Node stopped between the take and
+the activation) still activates, while a recorded time at or after the expiry
+is refused. A config without the field, such as a take-time template, is
+accepted at the current clock.
 
 ## Directions
 

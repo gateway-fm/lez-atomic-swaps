@@ -16,7 +16,7 @@ use rustix::{
     fs::{CWD, RenameFlags, renameat_with},
     io::Errno,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
@@ -217,8 +217,9 @@ fn provision_zec_actor_from_config(
     output_root: &Path,
     role: ActorRole,
 ) -> Result<ZecActorProvisionV1> {
-    let prepared = prepare_provision(source, final_agreement_wire, accepted_at, output_root, role)?;
     let paths = ProvisionPaths::new(output_root, role);
+    let accepted_at = first_acceptance(&paths, accepted_at);
+    let prepared = prepare_provision(source, final_agreement_wire, accepted_at, output_root, role)?;
     if output_root.exists() {
         validate_exact_replay(
             &paths,
@@ -262,6 +263,34 @@ fn provision_zec_actor_from_config(
             let _ = fs::remove_dir_all(&stage_root);
             Err(error)
         }
+    }
+}
+
+/// The acceptance time a published bundle already records, when it is not
+/// later than `accepted_at`; otherwise `accepted_at`.
+///
+/// A retried completion provisions again at its own, later clock. The bundle
+/// keeps the time of the first acceptance, so the retry is an exact replay and
+/// the actor still activates at the time this role first accepted. The value
+/// read here is only a candidate: [`validate_exact_replay`] then requires the
+/// whole bundle to be owner-private and byte-identical to the one this call
+/// derives from the agreement accepted at that time, so an unreadable,
+/// foreign or edited file fails the replay instead of choosing the time.
+fn first_acceptance(paths: &ProvisionPaths, accepted_at: UnixSeconds) -> UnixSeconds {
+    #[derive(Deserialize)]
+    struct RecordedAcceptance {
+        accepted_at_unix_seconds: Option<u64>,
+    }
+    let Ok((bytes, _)) =
+        read_bounded_identified(&paths.config, MAX_CONFIG_BYTES, FilePrivacy::OwnerPrivate)
+    else {
+        return accepted_at;
+    };
+    match serde_json::from_slice::<RecordedAcceptance>(bytes.as_slice()) {
+        Ok(RecordedAcceptance {
+            accepted_at_unix_seconds: Some(recorded),
+        }) if recorded != 0 && recorded <= accepted_at.value() => UnixSeconds::new(recorded),
+        _ => accepted_at,
     }
 }
 
@@ -330,6 +359,7 @@ fn prepare_provision(
         agreement_sha256,
         paths.state_database.clone(),
         paths.bridge_journal.clone(),
+        accepted_at,
     )
     .context("failed to encode rebound actor config")?;
     let config_sha256 = Hex32::from_bytes(Sha256::digest(&config_bytes).into());

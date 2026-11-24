@@ -31,7 +31,8 @@ use zcash_protocol::{
 };
 use zcash_transparent::address::TransparentAddress;
 use zec_reference_actor::{
-    ActorConfig, ActorRole, provision_zec_maker_actor_from_chat,
+    ActorCommand, ActorCommandError, ActorCommandOutputV1, ActorConfig, ActorRole,
+    execute_actor_command, provision_zec_maker_actor_from_chat,
     provision_zec_taker_actor_from_chat,
 };
 
@@ -375,6 +376,135 @@ fn concurrent_same_wire_publication_has_one_creator_and_one_exact_replay() {
     );
 }
 
+// Activation after the offer expired: the take accepted the agreement 20 s
+// ago, the offer (and so the transcript) expired 15 s ago, and the actor is
+// activated only now. It activates at the acceptance its provisioner
+// recorded, as every later step of the swap resumes from it.
+#[tokio::test(flavor = "current_thread")]
+async fn both_roles_activate_at_the_recorded_acceptance_after_the_offer_expired() {
+    let accepted_at = UnixSeconds::new(now() - 20);
+    let fixture = Fixture::accepted(accepted_at, 5);
+    for role in [ActorRole::Maker, ActorRole::Taker] {
+        let output = fixture.output(&format!("expired-offer-{role:?}"));
+        let provisioned = match role {
+            ActorRole::Maker => provision_zec_maker_actor_from_chat(
+                &fixture.maker_config,
+                &fixture.final_wire,
+                accepted_at,
+                &output,
+            ),
+            ActorRole::Taker => provision_zec_taker_actor_from_chat(
+                &fixture.taker_config,
+                &fixture.final_wire,
+                accepted_at,
+                &output,
+            ),
+        }
+        .expect("provision at the acceptance time");
+        let config = ActorConfig::load_private(provisioned.config_file()).unwrap();
+        assert_eq!(config.accepted_at(), Some(accepted_at));
+        assert!(now() >= accepted_at.value() + 5, "the offer has expired");
+        for attempt in ["first", "repeated"] {
+            let activated = execute_actor_command(&config, ActorCommand::Activate)
+                .await
+                .unwrap_or_else(|error| panic!("{role:?} {attempt} activation: {error:?}"));
+            assert!(matches!(activated, ActorCommandOutputV1::Effect(_)));
+        }
+    }
+}
+
+// A recorded acceptance at or after the expiry is refused: provisioning does
+// not write one, and an actor whose config carries one does not activate.
+#[tokio::test(flavor = "current_thread")]
+async fn a_recorded_acceptance_at_or_after_expiry_is_refused() {
+    let accepted_at = UnixSeconds::new(now() - 20);
+    let expires_at = accepted_at.value() + 5;
+    let fixture = Fixture::accepted(accepted_at, 5);
+    for late in [expires_at, expires_at + 1] {
+        assert!(
+            provision_zec_maker_actor_from_chat(
+                &fixture.maker_config,
+                &fixture.final_wire,
+                UnixSeconds::new(late),
+                &fixture.output(&format!("late-{late}")),
+            )
+            .is_err()
+        );
+    }
+
+    let output = fixture.output("rewritten-acceptance");
+    let provisioned = provision_zec_maker_actor_from_chat(
+        &fixture.maker_config,
+        &fixture.final_wire,
+        accepted_at,
+        &output,
+    )
+    .expect("provision at the acceptance time");
+    for late in [expires_at, expires_at + 1] {
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&fs::read(provisioned.config_file()).unwrap()).unwrap();
+        config["accepted_at_unix_seconds"] = json!(late);
+        fs::remove_file(provisioned.config_file()).unwrap();
+        private_file(
+            provisioned.config_file(),
+            &serde_json::to_vec_pretty(&config).unwrap(),
+        );
+        let config = ActorConfig::load_private(provisioned.config_file()).unwrap();
+        assert_eq!(config.accepted_at(), Some(UnixSeconds::new(late)));
+        assert_eq!(
+            execute_actor_command(&config, ActorCommand::Activate)
+                .await
+                .err(),
+            Some(ActorCommandError::ActivationUnavailable)
+        );
+    }
+}
+
+// A completion retried later provisions again at its own clock; the bundle
+// keeps the first acceptance, so the retry is an exact replay. A retry at an
+// earlier clock than the recorded one is not an exact replay.
+#[test]
+fn a_later_retry_keeps_the_first_recorded_acceptance() {
+    let fixture = Fixture::new();
+    let output = fixture.output("retried");
+    let first = provision_zec_taker_actor_from_chat(
+        &fixture.taker_config,
+        &fixture.final_wire,
+        fixture.accepted_at,
+        &output,
+    )
+    .expect("first provisioning");
+    let bytes = fs::read(first.config_file()).unwrap();
+    let later = UnixSeconds::new(fixture.accepted_at.value() + 30);
+    let replay = provision_zec_taker_actor_from_chat(
+        &fixture.taker_config,
+        &fixture.final_wire,
+        later,
+        &output,
+    )
+    .expect("later retry is an exact replay");
+    assert!(replay.was_replay());
+    assert_eq!(replay.config_sha256(), first.config_sha256());
+    assert_eq!(fs::read(replay.config_file()).unwrap(), bytes);
+    assert_eq!(
+        ActorConfig::load_private(replay.config_file())
+            .unwrap()
+            .accepted_at(),
+        Some(fixture.accepted_at)
+    );
+    let earlier = UnixSeconds::new(fixture.accepted_at.value() - 1);
+    assert!(
+        provision_zec_taker_actor_from_chat(
+            &fixture.taker_config,
+            &fixture.final_wire,
+            earlier,
+            &output,
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(first.config_file()).unwrap(), bytes);
+}
+
 struct Fixture {
     root: TempDir,
     maker_config: PathBuf,
@@ -385,24 +515,29 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::accepted(UnixSeconds::new(now()), 300)
+    }
+
+    /// A fixture whose offer, and so whose agreement, expires `ttl_seconds`
+    /// after `accepted_at`.
+    fn accepted(accepted_at: UnixSeconds, ttl_seconds: u64) -> Self {
         let root = TempDir::new().expect("temporary provisioner root");
         fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
             .expect("make provisioner root owner-private");
         let source = root.path().join("source");
         private_directory(&source);
-        let accepted_at = UnixSeconds::new(now());
         let maker_secret = secret(8);
         let taker_secret = secret(2);
         let source_wire = agreement_wire(
             &maker_secret,
             &taker_secret,
-            NegotiationTranscriptV1::new([9; 32], [10; 32], accepted_at.value() + 300),
+            NegotiationTranscriptV1::new([9; 32], [10; 32], accepted_at.value() + ttl_seconds),
             accepted_at,
         );
         let final_wire = agreement_wire(
             &maker_secret,
             &taker_secret,
-            NegotiationTranscriptV1::new([11; 32], [12; 32], accepted_at.value() + 300),
+            NegotiationTranscriptV1::new([11; 32], [12; 32], accepted_at.value() + ttl_seconds),
             accepted_at,
         );
         let agreement_file = source.join("agreement-v2.borsh");
