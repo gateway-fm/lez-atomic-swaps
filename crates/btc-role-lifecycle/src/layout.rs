@@ -58,7 +58,9 @@ impl SwapLayout {
             .create(&self.root)
             .with_context(|| format!("create swap directory {}", self.root.display()))?;
         for sub in ["journals", "lez", "bitcoin", "actor"] {
-            DirBuilder::new().mode(0o700).create(self.root.join(sub))?;
+            DirBuilder::new()
+                .mode(0o700)
+                .create(join_component(&self.root, sub)?)?;
         }
         Ok(())
     }
@@ -99,11 +101,12 @@ impl SwapLayout {
             !pair.is_empty() && pair.bytes().all(|byte| byte.is_ascii_lowercase()),
             "{pair:?} is not a pair name"
         );
-        let stages = self
-            .root
-            .parent()
-            .context("the swap directory has no swaps root")?
-            .join(STAGE_DIRECTORY);
+        let stages = join_component(
+            self.root
+                .parent()
+                .context("the swap directory has no swaps root")?,
+            STAGE_DIRECTORY,
+        )?;
         match DirBuilder::new().mode(0o700).create(&stages) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -327,6 +330,7 @@ fn sync_parent(path: &Path) -> Result<()> {
     let parent = path
         .parent()
         .with_context(|| format!("{} has no directory", path.display()))?;
+    vet_configured_path(parent, "directory")?;
     File::open(parent)?.sync_all()?;
     Ok(())
 }
