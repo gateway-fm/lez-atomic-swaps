@@ -260,6 +260,39 @@ class NotExercised(Failure):
 
 
 NOT_EXERCISED_EXIT = 98
+
+
+def runtime_child(root: pathlib.Path, name: str) -> pathlib.Path:
+    """`root / name` for a name read back from a file or the environment.
+
+    The name must be one plain path component (not empty, `.` or `..`, no
+    separator or NUL), and the joined path must stay directly under `root`.
+    """
+    if (not name or name in {".", ".."} or "/" in name or "\\" in name or "\0" in name
+            or pathlib.PurePath(name).parts != (name,)):
+        raise Failure(f"{name!r} is not a single path component")
+    path = root / name
+    base = os.path.abspath(root)
+    if os.path.dirname(os.path.abspath(path)) != base:
+        raise Failure(f"{name!r} leaves {root}")
+    return path
+
+
+def configured_file(variable: str) -> pathlib.Path:
+    """The file an environment variable names; a path that walks the tree
+    with `..` or holds a NUL is refused."""
+    value = os.environ[variable]
+    if "\0" in value or ".." in pathlib.PurePath(value).parts:
+        raise Failure(f"{variable} must not walk the tree: {value!r}")
+    return pathlib.Path(value)
+
+
+def zec_current_run_id() -> str:
+    """The run id `runtime/zec/current` names, checked as one plain name."""
+    zec_root = LANE_RUNTIME / "zec"
+    run_id = (zec_root / "current").read_text().strip()
+    runtime_child(zec_root, run_id)
+    return run_id
 NOT_EXERCISED: list[str] = []
 
 
@@ -3208,10 +3241,10 @@ ZEC_CORRIDOR: dict = {}
 def zebra_headers() -> dict:
     headers = {"content-type": "application/json"}
     if os.environ.get("LEZ_ZEBRA_API_KEY_FILE"):
-        headers["x-api-key"] = pathlib.Path(os.environ["LEZ_ZEBRA_API_KEY_FILE"]).read_text().strip()
+        headers["x-api-key"] = configured_file("LEZ_ZEBRA_API_KEY_FILE").read_text().strip()
     elif os.environ.get("LEZ_ZEBRA_COOKIE_FILE"):
         import base64
-        cookie = pathlib.Path(os.environ["LEZ_ZEBRA_COOKIE_FILE"]).read_text().strip()
+        cookie = configured_file("LEZ_ZEBRA_COOKIE_FILE").read_text().strip()
         headers["authorization"] = "Basic " + base64.b64encode(cookie.encode()).decode()
     return headers
 
@@ -3328,8 +3361,8 @@ SCENARIO = ""  # the scenario run() is running
 
 def zec_current_refund_delay() -> int:
     """The LEZ refund delay of the corridor the Nodes run with (runtime/zec/current)."""
-    run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
-    spec = json.loads((LANE_RUNTIME / "zec" / run_id / "spec.json").read_text())
+    run_id = zec_current_run_id()
+    spec = json.loads((runtime_child(LANE_RUNTIME / "zec", run_id) / "spec.json").read_text())
     return zec_profile_refund_delay(spec.get("profile", "deterministic-local-v1"))
 
 
@@ -3348,7 +3381,7 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
     publishes on its running Node (zec_take_time_offers); its agreement facts
     are filled in after the scenario's own take (zec_taker_actor_config)."""
     reuse = os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1"
-    if reuse and swap_id and ((LANE_RUNTIME / "zec" / "take-time" / f"{swap_id}.json").is_file()
+    if reuse and swap_id and (runtime_child(LANE_RUNTIME / "zec" / "take-time", f"{swap_id}.json").is_file()
                               or taker_has_take_time_swap(swap_id)):
         # A swap agreed at take time (a desk's Zcash offer) has no corridor: its
         # facts are in the Taker's swap directory.
@@ -3368,8 +3401,8 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
         log("  reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)")
         # A corridor from before the devnet's Zebra moved to NU7 names NU6.2
         # and outputs of a chain that is gone: say so instead of a stuck swap.
-        live_run = (LANE_RUNTIME / "zec" / "current").read_text().strip()
-        live_profile = json.loads((LANE_RUNTIME / "zec" / live_run / "spec.json").read_text()).get(
+        live_run = zec_current_run_id()
+        live_profile = json.loads((runtime_child(LANE_RUNTIME / "zec", live_run) / "spec.json").read_text()).get(
             "profile", "deterministic-local-v1")
         if live_profile not in ZEC_NU7_PROFILES:
             raise Failure(f"the live corridor {live_run} was provisioned under {live_profile} (NU6.2), but the "
@@ -3392,8 +3425,8 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
             raise SystemExit(3)
         if result.returncode != 0:
             raise Failure(f"zec-catalog-fixture.sh failed: {result.stderr.strip()[-300:] or result.stdout.strip()[-300:]}")
-    run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
-    out = LANE_RUNTIME / "zec" / run_id
+    run_id = zec_current_run_id()
+    out = runtime_child(LANE_RUNTIME / "zec", run_id)
     entries = json.loads((out / "prepared.json").read_text())
     corridors = []
     for index, entry in enumerate(entries):
@@ -4135,7 +4168,7 @@ def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     # A desk journey may have the Taker's Node stopped (zec-survivor): the
     # facts read once are kept on the host and reused.
-    cached = LANE_RUNTIME / "zec" / "take-time" / f"{swap_id}.json"
+    cached = runtime_child(LANE_RUNTIME / "zec" / "take-time", f"{swap_id}.json")
     if read.returncode == 0 and read.stdout.strip():
         cached.parent.mkdir(parents=True, exist_ok=True)
         cached.write_text(read.stdout)
@@ -6448,7 +6481,7 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
             taken = zec_dynamic_corridor(swap_id, "")
             opens = stamp_time(taken["run_id"]) + taken["lez_refund_delay_seconds"]
         else:
-            run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
+            run_id = zec_current_run_id()
             opens = stamp_time(run_id) + zec_current_refund_delay()
         wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
         log("  the Taker's refund is due")

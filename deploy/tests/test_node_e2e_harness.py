@@ -1439,5 +1439,40 @@ class CustodyCredit(unittest.TestCase):
             self.assertNotIn(CREDIT_PROBE, (SCRIPTS / packager).read_text())
 
 
+
+class RuntimePaths(unittest.TestCase):
+    """Names read back from files or the environment stay under their root."""
+
+    def test_a_plain_name_joins_directly_under_its_root(self):
+        root = pathlib.Path('/srv/runtime/zec')
+        for name in ['run-20260101-0001', 'swap.json', '.stage', '........']:
+            self.assertEqual(e2e.runtime_child(root, name), root / name)
+
+    def test_a_name_that_walks_the_tree_is_refused(self):
+        root = pathlib.Path('/srv/runtime/zec')
+        for name in ['', '.', '..', '../x', '../../etc/passwd', '/abs', 'a/b', 'a\\b', 'a\0b', 'x/..']:
+            with self.assertRaises(e2e.Failure, msg=repr(name)):
+                e2e.runtime_child(root, name)
+
+    def test_the_current_run_id_is_one_plain_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lane = pathlib.Path(directory)
+            (lane / 'zec').mkdir()
+            with patch.object(e2e, 'LANE_RUNTIME', lane):
+                (lane / 'zec' / 'current').write_text('run-0001\n')
+                self.assertEqual(e2e.zec_current_run_id(), 'run-0001')
+                (lane / 'zec' / 'current').write_text('../../outside\n')
+                with self.assertRaises(e2e.Failure):
+                    e2e.zec_current_run_id()
+
+    def test_a_configured_credential_file_must_not_walk_the_tree(self):
+        with patch.dict(os.environ, {'LEZ_ZEBRA_API_KEY_FILE': '/run/secrets/zebra.key'}):
+            self.assertEqual(e2e.configured_file('LEZ_ZEBRA_API_KEY_FILE'),
+                             pathlib.Path('/run/secrets/zebra.key'))
+        with patch.dict(os.environ, {'LEZ_ZEBRA_API_KEY_FILE': '/run/secrets/../../etc/shadow'}):
+            with self.assertRaises(e2e.Failure):
+                e2e.configured_file('LEZ_ZEBRA_API_KEY_FILE')
+
+
 if __name__ == '__main__':
     unittest.main()
