@@ -28,22 +28,24 @@ permissions:
 # Budget. The repository may hold 10 GB of caches (GitHub's default; `gh api
 # repos/{owner}/{repo}/actions/cache/storage-limit`), unused caches expire
 # after 7 days, and beyond the limit GitHub evicts the least recently used.
-# scripts/ci-cache-gate.sh measures what GitHub stores, the zstd archive, and
-# saves nothing above the cap passed to it. One generation of every cache,
-# with the size the first seeding run measured (run 45409393120):
-#                                   cap        measured
-#   basecamp-nix-store               384 MiB    150 MiB
-#   lez-v02-provisional (Cargo)     3072 MiB   2778 MiB
-#   lez-v02-provisional-tools        512 MiB    442 MiB
-#   rust-workspace                   448 MiB    379 MiB
-#   lez-v02-sidecar                 1536 MiB   1391 MiB
-#   lint-provisional-lez-v02        1152 MiB   1058 MiB
-#   caps together                   7104 MiB
+# scripts/ci-cache-gate.sh measures what GitHub stores, the archive
+# actions/cache uploads (tar | zstdmt), and saves nothing above the cap
+# passed to it. One generation of every cache, with what GitHub stored from
+# the line-tables-only seeding run 45417783353 (the compat graphs now build
+# without debug info and the provisional job no longer caches its methods
+# and deployer target, so both are smaller than that):
+#                                   cap        stored before
+#   basecamp-nix-store               384 MiB     180 MiB
+#   lez-v02-provisional (Cargo)     3072 MiB    4295 MiB, 3 targets
+#   lez-v02-provisional-tools        640 MiB     567 MiB
+#   rust-workspace                   832 MiB     695 MiB
+#   lez-v02-sidecar                 2048 MiB    1893 MiB
+#   caps together                   6976 MiB
 #   other actions' caches           1300 MiB (trivy-action's database, about
 #                                   100 MB per ref and day, its binary, and
 #                                   setup-node's npm cache)
-#   total                           8404 MiB of the 9536 MiB in 10 GB
-# The remaining 1.1 GiB holds a second generation of a cache whose key
+#   total                           8276 MiB of the 9536 MiB in 10 GB
+# The remaining 1.2 GiB holds a second generation of a small cache whose key
 # changed until the first expires. A dispatch's caches count as well; once
 # that branch stops running they are the first that GitHub evicts.
 env:
@@ -88,7 +90,10 @@ jobs:
         include:
           - shard: provisional LEZ v0.2
             manifests: compat/lez-v0.2-provisional/Cargo.toml
-            cache: lint-provisional-lez-v02
+            # Restores the provisional job's cache (never saves one) and lints
+            # in its target, where that job's identical clippy and doc runs
+            # left the dependency builds.
+            provisional-cache: true
           - shard: provisional escrow guest, methods and deployer
             manifests: >-
               compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
@@ -106,17 +111,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      # Cached Cargo jobs build with line tables only (file and line in
-      # panics and backtraces, no variable or type information) and without
-      # incremental state, which shrinks the cached targets; the keys name
-      # the setting.
+      # As in the provisional job, whose cache the first shard restores: the
+      # cached compat graphs build without debug info (panics keep file
+      # and line; backtraces lose them) and without incremental state, which
+      # shrinks the cached targets; the keys name the setting.
       CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
-      CARGO_CACHE_PATHS: |
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      # The provisional job's cache paths, which the restore must name
+      # exactly as that job saves them.
+      PROVISIONAL_CACHE_PATHS: |
         ~/.cargo/registry/index
         ~/.cargo/registry/cache
         ~/.cargo/git/db
-        target/check-all
+        /tmp/lez-v02-provisional-target
+        /tmp/lez-v02-provisional-guest-target
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -128,21 +136,22 @@ jobs:
           components: rustfmt, clippy
       - name: Install the smart-card library the LEZ v0.2.4 wallet crate links
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libpcsclite-dev
-      # Third-party build output only: the prune step removes this shard's
+      # Third-party build output only: the prune step removes the workspace's
       # own crates before any Cargo command, so they are linted from source.
-      - name: Restore this shard's Cargo registry and dependency builds
+      - name: Restore the provisional job's Cargo registry and dependency builds
         id: cargo-cache
-        if: matrix.cache
+        if: matrix.provisional-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.CARGO_CACHE_PATHS }}
-          key: ${{ matrix.cache }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0.2-provisional/Cargo.lock') }}
-      - name: Prune the restored Cargo target of this shard's own crates
-        if: matrix.cache
-        run: ./scripts/ci-cargo-cache-prune.sh target/check-all compat/lez-v0.2-provisional/Cargo.toml
+          path: ${{ env.PROVISIONAL_CACHE_PATHS }}
+          key: lez-v02-provisional-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0.2-provisional/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/methods/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock') }}
+      - name: Prune the restored Cargo target of the workspace's own crates
+        if: matrix.provisional-cache
+        run: ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
       - name: Lint this shard's workspaces
         env:
           MANIFESTS: ${{ matrix.manifests }}
+          CHECK_ALL_TARGET_DIR: ${{ matrix.provisional-cache && '/tmp/lez-v02-provisional-target' || '' }}
         run: |
           set -euo pipefail
           read -r -a manifests <<<"$MANIFESTS"
@@ -151,24 +160,6 @@ jobs:
             args+=(--workspace "$manifest")
           done
           ./scripts/check-all.sh --separate --rust-only "${args[@]}"
-      - name: Prune and measure this shard's Cargo cache before saving
-        id: cargo-gate
-        if: matrix.cache
-        env:
-          CACHE_NAME: ${{ matrix.cache }}
-          CI_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
-          CI_CACHE_MATCHED_KEY: ${{ steps.cargo-cache.outputs.cache-matched-key }}
-        run: |
-          if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
-            ./scripts/ci-cargo-cache-prune.sh target/check-all compat/lez-v0.2-provisional/Cargo.toml
-          fi
-          ./scripts/ci-cache-gate.sh "$CACHE_NAME" 1152 "$CARGO_CACHE_PATHS"
-      - name: Save this shard's Cargo registry and dependency builds
-        if: matrix.cache && env.CI_CACHE_SAVE == 'true' && steps.cargo-gate.outputs.save == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.CARGO_CACHE_PATHS }}
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   ci-quality:
     name: shell, workflow, Dockerfile, and Compose quality
@@ -339,7 +330,7 @@ jobs:
           if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
             ./scripts/ci-cargo-cache-prune.sh target Cargo.toml
           fi
-          ./scripts/ci-cache-gate.sh rust-workspace 448 "$CARGO_CACHE_PATHS"
+          ./scripts/ci-cache-gate.sh rust-workspace 832 "$CARGO_CACHE_PATHS"
       - name: Save the Cargo registry and dependency builds
         if: env.CI_CACHE_SAVE == 'true' && steps.cargo-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -503,12 +494,11 @@ jobs:
       # absolute paths); a hosted runner runs one job at a time.
       CARGO_HOME: /tmp/lez-v02-sidecar-cargo
       CARGO_TARGET_DIR: /tmp/lez-v02-sidecar-target
-      # Cached Cargo jobs build with line tables only (file and line in
-      # panics and backtraces, no variable or type information) and without
-      # incremental state, which shrinks the cached targets; the keys name
-      # the setting.
+      # The cached compat graphs build without debug info (panics keep file
+      # and line; backtraces lose them) and without incremental state, which
+      # shrinks the cached targets; the keys name the setting.
       CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_CACHE_PATHS: |
         /tmp/lez-v02-sidecar-cargo/registry/index
         /tmp/lez-v02-sidecar-cargo/registry/cache
@@ -588,7 +578,7 @@ jobs:
           if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
             ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml
           fi
-          ./scripts/ci-cache-gate.sh lez-v02-sidecar 1536 "$CARGO_CACHE_PATHS"
+          ./scripts/ci-cache-gate.sh lez-v02-sidecar 2048 "$CARGO_CACHE_PATHS"
       - name: Save the sidecar Cargo registry and dependency builds
         if: env.CI_CACHE_SAVE == 'true' && steps.cargo-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -626,20 +616,21 @@ jobs:
       LEZ_V02_GUEST_TARGET_DIR: /tmp/lez-v02-provisional-guest-target
       LEZ_V02_ARTIFACT_TARGET_DIR: /tmp/lez-v02-provisional-artifact-target
       LEZ_V02_TOOL_DIR: /tmp/lez-v02-provisional-tools
-      # Cached Cargo jobs build with line tables only (file and line in
-      # panics and backtraces, no variable or type information) and without
-      # incremental state, which shrinks the cached targets; the keys name
-      # the setting.
+      # The cached compat graphs build without debug info (panics keep file
+      # and line; backtraces lose them) and without incremental state, which
+      # shrinks the cached targets; the keys name the setting.
       CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_DEV_DEBUG: "0"
       TOOLS_CACHE_PATHS: /tmp/lez-v02-provisional-tools
+      # The root workspace's and the guest's targets. The methods and
+      # deployer target is not cached: it saves about three minutes of a job
+      # that is not the run's longest, for about 1.5 GB.
       CARGO_CACHE_PATHS: |
         ~/.cargo/registry/index
         ~/.cargo/registry/cache
         ~/.cargo/git/db
         /tmp/lez-v02-provisional-target
         /tmp/lez-v02-provisional-guest-target
-        /tmp/lez-v02-provisional-artifact-target
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -663,7 +654,7 @@ jobs:
           path: ${{ env.TOOLS_CACHE_PATHS }}
           key: lez-v02-provisional-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}
       # Third-party build output only. The prune step removes every crate of
-      # the four workspaces and every guest build before Cargo runs, so the
+      # the two workspaces and every guest build before Cargo runs, so the
       # Docker guest build and both ImageID checks run from source each time.
       - name: Restore the provisional LEZ v0.2 Cargo registry and dependency builds
         id: cargo-cache
@@ -675,7 +666,6 @@ jobs:
         run: |
           ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
           ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
-          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
       # rzup's GitHub release requests; the verifier hands it to rzup alone.
       - name: Verify the provisional LEZ v0.2 graph and the escrow guest
         env:
@@ -692,7 +682,7 @@ jobs:
           if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
             rm -rf -- "${LEZ_V02_TOOL_DIR}/cargo-home/registry" "${LEZ_V02_TOOL_DIR}/cargo-home/git"
           fi
-          ./scripts/ci-cache-gate.sh lez-v02-provisional-tools 512 "$TOOLS_CACHE_PATHS"
+          ./scripts/ci-cache-gate.sh lez-v02-provisional-tools 640 "$TOOLS_CACHE_PATHS"
       - name: Save the provisional LEZ v0.2 Risc0 tools
         if: env.CI_CACHE_SAVE == 'true' && steps.tools-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -708,7 +698,6 @@ jobs:
           if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
             ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
             ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
-            ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
           fi
           ./scripts/ci-cache-gate.sh lez-v02-provisional 3072 "$CARGO_CACHE_PATHS"
       - name: Save the provisional LEZ v0.2 Cargo registry and dependency builds

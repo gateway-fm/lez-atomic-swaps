@@ -8,10 +8,12 @@ set -euo pipefail
 #
 # PATH is what the save step stores, written as actions/cache takes it: one
 # path per argument or per line, `~/` for the home directory; no `!`
-# exclusions (see below). CAP_MIB bounds what GitHub stores, the zstd archive that
-# actions/cache uploads; this script measures it by compressing the same
-# paths the same way (tar, then zstd -T0 --long=30 at level 3) before the
-# save, on saving runs only.
+# exclusions (see below). CAP_MIB bounds what GitHub stores, the archive
+# actions/cache uploads, which this script measures before the save, on
+# saving runs only, by compressing the same paths the same way. On Linux the
+# pinned actions/cache runs `tar --posix -cf ... --use-compress-program
+# zstdmt`: zstd -T0 at its default level 3, without --long (its log prints
+# the command), so that is the command here.
 #
 # Environment:
 #   CI_CACHE_SAVE         `true` on a run that saves caches (a push to main,
@@ -121,8 +123,8 @@ command -v zstd >/dev/null || {
 size_file="$(mktemp)"
 trap 'rm -f -- "$size_file"' EXIT
 set +o pipefail
-tar -c -f - -P -- "${existing[@]}" 2>/dev/null \
-  | zstd -T0 --long=30 -3 -q -c | wc -c >"$size_file"
+tar --posix -c -f - -P -- "${existing[@]}" 2>/dev/null \
+  | zstd -T0 -3 -q -c | wc -c >"$size_file"
 statuses=("${PIPESTATUS[@]}")
 set -o pipefail
 # GNU tar exits 1 when a file changed while it was read; the save would

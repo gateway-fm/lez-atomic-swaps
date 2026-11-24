@@ -178,11 +178,11 @@ readonly cargo_prune='scripts/ci-cargo-cache-prune.sh'
 readonly cache_gate='scripts/ci-cache-gate.sh'
 readonly nix_store_cache='scripts/ci-basecamp-nix-store-cache.sh'
 readonly expected_cache_restores=6
-readonly expected_cache_saves=6
+readonly expected_cache_saves=5
 # The sum of the caps passed to ci-cache-gate.sh, in MiB: what this
 # workflow's caches may hold at once, beside the 1300 MiB other actions'
 # caches hold, within the repository's 10 GB (the budget comment in ci.yml).
-readonly cache_cap_budget_mib=7104
+readonly cache_cap_budget_mib=6976
 [[ -x "$cargo_prune" && -x "$nix_store_cache" && -x "$cache_gate" ]] || fail "cache scripts must remain executable"
 for workflow in "$ci_workflow" "$public_workflow"; do
   ! rg -q 'uses: actions/cache@' "$workflow" \
@@ -218,7 +218,10 @@ unguarded_saves="$(awk '
 [[ -z "$unguarded_saves" ]] || fail "a cache save runs without CI_CACHE_SAVE and its gate: ${unguarded_saves}"
 require_fixed 'if [[ "${CI_CACHE_SAVE:-false}" != true ]]; then' "$cache_gate"
 require_fixed 'if (( bytes > cap_bytes )); then' "$cache_gate"
-require_fixed '| zstd -T0 --long=30 -3 -q -c | wc -c >"$size_file"' "$cache_gate"
+# The pinned actions/cache compresses with zstdmt (zstd -T0, level 3, no
+# --long); the gate must measure the same, or its sizes are not GitHub's.
+require_fixed '| zstd -T0 -3 -q -c | wc -c >"$size_file"' "$cache_gate"
+! rg -q -- '\| zstd .*--long' "$cache_gate" || fail "$cache_gate must compress as actions/cache does, without --long"
 require_fixed 'echo "$line" >>"$GITHUB_STEP_SUMMARY"' "$cache_gate"
 # One gate per save, each with a cap; together the caps fit the budget.
 mapfile -t gate_caps < <(rg -o '\./scripts/ci-cache-gate\.sh \S+ [0-9]+ ' "$ci_workflow" | cut -d' ' -f3)
@@ -238,6 +241,25 @@ for paths in CARGO_CACHE_PATHS TOOLS_CACHE_PATHS; do
   [[ "$(rg -Fxc "          path: \${{ env.${paths} }}" "$ci_workflow")" == "$((gates * 2))" ]] \
     || fail "every cache on ${paths} must restore, measure and save the same paths"
 done
+# The lint shard restores the provisional job's cache read-only: same key,
+# same paths, same debug-info setting.
+[[ "$(rg -Fxc '          path: ${{ env.PROVISIONAL_CACHE_PATHS }}' "$ci_workflow")" == 1 ]] \
+  || fail "only the provisional lint shard restores the provisional job's cache"
+env_block() { # env_block NAME: the lines of a multi-line job variable
+  awk -v name="$1" '
+    $0 == "      " name ": |" { found = 1; next }
+    found && /^        / { print; next }
+    found { exit }
+  ' "$ci_workflow"
+}
+[[ -n "$(env_block PROVISIONAL_CACHE_PATHS)" \
+  && "$(env_block PROVISIONAL_CACHE_PATHS)" == "$(awk '/^  lez-v02-provisional:$/ { found = 1 } found' "$ci_workflow" \
+    | awk '$0 == "      CARGO_CACHE_PATHS: |" { f = 1; next } f && /^        / { print; next } f { exit }')" ]] \
+  || fail "the lint shard must restore the provisional cache with the provisional job's exact paths"
+[[ "$(rg -Fc "key: lez-v02-provisional-\${{ runner.os }}-\${{ runner.arch }}-\${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-" "$ci_workflow")" == 2 ]] \
+  || fail "the lint shard must restore the provisional job's key"
+! rg -q '^        /tmp/lez-v02-provisional-artifact-target' "$ci_workflow" \
+  || fail "the provisional methods and deployer target is not cached"
 [[ "$(rg -Fxc '          path: ${{ runner.temp }}/basecamp-nix-store/store' "$ci_workflow")" == 2 ]] \
   || fail "the Basecamp Nix store restore and save must name the same directory"
 require_fixed './scripts/ci-cache-gate.sh basecamp-nix-store 384 "${RUNNER_TEMP}/basecamp-nix-store/store"' "$ci_workflow"
@@ -249,7 +271,8 @@ while IFS= read -r key; do
 done < <(rg '^ +key: ' "$ci_workflow")
 [[ "$(rg -Fc '${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 4 ]] \
   || fail "every Cargo cache key must name the debug-info setting and the rustc version and hash the lock files"
-[[ "$(rg -Fxc '      CARGO_PROFILE_DEV_DEBUG: line-tables-only' "$ci_workflow")" == 4 \
+[[ "$(rg -c '^      CARGO_PROFILE_DEV_DEBUG: ' "$ci_workflow")" == 4 \
+  && "$(rg -Fxc '      CARGO_PROFILE_DEV_DEBUG: "0"' "$ci_workflow")" == 3 \
   && "$(rg -Fxc '      CARGO_INCREMENTAL: "0"' "$ci_workflow")" == 4 ]] \
   || fail "every job with a Cargo cache must set its debug-info and incremental settings"
 require_fixed "key: lez-v02-provisional-tools-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}" "$ci_workflow"
@@ -257,17 +280,19 @@ require_fixed "hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 
 ! rg -q 'advisory-db|/bin$' "$ci_workflow" \
   || fail "the cargo-deny advisory database and Cargo bin directories are never cached"
 # Each Cargo cache is pruned after its restore and before Cargo runs.
-for target in 'target Cargo.toml' \
-  'target/check-all compat/lez-v0.2-provisional/Cargo.toml' \
-  '/tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml' \
-  '/tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml' \
-  '/tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml' \
-  '/tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml'; do
-  [[ "$(rg -Fc -- "./scripts/ci-cargo-cache-prune.sh ${target}" "$ci_workflow")" == 2 ]] \
+# The provisional root target is pruned three times: after the lint shard's
+# restore, after the provisional job's, and before that job's save.
+for target in 'target Cargo.toml|2' \
+  '/tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml|2' \
+  '/tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml|3' \
+  '/tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml|2'; do
+  count="${target##*|}"
+  target="${target%|*}"
+  [[ "$(rg -Fc -- "./scripts/ci-cargo-cache-prune.sh ${target}" "$ci_workflow")" == "$count" ]] \
     || fail "$ci_workflow must prune ${target%% *} after the restore and before the save"
 done
 provisional_order="$(rg -n -F -e 'Restore the provisional LEZ v0.2 Cargo registry' \
-  -e 'ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target' \
+  -e 'ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target' \
   -e 'run: ./scripts/verify-lez-v02-provisional.sh' "$ci_workflow" | cut -d: -f1 | head -n 3 | paste -sd ' ' -)"
 read -r restore_line prune_line verify_line <<<"$provisional_order"
 (( restore_line < prune_line && prune_line < verify_line )) \

@@ -67,6 +67,20 @@ expect_output "save=true"
 expect_summary '- Cache `fitting-cache`: restored an older generation (older-key); saving 3 MiB compressed (cap 3 MiB)'
 grep -Eq '^compressed-bytes=2[0-9]{6}$' "${work}/output" || fail "expected about 2 MiB compressed: $(cat "${work}/output")"
 
+# The gate's number is what the actions/cache command produces: tar --posix
+# piped through zstdmt, which is zstd -T0 at level 3 without --long, so a
+# repeat 4 MiB back (beyond level 3's window) is stored twice.
+mkdir -p "${work}/repeats"
+random_mib "${work}/repeats/a" 4
+cp "${work}/repeats/a" "${work}/repeats/b"
+CI_CACHE_SAVE=true gate repeats 16 "${work}/repeats"
+expected="$(tar --posix -c -f - -P -- "${work}/repeats" 2>/dev/null | zstd -T0 -q -c | wc -c | tr -d '[:space:]')"
+measured="$(sed -n 's/^compressed-bytes=//p' "${work}/output")"
+# Within 0.1%: pax headers carry the read times.
+(( measured * 1000 > expected * 999 && measured * 1000 < expected * 1001 )) \
+  || fail "the gate measured ${measured} bytes, the actions/cache command ${expected}"
+(( expected > 8 * 1024 * 1024 )) || fail "the measurement must not find repeats beyond zstd's level-3 window: ${expected}"
+
 CI_CACHE_SAVE=true gate zeros 1 "${work}/zeros"
 expect_output "save=true"
 expect_summary 'not restored (no cache for this key); saving 1 MiB compressed (cap 1 MiB)'
