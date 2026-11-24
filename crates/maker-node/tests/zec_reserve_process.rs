@@ -71,6 +71,12 @@ const ZEBRA_TIP: u32 = 120;
 /// The principal must exceed the agreement's 10,000-zatoshi claim fee.
 const FOREIGN_UNITS: u64 = 1_000_000;
 const LEZ_UNITS: u128 = 2_500_000;
+/// The whole take (reserve, propose, complete) must finish before the offer
+/// expires: the Maker's reservation and the agreement's transcript expire
+/// with it. These tests take a live offer and never wait for its expiry, so
+/// its lifetime is that of the other Node suites, not a deadline the take
+/// races on a loaded host.
+const OFFER_TTL_SECONDS: u64 = 300;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_taker_sells_lez_swap_is_agreed_at_take_time_without_a_corridor() {
@@ -229,6 +235,10 @@ async fn agree_at_take_time(direction: SwapDirection) {
     write_private(&decoy.join("zec-reservation.json"), b"funded swap");
     let module =
         taker_service_rpc_module(load_taker_service_context(&service_config).unwrap()).unwrap();
+    // Both roles accept the agreement during the take, before its transcript
+    // expires with the offer; the test checks the wire at that time, not at
+    // whatever time it reaches the check.
+    let taken_at = now();
     let commit: TakerInitiationCommitV1 = module
         .call("taker_swap_initiate_v1", [request.clone()])
         .await
@@ -248,7 +258,7 @@ async fn agree_at_take_time(direction: SwapDirection) {
     let final_wire = fs::read(taker_swap.join("zec-agreement.borsh")).unwrap();
     let accepted = AcceptedZecAgreementV1::accept_wire_at(
         &final_wire,
-        UnixSeconds::new(now()),
+        UnixSeconds::new(taken_at),
         Participant::Taker,
         0,
     )
@@ -702,7 +712,7 @@ async fn configure_live_route(socket: &Path, route: MakerRouteV1) {
         MakerPriceSourceKind::Local,
         10,
         FOREIGN_UNITS,
-        3,
+        OFFER_TTL_SECONDS,
     )
     .unwrap();
     let _: Value = call_local_rpc(
@@ -733,7 +743,7 @@ async fn configure_live_route(socket: &Path, route: MakerRouteV1) {
         MakerPriceSourceKind::Local,
         10,
         FOREIGN_UNITS,
-        3,
+        OFFER_TTL_SECONDS,
     )
     .unwrap();
     let _: Value = call_local_rpc(
