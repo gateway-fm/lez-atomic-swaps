@@ -280,10 +280,13 @@ wait_healthy 2400 "$LEZ_CONTAINER_PREFIX-bitcoin-core" "$LEZ_CONTAINER_PREFIX-ze
 # (LEZ_FRESH_FINALITY_SECONDS, 60), and start another chain if either never comes.
 if [[ "$FRESH_LEZ" == 1 ]]; then
   stage "the new chain finalizes"
+  # An indexer that does not answer yet (connection refused, a timeout) is an
+  # empty read, not an error: under `set -e -o pipefail` curl's exit status
+  # would otherwise end this script on the first read instead of polling.
   lez_finalized() {
     curl -s --max-time 10 -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
-      "$LEZ_STACK_INDEXER_URL" 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
+      "$LEZ_STACK_INDEXER_URL" 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p' || true
   }
   # read every 2 s: once it serves a height, a healthy chain finalizes every second or two
   first=""; moved=0; now=""
