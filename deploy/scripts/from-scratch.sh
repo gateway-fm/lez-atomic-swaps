@@ -346,9 +346,11 @@ phase_rust() {
   for b in "${bins[@]}"; do mkdir -p "$DEPLOY_ROOT/images/${b%/*}"; done
   log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
   # LEZ_TEST_HOOKS=1: the devnet test hooks of the Taker Node (a clock offset,
-  # a cheating refund; xmr_supervisor::test_hooks), never in a release build
+  # a cheating refund; xmr_supervisor::test_hooks) and of the Maker Node (a
+  # hold of Zcash actor activations; actor_supervisor::runtime::test_hooks),
+  # never in a release build
   local hooks=""
-  [[ "${LEZ_TEST_HOOKS:-0}" != 1 ]] || { hooks=",lez-taker-node/test-hooks"; log "with the devnet test hooks (LEZ_TEST_HOOKS=1)"; }
+  [[ "${LEZ_TEST_HOOKS:-0}" != 1 ]] || { hooks=",lez-taker-node/test-hooks,lez-maker-node/test-hooks"; log "with the devnet test hooks (LEZ_TEST_HOOKS=1)"; }
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
     -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target -e CARGO_INCREMENTAL=0 \
     -e "LEZ_NODE_HOOKS_FEATURE=$hooks" ${release_build_env[@]+"${release_build_env[@]}"} "$RUST_IMAGE" bash -c '

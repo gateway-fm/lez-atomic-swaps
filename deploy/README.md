@@ -384,6 +384,18 @@ which `from-scratch.sh` refuses `LEZ_TEST_HOOKS=1`, and the sidecar's hook
 module holds a compile-time assertion that `LEZ_RELEASE_BUILD` is unset
 (`deploy/tests/test_release_workflow.py`, `NoTestHooksInARelease`).
 
+**The Maker's actor activated after the offer expired.**
+`zec-activate-after-expiry` (TakerSellsLez) publishes a Zcash offer with a
+60 s TTL and takes it while the Maker Node's `hold-zec-activations` hook
+holds back its actor's activation. Once the Maker's monitor shows the
+activation held, the Maker Node is stopped, started again after the offer
+has expired (the hold still set) and the hold is cleared. A ZEC agreement's
+transcript expires with its offer, and each actor activates at the time its
+role accepted the agreement, recorded in the actor's config at provisioning,
+so the Maker activates after the expiry and the swap must complete on both
+Nodes as `zec-dynamic-happy`'s does. A Maker Node built without the hooks
+fails the scenario before any swap, naming `LEZ_TEST_HOOKS=1`.
+
 Each long wait logs its state, LEZ's finalized height and the sequencer's tip when
 the state changes and at least once a minute, and a timeout names what it waited
 for and what it saw last; `regress.sh` writes both heights on each try's start and
@@ -719,17 +731,20 @@ Monero swap's LEZ by itself from R (finalized LEZ time). Its entrypoint turns
 that off with `LEZ_XMR_AUTOMATIC_REFUND=false` or the word `false` in
 `<state>/xmr-automatic-refund` (read at each start); `node-e2e.py` writes the
 file and restarts the Node. With `LEZ_TEST_HOOKS=1`, the devnet's build
-(`from-scratch.sh`) compiles the Taker Node with the feature `test-hooks` and
-the LEZ sidecar with its own `test-hooks`; both read files in
-`<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, set by the entrypoint):
+(`from-scratch.sh`) compiles the Taker Node and the Maker Node with their
+feature `test-hooks` and the LEZ sidecar with its own `test-hooks`; all read
+files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, set by the entrypoint):
 `clock-offset-ms` (the Taker supervisor's clock offset),
 `cheat-refund-before-r` and `cheat-refund-after-claim` (a cheating Taker),
+`hold-zec-activations` (a flag: the Maker Node's supervisor holds back its
+Zcash actors' activations while it exists),
 `punish-nonce-thefts`, `hold-claim-preparations` and `hold-claim-submissions`
-(counts, in the Maker's sidecar). Without it neither
+(counts, in the Maker's sidecar). Without it none
 is built in, and `xmr-taker-clock-ahead`, `xmr-punish-replans`,
-`xmr-taker-cheats` and `xmr-kill-maker` fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`
-(they look for the hook's name in the Taker Node's or the Maker sidecar's
-executable). So a devnet for `regress.sh full` is built with
+`xmr-taker-cheats`, `xmr-kill-maker`, `zec-kill-maker-claim` and
+`zec-activate-after-expiry` fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`
+(they look for the hook's name in the Taker Node's, the Maker Node's or the
+Maker sidecar's executable). So a devnet for `regress.sh full` is built with
 `LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh`.
 
 No release has the hooks. The release workflows and the role packagers never

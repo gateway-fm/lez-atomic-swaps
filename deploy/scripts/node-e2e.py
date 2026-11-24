@@ -83,6 +83,13 @@ tests/fixtures/zec-catalog-fixture.sh --direction …, which also recreates both
                                          with its LEZ claim held in its sidecar, at its
                                          preparation and in flight; both swaps complete
                                          (issue #187; needs LEZ_TEST_HOOKS=1)
+    node-e2e.py --pair Zcash zec-activate-after-expiry (TakerSellsLez): an offer with a
+                                         60 s TTL taken, the Maker's actor activation
+                                         held by a test hook, the Maker Node stopped and
+                                         started again after the offer expired, the hold
+                                         cleared; the Maker activates at its recorded
+                                         acceptance and the swap completes (needs
+                                         LEZ_TEST_HOOKS=1)
 
 The ZEC refund windows come from the agreement, not the timing profile. Selling
 LEZ, the refund journeys provision their corridor under
@@ -221,6 +228,7 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
                   "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding", "zec-kill-maker-claim",
+                  "zec-activate-after-expiry",
                   # the XMR scenarios that write a Node's test hooks or switch,
                   # stop a wallet-rpc container or run the Maker's probe
                   "xmr-taker-refund", "xmr-taker-refund-kill", "xmr-taker-clock-ahead", "xmr-punish-replans",
@@ -4154,9 +4162,10 @@ def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
     return corridor
 
 
-def zec_dynamic_publish(stamp: str, offers: list[tuple[str, str]]) -> None:
+def zec_dynamic_publish(stamp: str, offers: list[tuple[str, str]], offer_ttl_seconds: int = 3600) -> None:
     """The Maker's CLI enables this direction's Zcash route at the lot's price
-    and publishes each (request id, offer id) on its running Node."""
+    and publishes each (request id, offer id) on its running Node, each offer
+    valid for `offer_ttl_seconds`."""
     route = ["--pair", "zcash", "--direction", "taker-sells-lez" if zec_taker_sells_lez() else "taker-sells-foreign"]
     revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
                                      if r["value"]["route"] == ROUTE), [])
@@ -4165,7 +4174,8 @@ def zec_dynamic_publish(stamp: str, offers: list[tuple[str, str]]) -> None:
     for enabled in ("false", "true"):
         maker_cli("configure-pair", "--request-id", f"e2e-zecdyn-pair-{stamp}-{enabled}", *revision(maker_cli("pairs")),
                   *route, "--enabled", enabled, "--price-source", "local", "--minimum-foreign-units",
-                  str(ZEC_FOREIGN_UNITS), "--maximum-foreign-units", str(ZEC_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+                  str(ZEC_FOREIGN_UNITS), "--maximum-foreign-units", str(ZEC_FOREIGN_UNITS),
+                  "--offer-ttl-seconds", str(offer_ttl_seconds))
         if enabled == "false":
             maker_cli("set-local-price", "--request-id", f"e2e-zecdyn-price-{stamp}", *revision(maker_cli("prices")),
                       *route, "--lez-units-per-lot", "1", "--foreign-units-per-lot",
@@ -8518,6 +8528,131 @@ def scenario_zec_kill_maker_claim(stamp: str) -> dict:
     return {"points": walked}
 
 
+# ---- zec-activate-after-expiry: the Maker's actor activated after its offer expired ----
+# A ZEC agreement's transcript expires when its offer does. Each role's actor
+# activates at the time that role accepted the agreement, which its
+# provisioner records in the actor's config, not at the time the activation
+# runs: a Maker stopped between the take and its actor's activation, and
+# started only after the offer expired, must still activate and settle (the
+# Taker has locked by then). The Maker Node's test hook hold-zec-activations
+# (a devnet built with LEZ_TEST_HOOKS=1) holds the Maker's Zcash activations
+# while its file exists: the offer is published with a 60 s TTL, taken, the
+# Maker's activation held, the Maker stopped, started again once the offer
+# has expired (still held), and the hold cleared. The swap must complete on
+# both Nodes with the LEZ lot paid as usual.
+ZEC_ACTIVATION_HOLD = "hold-zec-activations"
+ZEC_ACTIVATION_HELD_CLASS = "test_hook_activation_held"
+ZEC_SHORT_OFFER_TTL_SECONDS = 60
+MAKER_NODE_PROGRAM = "/usr/local/bin/lez-maker-node"
+
+
+def require_maker_node_test_hooks(hook: str) -> None:
+    """Fails the scenario at once, before any swap, unless the Maker Node was
+    built with the devnet test hooks (from-scratch.sh with LEZ_TEST_HOOKS=1):
+    without them the hook file is ignored and nothing is held."""
+    result = subprocess.run(node_command("maker", ["grep", "-qa", hook, MAKER_NODE_PROGRAM]),
+                            capture_output=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"the Maker's {MAKER_NODE_PROGRAM.rsplit('/', 1)[-1]} has no devnet test hooks: this scenario "
+                      "needs the devnet built with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh)")
+
+
+def zec_maker_activation_held(view: dict) -> bool:
+    """Whether the Maker's monitor shows its actor not activated, its last
+    attempt the activation the test hook held."""
+    observation = (view.get("progress") or {}).get("observation") or {}
+    outcome = view.get("last_outcome") or {}
+    return (observation.get("state") == "not_activated" and outcome.get("step") == "activate"
+            and outcome.get("failure_class") == ZEC_ACTIVATION_HELD_CLASS)
+
+
+def zec_wait_maker_activation_held(swap_id: str, timeout: int) -> dict:
+    """Waits until the Maker's supervisor has tried to activate the swap's actor
+    and the hook held it; fails if the actor activated anyway."""
+    wait = Wait(f"the Maker's hook to hold the activation of {swap_id[:12]}", timeout)
+    while wait.running():
+        reply = rpc("maker", "maker_actor_monitor_v1", {"id": swap_id}, timeout=30)
+        view = reply.get("result") or {}
+        observation = (view.get("progress") or {}).get("observation") or {}
+        if observation.get("state") == "active":
+            raise Failure(f"the Maker activated {swap_id[:12]} with {ZEC_ACTIVATION_HOLD} set: nothing was held")
+        if zec_maker_activation_held(view):
+            return view
+        wait.note((observation.get("state"), (view.get("last_outcome") or {}).get("failure_class")),
+                  lambda: f"maker {maker_phase(swap_id)}, last {(view.get('last_outcome') or {})}")
+        time.sleep(3)
+    raise wait.failure()
+
+
+def scenario_zec_activate_after_expiry(stamp: str) -> dict:
+    """The Maker's Zcash actor activated only after the offer expired, after a
+    stop and a start of the Maker Node between the take and the activation;
+    the swap must complete on both Nodes."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-activate-after-expiry is a selling-LEZ scenario: the Taker locks its LEZ first")
+    require_maker_node_test_hooks(ZEC_ACTIVATION_HOLD)
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    zec_fund()
+    before = lez_balances()
+    maker_test_hook(ZEC_ACTIVATION_HOLD, "1")
+    try:
+        offer_id = f"offer-e2e-zecexp-{stamp}"
+        zec_dynamic_publish(stamp, [(f"e2e-zecexp-publish-{stamp}", offer_id)],
+                            offer_ttl_seconds=ZEC_SHORT_OFFER_TTL_SECONDS)
+        published_at = int(time.time())
+        swap_id = zec_take_or_resume(offer_id, stamp)
+        taken_at = int(time.time())
+        log(f"  took {offer_id} {taken_at - published_at} s after it was published "
+            f"(offer TTL {ZEC_SHORT_OFFER_TTL_SECONDS} s)")
+        corridor = zec_dynamic_corridor(swap_id, offer_id)
+        held = zec_wait_maker_activation_held(swap_id, timeout=300)
+        log(f"  the Maker's activation of {swap_id[:12]} is held ({held['last_outcome'].get('failure_class')}); "
+            f"taker {taker_view(swap_id)['state']}; stopping the Maker Node")
+        node_stop("maker")
+        stopped_at = int(time.time())
+        expired_at = published_at + ZEC_SHORT_OFFER_TTL_SECONDS
+        wait = Wait(f"the offer {offer_id} to expire while the Maker is down", ZEC_SHORT_OFFER_TTL_SECONDS + 120)
+        while wait.running() and time.time() <= expired_at + 10:
+            wait.note("waiting", f"{max(0, expired_at + 10 - int(time.time()))} s to the expiry and a margin")
+            time.sleep(5)
+        if time.time() <= expired_at + 10:
+            raise wait.failure()
+        log(f"  the offer expired at {expired_at}; starting the Maker Node again (the hold still set)")
+        node_start("maker")
+        wait_healthy("maker")
+        zec_wait_maker_activation_held(swap_id, timeout=300)
+        restarted_at = int(time.time())
+        log(f"  the restarted Maker still holds the activation, {restarted_at - expired_at} s after the expiry; "
+            "clearing the hold")
+    finally:
+        # A failure while the Maker is down leaves its container stopped: the
+        # hold is cleared once it can be, and the scenario's own failure kept.
+        try:
+            maker_test_hook(ZEC_ACTIVATION_HOLD, None)
+        except subprocess.CalledProcessError as error:
+            log(f"  could not clear {ZEC_ACTIVATION_HOLD} (the Maker is down?): {error}")
+    wait = Wait(f"the Maker to activate {swap_id[:12]} after the offer expired", 600)
+    while wait.running():
+        view = maker_view(swap_id)
+        observation = (view.get("progress") or {}).get("observation") or {}
+        if observation.get("state") == "active":
+            break
+        wait.note((observation.get("state"), (view.get("last_outcome") or {}).get("failure_class")),
+                  lambda: f"maker {maker_phase(swap_id)}, last {(view.get('last_outcome') or {})}")
+        time.sleep(5)
+    else:
+        raise wait.failure()
+    activated_at = int(time.time())
+    if activated_at <= expired_at:
+        raise Failure(f"the Maker activated {swap_id[:12]} at {activated_at}, before the offer expired at {expired_at}")
+    log(f"  the Maker activated {swap_id[:12]} {activated_at - expired_at} s after the offer expired")
+    settled = zec_happy_after_take(stamp, since, swap_id, corridor)
+    return {"swap_id": swap_id, "offer_id": offer_id, "offer_ttl_seconds": ZEC_SHORT_OFFER_TTL_SECONDS,
+            "published_at": published_at, "taken_at": taken_at, "maker_stopped_at": stopped_at,
+            "offer_expired_at": expired_at, "maker_restarted_at": restarted_at,
+            "maker_activated_at": activated_at, "lez_balances_before": before, **settled}
+
+
 # ---- a stranger's credit to a funded escrow's custody (TM-0032) -------------------
 # LEZ lets anyone raise the balance of any initialised account, so a third
 # party can send LEZ to the custody account of a funded swap whenever it
@@ -8764,6 +8899,7 @@ ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
     "zec-slow-funding": scenario_zec_slow_funding,
     "zec-kill-maker-claim": scenario_zec_kill_maker_claim,
+    "zec-activate-after-expiry": scenario_zec_activate_after_expiry,
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,

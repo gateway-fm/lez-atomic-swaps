@@ -482,6 +482,14 @@ jobs:
           command: check
           arguments: --all-features --config fuzz/deny.toml
           command-arguments: advisories bans licenses sources
+      - name: Audit LEZ v0.2 XMR release service graph
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0_2-xmr-release-service/Cargo.toml
+          command: check
+          arguments: --all-features --config compat/lez-v0_2-xmr-release-service/deny.toml
+          command-arguments: advisories bans licenses sources
   lez-v02-sidecar:
     name: isolated official LEZ v0.2 sidecar contract
     runs-on: ubuntu-24.04

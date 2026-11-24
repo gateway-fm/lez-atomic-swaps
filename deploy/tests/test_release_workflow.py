@@ -235,8 +235,9 @@ if __name__ == '__main__':
 
 
 class NoTestHooksInARelease(unittest.TestCase):
-    """The devnet's test hooks (feature test-hooks of the Taker Node and the LEZ
-    sidecar: a skewed clock, a cheating Taker, a punish nonce thief) never
+    """The devnet's test hooks (feature test-hooks of the Taker Node, the Maker
+    Node and the LEZ sidecar: a skewed clock, a cheating Taker, a held Zcash
+    activation, a punish nonce thief) never
     reach a release: the devnet build enables them only on LEZ_TEST_HOOKS=1,
     nothing on the release path names them or sets that variable, the release
     path marks itself LEZ_RELEASE_BUILD, and under that mark from-scratch.sh
@@ -274,7 +275,7 @@ class NoTestHooksInARelease(unittest.TestCase):
         for line in text.splitlines():
             if 'test-hooks' in line and not line.lstrip().startswith('#'):
                 self.assertRegex(line, r'\[\[ "\$\{LEZ_TEST_HOOKS:-0\}" != 1 \]\] \|\| ', line)
-        self.assertIn('hooks=",lez-taker-node/test-hooks"', text)
+        self.assertIn('hooks=",lez-taker-node/test-hooks,lez-maker-node/test-hooks"', text)
         self.assertIn('hooks="--features test-hooks"', text)
         self.assertIn('pair-xmr$LEZ_NODE_HOOKS_FEATURE"', text)
         # The release mark reaches both build containers.
@@ -317,6 +318,9 @@ class NoTestHooksInARelease(unittest.TestCase):
         taker = (ROOT / 'crates/taker-node/src/taker_service/xmr_supervisor.rs').read_text()
         module = taker.split('#[cfg(feature = "test-hooks")]\npub(super) mod test_hooks {', 1)[1]
         self.assertIn(guard, module.split('\n}\n', 1)[0])
+        maker = (ROOT / 'crates/maker-node/src/actor_supervisor/runtime.rs').read_text()
+        module = maker.split('#[cfg(feature = "test-hooks")]\npub(super) mod test_hooks {', 1)[1]
+        self.assertIn(guard, module.split('\n}\n', 1)[0])
         self.assertIn('#[cfg(feature = "test-hooks")]\nmod test_hooks;',
                       (ROOT / 'compat/lez-v0_2-sidecar/src/lib.rs').read_text())
         self.assertIn(guard, (ROOT / 'compat/lez-v0_2-sidecar/src/test_hooks.rs').read_text())
@@ -330,5 +334,5 @@ class NoTestHooksInARelease(unittest.TestCase):
             self.assertFalse(default and 'test-hooks' in default.group(1), manifest)
             for line in text.splitlines():
                 if 'test-hooks' in line and not line.lstrip().startswith('#'):
-                    # Only the two crates' own definitions of the feature.
+                    # Only the three crates' own definitions of the feature.
                     self.assertRegex(line, r'^test-hooks = \[("pair-xmr")?\]$', manifest)
