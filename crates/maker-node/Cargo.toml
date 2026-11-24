@@ -24,6 +24,11 @@ pair-xmr = [
     "lez-taker-node/pair-xmr",
 ]
 test-crash-hooks = ["pair-zec", "zec-reference-actor/test-crash-hooks"]
+# The devnet's test hooks (actor_supervisor::runtime::test_hooks): a hold of
+# Zcash actor activations, read from LEZ_TEST_HOOKS_DIR. The devnet build
+# enables it only with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh); no
+# release build does.
+test-hooks = []
 
 [[bin]]
 name = "lez-maker-node"

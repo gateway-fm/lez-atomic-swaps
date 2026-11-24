@@ -649,6 +649,10 @@ fn run_claimed_attempt_with_lock(
             Ok(command) => command,
             Err(attempt) => return Ok(attempt),
         };
+        if activation_held(lease.record().manifest().kind(), command) {
+            attempted = command.name();
+            return Ok(ClaimedAttempt::Backoff("test_hook_activation_held"));
+        }
         let admitted = match effect_held_back(store, lease, config, command, &status) {
             Ok(admitted) => admitted,
             Err(class) => return Ok(ClaimedAttempt::Backoff(class)),
@@ -710,6 +714,47 @@ fn run_claimed_attempt_with_lock(
         progress,
         held_lock: Some(held_lock),
     })
+}
+
+/// Whether the devnet's test hook `hold-zec-activations` holds back this
+/// attempt: a Zcash actor's activation while the flag file is present (the
+/// scenario zec-activate-after-expiry stops the Maker between the take and the
+/// activation). Always false without the `test-hooks` feature.
+fn activation_held(kind: MakerActorKindV1, command: ActorEffectCommand) -> bool {
+    #[cfg(feature = "test-hooks")]
+    return kind == MakerActorKindV1::Zcash
+        && command == ActorEffectCommand::Activate
+        && test_hooks::flag("hold-zec-activations");
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        let _ = (kind, command);
+        false
+    }
+}
+
+/// The devnet's test hooks: files in the directory `LEZ_TEST_HOOKS_DIR`
+/// names, read on every use. Built only with the `test-hooks` feature, which
+/// the devnet's build enables and no release build does: a Node built without
+/// it has none of this.
+#[cfg(feature = "test-hooks")]
+pub(super) mod test_hooks {
+    use std::path::PathBuf;
+
+    // A release build (the release workflows and packagers set
+    // LEZ_RELEASE_BUILD) cannot carry the test hooks: it does not compile.
+    const _: () = assert!(
+        option_env!("LEZ_RELEASE_BUILD").is_none(),
+        "the devnet test hooks (feature test-hooks) are never part of a release build (LEZ_RELEASE_BUILD)"
+    );
+
+    fn file(name: &str) -> Option<PathBuf> {
+        std::env::var_os("LEZ_TEST_HOOKS_DIR").map(|directory| PathBuf::from(directory).join(name))
+    }
+
+    /// A flag file that is present.
+    pub(crate) fn flag(name: &str) -> bool {
+        file(name).is_some_and(|path| path.exists())
+    }
 }
 
 /// The effect one attempt runs: the owner's queued action if there is one,

@@ -675,6 +675,69 @@ class ZecKillMakerClaim(unittest.TestCase):
                         entrypoint.index('node_helper "$bin/lez-v02-bridge-poc"'))
 
 
+class ZecActivateAfterExpiry(unittest.TestCase):
+    """zec-activate-after-expiry: what can be checked without a stack."""
+
+    def test_it_is_registered_refused_natively_and_held_by_the_maker_node(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-activate-after-expiry'], e2e.scenario_zec_activate_after_expiry)
+        self.assertIn('zec-activate-after-expiry', e2e.NATIVE_REFUSED)
+        self.assertEqual(e2e.ZEC_ACTIVATION_HOLD, 'hold-zec-activations')
+        runtime = (REPO / 'crates/maker-node/src/actor_supervisor/runtime.rs').read_text()
+        self.assertIn(f'test_hooks::flag("{e2e.ZEC_ACTIVATION_HOLD}")', runtime)
+        self.assertIn(f'Backoff("{e2e.ZEC_ACTIVATION_HELD_CLASS}")', runtime)
+        # the hook only in a devnet build of the Maker Node
+        self.assertIn(',lez-maker-node/test-hooks', (REPO / 'deploy/scripts/from-scratch.sh').read_text())
+        self.assertIn('\ntest-hooks = []\n', (REPO / 'crates/maker-node/Cargo.toml').read_text())
+
+    def test_the_offer_expires_while_the_maker_is_down(self):
+        self.assertLessEqual(e2e.ZEC_SHORT_OFFER_TTL_SECONDS, 120)
+        source = inspect.getsource(e2e.scenario_zec_activate_after_expiry)
+        self.assertIn('offer_ttl_seconds=ZEC_SHORT_OFFER_TTL_SECONDS', source)
+        # held before the take, the Maker stopped, started after the expiry, the hold cleared last
+        order = [source.index(step) for step in (
+            'maker_test_hook(ZEC_ACTIVATION_HOLD, "1")', 'zec_take_or_resume(', 'node_stop("maker")',
+            'expired_at + 10', 'node_start("maker")', 'maker_test_hook(ZEC_ACTIVATION_HOLD, None)',
+            'zec_happy_after_take(')]
+        self.assertEqual(order, sorted(order))
+
+    def test_the_publication_takes_the_offer_ttl(self):
+        calls = []
+        with patch.object(e2e, 'maker_cli', lambda *argv: calls.append(argv) or []), \
+                patch.object(e2e, 'zec_taker_sells_lez', lambda: True):
+            e2e.zec_dynamic_publish('1700000000', [('request', 'offer')], offer_ttl_seconds=60)
+        configured = [argv for argv in calls if argv[0] == 'configure-pair']
+        self.assertTrue(configured)
+        for argv in configured:
+            self.assertEqual(argv[argv.index('--offer-ttl-seconds') + 1], '60')
+        calls.clear()
+        with patch.object(e2e, 'maker_cli', lambda *argv: calls.append(argv) or []), \
+                patch.object(e2e, 'zec_taker_sells_lez', lambda: True):
+            e2e.zec_dynamic_publish('1700000000', [('request', 'offer')])
+        self.assertTrue(all(argv[argv.index('--offer-ttl-seconds') + 1] == '3600'
+                            for argv in calls if argv[0] == 'configure-pair'))
+
+    def test_the_held_activation_is_read_from_the_makers_monitor(self):
+        held = {'progress': {'observation': {'state': 'not_activated'}},
+                'last_outcome': {'step': 'activate', 'outcome': 'failed',
+                                 'failure_class': 'test_hook_activation_held'}}
+        self.assertTrue(e2e.zec_maker_activation_held(held))
+        self.assertFalse(e2e.zec_maker_activation_held({**held, 'progress': {'observation': {'state': 'active'}}}))
+        self.assertFalse(e2e.zec_maker_activation_held({**held, 'last_outcome': {'step': 'status'}}))
+        self.assertFalse(e2e.zec_maker_activation_held({}))
+
+    def test_selling_zec_is_refused_before_anything_runs(self):
+        with patch.object(e2e, 'zec_taker_sells_lez', lambda: False), \
+                patch.object(e2e, 'require_maker_node_test_hooks', lambda *_: self.fail('nothing may be checked')):
+            with self.assertRaisesRegex(e2e.Failure, 'selling-LEZ'):
+                e2e.scenario_zec_activate_after_expiry('1700000000')
+
+    def test_a_maker_node_without_the_hooks_fails_at_once_naming_the_build(self):
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), \
+                patch.object(e2e.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 1, b'', b'')):
+            with self.assertRaisesRegex(e2e.Failure, 'LEZ_TEST_HOOKS=1'):
+                e2e.require_maker_node_test_hooks('hold-zec-activations')
+
+
 class MakerEarlyClaim(unittest.TestCase):
     """zec-maker-early-claim (TM-0030): what can be checked without a stack."""
 
@@ -1000,9 +1063,10 @@ class XmrOwnRefundAndAdversaries(unittest.TestCase):
     def test_the_devnet_build_has_the_test_hooks_only_on_request(self):
         # The release side of this is test_release_workflow.NoTestHooksInARelease.
         from_scratch = (SCRIPTS / 'from-scratch.sh').read_text()
-        self.assertIn('hooks=",lez-taker-node/test-hooks"', from_scratch)
+        self.assertIn('hooks=",lez-taker-node/test-hooks,lez-maker-node/test-hooks"', from_scratch)
         self.assertIn('hooks="--features test-hooks"', from_scratch)
         self.assertIn('test-hooks = ["pair-xmr"]', (REPO / 'crates/taker-node/Cargo.toml').read_text())
+        self.assertIn('test-hooks = []', (REPO / 'crates/maker-node/Cargo.toml').read_text())
         self.assertIn('test-hooks = []', (REPO / 'compat/lez-v0_2-sidecar/Cargo.toml').read_text())
 
     def test_the_scenarios_with_hooks_fail_at_once_without_them(self):

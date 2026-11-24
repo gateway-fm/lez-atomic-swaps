@@ -112,6 +112,9 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-slow-funding:TakerSellsLez"
       # selling LEZ only: the Maker killed with its LEZ claim held in its sidecar (a devnet built with LEZ_TEST_HOOKS=1)
       echo "node:zec:zec-kill-maker-claim:TakerSellsLez"
+      # selling LEZ only: the Maker stopped between the take and its actor's activation, started after
+      # the offer expired (a devnet built with LEZ_TEST_HOOKS=1)
+      echo "node:zec:zec-activate-after-expiry:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
       echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"
@@ -362,6 +365,8 @@ expected_seconds() { # expected_seconds <test>
       *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
       # two swaps, the Maker killed and started again in each
       *zec-kill-maker-claim*) seconds=700 ;;
+      # a 60 s offer, the Maker down past it, then the happy swap
+      *zec-activate-after-expiry*) seconds=500 ;;
       node:xmr:xmr-kill-*) seconds=2700 ;;
       node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
       # waits for the agreement's punish time P (+1000 s on fast), or its refund time R (+720 s)
