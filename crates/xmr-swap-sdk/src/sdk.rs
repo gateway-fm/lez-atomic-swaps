@@ -939,6 +939,22 @@ mod tests {
         ));
     }
 
+    /// The envelope's bytes are pinned: varint schema and lengths, then the
+    /// raw wires. Changing postcard's features must not change them.
+    #[test]
+    fn negotiation_envelope_wire_bytes_are_pinned() {
+        let encoded = postcard::to_allocvec(&NegotiationEnvelopeWireV1 {
+            schema_version: 300,
+            agreement_wire: vec![0x5a; 130],
+            activation_wire: vec![1, 2, 3],
+        })
+        .unwrap();
+        let mut expected = vec![0xac, 0x02, 0x82, 0x01];
+        expected.extend([0x5a; 130]);
+        expected.extend([0x03, 1, 2, 3]);
+        assert_eq!(encoded, expected);
+    }
+
     #[test]
     fn negotiation_envelope_rejects_empty_trailing_and_unknown_schema() {
         assert!(matches!(
