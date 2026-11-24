@@ -205,14 +205,11 @@ mod tests {
 
     use super::*;
 
-    /// Probe deadline for these tests. macOS assesses every newly written
-    /// executable on its first `execve` (about 0.2 s here), which alone overruns
-    /// the 100 ms Linux budget; the probes under test do not depend on the value.
-    const PROBE_TIMEOUT_MILLISECONDS: u64 = if cfg!(target_os = "macos") {
-        2_000
-    } else {
-        100
-    };
+    /// Probe deadline for these tests. No probe under test depends on the
+    /// value, so it only has to outlast one `sh` start: macOS assesses every
+    /// newly written executable on its first `execve` (about 0.2 s), and a
+    /// loaded Linux CI runner has taken more than 100 ms to start the shell.
+    const PROBE_TIMEOUT_MILLISECONDS: u64 = 2_000;
 
     fn config(program: &std::path::Path, digest: [u8; 32], args: &[&str]) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({

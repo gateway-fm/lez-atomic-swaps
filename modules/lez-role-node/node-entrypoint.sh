@@ -475,6 +475,11 @@ zec_ready=0
 # names; the Maker takes every corridor's config as an actor template. The
 # Node is ZEC-ready when the first corridor's sidecar answers.
 zec_configs=()
+# The devnet sidecar's test hooks (feature test-hooks, built only with
+# LEZ_TEST_HOOKS=1): count files in <state>/test-hooks, read by the ZEC
+# sidecars started here and the BTC sidecars the Node spawns. A sidecar
+# built without the feature never reads them.
+export LEZ_TEST_HOOKS_DIR="$state/test-hooks"
 for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state"/corridor-*/"$role"/actor-config.json; do
   [[ -s "$zec_candidate" && "$btc_lifecycle_ready" == 1 ]] || continue
   chmod 0700 "$zec_state" 2>/dev/null || true

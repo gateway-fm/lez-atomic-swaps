@@ -44,7 +44,8 @@ pub enum DurableReservationError {
     /// A crash-left temporary file requires explicit operator recovery.
     #[error("a partial durable reservation requires explicit recovery")]
     PartialReservation,
-    /// The durable envelope or payload is malformed or unsupported in place.
+    /// The durable envelope or payload is malformed or unsupported in place,
+    /// or an entry the reservation requires is missing.
     #[error("durable reservation is corrupt")]
     CorruptReservation,
     /// A newer writer owns the state and this binary must not reinterpret it.
@@ -53,7 +54,8 @@ pub enum DurableReservationError {
     /// Another process atomically installed the reservation first.
     #[error("durable reservation already exists")]
     AlreadyReserved,
-    /// A redacted filesystem operation failed.
+    /// A redacted filesystem operation failed: an I/O failure that says
+    /// nothing about what the store holds.
     #[error("durable reservation filesystem operation failed")]
     Filesystem,
 }
@@ -408,7 +410,7 @@ fn validate_trusted_parent_chain(path: &Path) -> Result<(), DurableReservationEr
         let descriptor = open_secure_directory(ancestor)?;
         let metadata = descriptor
             .metadata()
-            .map_err(|_| DurableReservationError::InsecureDirectory)?;
+            .map_err(|_| DurableReservationError::Filesystem)?;
         let mode = metadata.mode();
         let trusted_owner = metadata.uid() == 0 || metadata.uid() == effective_uid;
         let group_or_other_writable = mode & 0o022 != 0;
@@ -431,7 +433,7 @@ fn open_secure_directory(path: &Path) -> Result<File, DurableReservationError> {
         ResolveFlags::NO_SYMLINKS,
     )
     .map(File::from)
-    .map_err(|_| DurableReservationError::InsecureDirectory)
+    .map_err(directory_open_error)
 }
 
 /// macOS has no `openat2`; `O_NOFOLLOW_ANY` (macOS 11+) is the equivalent of
@@ -447,7 +449,21 @@ fn open_secure_directory(path: &Path) -> Result<File, DurableReservationError> {
         Mode::empty(),
     )
     .map(File::from)
-    .map_err(|_| DurableReservationError::InsecureDirectory)
+    .map_err(directory_open_error)
+}
+
+/// Why a state directory (or an ancestor) did not open. Missing, not a
+/// directory, reached through a symlink or not ours to open: it is not a
+/// trusted state directory. Anything else (descriptors exhausted, an
+/// interrupted or failed read) is a filesystem failure that says nothing
+/// about the directory and may pass.
+fn directory_open_error(error: Errno) -> DurableReservationError {
+    match error {
+        Errno::NOENT | Errno::NOTDIR | Errno::LOOP | Errno::ACCESS | Errno::PERM | Errno::XDEV => {
+            DurableReservationError::InsecureDirectory
+        }
+        _ => DurableReservationError::Filesystem,
+    }
 }
 
 pub(crate) struct DurableReservationStore {
@@ -790,9 +806,11 @@ impl DurableReservationStore {
 }
 
 fn validate_directory(directory: &File) -> Result<std::fs::Metadata, DurableReservationError> {
+    // fstat of a held descriptor fails only on I/O, never on what the
+    // directory is.
     let metadata = directory
         .metadata()
-        .map_err(|_| DurableReservationError::InsecureDirectory)?;
+        .map_err(|_| DurableReservationError::Filesystem)?;
     if !metadata.file_type().is_dir()
         || metadata.uid() != geteuid().as_raw()
         || metadata.mode() & 0o7777 != 0o700
@@ -814,9 +832,10 @@ fn validate_fixed_filename(filename: &str) -> Result<(), DurableReservationError
 }
 
 fn validate_state_file(file: &File) -> Result<(), DurableReservationError> {
+    // fstat of a held descriptor fails only on I/O, never on what the file is.
     let metadata = file
         .metadata()
-        .map_err(|_| DurableReservationError::InsecureStateFile)?;
+        .map_err(|_| DurableReservationError::Filesystem)?;
     if !metadata.file_type().is_file()
         || metadata.uid() != geteuid().as_raw()
         || metadata.mode() & 0o7777 != 0o600
@@ -910,5 +929,44 @@ mod bridge_state_lease_tests {
             .expect("private symlink target");
         symlink(&target, &lease_path).expect("symlinked lease file");
         assert_unsafe(directory.path());
+    }
+}
+
+#[cfg(test)]
+mod io_failure_tests {
+    use super::{DurableReservationError, Errno, directory_open_error};
+
+    /// Issue #187: what a state directory is fails closed for good, an I/O
+    /// failure opening it passes (the request journal tries a submission it
+    /// stopped again).
+    #[test]
+    fn a_directory_open_failure_is_insecure_only_for_what_the_directory_is() {
+        for errno in [
+            Errno::NOENT,
+            Errno::NOTDIR,
+            Errno::LOOP,
+            Errno::ACCESS,
+            Errno::PERM,
+            Errno::XDEV,
+        ] {
+            assert_eq!(
+                directory_open_error(errno),
+                DurableReservationError::InsecureDirectory,
+                "{errno:?}"
+            );
+        }
+        for errno in [
+            Errno::MFILE,
+            Errno::NFILE,
+            Errno::IO,
+            Errno::INTR,
+            Errno::NOMEM,
+        ] {
+            assert_eq!(
+                directory_open_error(errno),
+                DurableReservationError::Filesystem,
+                "{errno:?}"
+            );
+        }
     }
 }

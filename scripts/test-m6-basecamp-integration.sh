@@ -59,9 +59,16 @@ echo "Maker and Taker Basecamp integration tests passed"
 # what logosctl installs); prove the archive each one produces carries the
 # shared UI kit next to Main.qml in every variant and no development variant.
 # The per-role flakes carry no lock file (a catalog resolves them from the
-# pinned Chat release), so their lock is computed and not written.
+# pinned Chat release), so their lock is computed and not written. Their only
+# unlocked input is that Chat release: it is given the revision
+# apps/basecamp/flake.lock pins for the same tag, which leaves the computed
+# lock unchanged and needs no GitHub API request to resolve the tag
+# (scripts/basecamp-chat-module-ref.sh checks that both name the same tag).
+chat_module_ref="$(./scripts/basecamp-chat-module-ref.sh)"
 for role in maker taker; do
-  output="$("${nix[@]}" build --no-write-lock-file --no-link --print-out-paths "path:apps/basecamp?dir=${role}#lgx-portable")"
+  output="$("${nix[@]}" build --no-write-lock-file --no-link --print-out-paths \
+    --override-input chat_module "$chat_module_ref" \
+    "path:apps/basecamp?dir=${role}#lgx-portable")"
   archive="$(find "$output" -maxdepth 2 -name '*.lgx' | head -n1)"
   [[ -n "$archive" ]] || fail "the ${role} catalog flake produced no .lgx"
   ./scripts/check-basecamp-lgx-kit.sh "$archive"

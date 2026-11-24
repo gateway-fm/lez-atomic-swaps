@@ -91,6 +91,17 @@ impl From<NativePrepareError> for BridgeRuntimeError {
     fn from(value: NativePrepareError) -> Self {
         match value {
             NativePrepareError::ReplanExhausted => Self::ReplanExhausted,
+            // The planner's durable store could not be read or written (an
+            // I/O failure: no descriptor, an interrupted read). Nothing was
+            // decided about the bytes, so it is the class of a node that did
+            // not answer: `unavailable`, which the request journal tries again
+            // under the same request id (issue #187), not an invalid
+            // transaction replayed for good. A store that holds something
+            // else, a corrupt or a foreign entry stays a refusal.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            NativePrepareError::DurableReservation(
+                crate::durable_reservation::DurableReservationError::Filesystem,
+            ) => Self::Unavailable,
             _ => Self::Planner,
         }
     }
@@ -961,6 +972,15 @@ impl BridgeRuntime {
         &self,
         request: &lez_bridge_protocol::PrepareRevealingClaimRequest,
     ) -> Result<lez_bridge_protocol::PrepareRevealingClaimResult, BridgeRuntimeError> {
+        // TEST-ONLY (feature `test-hooks`, the devnet's zec-kill-maker-claim
+        // kill point "claim preparation held"): while
+        // `hold-claim-preparations` holds a count, the revealing claim's
+        // preparation waits here, before anything of it is durable, for the
+        // kill that comes for it.
+        #[cfg(feature = "test-hooks")]
+        if crate::test_hooks::take("hold-claim-preparations") {
+            std::future::pending::<()>().await;
+        }
         self.planner
             .prepare_revealing_claim(request)
             .await
@@ -1761,14 +1781,16 @@ impl BridgeRuntime {
         ))
     }
 
-    /// TEST-ONLY (feature `test-hooks`, the devnet's xmr-kill-maker kill
-    /// point "claim tool running"): while `hold-claim-submissions` holds a
-    /// count, the Maker's tag-15 claim submission waits here for good, its
-    /// in-flight marker journaled and nothing looked up or sent, for the kill
-    /// that comes for it.
+    /// TEST-ONLY (feature `test-hooks`, the devnet's kill points "claim
+    /// submission in flight" of zec-kill-maker-claim and "claim tool running"
+    /// of xmr-kill-maker): while `hold-claim-submissions` holds a count, a
+    /// revealing claim's submission or the Maker's tag-15 claim submission
+    /// waits here for good, its in-flight marker journaled and nothing looked
+    /// up or sent, for the kill that comes for it.
     #[cfg(feature = "test-hooks")]
     async fn hold_claim_submission(&self, prepared: &PreparedTransaction) {
-        if self.planner.xmr_claim_submission(prepared).await
+        if (self.revealing_claim_lineage_member(prepared).await
+            || self.planner.xmr_claim_submission(prepared).await)
             && crate::test_hooks::take("hold-claim-submissions")
         {
             std::future::pending::<()>().await;

@@ -1,0 +1,76 @@
+
+[12:15:44] === zec-happy (TakerSellsForeign)
+
+[12:15:44] provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh: offer, draft, catalog, Nodes recreated)
+   [zec-provision 12:16:06]   maker sidecar answers on 127.0.0.1:19901
+   [zec-provision 12:16:06]   taker sidecar answers on 127.0.0.1:19902
+     maker_health: ready=True degraded=False
+   [zec-provision 12:16:06]   Taker lists zec-devnet-offer-179543614402 ; corridor zec-devnet-179543614402 is live
+
+[12:16:07] corridor lot: 1.0 ZEC for 50000 LEZ units
+
+[12:16:07] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   zec-devnet-swap-179543614402 awaiting_first_lock 0 -
+
+[12:16:10] The Taker Node funds the Zcash HTLC on its own, straight after the take; the Maker desk watches its row while the Maker Node locks the LEZ escrow
+
+[12:16:10] driving the Taker's ZEC actor on the Node until zec-devnet-s shows claim_available
+
+[12:16:10] Maker desk shows zec-devnet-s at awaiting_taker_claim
+   [13:16:10]   reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)
+   [13:16:10]   corridor zec-devnet-179543614402 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-179543614402, zebra tip 277, Zcash refund height 286
+   [13:16:10]   receipt: swap zec-devnet-swap-179543614402, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179543614402/actor/taker/actor-config.json
+   [13:16:11]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-drive to claim_available): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 277 | LEZ finalized 3037, tip 3040 (3 unfinalized) [heartbeat]
+   [13:16:14]   zebra: mined 1 block(s) → height 278 (mempool had ['9bf5b847afd0'])
+   [13:16:20]   [9 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-drive to claim_available): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 278 | LEZ finalized 3037, tip 3040 (3 unfinalized) [heartbeat]
+   [13:16:23]   zebra: mined 1 block(s) → height 279 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+   [13:16:36]   [25 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-drive to claim_available): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 279 | LEZ finalized 3051, tip 3056 (5 unfinalized) [heartbeat]
+   [13:16:36]   taker zec-devnet-s is claim_available
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[12:16:41] Taker desk: claim_lez on zec-devnet-s
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[12:16:43] The Taker's LEZ claim revealed the secret; the Maker Node's Zcash claim waits for a zebra block, and both desks watch the swap complete
+
+[12:16:43] Taker desk shows zec-devnet-s at completed
+
+[12:16:43] Maker desk shows zec-devnet-s at completed
+
+[12:16:43] driving the Taker's ZEC actor on the Node until zec-devnet-s shows completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+   [13:16:43]   reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)
+   [13:16:43]   corridor zec-devnet-179543614402 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-179543614402, zebra tip 277, Zcash refund height 286
+   [13:16:43]   receipt: swap zec-devnet-swap-179543614402, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179543614402/actor/taker/actor-config.json
+   [13:16:43]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (zec-drive to completed): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker claim_evidence_available | zebra 279 | LEZ finalized 3051, tip 3056 (5 unfinalized) [heartbeat]
+   [13:16:47]   [3 s] waiting for the Taker's zec-devnet-s to reach completed (zec-drive to completed): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 279 | LEZ finalized 3051, tip 3056 (5 unfinalized) [heartbeat]
+   [13:16:50]   zebra: mined 1 block(s) → height 280 (mempool had ['a83ac6bb92d5'])
+   [13:16:56]   [13 s] waiting for the Taker's zec-devnet-s to reach completed (zec-drive to completed): taker completed (gen 4) | actor at completed | maker completed | zebra 280 | LEZ finalized 3065, tip 3073 (8 unfinalized) [heartbeat]
+   [13:16:56]   taker zec-devnet-s is completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+[13:17:03]   reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)
+[13:17:04]   corridor zec-devnet-179543614402 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-179543614402, zebra tip 277, Zcash refund height 286
+[13:17:04]   receipt: swap zec-devnet-swap-179543614402, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179543614402/actor/taker/actor-config.json
+[13:17:04]   ZEC evidence written to <checkout>/deploy/runtime/lanes/2/evidence/zec/zec-devnet-swap-179543614402.json (taker completed, maker completed, funding 278, spend 280)
+
+[12:17:04] === zec-happy (TakerSellsForeign): passed in 80s

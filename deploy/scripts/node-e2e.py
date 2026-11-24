@@ -79,6 +79,10 @@ tests/fixtures/zec-catalog-fixture.sh --direction …, which also recreates both
                                          funded escrow's custody; the swap still settles
                                          and the ending's recipient gets the lot and the
                                          unit (TM-0032)
+    node-e2e.py --pair Zcash zec-kill-maker-claim (TakerSellsLez): the Maker killed
+                                         with its LEZ claim held in its sidecar, at its
+                                         preparation and in flight; both swaps complete
+                                         (issue #187; needs LEZ_TEST_HOOKS=1)
 
 The ZEC refund windows come from the agreement, not the timing profile. Selling
 LEZ, the refund journeys provision their corridor under
@@ -216,7 +220,7 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 # container: a native Node reaches the chains directly, with nothing to cut.
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
-                  "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding",
+                  "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding", "zec-kill-maker-claim",
                   # the XMR scenarios that write a Node's test hooks or switch,
                   # stop a wallet-rpc container or run the Maker's probe
                   "xmr-taker-refund", "xmr-taker-refund-kill", "xmr-taker-clock-ahead", "xmr-punish-replans",
@@ -3895,6 +3899,12 @@ ZEC_SLOW_FUNDING_HOLD_SECONDS = int(os.environ.get("LEZ_ZEC_SLOW_FUNDING_HOLD_SE
 # The second-lock lookup once covered predecessor revisions 1 to 16 only, so
 # the hold must carry the Maker's journal well past revision 17.
 ZEC_SLOW_FUNDING_MIN_REVISION = 24
+# The journal grows with the Maker's drives, whose pace depends on the host
+# (24 revisions in 75 s on one host, 21 on another): past the hold the funding
+# stays unmined until the journal is past the minimum, at most this long in
+# all. Nothing is mined meanwhile, so the Zcash refund height does not come
+# nearer; the LEZ refund time is minutes further.
+ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS = 240
 
 
 def zec_mempool_spend_of(outpoint: tuple[str, int]) -> str | None:
@@ -3932,10 +3942,12 @@ def zec_maker_active_revision(swap_id: str) -> int | None:
 
 def scenario_zec_slow_funding(stamp: str) -> dict:
     """Selling LEZ, the Maker's Zcash funding confirms slowly: it is held in
-    zebra's mempool, nothing mined, for ZEC_SLOW_FUNDING_HOLD_SECONDS, while
-    the Maker drives at its requeue and re-observes the Taker's LEZ lock one
-    block deeper on each drive, committing a revision each time. The hold must
-    carry the Maker's journal past ZEC_SLOW_FUNDING_MIN_REVISION. Then the
+    zebra's mempool, nothing mined, for ZEC_SLOW_FUNDING_HOLD_SECONDS and on
+    until the Maker's journal is past ZEC_SLOW_FUNDING_MIN_REVISION (at most
+    ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS in all), while the Maker drives at its
+    requeue and re-observes the Taker's LEZ lock one block deeper on each
+    drive, committing a revision each time. The hold must carry the Maker's
+    journal past ZEC_SLOW_FUNDING_MIN_REVISION. Then the
     funding is mined, and the Maker's LEZ claim must still find its second
     lock: the Taker claims the Zcash, the Maker claims the LEZ with the
     revealed preimage, and both Nodes complete."""
@@ -3968,19 +3980,22 @@ def scenario_zec_slow_funding(stamp: str) -> dict:
         f"Maker journal revision {start_revision}; holding it unmined for {ZEC_SLOW_FUNDING_HOLD_SECONDS} s")
     held = time.time()
     samples = []
-    while time.time() - held < ZEC_SLOW_FUNDING_HOLD_SECONDS:
+    while time.time() - held < ZEC_SLOW_FUNDING_HOLD_SECONDS or (
+            time.time() - held < ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS
+            and (samples[-1] if samples else start_revision or 0) < ZEC_SLOW_FUNDING_MIN_REVISION):
         time.sleep(10)
         if funding_txid not in (zebra("getrawmempool") or []):
             raise Failure(f"the funding {funding_txid[:12]} left the mempool during the hold although nothing was mined")
         samples.append(zec_maker_active_revision(swap_id))
         log(f"  [{time.time() - held:.0f} s held] Maker journal revision {samples[-1]}, taker "
             f"{taker_view(swap_id)['state']}, maker {maker_phase(swap_id)}")
+    held_for = round(time.time() - held)
     revision = zec_maker_active_revision(swap_id)
     if revision is None or revision < ZEC_SLOW_FUNDING_MIN_REVISION:
-        raise Failure(f"after {ZEC_SLOW_FUNDING_HOLD_SECONDS} s with the funding unmined the Maker's journal is at "
+        raise Failure(f"after {held_for} s with the funding unmined the Maker's journal is at "
                       f"revision {revision}, not past {ZEC_SLOW_FUNDING_MIN_REVISION - 1}: the hold did not reproduce "
                       "the slow funding")
-    log(f"  the hold carried the Maker's journal from revision {start_revision} to {revision}; mining the funding")
+    log(f"  the {held_for} s hold carried the Maker's journal from revision {start_revision} to {revision}; mining the funding")
     zebra_mine(1, f"the Maker's funding {funding_txid[:12]}, after the hold")
     view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=1200, corridor=corridor,
                           describe="(the funding mined after the hold)")
@@ -4002,7 +4017,7 @@ def scenario_zec_slow_funding(stamp: str) -> dict:
     log(f"  the Maker claimed the LEZ after its journal passed revision {revision} "
         f"(now {final_revision}): {maker_claims}; both Nodes completed")
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
-            "offer_id": corridor["offer_id"], "hold_seconds": ZEC_SLOW_FUNDING_HOLD_SECONDS,
+            "offer_id": corridor["offer_id"], "hold_seconds": held_for,
             "maker_revision_before_hold": start_revision, "maker_revision_at_mining": revision,
             "maker_revision_samples": samples, "maker_revision_final": final_revision,
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
@@ -6108,6 +6123,136 @@ def zec_escrow_claim_probe(label: str, onchain_swap_id: str, program_id: str, pr
         raise Failure(f"the claim with {label} did not test what it should: escrow {after['status']}, "
                       f"preimage matches the digest: {evidence['presented_preimage_matches_digest']}")
     return evidence
+
+
+# zec-slow-funding: the Maker's Zcash funding held unmined in zebra's mempool.
+ZEC_SLOW_FUNDING_HOLD_SECONDS = int(os.environ.get("LEZ_ZEC_SLOW_FUNDING_HOLD_SECONDS", "75"))
+# The second-lock lookup once covered predecessor revisions 1 to 16 only, so
+# the hold must carry the Maker's journal well past revision 17.
+ZEC_SLOW_FUNDING_MIN_REVISION = 24
+# The journal grows with the Maker's drives, whose pace depends on the host
+# (24 revisions in 75 s on one host, 21 on another): past the hold the funding
+# stays unmined until the journal is past the minimum, at most this long in
+# all. Nothing is mined meanwhile, so the Zcash refund height does not come
+# nearer; the LEZ refund time is minutes further.
+ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS = 240
+
+
+def zec_mempool_spend_of(outpoint: tuple[str, int]) -> str | None:
+    """The transaction in zebra's mempool that spends `outpoint`, if any."""
+    for txid in zebra("getrawmempool") or []:
+        raw = zebra("getrawtransaction", [txid, 1])
+        if any(vin.get("txid") == outpoint[0] and int(vin.get("vout", -1)) == outpoint[1]
+               for vin in raw.get("vin") or []):
+            return txid
+    return None
+
+
+def zec_maker_active_revision(swap_id: str) -> int | None:
+    """The active revision of the Maker's ZEC recovery journal for `swap_id`
+    (zec_sdk_agreements in the Maker actor's store,
+    /var/lib/lez/zec/actors/<actor>/maker/state/actor.sqlite3, read only; the
+    Node's own maker.sqlite3 keeps the agreement at revision 0); None before
+    the Maker has accepted the agreement."""
+    reader = ("import glob,sqlite3,sys\n"
+              "ids=sorted({sys.argv[1], sys.argv[1].removeprefix('zec-'), 'zec-'+sys.argv[1].removeprefix('zec-')})\n"
+              "rows=[]\n"
+              "for p in ['/var/lib/lez/maker/maker.sqlite3']+glob.glob('/var/lib/lez/zec/actors/*/maker/state/actor.sqlite3'):\n"
+              "    c=sqlite3.connect('file:'+p+'?mode=ro',uri=True)\n"
+              "    if c.execute(\"SELECT count(*) FROM sqlite_master WHERE name='zec_sdk_agreements'\").fetchone()[0]:\n"
+              "        rows+=[r[0] for r in c.execute(\"SELECT active_revision FROM zec_sdk_agreements WHERE local_role='maker'\""
+              "\" AND swap_id IN (%s)\" % ','.join('?'*len(ids)), ids)]\n"
+              "print(max(rows) if rows else '')\n")
+    read = subprocess.run(["docker", "exec", NODES["maker"][0], "python3", "-c", reader, swap_id],
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if read.returncode != 0:
+        raise Failure(f"cannot read the Maker's ZEC journal: {read.stderr.strip()[-200:]}")
+    value = read.stdout.strip()
+    return int(value) if value else None
+
+
+def scenario_zec_slow_funding(stamp: str) -> dict:
+    """Selling LEZ, the Maker's Zcash funding confirms slowly: it is held in
+    zebra's mempool, nothing mined, for ZEC_SLOW_FUNDING_HOLD_SECONDS and on
+    until the Maker's journal is past ZEC_SLOW_FUNDING_MIN_REVISION (at most
+    ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS in all), while the Maker drives at its
+    requeue and re-observes the Taker's LEZ lock one block deeper on each
+    drive, committing a revision each time. The hold must carry the Maker's
+    journal past ZEC_SLOW_FUNDING_MIN_REVISION. Then the
+    funding is mined, and the Maker's LEZ claim must still find its second
+    lock: the Taker claims the Zcash, the Maker claims the LEZ with the
+    revealed preimage, and both Nodes complete."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-slow-funding is a selling-LEZ scenario: the Maker funds Zcash second")
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    # Nothing is mined until the Maker's funding, the spend of the provisioned
+    # outpoint, waits in the mempool (a mempool may also hold an earlier
+    # swap's transaction, which a reset leaves there).
+    wait = Wait(f"the Maker's Zcash funding of {swap_id[:12]} in zebra's mempool (nothing mined)", zec_timeout(900))
+    funding_txid = None
+    while wait.running():
+        funding_txid = zec_mempool_spend_of(outpoint)
+        if funding_txid:
+            break
+        view = taker_view(swap_id)
+        if view["state"] in TERMINAL:
+            raise Failure(f"{swap_id[:12]} ended {view['state']} before the Maker funded")
+        wait.note(view["state"], lambda: f"taker {view['state']} | maker {maker_phase(swap_id)} | "
+                                         f"Maker journal revision {zec_maker_active_revision(swap_id)}")
+        time.sleep(2)
+    else:
+        raise wait.failure()
+    start_revision = zec_maker_active_revision(swap_id)
+    log(f"  the Maker's Zcash funding {funding_txid[:12]} waits in the mempool at zebra {zebra('getblockcount')}; "
+        f"Maker journal revision {start_revision}; holding it unmined for {ZEC_SLOW_FUNDING_HOLD_SECONDS} s")
+    held = time.time()
+    samples = []
+    while time.time() - held < ZEC_SLOW_FUNDING_HOLD_SECONDS or (
+            time.time() - held < ZEC_SLOW_FUNDING_MAX_HOLD_SECONDS
+            and (samples[-1] if samples else start_revision or 0) < ZEC_SLOW_FUNDING_MIN_REVISION):
+        time.sleep(10)
+        if funding_txid not in (zebra("getrawmempool") or []):
+            raise Failure(f"the funding {funding_txid[:12]} left the mempool during the hold although nothing was mined")
+        samples.append(zec_maker_active_revision(swap_id))
+        log(f"  [{time.time() - held:.0f} s held] Maker journal revision {samples[-1]}, taker "
+            f"{taker_view(swap_id)['state']}, maker {maker_phase(swap_id)}")
+    held_for = round(time.time() - held)
+    revision = zec_maker_active_revision(swap_id)
+    if revision is None or revision < ZEC_SLOW_FUNDING_MIN_REVISION:
+        raise Failure(f"after {held_for} s with the funding unmined the Maker's journal is at "
+                      f"revision {revision}, not past {ZEC_SLOW_FUNDING_MIN_REVISION - 1}: the hold did not reproduce "
+                      "the slow funding")
+    log(f"  the {held_for} s hold carried the Maker's journal from revision {start_revision} to {revision}; mining the funding")
+    zebra_mine(1, f"the Maker's funding {funding_txid[:12]}, after the hold")
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=1200, corridor=corridor,
+                          describe="(the funding mined after the hold)")
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    if funding is None or funding[0] != funding_txid:
+        raise Failure(f"claim_available, but the block spending the provisioned outpoint is {funding}, "
+                      f"not the held funding {funding_txid[:12]}")
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                  timeout=300)
+    log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')})")
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait_completed(swap_id, timeout=600)
+    maker_claims = zec_maker_claim_operations(swap_id, since)
+    if "lez_followup_claim" not in maker_claims:
+        raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
+                      "not its LEZ follow-up claim")
+    final_revision = zec_maker_active_revision(swap_id)
+    log(f"  the Maker claimed the LEZ after its journal passed revision {revision} "
+        f"(now {final_revision}): {maker_claims}; both Nodes completed")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "offer_id": corridor["offer_id"], "hold_seconds": held_for,
+            "maker_revision_before_hold": start_revision, "maker_revision_at_mining": revision,
+            "maker_revision_samples": samples, "maker_revision_final": final_revision,
+            "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
+            "maker_claim_operations": maker_claims}
 
 
 def scenario_zec_maker_early_claim(stamp: str) -> dict:
@@ -8242,6 +8387,137 @@ def scenario_mixed_three_pair(stamp: str) -> dict:
     return {"swaps": swaps, "overlap": overlap, "taker_monero_sweep": swept, "lez_transactions": moved}
 
 
+# ---- zec-kill-maker-claim: the Maker killed with its LEZ claim held (issue #187) ----
+# Selling LEZ, once the Taker has claimed the Maker's Zcash (revealing the
+# preimage), the Maker's actor claims the Taker's LEZ through its ZEC sidecar:
+# it prepares the revealing claim (ClaimNative) and submits it. Two points,
+# one fresh swap each, hold that claim in the Maker's sidecar with a test hook
+# (a count of one, a devnet built with LEZ_TEST_HOOKS=1), and the Maker's
+# container is killed with SIGKILL while the hold is taken:
+#  - "claim preparation held": the preparation waits before anything of it is
+#    durable (hold-claim-preparations); the restarted Maker prepares and
+#    submits the claim afresh.
+#  - "claim submission in flight": the submission waits after the sidecar's
+#    request journal holds its in-flight marker, before its lookup and send
+#    (hold-claim-submissions). The restarted Maker asks for the same claim
+#    under the same request id; its sidecar must decide the in-flight
+#    marker on the chain again (looked up, sent once) instead of answering
+#    unknown_submission_outcome from the journal until the claim window
+#    closes, which leaves the Taker with the Zcash and, from the LEZ refund
+#    time, its LEZ back: the Maker loses both legs.
+# Each swap must complete on both Nodes with the LEZ lot paid to the Maker.
+ZEC_MAKER_STATE = "/var/lib/lez/maker"
+ZEC_SIDECAR_PROGRAM = "/usr/local/bin/lez-v02-bridge-poc"
+ZEC_CLAIM_HOLDS = (("claim preparation held", "hold-claim-preparations"),
+                   ("claim submission in flight", "hold-claim-submissions"))
+TEST_HOOK_SCRIPT = ('set -eu; mkdir -p "$1"; chmod 0700 "$1"; '
+                    'if [ -n "$3" ]; then printf "%s\\n" "$3" > "$1/$2.tmp"; mv "$1/$2.tmp" "$1/$2"; '
+                    'else rm -f "$1/$2"; fi')
+
+
+def maker_test_hook(name: str, value: str | None) -> None:
+    """Sets (`value`) or clears (None) one test hook of the Maker's sidecars,
+    read on its next use (no restart)."""
+    node_run("maker", "sh", "-c", TEST_HOOK_SCRIPT, "hook", f"{ZEC_MAKER_STATE}/test-hooks", name, value or "")
+    log(f"  maker test hook {name}: {value if value is not None else 'cleared'}")
+
+
+def maker_test_hook_value(name: str) -> str | None:
+    """What one test hook of the Maker holds now, None when it is unset."""
+    result = subprocess.run(node_command("maker", ["cat", f"{ZEC_MAKER_STATE}/test-hooks/{name}"]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def require_sidecar_test_hooks(hook: str) -> None:
+    """Fails the scenario at once, before any swap, unless the Maker's sidecar
+    was built with the devnet test hooks (from-scratch.sh with
+    LEZ_TEST_HOOKS=1): without them a hook file is ignored and nothing is
+    held."""
+    result = subprocess.run(node_command("maker", ["grep", "-qa", hook, ZEC_SIDECAR_PROGRAM]),
+                            capture_output=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"the Maker's {ZEC_SIDECAR_PROGRAM.rsplit('/', 1)[-1]} has no devnet test hooks: this scenario "
+                      "needs the devnet built with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh)")
+
+
+def zec_kill_maker_claim_point(stamp: str, point: str, hook: str) -> dict:
+    """One fresh swap: the Maker's LEZ claim held at `hook`, the Maker killed
+    while it is held, the swap carried to completed on both Nodes."""
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    before = lez_balances()
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                          describe=zec_flow())
+    maker_test_hook(hook, "1")
+    try:
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                       "swap_id": swap_id,
+                                                       "expected_generation": view["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')}); the Maker's LEZ claim "
+            f"is to wait in its sidecar's {hook}")
+        wait = Wait(f"the Maker's sidecar to take the hold {hook} on {swap_id[:12]}", 900)
+        while wait.running():
+            if maker_test_hook_value(hook) == "0":
+                break
+            if maker_phase(swap_id) == "completed":
+                raise Failure(f"the Maker completed {swap_id[:12]} with {hook} set: its LEZ claim was never held")
+            wait.note(maker_phase(swap_id), lambda: f"maker {maker_phase(swap_id)}, hook {maker_test_hook_value(hook)}")
+            time.sleep(3)
+        else:
+            raise wait.failure()
+        at = {"point": point, "hook": hook, "taker_state": taker_view(swap_id)["state"],
+              "maker_phase": maker_phase(swap_id)}
+        log(f"  kill point '{point}': the Maker's LEZ claim waits in its sidecar; taker {at['taker_state']}, "
+            f"maker {at['maker_phase']}")
+        killed = kill_node("maker")
+    finally:
+        maker_test_hook(hook, None)
+    # The Taker holds the Zcash; the restarted Maker must claim the LEZ.
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait = Wait(f"the restarted Maker to claim the LEZ of {swap_id[:12]} and complete", 900)
+    while wait.running():
+        view = maker_view(swap_id)
+        phase = maker_phase(swap_id)
+        if view.get("schedule_state") == "terminal":
+            break
+        wait.note((phase, view.get("schedule_state")), f"maker {phase} (schedule {view.get('schedule_state')})")
+        time.sleep(5)
+    else:
+        raise wait.failure()
+    if maker_phase(swap_id) != "completed":
+        raise Failure(f"after the kill at '{point}' the Maker ended {swap_id[:12]} {maker_phase(swap_id)}, "
+                      "not completed: its LEZ claim was never sent again")
+    wait_completed(swap_id, timeout=300)
+    maker_claims = zec_maker_claim_operations(swap_id, since)
+    if "lez_followup_claim" not in maker_claims:
+        raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
+                      "not its LEZ follow-up claim")
+    settled = assert_lez_settled(before, taker_view(swap_id)["state"], maker_phase(swap_id))
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "kill": {**at, **killed}, "maker_claim_operations": maker_claims, **settled}
+
+
+def scenario_zec_kill_maker_claim(stamp: str) -> dict:
+    """Issue #187 on the devnet: the Maker killed at each of ZEC_CLAIM_HOLDS
+    while its LEZ follow-up claim is held in its sidecar, one fresh swap per
+    point (zec_kill_maker_claim_point)."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-kill-maker-claim is a selling-LEZ scenario: the Maker claims the Taker's LEZ last")
+    for _, hook in ZEC_CLAIM_HOLDS:
+        require_sidecar_test_hooks(hook)
+    # A hold an earlier run could not clear would park this run's claims.
+    for _, hook in ZEC_CLAIM_HOLDS:
+        maker_test_hook(hook, None)
+    walked = [zec_kill_maker_claim_point(f"{stamp}k{index}", point, hook)
+              for index, (point, hook) in enumerate(ZEC_CLAIM_HOLDS)]
+    log("  the Maker killed at " + "; ".join(f"{w['kill']['point']} → completed" for w in walked))
+    return {"points": walked}
+
+
 # ---- a stranger's credit to a funded escrow's custody (TM-0032) -------------------
 # LEZ lets anyone raise the balance of any initialised account, so a third
 # party can send LEZ to the custody account of a funded swap whenever it
@@ -8487,6 +8763,7 @@ XMR_SCENARIOS = {
 ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
     "zec-slow-funding": scenario_zec_slow_funding,
+    "zec-kill-maker-claim": scenario_zec_kill_maker_claim,
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,

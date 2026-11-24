@@ -688,7 +688,7 @@ impl NativeEscrowPlanner {
                         .load::<PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult>(
                             ReservationKind::XmrCurrentProfileClockV1,
                         )?
-                        .ok_or(DurableReservationError::Filesystem)?;
+                        .ok_or(DurableReservationError::CorruptReservation)?;
                     self.validate_prepared_current_profile_clock(&stored_request, &stored_result)?;
                     if stored_request != *request {
                         return Err(NativePrepareError::ActivePrepare);
@@ -879,7 +879,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable(&request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.supersessions = self.recover_supersessions(&request, &recovered)?;
                 state.active = Some(ActivePrepare {
                     request,
@@ -1046,7 +1046,7 @@ impl NativeEscrowPlanner {
     {
         let (stored_request, stored_result) = store
             .load::<SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult>(kind)?
-            .ok_or(DurableReservationError::Filesystem)?;
+            .ok_or(DurableReservationError::CorruptReservation)?;
         self.validate_supersede_request(active_request, &stored_request)?;
         self.validate_supersession(active_request, current, &stored_request, &stored_result)?;
         if stored_request.step != request.step
@@ -1447,7 +1447,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_xmr_escrow_v3(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_xmr_escrow_v3 = Some(ActiveXmrEscrowPrepareV3 {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -1493,7 +1493,7 @@ impl NativeEscrowPlanner {
                 if self.durable_store.is_some() {
                     let recovered = self
                         .recover_durable_xmr_claim_authorization_v3(request)?
-                        .ok_or(DurableReservationError::Filesystem)?;
+                        .ok_or(DurableReservationError::CorruptReservation)?;
                     if recovered != active.result {
                         return Err(NativePrepareError::InvalidTransactionBytes);
                     }
@@ -1531,7 +1531,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_xmr_claim_authorization_v3(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_xmr_claim_authorization_v3 =
                     Some(ActiveXmrClaimAuthorizationPrepareV3 {
                         request: request.clone(),
@@ -1596,7 +1596,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_xmr_claim_v3(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_xmr_claim_v3 = Some(ActiveXmrClaimPrepareV3 {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -1688,7 +1688,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_xmr_claim_v3_completion(&active, request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.completed_xmr_claim_v3 = Some(ActiveXmrClaimCompletionV3 {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -1851,7 +1851,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_xmr_refund_v3(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_xmr_refund_v3 = Some(ActiveXmrRefundPrepareV3 {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -1943,7 +1943,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_xmr_refund_v3_completion(&active, request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.completed_xmr_refund_v3 = Some(ActiveXmrRefundCompletionV3 {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -2107,7 +2107,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_xmr_punish_v3(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 let result = recovered.result.clone();
                 state.active_xmr_punish_v3 = Some(recovered);
                 return Ok(result);
@@ -2191,7 +2191,7 @@ impl NativeEscrowPlanner {
                     // Another process of this signer re-planned first.
                     let recovered = self
                         .recover_durable_xmr_punish_v3(request)?
-                        .ok_or(DurableReservationError::Filesystem)?;
+                        .ok_or(DurableReservationError::CorruptReservation)?;
                     let result = recovered.result.clone();
                     state.active_xmr_punish_v3 = Some(recovered);
                     return Ok(result);
@@ -2306,7 +2306,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_witnessed_escrow(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_witnessed_escrow = Some(ActiveWitnessedEscrowPrepare {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -2375,7 +2375,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_witnessed_asset_escrow_v2(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_witnessed_asset_escrow_v2 = Some(ActiveWitnessedAssetEscrowV2 {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -2437,7 +2437,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_witnessed_asset_claim_v2(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_witnessed_asset_claim_v2 = Some(ActiveWitnessedAssetClaimV2 {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -2499,7 +2499,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_witnessed_asset_refund_v2(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_witnessed_asset_refund_v2 = Some(ActiveWitnessedAssetRefundV2 {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -2565,7 +2565,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_refund(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_refund = Some(ActiveRefundPrepare {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -2635,7 +2635,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_claim(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.claim_supersessions =
                     self.recover_claim_supersessions(request, &recovered)?;
                 state.active_claim = Some(ActiveClaimPrepare {
@@ -2707,7 +2707,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_witnessed_claim(request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.active_witnessed_claim = Some(ActiveWitnessedClaimPrepare {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -2796,7 +2796,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_witnessed_completion(&active, request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.completed_witnessed_claim = Some(ActiveWitnessedClaimCompletion {
                     request: request.clone(),
                     result: recovered.clone(),
@@ -2894,7 +2894,7 @@ impl NativeEscrowPlanner {
             if error == DurableReservationError::AlreadyReserved {
                 let recovered = self
                     .recover_durable_witnessed_asset_claim_completion_v2(&active, request)?
-                    .ok_or(DurableReservationError::Filesystem)?;
+                    .ok_or(DurableReservationError::CorruptReservation)?;
                 state.completed_witnessed_asset_claim_v2 =
                     Some(ActiveWitnessedAssetClaimCompletionV2 {
                         request: request.clone(),
@@ -3326,7 +3326,7 @@ impl NativeEscrowPlanner {
                         .load::<SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult>(
                             kind,
                         )?
-                        .ok_or(DurableReservationError::Filesystem)?;
+                        .ok_or(DurableReservationError::CorruptReservation)?;
                     self.validate_claim_supersession(
                         &source,
                         &current,

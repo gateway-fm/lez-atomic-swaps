@@ -79,7 +79,23 @@ stack and are kept as the record of that submission shape.
   at `3b73e65b` (version 0.3.4, with the scenario `zec-maker-early-claim`)
   on an Apple-silicon Mac: 98 of 98, each on its first try, 115 minutes on
   three lanes, one operator running both parties on one host
-  (`docs/evidence/regression-0.3.4-2026-11-19-macos-arm64/`).
+  (`docs/evidence/regression-0.3.4-2026-11-19-macos-arm64/`). The 106 at
+  `14b05e56` (version 0.3.5, with the fixes for #185, #186 and #187) on an
+  Apple-silicon Mac: 106 of 106, each on its first try, 153 minutes on two
+  lanes, one operator running both parties on one host
+  (`docs/evidence/regression-0.3.5-2026-11-23-macos-arm64/`).
+- **Fixes of 0.3.5** (#185, #186, #187). The escrow accepts a custody a
+  stranger credited and sweeps it all (TM-0032; ImageID `ca66e0dc…`), and the
+  Nodes accept such a custody: `btc-custody-credit`,
+  `btc-custody-credit-refund`, `zec-custody-credit` and
+  `zec-custody-credit-refund`. The ZEC Maker's LEZ claim finds its second
+  lock however slowly its Zcash funding confirmed: `zec-slow-funding`. The
+  LEZ sidecar decides an unknown or in-flight submission on the chain again,
+  and tries one refused before its send (a node lookup that did not answer,
+  an I/O failure reading its store) again: `zec-kill-maker-claim`, on a
+  devnet built with `LEZ_TEST_HOOKS=1`. The full tier lists 106 tests
+  (`regress.sh list full`); all 106 passed at `14b05e56`, each on its first
+  try (`docs/evidence/regression-0.3.5-2026-11-23-macos-arm64/`).
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.
@@ -99,7 +115,7 @@ stack and are kept as the record of that submission shape.
 
 | # | Official deliverable (rfp#122) | Artefact | Proof | Today |
 |---|---|---|---|---|
-| 1 | LEZ escrow program v1 deployed on testnet 0.2, SHA-256 HTLC preimage path, `BlockValidityWindow` / `TimestampValidityWindow` for the refund | The deployed LEZ v0.2 escrow (devnet ImageID `c22d61fc…`, the same program the BTC leg settles on); the ZEC agreement binds `secret_digest`, the Taker's first claim reveals it (`lez_revealing_claim` selling ZEC, `zcash_revealing_claim` selling LEZ, [ADR 0216](architecture/0216-zec-taker-reveals-first-in-both-directions.md)), `ZecRefundPlanV1` carries both windows | M6 service certificates (claim + refund, 2026-08-04); the devnet `zec-happy` / refund scenarios below; **S1 needs a version-pinned deployment manifest and a public testnet-0.2 smoke transaction** | Devnet: yes, settled and refunded in both directions in `docs/evidence/regression-m2-2026-11-02/`. Public testnet 0.2: open (S1) |
+| 1 | LEZ escrow program v1 deployed on testnet 0.2, SHA-256 HTLC preimage path, `BlockValidityWindow` / `TimestampValidityWindow` for the refund | The LEZ v0.2 escrow the deployment manifest pins (devnet ImageID `ca66e0dc…`, with the custody-credit fix of TM-0032; the same program the BTC leg settles on); the ZEC agreement binds `secret_digest`, the Taker's first claim reveals it (`lez_revealing_claim` selling ZEC, `zcash_revealing_claim` selling LEZ, [ADR 0216](architecture/0216-zec-taker-reveals-first-in-both-directions.md)), `ZecRefundPlanV1` carries both windows | M6 service certificates (claim + refund, 2026-08-04); the devnet `zec-happy` / refund scenarios below; **S1 needs a version-pinned deployment manifest and a public testnet-0.2 smoke transaction** | Devnet: yes, settled and refunded in both directions in `docs/evidence/regression-m2-2026-11-02/`. Public testnet 0.2: open (S1) |
 | 2 | BIP-199 HTLC scripts and transaction construction on the transparent pool, integration tests against Zcash testnet **in CI** | `lez-zec-swap-sdk` (`bip199_contract`, `bip199_interpreter`, `zcash_transactions`, `zcash_funding` tests), `lez-zebra-node-adapter`, `zebra_regtest.rs` (fund → claim → refund through Zebra consensus) | The `zebra-regtest` job of `.github/workflows/ci.yml`, which runs the Zebra regtest test on every push; it was first written on PR #116 (`8be5d829`, `2bf2e8f6`, `999bddfe`) | Done 2026-11-03 (`ff958ec8`, `6574eeea`, `055bb204`; the Zebra test image's base moved to a clean distroless, `b7251402`); on `main` since PR #119 |
 | 3 | LEZ/ZEC SDK with full lifecycle coverage (discovery, negotiation, escrow creation, claim, refund) | Name it: **`lez-zec-swap-sdk`** on `lez-swap-sdk-core` (confirm the layering from `docs/architecture/0013-sdk-layering.md`); `docs/sdk-lez-zec.md` stage → API → test map; `crates/zec-swap-sdk/README.md`; `crates/zec-swap-sdk/examples/full-lifecycle.rs` offline, compiled under `--all-targets` | The reviewer builds and runs the example from the tag; the named tests in `tests/sdk_lifecycle.rs` (e.g. `first_claimant_activation_persists_agreement_and_claim_preimage_in_both_directions`, `maker_happy_path_locks_the_opposite_chain_and_restarts_in_both_legs_locked`, `taker_reorg_between_lez_maker_steps_suspends_funding_until_replacement`) cited per stage; traceability U1 / S8 rows updated | Done: `docs/sdk-lez-zec.md`, `crates/zec-swap-sdk/README.md`, `crates/zec-swap-sdk/examples/full-lifecycle.rs`; U1 / S8 rows updated |
 | 4 | Step-by-step Zcash node setup (the M1-chosen node plus the public-node option): configuration, wallet setup, obtaining testnet funds | `docs/zcash-testnet-setup.md` (258 lines: self-hosted Zebra route, public Zebrad provider route, disposable transparent wallet and funds, corridor rehearsal) | Read it against the five topics the M3 reviewer checked on U8: each route, wallet creation, funding, **which direction each route serves and why**; a fresh-machine walk (U10) | Guide done (both routes, wallet, funding, directions). A fresh-machine record (U10) is still open |

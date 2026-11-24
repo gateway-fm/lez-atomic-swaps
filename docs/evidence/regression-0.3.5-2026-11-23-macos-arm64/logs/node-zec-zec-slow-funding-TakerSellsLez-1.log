@@ -1,0 +1,42 @@
+[14:04:37] === zec-slow-funding (stamp 179543907702)
+[14:04:37] preflight: indexer historical reads
+[14:04:37]   indexer serves historical reads at the tip (5155)
+[14:04:37] preflight: LEZ finality check waived by request
+[14:04:37]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[14:05:02]       taker: taker ZEC corridor zec-devnet-179543907702: sidecar listening on 127.0.0.1:19902
+[14:05:02]       taker: taker: 1 prepared ZEC entries configured
+[14:05:02]     [zec-provision 13:05:02]   maker sidecar answers on 127.0.0.1:19901
+[14:05:02]     [zec-provision 13:05:02]   taker sidecar answers on 127.0.0.1:19902
+[14:05:02]       maker_health: ready=True degraded=False
+[14:05:02]     [zec-provision 13:05:02]   Taker lists zec-devnet-offer-179543907702 ; corridor zec-devnet-179543907702 is live
+[14:05:02]   corridor zec-devnet-179543907702 entry 0 (deterministic-local-devnet-v7): offer zec-devnet-offer-179543907702, zebra tip 533, Zcash refund height 550
+[14:05:03]   Taker took zec-devnet-offer-179543907702: swap zec-devnet-s (not_activated)
+[14:05:03]   receipt: swap zec-devnet-swap-179543907702, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179543907702/actor/taker/actor-config.json
+[14:05:03]   [0 s] waiting for the Maker's Zcash funding of zec-devnet-s in zebra's mempool (nothing mined): taker not_activated | maker leased | Maker journal revision 0 | LEZ finalized 5164, tip 5168 (4 unfinalized) [heartbeat]
+[14:05:05]   [2 s] waiting for the Maker's Zcash funding of zec-devnet-s in zebra's mempool (nothing mined): taker awaiting_first_lock | maker leased | Maker journal revision 0 | LEZ finalized 5164, tip 5168 (4 unfinalized) [heartbeat]
+[14:05:23]   [19 s] waiting for the Maker's Zcash funding of zec-devnet-s in zebra's mempool (nothing mined): taker refund_available | maker offered | Maker journal revision 0 | LEZ finalized 5180, tip 5184 (4 unfinalized) [heartbeat]
+[14:05:38]   the Maker's Zcash funding 2a845e67c64e waits in the mempool at zebra 533; Maker journal revision 2; holding it unmined for 75 s
+[14:05:48]   [10 s held] Maker journal revision 4, taker refund_available, maker taker_lock_confirmed
+[14:05:58]   [21 s held] Maker journal revision 6, taker refund_available, maker taker_lock_confirmed
+[14:06:09]   [31 s held] Maker journal revision 9, taker refund_available, maker taker_lock_confirmed
+[14:06:19]   [41 s held] Maker journal revision 11, taker refund_available, maker taker_lock_confirmed
+[14:06:29]   [52 s held] Maker journal revision 13, taker refund_available, maker taker_lock_confirmed
+[14:06:40]   [62 s held] Maker journal revision 15, taker refund_available, maker taker_lock_confirmed
+[14:06:50]   [72 s held] Maker journal revision 18, taker refund_available, maker taker_lock_confirmed
+[14:07:00]   [83 s held] Maker journal revision 20, taker refund_available, maker taker_lock_confirmed
+[14:07:11]   [93 s held] Maker journal revision 22, taker refund_available, maker taker_lock_confirmed
+[14:07:21]   [103 s held] Maker journal revision 24, taker refund_available, maker taker_lock_confirmed
+[14:07:21]   the 103 s hold carried the Maker's journal from revision 2 to 24; mining the funding
+[14:07:21]   zebra: mined 1 block(s) → height 534 (the Maker's funding 2a845e67c64e, after the hold)
+[14:07:21]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (the funding mined after the hold): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 534 | LEZ finalized 5276, tip 5281 (5 unfinalized) [heartbeat]
+[14:07:21]   zebra: mined 1 block(s) → height 535 (Maker's funding has 1 confirmation(s); the Taker's pre-reveal gate wants 2 (actor at taker_lock_confirmed))
+[14:07:25]   [3 s] waiting for the Taker's zec-devnet-s to reach claim_available (the funding mined after the hold): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 535 | LEZ finalized 5276, tip 5281 (5 unfinalized) [heartbeat]
+[14:07:25]   Taker claimed Zcash (replay=False)
+[14:07:25]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 535 | LEZ finalized 5276, tip 5281 (5 unfinalized) [heartbeat]
+[14:07:25]   zebra: mined 1 block(s) → height 536 (mempool had ['1b4ce42a2f8f'])
+[14:07:29]   [3 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 536 | LEZ finalized 5276, tip 5281 (5 unfinalized) [heartbeat]
+[14:07:42]   [16 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 536 | LEZ finalized 5294, tip 5297 (3 unfinalized) [heartbeat]
+[14:07:42]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 5294, tip 5297 (3 unfinalized) [heartbeat]
+[14:07:42]   both Nodes report zec-devnet-s completed
+[14:07:42]   the Maker claimed the LEZ after its journal passed revision 24 (now 28): ['lez_followup_claim']; both Nodes completed
+[14:07:42] === zec-slow-funding: passed in 186s

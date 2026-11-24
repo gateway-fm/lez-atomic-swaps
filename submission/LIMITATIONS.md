@@ -316,6 +316,38 @@ Found in the M4 review, outside the Monero protocol:
   uses the same image); the VNC ports are bound to `127.0.0.1`. The systemd
   and macOS packages run no VNC.
 
+## LEZ submissions and the sidecar's request journal
+
+- The LEZ sidecar answers a repeated request from what it journaled under
+  its request id, except for the submissions whose caller asks again under
+  the same request id only after it found the transaction absent and only
+  inside its own window: the native escrow pair and its re-plans, the
+  revealing claim and its re-plans (the ZEC Maker's follow-up claim too), the
+  native refund (the ZEC path's `lez_refund`, and the BTC actor's witnessed
+  LEZ refund, which takes the same sidecar slot), and on the XMR path the
+  tag-13 escrow pair, the Maker's tag-15 claim, the tag-16 refund and the
+  tag-17 punishment. For those, an unknown outcome, or the in-flight marker a
+  sidecar killed mid-submission leaves, is decided on the chain again: the
+  exact bytes are looked up and, absent, sent once more (one transaction id
+  and one nonce, included at most once); a journaled acceptance is decided
+  again the same way, except the tag-13 pair's, which its supervisor sends
+  on every lock step until it is final. A definite refusal is still replayed
+  (issue #187), except for the XMR recoveries (tags 16 and 17), whose every
+  outcome is decided again: a refusal of them can lift with time. The XMR
+  claim authorization (tag 14) decides an unknown outcome again too.
+- A submission refused as `unavailable` before its send is tried again under
+  the same request id, for every submission. That covers a node lookup that
+  did not answer and an I/O failure reading the sidecar's durable store while
+  it classifies the submission (a reservation file or the state directory
+  that cannot be opened or read). What the store holds (a corrupt, foreign,
+  partial or future-schema entry, a directory or file that is not the
+  sidecar's own) and bytes that do not match it stay a definite refusal.
+- On the BTC path the sidecar's answer to the witnessed refund changed, but
+  the BTC actor never asks again after an unknown outcome, so its behaviour
+  did not; its witnessed escrow, claim and token effects keep one attempt in
+  the sidecar (its own journal sends each once; a lost one falls back to
+  observation and recovery). So does the reference clock transaction.
+
 ## M6 boundary
 
 - The signed-off HTML prototypes create no daemon, wallet, or chain effects.

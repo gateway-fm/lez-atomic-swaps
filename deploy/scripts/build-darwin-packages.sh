@@ -85,6 +85,14 @@ tar -C "$repo/third_party/logos-execution-zone-module" --exclude=.git -cf - . | 
 for p in "$deploy"/builder/patches/logos-execution-zone-module/*.patch; do
   case "$(basename "$p")" in 0001-lez-*) git -C "$work/src/lez" apply "$p" ;; *) git -C "$work/src/mod" apply "$p" ;; esac
 done
+# RISC Zero's recursion circuit archive, which LEZ's flake fetches from a
+# bucket that no longer serves it: the same bytes from this project's
+# build-inputs-1 release, checked against the pinned SHA-256, go into the store
+# under the flake's fetchurl name first (from-scratch.sh, build_logos_module).
+zkr_sha256="$(pin RISC0_RECURSION_ZKR_SHA256)"
+nix-store --check-validity "$(nix-store --print-fixed-path sha256 "$zkr_sha256" "$zkr_sha256.zip")" 2>/dev/null \
+  || nix --extra-experimental-features nix-command store prefetch-file --name "$zkr_sha256.zip" \
+    --expected-hash "sha256:$zkr_sha256" "$(pin RISC0_RECURSION_ZKR_URL)"
 nixb core "path:$work/src/mod#lgx-portable" --no-update-lock-file --override-input logos-execution-zone "path:$work/src/lez"
 one lez_core core
 

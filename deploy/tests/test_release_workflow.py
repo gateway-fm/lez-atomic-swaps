@@ -101,7 +101,7 @@ class PackagesWorkflow(unittest.TestCase):
 
     def test_darwin_variants_build_on_apple_silicon_and_feed_the_merge(self):
         darwin = self.job('darwin')
-        self.assertIn('runs-on: macos-14', darwin)
+        self.assertIn('runs-on: macos-15', darwin)
         self.assertIn('deploy/scripts/build-darwin-packages.sh --out _out', darwin)
         self.assertIn('name: lgx-darwin-arm64', darwin)
         self.assertIn('xcodebuild -downloadComponent MetalToolchain', darwin)
@@ -142,6 +142,83 @@ class PackagesWorkflow(unittest.TestCase):
     def test_actions_are_pinned_by_commit(self):
         for ref in re.findall(r'uses: (\S+)', self.PACKAGES):
             self.assertRegex(ref, r'@[0-9a-f]{40}$', ref)
+
+
+
+class NoTestHooksInARelease(unittest.TestCase):
+    """The devnet's test hooks (feature test-hooks of the LEZ sidecar: the
+    claim holds of zec-kill-maker-claim) never reach a release: the devnet
+    build enables them only on LEZ_TEST_HOOKS=1, nothing on the release path
+    names them or sets that variable, the release path marks itself
+    LEZ_RELEASE_BUILD, and under that mark from-scratch.sh refuses
+    LEZ_TEST_HOOKS=1 and the hooks do not compile."""
+
+    RELEASE_WORKFLOWS = ('.github/workflows/release-images.yml', '.github/workflows/release-packages.yml')
+    PACKAGERS = ('deploy/scripts/package-role-node.sh', 'deploy/scripts/package-role-node-darwin.sh',
+                 'deploy/scripts/build-darwin-packages.sh', 'deploy/scripts/package-dist.sh',
+                 'deploy/scripts/stage-basecamp-package.sh', 'deploy/scripts/pin-package-dependencies.sh')
+    FROM_SCRATCH = ROOT / 'deploy/scripts/from-scratch.sh'
+
+    def test_the_release_path_never_names_the_hooks(self):
+        for path in self.RELEASE_WORKFLOWS + self.PACKAGERS:
+            text = (ROOT / path).read_text()
+            for word in ('test-hooks', 'test_hooks', 'LEZ_TEST_HOOKS', '--all-features'):
+                self.assertNotIn(word, text, f'{path} names {word}')
+
+    def test_the_release_workflows_mark_their_builds(self):
+        for path in self.RELEASE_WORKFLOWS:
+            text = (ROOT / path).read_text()
+            top = text.split('\njobs:\n', 1)[0]
+            self.assertRegex(top, r'\nenv:\n(  .*\n)*  LEZ_RELEASE_BUILD: "1"\n', path)
+            # The builds they run are from-scratch.sh's phases, under that mark.
+            self.assertIn('deploy/scripts/from-scratch.sh', text)
+
+    def test_the_darwin_packager_marks_each_cargo_build(self):
+        text = (ROOT / 'deploy/scripts/package-role-node-darwin.sh').read_text()
+        builds = re.findall(r'.*cargo (?:\+\S+ )?build.*', text)
+        self.assertEqual(len(builds), 2)
+        for line in builds:
+            self.assertIn('LEZ_RELEASE_BUILD=1 ', line)
+
+    def test_from_scratch_builds_the_hooks_only_on_request(self):
+        text = self.FROM_SCRATCH.read_text()
+        for line in text.splitlines():
+            if 'test-hooks' in line and not line.lstrip().startswith('#'):
+                self.assertRegex(line, r'\[\[ "\$\{LEZ_TEST_HOOKS:-0\}" != 1 \]\] \|\| ', line)
+        self.assertIn('hooks="--features test-hooks"', text)
+        # The release mark reaches the sidecar's build container.
+        self.assertEqual(text.count('${release_build_env[@]+"${release_build_env[@]}"}'), 1)
+
+    def test_from_scratch_refuses_the_hooks_in_a_release_build(self):
+        import os
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as workspace:
+            for env, message in ((dict(LEZ_TEST_HOOKS='1', LEZ_RELEASE_BUILD='1'), 'no release build'),
+                                 (dict(LEZ_TEST_HOOKS='yes'), 'LEZ_TEST_HOOKS is 0 or 1')):
+                result = subprocess.run([str(self.FROM_SCRATCH), '--workspace', workspace, '--only', 'none'],
+                                        env={**os.environ, **env}, capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(message, result.stderr)
+
+    def test_the_hooks_do_not_compile_in_a_release_build(self):
+        guard = 'option_env!("LEZ_RELEASE_BUILD").is_none()'
+        self.assertIn('#[cfg(feature = "test-hooks")]\nmod test_hooks;',
+                      (ROOT / 'compat/lez-v0_2-sidecar/src/lib.rs').read_text())
+        self.assertIn(guard, (ROOT / 'compat/lez-v0_2-sidecar/src/test_hooks.rs').read_text())
+
+    def test_no_default_or_dependent_feature_turns_the_hooks_on(self):
+        for manifest in sorted(ROOT.glob('**/Cargo.toml')):
+            parts = manifest.relative_to(ROOT).parts
+            if 'target' in parts or 'node_modules' in parts:
+                continue
+            text = manifest.read_text()
+            default = re.search(r'^default = \[(.*?)\]', text, re.M | re.S)
+            self.assertFalse(default and 'test-hooks' in default.group(1), manifest)
+            for line in text.splitlines():
+                if 'test-hooks' in line and not line.lstrip().startswith('#'):
+                    # Only the sidecar's own definition of the feature.
+                    self.assertEqual(line, 'test-hooks = []', manifest)
 
 
 if __name__ == '__main__':

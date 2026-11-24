@@ -110,6 +110,8 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-maker-early-claim:TakerSellsLez"
       # selling LEZ only: the Maker's Zcash funding held unmined while its journal grows past 17 revisions
       echo "node:zec:zec-slow-funding:TakerSellsLez"
+      # selling LEZ only: the Maker killed with its LEZ claim held in its sidecar (a devnet built with LEZ_TEST_HOOKS=1)
+      echo "node:zec:zec-kill-maker-claim:TakerSellsLez"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
       echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"
@@ -358,6 +360,8 @@ expected_seconds() { # expected_seconds <test>
     case "$1" in
       *late-claim-unmined*|*:kill-taker:*|*:kill-maker:*) seconds=1800 ;;
       *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
+      # two swaps, the Maker killed and started again in each
+      *zec-kill-maker-claim*) seconds=700 ;;
       node:xmr:xmr-kill-*) seconds=2700 ;;
       node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
       # waits for the agreement's punish time P (+1000 s on fast), or its refund time R (+720 s)

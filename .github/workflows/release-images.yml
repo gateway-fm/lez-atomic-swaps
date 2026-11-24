@@ -224,12 +224,20 @@ jobs:
       # Each module's own flake builds its portable lgx from the pinned
       # third_party submodule with builder/patches applied to a scratch copy.
       - name: lez_indexer_module (LEZ v0.2.4 + builder/patches/lez-indexer-module)
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:indexer-module
       - name: lez_core, the LEZ wallet (LEZ v0.2.4 + builder/patches/logos-execution-zone-module)
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:wallet-module
       - name: lez_swap_node, which runs a role's Node inside Basecamp (modules/lez-swap-node)
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:swap-node-module
       - name: The plugins of lez_maker_node and lez_taker_node, the packages that carry each role's Node (modules/lez-<role>-node)
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:role-node-modules
       - name: Collect payloads
         run: |
@@ -270,6 +278,8 @@ jobs:
         with:
           toolchain: 1.96.0
       - name: Guest ELF at the pinned digest
+        env:
+          RZUP_GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/verify-lez-v02-provisional.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -360,6 +370,8 @@ jobs:
       - name: Pinned sources
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
       - name: Basecamp bundle, qt-mcp, both role packages, Chat and Delivery
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only nix
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

@@ -28,6 +28,21 @@ if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
   exit 1
 fi
 
+# rzup reads GITHUB_TOKEN (rzup 0.5.1 src/env.rs) and sends it as a bearer
+# token on its GitHub release requests, which unauthenticated hit the shared
+# API rate limit. The caller passes it as RZUP_GITHUB_TOKEN; it is kept in an
+# unexported variable and handed to rzup alone, so no Cargo build script or
+# container below sees it. It is never printed.
+rzup_github_token="${RZUP_GITHUB_TOKEN:-}"
+unset RZUP_GITHUB_TOKEN
+rzup_install() {
+  if [[ -n "$rzup_github_token" ]]; then
+    GITHUB_TOKEN="$rzup_github_token" "$rzup_bin" install "$@"
+  else
+    "$rzup_bin" install "$@"
+  fi
+}
+
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/lez-v02-provisional-target-${run_id}}"
 export LEZ_V02_TOOL_DIR="${LEZ_V02_TOOL_DIR:-${TMPDIR:-/tmp}/lez-v02-provisional-tools-${run_id}}"
@@ -61,27 +76,14 @@ if [[ "$($rzup_bin --version)" != "rzup ${rzup_version}" ]]; then
   exit 1
 fi
 
-# rzup finds its releases through the GitHub API, which refuses an anonymous
-# caller once its address has spent the hourly allowance; CI's runners share
-# addresses. CI hands its read-only token in RZUP_GITHUB_TOKEN, and only the
-# two installs below see it, as the GITHUB_TOKEN rzup reads: no build does.
-rzup_token="${RZUP_GITHUB_TOKEN:-}"
-unset RZUP_GITHUB_TOKEN
-rzup_install() {
-  if [[ -n "$rzup_token" ]]; then
-    RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" GITHUB_TOKEN="$rzup_token" \
-      "$rzup_bin" install "$@"
-  else
-    RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" "$rzup_bin" install "$@"
-  fi
-}
-
 if [[ "${LEZ_NATIVE_TOOLS:-0}" != "1" ]]; then
 if ! RISC0_HOME="$risc0_home" "$rzup_bin" show | rg -q "rust.*${risc0_rust_version}"; then
-  rzup_install rust "$risc0_rust_version"
+  RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" \
+    rzup_install rust "$risc0_rust_version"
 fi
 if [[ ! -x "$r0vm_bin" ]]; then
-  rzup_install r0vm "$risc0_version"
+  RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" \
+    rzup_install r0vm "$risc0_version"
 fi
 fi
 

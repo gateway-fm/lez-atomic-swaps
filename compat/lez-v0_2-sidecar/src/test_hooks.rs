@@ -1,6 +1,7 @@
 //! The devnet's test hooks: files in the directory `LEZ_TEST_HOOKS_DIR`
 //! names, read on every use. Built only with the `test-hooks` feature, which
-//! the devnet's build enables and no release build does.
+//! the devnet's build enables on request (`LEZ_TEST_HOOKS=1`) and no release
+//! build does.
 
 use std::path::PathBuf;
 

@@ -752,7 +752,7 @@ run on macOS.
   with `builder/patches` (about 40 minutes on an empty Nix store; risc0 needs
   the Metal compiler, a separate component on Xcode 26:
   `xcodebuild -downloadComponent MetalToolchain`).
-- **Release.** `release-packages.yml` (manual dispatch) runs it on `macos-14`
+- **Release.** `release-packages.yml` (manual dispatch) runs it on `macos-15`
   beside the Linux jobs and merges each package's variants. `lgx merge` keeps
   only the manifest fields it models and drops `display_name` (Basecamp then
   lists the desks by package name), so `restore-merged-manifest.py` writes the

@@ -1,0 +1,647 @@
+[14:02:29] === zec-maker-early-claim (stamp 1795438949)
+[14:02:29] preflight: indexer historical reads
+[14:02:30]   indexer serves historical reads at the tip (5063)
+[14:02:30] preflight: LEZ finality check waived by request
+[14:02:30]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[14:03:00]       taker: taker ZEC corridor zec-devnet-1795438950: sidecar listening on 127.0.0.1:19902
+[14:03:00]       taker: taker: 1 prepared ZEC entries configured
+[14:03:00]     [zec-provision 13:03:00]   maker sidecar answers on 127.0.0.1:19901
+[14:03:00]     [zec-provision 13:03:00]   taker sidecar answers on 127.0.0.1:19902
+[14:03:00]       maker_health: ready=True degraded=False
+[14:03:00]     [zec-provision 13:03:00]   Taker lists zec-devnet-offer-1795438950 ; corridor zec-devnet-1795438950 is live
+[14:03:01]   corridor zec-devnet-1795438950 entry 0 (deterministic-local-devnet-v8): offer zec-devnet-offer-1795438950, zebra tip 544, Zcash refund height 561
+[14:03:01]   LEZ accounts before the take: {'maker': 2200000, 'taker': 1800000}
+[14:03:01]   Taker took zec-devnet-offer-1795438950: swap zec-devnet-s (not_activated)
+[14:03:01]   receipt: swap zec-devnet-swap-1795438950, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1795438950/actor/taker/actor-config.json
+[14:03:01]   cutting the Maker Node's zebra route: it will observe the Taker's lock but cannot fund Zcash
+[14:03:02]   [0 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker not_activated | actor at - | maker leased | zebra 544 | LEZ finalized 5074, tip 5079 (5 unfinalized) [heartbeat]
+[14:03:05]   [3 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker awaiting_first_lock | actor at offered | maker leased | zebra 544 | LEZ finalized 5089, tip 5093 (4 unfinalized) [heartbeat]
+[14:03:19]   [17 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker refund_available | actor at offered | maker offered | zebra 544 | LEZ finalized 5089, tip 5093 (4 unfinalized) [heartbeat]
+[14:03:23]   [21 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker refund_available | actor at taker_lock_confirmed | maker offered | zebra 544 | LEZ finalized 5089, tip 5093 (4 unfinalized) [heartbeat]
+[14:03:23]   [0 s] waiting for the Maker's zec-devnet-s to reach awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Maker observing the Taker's LEZ lock without zebra): maker offered (schedule leased) | LEZ finalized 5089, tip 5093 (4 unfinalized) [heartbeat]
+[14:03:26]   [3 s] waiting for the Maker's zec-devnet-s to reach awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Maker observing the Taker's LEZ lock without zebra): maker taker_lock_confirmed (schedule leased) | LEZ finalized 5100, tip 5107 (7 unfinalized) [heartbeat]
+[14:03:26]   the Taker's view lists no LEZ lock effect; its actor past taker_lock_confirmed and the Maker at taker_lock_confirmed (the Maker reads the lock from LEZ finality) are what say it is final
+[14:03:26]   the Maker is at taker_lock_confirmed and has not funded Zcash: outpoint 873cd56da2fd:0 unspent, zebra's mempool empty
+[14:03:26]   the swap's preimage is read from the Taker's half (/var/lib/lez/zec/corridor/taker/claim-preimage.key, 32 bytes, kept in the harness and never logged); its SHA-256 is 5e61bfeb64e63908c4f4e573ff5fda618a47582f6a65326683a4f2f0b8c5b37f
+[14:03:26]   searching the Maker's files for the preimage (raw, hex, HEX, base64) and the digest (raw, hex, HEX)
+[14:03:27]     searched /var/lib/lez/maker/btc-chat-signing.key (64 bytes)
+[14:03:27]     searched /var/lib/lez/maker/delivery-signing.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/maker/maker.sqlite3 (598016 bytes)
+[14:03:27]     searched /var/lib/lez/maker/maker.sqlite3-shm (32768 bytes)
+[14:03:27]     searched /var/lib/lez/maker/maker.sqlite3-wal (300792 bytes)
+[14:03:27]     searched /var/lib/lez/maker/maker.sqlite3.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/maker/zec-claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T120448Z/maker.sqlite3 (475136 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/maker.sqlite3 (565248 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/reservation.json (3806 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/round-ceremony-nonce.json (4842 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/round-ceremony-partial.json (2771 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/round-ceremony-reserve.json (4919 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/round-reserve.json (2459 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/sidecar-capability (65 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/sidecar.json (513 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/sidecar.log (870 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/taker-contribution.borsh (537 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/actor/actor-config.json (2618 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/actor/bitcoin-refund.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/actor/state.sqlite3 (499712 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/actor/state.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/bitcoin/funding-plan.json (848 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/bitcoin/funding-transaction.hex (411 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/journals/bitcoin.sqlite (442368 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/journals/lez.sqlite (442368 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/lez/prepared-claim.json (783 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/role/agreement-binding.json (1088 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/role/agreement.borsh (1462 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/role/contribution-summary.json (1220 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/role/contribution.borsh (504 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/role/peer-contribution.borsh (537 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/role/private/agreement.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/role/private/bitcoin-funding.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/role/private/bitcoin-refund.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/sidecar-state/bridge-requests.v1.json (3533 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/sidecar-state/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/sidecar-state/runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/maker/.reset-archive/20261123T124411Z/btc/swaps/4dedaf3067d1b55d3592139466ff01096ea6b52241ef2c3b3ac6a2eca08f2069/sidecar-state/witnessed-claim-reservation.v1.json (2333 bytes)
+[14:03:27]     searched /var/lib/lez/maker/btc/btc-role.json (2126 bytes)
+[14:03:27]     searched /var/lib/lez/maker/btc/btc-rpc-cookie (40 bytes)
+[14:03:27]     searched /var/lib/lez/maker/btc/claim-destination (65 bytes)
+[14:03:27]     searched /var/lib/lez/maker/btc/identity.json (442 bytes)
+[14:03:27]     searched /var/lib/lez/maker/btc/runtime.json (503 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar.log (72171 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/023cb2f075046cff70affc48a3ceedd3467beb1c533d95693c250ff7f57141de/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/023cb2f075046cff70affc48a3ceedd3467beb1c533d95693c250ff7f57141de/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/023cb2f075046cff70affc48a3ceedd3467beb1c533d95693c250ff7f57141de/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/023cb2f075046cff70affc48a3ceedd3467beb1c533d95693c250ff7f57141de/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/023cb2f075046cff70affc48a3ceedd3467beb1c533d95693c250ff7f57141de/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/023cb2f075046cff70affc48a3ceedd3467beb1c533d95693c250ff7f57141de/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/130758a237b648035ed289bae8bca4f1f5ca6585b4f5d2b4a22bd268a10c4f1c/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/130758a237b648035ed289bae8bca4f1f5ca6585b4f5d2b4a22bd268a10c4f1c/maker/state/actor.sqlite3 (430080 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/130758a237b648035ed289bae8bca4f1f5ca6585b4f5d2b4a22bd268a10c4f1c/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/130758a237b648035ed289bae8bca4f1f5ca6585b4f5d2b4a22bd268a10c4f1c/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/130758a237b648035ed289bae8bca4f1f5ca6585b4f5d2b4a22bd268a10c4f1c/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/14eaa03fc2c30be57402c9b82f271707af3f4ec1a944180fc3e9485faeee9886/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/14eaa03fc2c30be57402c9b82f271707af3f4ec1a944180fc3e9485faeee9886/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/14eaa03fc2c30be57402c9b82f271707af3f4ec1a944180fc3e9485faeee9886/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/14eaa03fc2c30be57402c9b82f271707af3f4ec1a944180fc3e9485faeee9886/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/14eaa03fc2c30be57402c9b82f271707af3f4ec1a944180fc3e9485faeee9886/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/1fc3e51828b6f2a57edb372c3e87683b3dedf757f7767c07f1a531f29d644467/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/1fc3e51828b6f2a57edb372c3e87683b3dedf757f7767c07f1a531f29d644467/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/1fc3e51828b6f2a57edb372c3e87683b3dedf757f7767c07f1a531f29d644467/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/1fc3e51828b6f2a57edb372c3e87683b3dedf757f7767c07f1a531f29d644467/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/1fc3e51828b6f2a57edb372c3e87683b3dedf757f7767c07f1a531f29d644467/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/1fc3e51828b6f2a57edb372c3e87683b3dedf757f7767c07f1a531f29d644467/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/3581edb8cfc63c01f66bd50654f2519e0d0bf353da16482986e9f7abcab6ab77/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/3581edb8cfc63c01f66bd50654f2519e0d0bf353da16482986e9f7abcab6ab77/maker/lez-first-lock-attempts.json (219 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/3581edb8cfc63c01f66bd50654f2519e0d0bf353da16482986e9f7abcab6ab77/maker/state/actor.sqlite3 (434176 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/3581edb8cfc63c01f66bd50654f2519e0d0bf353da16482986e9f7abcab6ab77/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/3581edb8cfc63c01f66bd50654f2519e0d0bf353da16482986e9f7abcab6ab77/maker/state/bridge.sqlite3 (483328 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/3581edb8cfc63c01f66bd50654f2519e0d0bf353da16482986e9f7abcab6ab77/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4a78982db379ea32cdaf4109662f9effb03849f698966d2096584f2ffdd1cedd/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4a78982db379ea32cdaf4109662f9effb03849f698966d2096584f2ffdd1cedd/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4a78982db379ea32cdaf4109662f9effb03849f698966d2096584f2ffdd1cedd/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4a78982db379ea32cdaf4109662f9effb03849f698966d2096584f2ffdd1cedd/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4a78982db379ea32cdaf4109662f9effb03849f698966d2096584f2ffdd1cedd/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4a78982db379ea32cdaf4109662f9effb03849f698966d2096584f2ffdd1cedd/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4b6474b68c1a0c572c64d6412b8e5dd324d28791e1e5c07e9eb59120540b57a1/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4b6474b68c1a0c572c64d6412b8e5dd324d28791e1e5c07e9eb59120540b57a1/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4b6474b68c1a0c572c64d6412b8e5dd324d28791e1e5c07e9eb59120540b57a1/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4b6474b68c1a0c572c64d6412b8e5dd324d28791e1e5c07e9eb59120540b57a1/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4b6474b68c1a0c572c64d6412b8e5dd324d28791e1e5c07e9eb59120540b57a1/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/4b6474b68c1a0c572c64d6412b8e5dd324d28791e1e5c07e9eb59120540b57a1/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/54672bfc009d4d72ea1989973017b3bb78f19f4f513c66f564e01e52aa0d2e3d/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/54672bfc009d4d72ea1989973017b3bb78f19f4f513c66f564e01e52aa0d2e3d/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/54672bfc009d4d72ea1989973017b3bb78f19f4f513c66f564e01e52aa0d2e3d/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/54672bfc009d4d72ea1989973017b3bb78f19f4f513c66f564e01e52aa0d2e3d/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/54672bfc009d4d72ea1989973017b3bb78f19f4f513c66f564e01e52aa0d2e3d/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/54672bfc009d4d72ea1989973017b3bb78f19f4f513c66f564e01e52aa0d2e3d/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/56803cd48a3e42109d0def362eaad79633ecb9b30d34a2908c7c03b0007fb026/maker/actor-config.json (2131 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/56803cd48a3e42109d0def362eaad79633ecb9b30d34a2908c7c03b0007fb026/maker/state/actor.sqlite3 (442368 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/56803cd48a3e42109d0def362eaad79633ecb9b30d34a2908c7c03b0007fb026/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/56803cd48a3e42109d0def362eaad79633ecb9b30d34a2908c7c03b0007fb026/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/56803cd48a3e42109d0def362eaad79633ecb9b30d34a2908c7c03b0007fb026/shared/agreement-v2.borsh (1008 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5af5005e61c4a2737910dc3d2bc09a82c1df4e3a006abbe6056fc0733799d4e0/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5af5005e61c4a2737910dc3d2bc09a82c1df4e3a006abbe6056fc0733799d4e0/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5af5005e61c4a2737910dc3d2bc09a82c1df4e3a006abbe6056fc0733799d4e0/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5af5005e61c4a2737910dc3d2bc09a82c1df4e3a006abbe6056fc0733799d4e0/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5af5005e61c4a2737910dc3d2bc09a82c1df4e3a006abbe6056fc0733799d4e0/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5af5005e61c4a2737910dc3d2bc09a82c1df4e3a006abbe6056fc0733799d4e0/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5daa5959b9d71c8c58ae1278a38006fbfc67745c29bd16de5b30e3ae081f2981/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5daa5959b9d71c8c58ae1278a38006fbfc67745c29bd16de5b30e3ae081f2981/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5daa5959b9d71c8c58ae1278a38006fbfc67745c29bd16de5b30e3ae081f2981/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5daa5959b9d71c8c58ae1278a38006fbfc67745c29bd16de5b30e3ae081f2981/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/5daa5959b9d71c8c58ae1278a38006fbfc67745c29bd16de5b30e3ae081f2981/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/62c42a7a6e96604168d30c19ad2ba649255872b650f35416b19595704d82cfda/maker/actor-config.json (2262 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/62c42a7a6e96604168d30c19ad2ba649255872b650f35416b19595704d82cfda/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/62c42a7a6e96604168d30c19ad2ba649255872b650f35416b19595704d82cfda/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/62c42a7a6e96604168d30c19ad2ba649255872b650f35416b19595704d82cfda/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/62c42a7a6e96604168d30c19ad2ba649255872b650f35416b19595704d82cfda/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/62c42a7a6e96604168d30c19ad2ba649255872b650f35416b19595704d82cfda/shared/agreement-v2.borsh (1012 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/796acb0e9a878830e9a070c44bfbb45431f1e4db6fcff784adc05eadf65a5fb3/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/796acb0e9a878830e9a070c44bfbb45431f1e4db6fcff784adc05eadf65a5fb3/maker/state/actor.sqlite3 (434176 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/796acb0e9a878830e9a070c44bfbb45431f1e4db6fcff784adc05eadf65a5fb3/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/796acb0e9a878830e9a070c44bfbb45431f1e4db6fcff784adc05eadf65a5fb3/maker/state/bridge.sqlite3 (475136 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/796acb0e9a878830e9a070c44bfbb45431f1e4db6fcff784adc05eadf65a5fb3/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/7aee36939e38a9ba15c1cf02d4a905085d777653826ff4a7747b7a38ab56ae66/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/7aee36939e38a9ba15c1cf02d4a905085d777653826ff4a7747b7a38ab56ae66/maker/state/actor.sqlite3 (430080 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/7aee36939e38a9ba15c1cf02d4a905085d777653826ff4a7747b7a38ab56ae66/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/7aee36939e38a9ba15c1cf02d4a905085d777653826ff4a7747b7a38ab56ae66/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/7aee36939e38a9ba15c1cf02d4a905085d777653826ff4a7747b7a38ab56ae66/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8721c981920aae7ff8f64d4216e7d4584846f0a728391e37cc4d9b9f24eb79f3/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8721c981920aae7ff8f64d4216e7d4584846f0a728391e37cc4d9b9f24eb79f3/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8721c981920aae7ff8f64d4216e7d4584846f0a728391e37cc4d9b9f24eb79f3/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8721c981920aae7ff8f64d4216e7d4584846f0a728391e37cc4d9b9f24eb79f3/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8721c981920aae7ff8f64d4216e7d4584846f0a728391e37cc4d9b9f24eb79f3/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8721c981920aae7ff8f64d4216e7d4584846f0a728391e37cc4d9b9f24eb79f3/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8e13afdcc47495befb1269fbff3754c2604c72ac4e357a83041f7ad8def99a56/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8e13afdcc47495befb1269fbff3754c2604c72ac4e357a83041f7ad8def99a56/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8e13afdcc47495befb1269fbff3754c2604c72ac4e357a83041f7ad8def99a56/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8e13afdcc47495befb1269fbff3754c2604c72ac4e357a83041f7ad8def99a56/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/8e13afdcc47495befb1269fbff3754c2604c72ac4e357a83041f7ad8def99a56/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/acd40fd21d404bde724f2e3fd0f1ef5d9ace481226f9ae73c27cb4ac91729f73/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/acd40fd21d404bde724f2e3fd0f1ef5d9ace481226f9ae73c27cb4ac91729f73/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/acd40fd21d404bde724f2e3fd0f1ef5d9ace481226f9ae73c27cb4ac91729f73/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/acd40fd21d404bde724f2e3fd0f1ef5d9ace481226f9ae73c27cb4ac91729f73/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/acd40fd21d404bde724f2e3fd0f1ef5d9ace481226f9ae73c27cb4ac91729f73/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/acd40fd21d404bde724f2e3fd0f1ef5d9ace481226f9ae73c27cb4ac91729f73/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/c6bb65315cdf99d1c3e10008d0204ace59586ccdca237242fa7e58fea412323b/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/c6bb65315cdf99d1c3e10008d0204ace59586ccdca237242fa7e58fea412323b/maker/state/actor.sqlite3 (430080 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/c6bb65315cdf99d1c3e10008d0204ace59586ccdca237242fa7e58fea412323b/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/c6bb65315cdf99d1c3e10008d0204ace59586ccdca237242fa7e58fea412323b/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/c6bb65315cdf99d1c3e10008d0204ace59586ccdca237242fa7e58fea412323b/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ce5539f589499e08c627462ed88e892ddedb068536e57d920d8628c2fd282baa/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ce5539f589499e08c627462ed88e892ddedb068536e57d920d8628c2fd282baa/maker/state/actor.sqlite3 (434176 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ce5539f589499e08c627462ed88e892ddedb068536e57d920d8628c2fd282baa/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ce5539f589499e08c627462ed88e892ddedb068536e57d920d8628c2fd282baa/maker/state/bridge.sqlite3 (475136 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ce5539f589499e08c627462ed88e892ddedb068536e57d920d8628c2fd282baa/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d40de808144d27a0d0ecaf17296f3771acb206274a5f2e479ddd1701fe32820b/maker/actor-config.json (2249 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d40de808144d27a0d0ecaf17296f3771acb206274a5f2e479ddd1701fe32820b/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d40de808144d27a0d0ecaf17296f3771acb206274a5f2e479ddd1701fe32820b/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d40de808144d27a0d0ecaf17296f3771acb206274a5f2e479ddd1701fe32820b/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d40de808144d27a0d0ecaf17296f3771acb206274a5f2e479ddd1701fe32820b/maker/state/bridge.sqlite3 (487424 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d40de808144d27a0d0ecaf17296f3771acb206274a5f2e479ddd1701fe32820b/shared/agreement-v2.borsh (1009 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d44467a09794920d78455d300a1269f0480065d6312006c90428b9efda523334/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d44467a09794920d78455d300a1269f0480065d6312006c90428b9efda523334/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d44467a09794920d78455d300a1269f0480065d6312006c90428b9efda523334/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d44467a09794920d78455d300a1269f0480065d6312006c90428b9efda523334/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d44467a09794920d78455d300a1269f0480065d6312006c90428b9efda523334/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d44467a09794920d78455d300a1269f0480065d6312006c90428b9efda523334/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d59556fc8ebb3b2f2a783ac1b0cdfba111ca7329cb1c6899df6ecdc2dc642cf8/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d59556fc8ebb3b2f2a783ac1b0cdfba111ca7329cb1c6899df6ecdc2dc642cf8/maker/state/actor.sqlite3 (434176 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d59556fc8ebb3b2f2a783ac1b0cdfba111ca7329cb1c6899df6ecdc2dc642cf8/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d59556fc8ebb3b2f2a783ac1b0cdfba111ca7329cb1c6899df6ecdc2dc642cf8/maker/state/bridge.sqlite3 (475136 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d59556fc8ebb3b2f2a783ac1b0cdfba111ca7329cb1c6899df6ecdc2dc642cf8/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d692b1a3d731295fd2381bf94132c8eb60626ce68e60963e0a2df2bbd8020c20/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d692b1a3d731295fd2381bf94132c8eb60626ce68e60963e0a2df2bbd8020c20/maker/state/actor.sqlite3 (430080 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d692b1a3d731295fd2381bf94132c8eb60626ce68e60963e0a2df2bbd8020c20/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d692b1a3d731295fd2381bf94132c8eb60626ce68e60963e0a2df2bbd8020c20/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d692b1a3d731295fd2381bf94132c8eb60626ce68e60963e0a2df2bbd8020c20/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d8922fa58023cbba189cd5864f449f2a02e26a0ade60f0c62aa3bdb3358209d6/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d8922fa58023cbba189cd5864f449f2a02e26a0ade60f0c62aa3bdb3358209d6/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d8922fa58023cbba189cd5864f449f2a02e26a0ade60f0c62aa3bdb3358209d6/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d8922fa58023cbba189cd5864f449f2a02e26a0ade60f0c62aa3bdb3358209d6/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/d8922fa58023cbba189cd5864f449f2a02e26a0ade60f0c62aa3bdb3358209d6/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef6df875fe8e31a1917f3a9e8980a105921b8ecabd6596ee3ef88ead1e76d64c/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef6df875fe8e31a1917f3a9e8980a105921b8ecabd6596ee3ef88ead1e76d64c/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef6df875fe8e31a1917f3a9e8980a105921b8ecabd6596ee3ef88ead1e76d64c/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef6df875fe8e31a1917f3a9e8980a105921b8ecabd6596ee3ef88ead1e76d64c/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef6df875fe8e31a1917f3a9e8980a105921b8ecabd6596ee3ef88ead1e76d64c/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef6df875fe8e31a1917f3a9e8980a105921b8ecabd6596ee3ef88ead1e76d64c/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef9b55fdc21a00a79c2db274f634b4bbecd697ae3d8eda5cecb76e513a1f10cd/maker/actor-config.json (2262 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef9b55fdc21a00a79c2db274f634b4bbecd697ae3d8eda5cecb76e513a1f10cd/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef9b55fdc21a00a79c2db274f634b4bbecd697ae3d8eda5cecb76e513a1f10cd/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef9b55fdc21a00a79c2db274f634b4bbecd697ae3d8eda5cecb76e513a1f10cd/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef9b55fdc21a00a79c2db274f634b4bbecd697ae3d8eda5cecb76e513a1f10cd/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/ef9b55fdc21a00a79c2db274f634b4bbecd697ae3d8eda5cecb76e513a1f10cd/shared/agreement-v2.borsh (1012 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/efb3faf0166d4e35fa3f7997fb28d99bad3c429010ea0ae85e6ca05bb9ed578a/maker/actor-config.json (2250 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/efb3faf0166d4e35fa3f7997fb28d99bad3c429010ea0ae85e6ca05bb9ed578a/maker/zcash-tip-observed (4 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/efb3faf0166d4e35fa3f7997fb28d99bad3c429010ea0ae85e6ca05bb9ed578a/maker/state/actor.sqlite3 (438272 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/efb3faf0166d4e35fa3f7997fb28d99bad3c429010ea0ae85e6ca05bb9ed578a/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/efb3faf0166d4e35fa3f7997fb28d99bad3c429010ea0ae85e6ca05bb9ed578a/maker/state/bridge.sqlite3 (454656 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/efb3faf0166d4e35fa3f7997fb28d99bad3c429010ea0ae85e6ca05bb9ed578a/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f4c6a5461496c2a3bdf89de1e7d23b528fb6afa4fd7b6bfd17cf029704356b5c/maker/actor-config.json (2249 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f4c6a5461496c2a3bdf89de1e7d23b528fb6afa4fd7b6bfd17cf029704356b5c/maker/state/actor.sqlite3 (430080 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f4c6a5461496c2a3bdf89de1e7d23b528fb6afa4fd7b6bfd17cf029704356b5c/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f4c6a5461496c2a3bdf89de1e7d23b528fb6afa4fd7b6bfd17cf029704356b5c/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f4c6a5461496c2a3bdf89de1e7d23b528fb6afa4fd7b6bfd17cf029704356b5c/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f9b105db7a3bda523ebcae07e8bb5368083ade3e112d1f84f0903297e89ff64d/maker/actor-config.json (2119 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f9b105db7a3bda523ebcae07e8bb5368083ade3e112d1f84f0903297e89ff64d/maker/state/actor.sqlite3 (442368 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f9b105db7a3bda523ebcae07e8bb5368083ade3e112d1f84f0903297e89ff64d/maker/state/actor.sqlite3.maker-actor.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f9b105db7a3bda523ebcae07e8bb5368083ade3e112d1f84f0903297e89ff64d/maker/state/bridge.sqlite3 (446464 bytes)
+[14:03:27]     searched /var/lib/lez/zec/actors/f9b105db7a3bda523ebcae07e8bb5368083ade3e112d1f84f0903297e89ff64d/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433054/maker/actor-config.json (2060 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433054/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433054/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433054/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433054/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433054/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433054/shared/agreement-v2.borsh (1009 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433570/maker/actor-config.json (2060 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433570/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433570/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433570/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433570/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433570/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795433570/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434111/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434111/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434111/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434111/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434111/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434111/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434111/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434404/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434404/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434404/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434404/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434404/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434404/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434404/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434687/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434687/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434687/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434687/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434687/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434687/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434687/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434981/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434981/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434981/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434981/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434981/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434981/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795434981/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435282/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435282/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435282/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435282/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435282/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435282/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435282/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435380/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435380/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435380/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435380/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435380/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435380/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435380/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435494/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435494/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435494/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435494/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435494/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435494/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435494/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588-b/maker/actor-config.json (2079 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588-b/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588-b/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588-b/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588-b/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588-b/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435588-b/shared/agreement-v2.borsh (1012 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435730/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435730/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435730/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435730/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435730/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435730/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435730/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435849/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435849/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435849/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435849/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435849/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435849/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795435849/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162-b/maker/actor-config.json (1948 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162-b/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162-b/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162-b/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162-b/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162-b/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436162-b/shared/agreement-v2.borsh (1008 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436302/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436302/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436302/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436302/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436302/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436302/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436302/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436405/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436405/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436405/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436405/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436405/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436405/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436405/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436809/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436809/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436809/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436809/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436809/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436809/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436809/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436894-b/maker/actor-config.json (2079 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436894-b/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436894-b/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436894-b/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436894-b/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436894-b/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795436894-b/shared/agreement-v2.borsh (1012 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437028/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437028/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437028/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437028/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437028/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437028/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437028/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437136/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437136/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437136/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437136/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437136/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437136/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437136/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437237/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437237/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437237/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437237/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437237/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437237/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437237/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437315/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437315/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437315/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437315/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437315/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437315/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437315/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437860/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437860/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437860/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437860/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437860/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437860/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437860/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437980/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437980/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437980/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437980/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437980/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437980/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795437980/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438073/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438073/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438073/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438073/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438073/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438073/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438073/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438186/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438186/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438186/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438186/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438186/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438186/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438186/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438260/maker/actor-config.json (1930 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438260/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438260/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438260/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438260/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438260/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/archive/zec-devnet-1795438260/shared/agreement-v2.borsh (1006 bytes)
+[14:03:27]     searched /var/lib/lez/zec/corridor/maker/actor-config.json (2061 bytes)
+[14:03:27]     searched /var/lib/lez/zec/corridor/maker/claim-recovery.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/corridor/maker/lez-runtime.json (502 bytes)
+[14:03:27]     searched /var/lib/lez/zec/corridor/maker/lez-signer.key (65 bytes)
+[14:03:27]     searched /var/lib/lez/zec/corridor/maker/sidecar.capability (64 bytes)
+[14:03:27]     searched /var/lib/lez/zec/corridor/maker/zcash.key (32 bytes)
+[14:03:27]     searched /var/lib/lez/zec/corridor/shared/agreement-v2.borsh (1010 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795433054/bridge-requests.v1.json (20703 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795433054/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795433570/bridge-requests.v1.json (1541 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795433570/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434111/bridge-requests.v1.json (20346 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434111/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434111/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434111/native-refund-reservation.v1.json (1925 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434404/bridge-requests.v1.json (24673 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434404/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434404/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434687/bridge-requests.v1.json (20552 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434687/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434687/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434687/native-refund-reservation.v1.json (1925 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434981/bridge-requests.v1.json (20826 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434981/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434981/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795434981/native-refund-reservation.v1.json (1925 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435282/bridge-requests.v1.json (4978 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435282/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435282/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435380/bridge-requests.v1.json (5478 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435380/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435380/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435494/bridge-requests.v1.json (5175 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435494/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435494/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435588/bridge-requests.v1.json (4978 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435588/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435588/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435588-b/bridge-requests.v1.json (4789 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435588-b/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435588-b/native-claim-reservation.v1.json (2417 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435730/bridge-requests.v1.json (5175 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435730/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435730/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435849/bridge-requests.v1.json (4978 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435849/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795435849/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436162/bridge-requests.v1.json (10306 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436162/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436162/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436162/native-escrow-supersession.1.v1.json (3071 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436162-b/bridge-requests.v1.json (10528 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436162-b/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436162-b/native-escrow-reservation.v1.json (3178 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436162-b/native-escrow-supersession.1.v1.json (3075 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436302/bridge-requests.v1.json (6806 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436302/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436302/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436405/bridge-requests.v1.json (6806 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436405/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436405/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436809/bridge-requests.v1.json (4978 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436809/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436809/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436894-b/bridge-requests.v1.json (4789 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436894-b/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795436894-b/native-claim-reservation.v1.json (2417 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437028/bridge-requests.v1.json (5175 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437028/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437028/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437136/bridge-requests.v1.json (5175 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437136/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437136/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437237/bridge-requests.v1.json (5175 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437237/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437237/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437315/bridge-requests.v1.json (9312 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437315/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437315/native-claim-reservation.v1.json (2413 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437860/bridge-requests.v1.json (5982 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437860/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437860/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437980/bridge-requests.v1.json (6600 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437980/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795437980/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438073/bridge-requests.v1.json (5982 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438073/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438073/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438186/bridge-requests.v1.json (6188 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438186/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438186/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438260/bridge-requests.v1.json (6394 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438260/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438260/native-escrow-reservation.v1.json (3174 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438950/bridge-requests.v1.json (1140 bytes)
+[14:03:27]     searched /var/lib/lez/zec/sidecar/zec-devnet-1795438950/bridge-state-lease.v1.lock (0 bytes)
+[14:03:27]     searched /run/lez/maker/node.log (146766 bytes)
+[14:03:27]     searched /run/lez/maker/ready (25 bytes)
+[14:03:27]   searched 499 files, 29926420 bytes, under /var/lib/lez/maker, /var/lib/lez/zec, /run/lez/maker
+[14:03:27]     digest_hex: 0 file(s)
+[14:03:27]     digest_hex_upper: 0 file(s)
+[14:03:27]     digest_raw: 4 file(s): /var/lib/lez/maker/maker.sqlite3-wal, /var/lib/lez/zec/actors/130758a237b648035ed289bae8bca4f1f5ca6585b4f5d2b4a22bd268a10c4f1c/maker/state/actor.sqlite3, /var/lib/lez/zec/actors/130758a237b648035ed289bae8bca4f1f5ca6585b4f5d2b4a22bd268a10c4f1c/shared/agreement-v2.borsh, /var/lib/lez/zec/corridor/shared/agreement-v2.borsh
+[14:03:27]     preimage_base64: 0 file(s)
+[14:03:27]     preimage_hex: 0 file(s)
+[14:03:27]     preimage_hex_upper: 0 file(s)
+[14:03:27]     preimage_raw: 0 file(s)
+[14:03:27]   the Maker's files hold the digest (4 file(s)) and never the preimage
+[14:03:27]   control: the same search over the Taker's /var/lib/lez/zec (626 files, 26001095 bytes) finds the preimage in ['/var/lib/lez/zec/corridor/taker/claim-preimage.key']
+[14:03:27]   the escrow of swap zec-devnet-swap-1795438950: on-chain swap id 4e215ed2ef2dfe8f5d5c8b7c9fc876b73cdf5693b501a85e47c8c29db5647b6f (derive_lez_swap_id_v1), program ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98
+[14:03:27]   claim_native as the Maker with a zero preimage: /usr/local/bin/lez-v02-escrow-claim-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --swap-id 4e215ed2ef2dfe8f5d5c8b7c9fc876b73cdf5693b501a85e47c8c29db5647b6f --private-key-file /var/lib/lez/zec/corridor/maker/lez-signer.key --preimage-hex 0000000000000000000000000000000000000000000000000000000000000000 --observe-seconds 30
+[14:03:58]     {
+[14:03:58]       "after": {
+[14:03:58]         "claimant_balance": 2200000,
+[14:03:58]         "claimant_nonce": 55,
+[14:03:58]         "custody_balance": 50000,
+[14:03:58]         "sequencer_tip": 5129,
+[14:03:58]         "status": "Funded",
+[14:03:58]         "tip_timestamp_ms": 1795439037223
+[14:03:58]       },
+[14:03:58]       "amount": 50000,
+[14:03:58]       "before": {
+[14:03:58]         "claimant_balance": 2200000,
+[14:03:58]         "claimant_nonce": 55,
+[14:03:58]         "custody_balance": 50000,
+[14:03:58]         "sequencer_tip": 5108,
+[14:03:58]         "status": "Funded",
+[14:03:58]         "tip_timestamp_ms": 1795439007091
+[14:03:58]       },
+[14:03:58]       "claimant_account": "3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5",
+[14:03:58]       "custody_account": "a6d7d0d077e912749948fc7df4ec7867601df964cbe427334b63756d72522de5",
+[14:03:58]       "escrow_kept_custody": true,
+[14:03:58]       "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+[14:03:58]       "included": false,
+[14:03:58]       "included_in_block": null,
+[14:03:58]       "metadata_account": "a92a2f7334c7df97fff5142ce2334ea3c193776d9b294f6ff77b15a9e38fc348",
+[14:03:58]       "observed_seconds": 30,
+[14:03:58]       "presented_preimage": "0000000000000000000000000000000000000000000000000000000000000000",
+[14:03:58]       "presented_preimage_matches_digest": false,
+[14:03:58]       "presented_preimage_sha256": "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925",
+[14:03:58]       "refund_at_ms": 1795439432000,
+[14:03:58]       "schema": "lez_v02_escrow_claim_probe_v1",
+[14:03:58]       "signer_is_claimant": true,
+[14:03:58]       "stored_secret_digest": "5e61bfeb64e63908c4f4e573ff5fda618a47582f6a65326683a4f2f0b8c5b37f",
+[14:03:58]       "submission": {
+[14:03:58]         "decision": "accepted",
+[14:03:58]         "error_code": null,
+[14:03:58]         "error_message": null
+[14:03:58]       },
+[14:03:58]       "submitted_before_refund_at": true,
+[14:03:58]       "swap_id": "4e215ed2ef2dfe8f5d5c8b7c9fc876b73cdf5693b501a85e47c8c29db5647b6f",
+[14:03:58]       "test_only": true,
+[14:03:58]       "transaction_id": "5e63e02535246b72b5569e3c8f8bc9c49b4a99388744ea34782c7bc3b39d1f3e"
+[14:03:58]     }
+[14:03:58]   a zero preimage: sequencer accepted, not included after 30 s; escrow Funded → Funded, custody 50000 → 50000, Maker's LEZ 2200000 → 2200000
+[14:03:58]   claim_native as the Maker with the digest as the preimage: /usr/local/bin/lez-v02-escrow-claim-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --swap-id 4e215ed2ef2dfe8f5d5c8b7c9fc876b73cdf5693b501a85e47c8c29db5647b6f --private-key-file /var/lib/lez/zec/corridor/maker/lez-signer.key --preimage-hex 5e61bfeb64e63908c4f4e573ff5fda618a47582f6a65326683a4f2f0b8c5b37f --observe-seconds 30
+[14:04:28]     {
+[14:04:28]       "after": {
+[14:04:28]         "claimant_balance": 2200000,
+[14:04:28]         "claimant_nonce": 55,
+[14:04:28]         "custody_balance": 50000,
+[14:04:28]         "sequencer_tip": 5151,
+[14:04:28]         "status": "Funded",
+[14:04:28]         "tip_timestamp_ms": 1795439068538
+[14:04:28]       },
+[14:04:28]       "amount": 50000,
+[14:04:28]       "before": {
+[14:04:28]         "claimant_balance": 2200000,
+[14:04:28]         "claimant_nonce": 55,
+[14:04:28]         "custody_balance": 50000,
+[14:04:28]         "sequencer_tip": 5129,
+[14:04:28]         "status": "Funded",
+[14:04:28]         "tip_timestamp_ms": 1795439037223
+[14:04:28]       },
+[14:04:28]       "claimant_account": "3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5",
+[14:04:28]       "custody_account": "a6d7d0d077e912749948fc7df4ec7867601df964cbe427334b63756d72522de5",
+[14:04:28]       "escrow_kept_custody": true,
+[14:04:28]       "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+[14:04:28]       "included": false,
+[14:04:28]       "included_in_block": null,
+[14:04:28]       "metadata_account": "a92a2f7334c7df97fff5142ce2334ea3c193776d9b294f6ff77b15a9e38fc348",
+[14:04:28]       "observed_seconds": 30,
+[14:04:28]       "presented_preimage": "5e61bfeb64e63908c4f4e573ff5fda618a47582f6a65326683a4f2f0b8c5b37f",
+[14:04:28]       "presented_preimage_matches_digest": false,
+[14:04:28]       "presented_preimage_sha256": "7f4a230c7cc4ef3cc710b82aa1f59ad7a7660ae9775707e9a0d4838f5e6695ef",
+[14:04:28]       "refund_at_ms": 1795439432000,
+[14:04:28]       "schema": "lez_v02_escrow_claim_probe_v1",
+[14:04:28]       "signer_is_claimant": true,
+[14:04:28]       "stored_secret_digest": "5e61bfeb64e63908c4f4e573ff5fda618a47582f6a65326683a4f2f0b8c5b37f",
+[14:04:28]       "submission": {
+[14:04:28]         "decision": "accepted",
+[14:04:28]         "error_code": null,
+[14:04:28]         "error_message": null
+[14:04:28]       },
+[14:04:28]       "submitted_before_refund_at": true,
+[14:04:28]       "swap_id": "4e215ed2ef2dfe8f5d5c8b7c9fc876b73cdf5693b501a85e47c8c29db5647b6f",
+[14:04:28]       "test_only": true,
+[14:04:28]       "transaction_id": "e52ae8ab18e92e19271de9a4045bc69bd62a242ed6e0d5b63829afcfec286887"
+[14:04:28]     }
+[14:04:28]   the digest as the preimage: sequencer accepted, not included after 30 s; escrow Funded → Funded, custody 50000 → 50000, Maker's LEZ 2200000 → 2200000
+[14:04:28]   compared: SHA-256 of the Taker's preimage = the digest the escrow stores = the digest found in the Maker's files; the escrow refused both claims and holds the Taker's LEZ
+[14:04:28]   stopping the Maker Node so it never funds Zcash
+[14:04:29]   waiting 375s for the agreement's LEZ refund time (the profile's delay after provisioning)
+[14:04:29]   [0 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 5135, tip 5137 (2 unfinalized) [heartbeat]
+[14:05:29]   [60 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 5180, tip 5184 (4 unfinalized) [heartbeat]
+[14:06:29]   [120 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 5217, tip 5231 (14 unfinalized) [heartbeat]
+[14:07:29]   [180 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 5276, tip 5281 (5 unfinalized) [heartbeat]
+[14:08:29]   [240 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 5323, tip 5328 (5 unfinalized) [heartbeat]
+[14:09:29]   [300 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 5373, tip 5377 (4 unfinalized) [heartbeat]
+[14:10:29]   [360 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 5417, tip 5424 (7 unfinalized) [heartbeat]
+[14:10:45]   [0 s] waiting for the Taker's refund of zec-devnet-s to reach refunded: taker refund_available (generation 1) | maker unreachable | LEZ finalized 5417, tip 5424 (7 unfinalized) [heartbeat]
+[14:10:45]   refund request admitted (attempt 1, taker refund_available | maker: unreachable)
+[14:10:50]   [5 s] waiting for the Taker's refund of zec-devnet-s to reach refunded: taker refund_in_progress (generation 1) | maker unreachable | LEZ finalized 5435, tip 5441 (6 unfinalized) [heartbeat]
+[14:10:57]   [12 s] waiting for the Taker's refund of zec-devnet-s to reach refunded: taker refunded (generation 2) | maker unreachable | LEZ finalized 5435, tip 5441 (6 unfinalized) [heartbeat]
+[14:10:57]   Taker refunded its LEZ escrow; Taker ended refunded
+[14:11:09]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-devnet-swap-1795438950", "action": "refund", "requested_after_generation": 13, "was_replay": false}
+[14:11:09]   [0 s] waiting for the Maker's zec-devnet-s to reach a terminal state (reconciling the refunded LEZ leg): maker taker_lock_confirmed (schedule leased) | LEZ finalized 5435, tip 5441 (6 unfinalized) [heartbeat]
+[14:11:16]   [6 s] waiting for the Maker's zec-devnet-s to reach a terminal state (reconciling the refunded LEZ leg): maker refunded (schedule terminal) | LEZ finalized 5456, tip 5458 (2 unfinalized) [heartbeat]
+[14:11:16]   zebra: the provisioned coinbase outpoint 873cd56da2fd:0 is still unspent; Maker ended refunded
+[14:11:16]   LEZ accounts {'maker': 2200000, 'taker': 1800000} → {'maker': 2200000, 'taker': 1800000}
+[14:11:16] === zec-maker-early-claim: passed in 526s
