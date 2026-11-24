@@ -12,7 +12,11 @@
 # published once per pin change (`.github/workflows/builder-image.yml`) and
 # `scripts/from-scratch.sh` pulls it by the digest in `image.lock`, or builds
 # it here when the registry is unreachable or `LEZ_BUILDER_IMAGE=local`.
-FROM ubuntu:24.04
+#
+# The base is pinned by digest: the layer cache of builder-image.yml is keyed
+# on it, so a republished `ubuntu:24.04` tag would rebuild every layer. Bump
+# the digest by hand (`docker buildx imagetools inspect ubuntu:24.04`).
+FROM ubuntu:24.04@sha256:562111b88caa79c71391c0c4d3c2114a7d5c35915c20561fd893cb1e07929e6b
 
 ENV DEBIAN_FRONTEND=noninteractive
 # hadolint ignore=DL3008

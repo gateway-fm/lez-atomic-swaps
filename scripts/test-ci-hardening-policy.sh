@@ -487,6 +487,8 @@ require_fixed 'nix-store --check-validity \$zkr 2>/dev/null || nix store prefetc
 require_fixed '--expected-hash sha256:$RISC0_RECURSION_ZKR_SHA256 $RISC0_RECURSION_ZKR_URL' deploy/scripts/from-scratch.sh
 require_fixed '--expected-hash "sha256:$zkr_sha256" "$(pin RISC0_RECURSION_ZKR_URL)"' deploy/scripts/build-darwin-packages.sh
 require_fixed 'zkr_sha256="$(pin RISC0_RECURSION_ZKR_SHA256)"' deploy/scripts/build-darwin-packages.sh
+[[ "$(rg -c '^FROM ' "$builder_dockerfile")" == 1 ]] && rg -q '^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$' "$builder_dockerfile" \
+  || fail "$builder_dockerfile must pin its one base image by digest (the layer cache is keyed on it)"
 require_fixed "ARG RISC0_RECURSION_ZKR_URL=${zkr_url}" "$builder_dockerfile"
 require_fixed "ARG RISC0_RECURSION_ZKR_SHA256=${zkr_sha256}" "$builder_dockerfile"
 require_fixed 'ENV RECURSION_SRC_PATH=/opt/lez-tools/risc0-recursion-zkr.zip' "$builder_dockerfile"
