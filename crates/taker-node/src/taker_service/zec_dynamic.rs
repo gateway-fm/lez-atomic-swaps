@@ -25,7 +25,7 @@ use lez_btc_role_lifecycle::{
 use lez_node_common::{
     ZecOutpointV1, ZecReserveRequestV1, ZecReserveResponseV1, local_rpc::call_local_chat_rpc,
 };
-use lez_swap_core::{Pair, SwapDirection, SwapId};
+use lez_swap_core::{Pair, SwapDirection, SwapId, path_safety::join_component};
 use lez_swap_store::maker_zec_chat_session_id;
 use lez_zec_swap_sdk::NegotiationTranscriptV1;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
@@ -112,14 +112,12 @@ impl DynamicZecRole {
         Ok(Self { config, btc })
     }
 
-    fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
+    fn layout(&self, reservation_id: &RequestId) -> Result<SwapLayout> {
         self.btc.layout(reservation_id)
     }
 
     fn swap_directories(&self) -> Vec<PathBuf> {
-        fs::read_dir(&self.btc.runtime().config().swaps_root)
-            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
-            .unwrap_or_default()
+        swap_directories_under(&self.btc.runtime().config().swaps_root)
     }
 
     /// Every swap this Node prepared at take time, as catalog entries.
@@ -146,10 +144,10 @@ impl DynamicZecRole {
         std::thread::spawn(move || {
             loop {
                 for configured in role.persisted_entries() {
-                    let layout = role.layout(&configured.reservation_id);
-                    if let Err(error) =
+                    let ensured = role.layout(&configured.reservation_id).and_then(|layout| {
                         SwapSidecar::ensure(role.btc.runtime(), &layout, &configured.reservation_id)
-                    {
+                    });
+                    if let Err(error) = ensured {
                         eprintln!(
                             "taker ZEC swap {}: sidecar unavailable: {error:#}",
                             configured.swap_id.as_str()
@@ -196,6 +194,19 @@ impl DynamicZecRole {
                 .authenticated_transfer_program_id(),
         }
     }
+}
+
+/// Every directory entry of `swaps_root`, each rebuilt as one checked name
+/// directly under it; an entry whose name is not one plain name is skipped.
+fn swap_directories_under(swaps_root: &Path) -> Vec<PathBuf> {
+    fs::read_dir(swaps_root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|entry| join_component(swaps_root, entry.file_name().to_str()?).ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// How long a reservation that never became a prepared swap holds its
@@ -245,7 +256,7 @@ pub(super) async fn prepare(
 ) -> Result<PreparedConfigurationV1> {
     ensure!(request.route.pair() == Pair::Zcash, "not a Zcash route");
     let reservation_id = derived_request_id(&request.request_id, "zec", b"node-reservation")?;
-    let layout = dynamic.layout(&reservation_id);
+    let layout = dynamic.layout(&reservation_id)?;
     let prepared_file = layout.root().join(PREPARED_FILE);
     if layout.exists()
         && let Ok(bytes) = read_private(&prepared_file, MAX_RECORD_BYTES)
@@ -484,8 +495,28 @@ pub(super) async fn prepare(
 mod tests {
     use super::{
         PREPARED_FILE, RESERVE_FILE, UNPREPARED_RESERVATION_HOLD, ZecOutpointV1, candidate,
-        funding_taken_elsewhere, reservation_holds_funding,
+        funding_taken_elsewhere, reservation_holds_funding, swap_directories_under,
     };
+
+    /// The swap directories read back from the swaps root are its direct
+    /// children. The take's own directory is named by `derived_request_id`
+    /// (lowercase hex of a SHA-256), so no hostile name can reach it; a
+    /// name that is not one plain component is skipped here.
+    #[test]
+    fn swap_directories_are_direct_children_of_the_swaps_root() {
+        let swaps = swap_dir("listing");
+        for name in ["0123abcd0123abcd", ".stage", "drive:c"] {
+            fs::create_dir(swaps.join(name)).expect("entry");
+        }
+        let mut found = swap_directories_under(&swaps);
+        found.sort();
+        assert_eq!(
+            found,
+            vec![swaps.join(".stage"), swaps.join("0123abcd0123abcd")]
+        );
+        assert!(swap_directories_under(&swaps.join("missing")).is_empty());
+        fs::remove_dir_all(swaps).expect("clean up");
+    }
 
     /// A take resumed after its hold reuses its outpoint only while no other
     /// take committed it meanwhile.

@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, ensure};
+use lez_swap_core::path_safety::{check_normalized_absolute, join_component};
 use lez_swap_store::PinnedExecutable;
 use secp256k1::rand::{RngCore as _, rngs::OsRng};
 use serde::{Deserialize, Serialize};
@@ -946,6 +947,8 @@ impl XmrMakerEffectToolPinsV1 {
                 .effect_tools()
                 .get(slot)
                 .with_context(|| format!("the Monero role config names no {slot} tool"))?;
+            check_normalized_absolute(program)
+                .with_context(|| format!("the Monero {slot} tool path is unsafe"))?;
             let bytes = std::fs::read(program)
                 .with_context(|| format!("the Monero {slot} tool is unreadable"))?;
             pins.insert(slot, (program.clone(), Sha256::digest(bytes).into()));
@@ -1007,6 +1010,10 @@ pub fn provision_xmr_maker_effect_authority(
     facts: &XmrMakerEffectFactsV1<'_>,
     directory: &Path,
 ) -> Result<PathBuf> {
+    // Every path the authority names must pass its validator as absolute and
+    // normalised; the two the Node hands in are checked before any is used.
+    check_normalized_absolute(directory).context("the effect authority directory is unsafe")?;
+    check_normalized_absolute(facts.runtime_file).context("the LEZ runtime file path is unsafe")?;
     let credentials = |name: &str, (url, login_file): (&str, &Path)| -> Result<AuthenticatedRpc> {
         let login = read_secret_line(login_file, "Monero RPC login")?;
         let (username, password) = login
@@ -1028,8 +1035,10 @@ pub fn provision_xmr_maker_effect_authority(
         )?;
         Ok(AuthenticatedRpc {
             url: url.to_owned(),
-            username_file: directory.join(username_file),
-            password_file: directory.join(password_file),
+            username_file: join_component(directory, &username_file)
+                .context("an RPC username file name is unsafe")?,
+            password_file: join_component(directory, &password_file)
+                .context("an RPC password file name is unsafe")?,
         })
     };
     if read_role_file(directory, SHARED_WALLET_FILE_PASSWORD_FILE, 128, "password").is_err() {
@@ -1127,6 +1136,7 @@ pub const XMR_MAKER_LEZ_SCAN_FILE: &str = "maker-lez-scan.json";
 ///
 /// Fails if the cursor cannot be written.
 pub fn seed_xmr_maker_lez_scan(directory: &Path, finalized_height: u64) -> Result<()> {
+    check_normalized_absolute(directory).context("the effect authority directory is unsafe")?;
     let cursor = directory.join("evidence").join(XMR_MAKER_LEZ_SCAN_FILE);
     match std::fs::OpenOptions::new()
         .write(true)
@@ -1144,5 +1154,77 @@ pub fn seed_xmr_maker_lez_scan(directory: &Path, finalized_height: u64) -> Resul
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(error).context("seed the Maker's LEZ scan cursor"),
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use std::{collections::BTreeMap, fs, path::Path};
+
+    use tempfile::TempDir;
+
+    use super::{
+        XmrMakerEffectFactsV1, XmrMakerEffectToolPinsV1, provision_xmr_maker_effect_authority,
+        seed_xmr_maker_lez_scan,
+    };
+
+    /// The provisioned directory and the runtime file the Node hands in are
+    /// absolute and normalised, or nothing is read or written.
+    #[test]
+    fn provisioning_refuses_a_directory_or_runtime_file_that_walks_the_tree() {
+        let directory = TempDir::new().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let config = crate::reserve::tests::config(&root);
+        let tools = XmrMakerEffectToolPinsV1(BTreeMap::new());
+        let effect = root.join("effect");
+        fs::create_dir(&effect).unwrap();
+        let runtime = root.join("runtime.json");
+        fs::write(&runtime, b"{}").unwrap();
+        let walking = effect.join("..").join("effect");
+        let walking_runtime = effect.join("..").join("runtime.json");
+        for (directory, runtime_file) in [
+            (Path::new("effect"), runtime.as_path()),
+            (walking.as_path(), runtime.as_path()),
+            (effect.as_path(), Path::new("runtime.json")),
+            (effect.as_path(), walking_runtime.as_path()),
+        ] {
+            let facts = XmrMakerEffectFactsV1 {
+                swap_id: [1; 32],
+                agreement_commitment: [2; 32],
+                activation_commitment: [3; 32],
+                run_id: "run-0001",
+                workflow_journal: &effect.join("workflow.sqlite"),
+                adaptor_journal: &effect.join("adaptor.sqlite"),
+                sidecar_url: "http://127.0.0.1:1/",
+                runtime_file,
+                capability_file: &effect.join("capability"),
+                wallet_lock_file: &effect.join("wallet.lock"),
+            };
+            let error = provision_xmr_maker_effect_authority(&config, &tools, &facts, directory)
+                .unwrap_err();
+            assert!(format!("{error:#}").contains("unsafe"), "{error:#}");
+        }
+        assert!(fs::read_dir(&effect).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn the_scan_cursor_is_seeded_only_under_a_normalised_absolute_directory() {
+        let directory = TempDir::new().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        fs::create_dir(root.join("evidence")).unwrap();
+        assert!(seed_xmr_maker_lez_scan(Path::new("relative"), 1).is_err());
+        assert!(seed_xmr_maker_lez_scan(&root.join("x").join(".."), 1).is_err());
+        assert!(
+            !root
+                .join("evidence")
+                .join(super::XMR_MAKER_LEZ_SCAN_FILE)
+                .exists()
+        );
+        seed_xmr_maker_lez_scan(&root, 1).unwrap();
+        assert!(
+            root.join("evidence")
+                .join(super::XMR_MAKER_LEZ_SCAN_FILE)
+                .is_file()
+        );
     }
 }

@@ -23,6 +23,7 @@ use lez_btc_role_lifecycle::{
     BtcRoleRuntime, SwapLayout, SwapSidecar,
     layout::{read_private, write_private_exact},
 };
+use lez_swap_core::path_safety::join_component;
 use lez_xmr_monero_adapter::MoneroChainIdentityAttestor;
 use lez_xmr_swap_sdk::MoneroPrivateViewKey;
 use xmr_reference_actor::{
@@ -130,6 +131,12 @@ fn actor_manifest_file(layout: &SwapLayout) -> PathBuf {
         .join(ACTOR_MANIFEST_FILE)
 }
 
+/// The record of one ceremony round: one checked name in the swap directory.
+fn round_file(layout: &SwapLayout, round: &str) -> RpcResult<PathBuf> {
+    join_component(layout.root(), &format!("round-xmr-{round}.json"))
+        .map_err(|error| internal(&error))
+}
+
 /// Returns the stored answer when this exact request already completed the
 /// round, fails on a different request for it, else `None`.
 fn replay<T: for<'de> Deserialize<'de>>(
@@ -137,7 +144,7 @@ fn replay<T: for<'de> Deserialize<'de>>(
     round: &str,
     digest: [u8; 32],
 ) -> RpcResult<Option<T>> {
-    let path = layout.root().join(format!("round-xmr-{round}.json"));
+    let path = round_file(layout, round)?;
     if !path.exists() {
         return Ok(None);
     }
@@ -167,7 +174,7 @@ fn record_round<T: Serialize>(
         response: serde_json::to_value(response).map_err(|error| internal(&error))?,
     };
     write_private_exact(
-        &layout.root().join(format!("round-xmr-{round}.json")),
+        &round_file(layout, round)?,
         &serde_json::to_vec(&record).map_err(|error| internal(&error))?,
     )
     .map(|_| ())
@@ -206,7 +213,9 @@ impl XmrMakerReservations {
         })
     }
 
-    fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
+    /// The reservation's swap directory, one checked name under the swaps
+    /// root (defence in depth: the id is already validated by its type).
+    fn layout(&self, reservation_id: &RequestId) -> anyhow::Result<SwapLayout> {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
     }
 
@@ -219,7 +228,7 @@ impl XmrMakerReservations {
             .flatten()
             .filter_map(|entry| {
                 let reservation_id = RequestId::new(entry.file_name().to_str()?.to_owned()).ok()?;
-                let layout = self.layout(&reservation_id);
+                let layout = self.layout(&reservation_id).ok()?;
                 let record = XmrReservationRecordV1::load(layout.root()).ok()?;
                 Some((reservation_id, layout, record))
             })
@@ -229,7 +238,9 @@ impl XmrMakerReservations {
     /// The reservation's layout while a round may still use it: recorded,
     /// and inside its grace unless its actor is already provisioned.
     fn open(&self, reservation_id: &RequestId, now: u64) -> RpcResult<SwapLayout> {
-        let layout = self.layout(reservation_id);
+        let layout = self
+            .layout(reservation_id)
+            .map_err(|_| invalid_request("unknown XMR reservation"))?;
         let record = XmrReservationRecordV1::load(layout.root())
             .map_err(|_| invalid_request("unknown XMR reservation"))?;
         if !actor_manifest_file(&layout).is_file() && now >= record.expires_at_unix_seconds {
@@ -329,7 +340,7 @@ impl XmrMakerReservations {
             &root.join(XMR_STAGE_A_FILE),
             &stage_b,
             &root.join(XMR_ADAPTOR_JOURNAL_FILE),
-            &self.actor_root.join(hex::encode(stage_b_sha256)),
+            &join_component(&self.actor_root, &hex::encode(stage_b_sha256))?,
         )?;
         let effect = layout.root().join(EFFECT_DIRECTORY);
         if !effect.is_dir() {
@@ -473,7 +484,9 @@ pub(super) async fn reserve(
         .as_ref()
         .ok_or_else(|| invalid_request("maker Chat signer is unavailable"))?;
     let _serial = reservations.rounds.lock().await;
-    let layout = reservations.layout(&request.reservation_id);
+    let layout = reservations
+        .layout(&request.reservation_id)
+        .map_err(invalid_request)?;
     let digest = request_digest(&request)?;
     if layout.root().exists() {
         return match XmrReservationRecordV1::load(layout.root()) {
@@ -675,4 +688,30 @@ pub(super) async fn ceremony_partial(
     let response = xmr_ceremony_partial_response(answer, false);
     record_round(&layout, "partial", digest, &response)?;
     Ok(response)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use std::path::Path;
+
+    use lez_bridge_protocol::RequestId;
+    use lez_btc_role_lifecycle::SwapLayout;
+
+    use super::round_file;
+
+    /// A round record is one plain name in the swap directory. The swap
+    /// directory itself comes from a `RequestId`, which cannot hold a
+    /// separator or be `.`/`..`, so no hostile reservation id can be built.
+    #[test]
+    fn a_round_record_never_leaves_the_swap_directory() {
+        let swaps = Path::new("/var/lib/lez/swaps");
+        let layout = SwapLayout::new(swaps, &RequestId::new("reservation-0001").unwrap()).unwrap();
+        assert_eq!(
+            round_file(&layout, "r1").unwrap(),
+            swaps.join("reservation-0001").join("round-xmr-r1.json")
+        );
+        for round in ["../../x", "a/b", "/abs", "a\\b", "a\0b"] {
+            assert!(round_file(&layout, round).is_err(), "{round:?}");
+        }
+    }
 }

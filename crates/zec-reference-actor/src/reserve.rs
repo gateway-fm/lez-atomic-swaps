@@ -22,7 +22,7 @@ use std::{
 
 use anyhow::{Context as _, Result, ensure};
 use lez_bridge_protocol::{DiscoveryWindow, Hex32, RequestId, RunId, RuntimeDescriptor};
-use lez_swap_core::{SwapDirection, SwapId, UnixSeconds};
+use lez_swap_core::{SwapDirection, SwapId, UnixSeconds, path_safety::check_normalized_absolute};
 use lez_zebra_node_adapter::{HttpZebraRpc, ZebraRpc};
 use lez_zec_swap_sdk::{
     NegotiationTranscriptV1, ZcashFundingInputV1, ZecAgreementDraftV1, ZecProfileId,
@@ -130,7 +130,7 @@ impl ZecRoleConfigV1 {
             "funding_scan_blocks is outside its bound"
         );
         if let Some(key) = &config.zcash_key_file {
-            read_zcash_key_file(key, "role")?;
+            read_zcash_key_file(checked_key_file(key)?, "role")?;
         }
         Ok(config)
     }
@@ -173,12 +173,24 @@ impl ZecRoleConfigV1 {
             .zcash_key_file
             .as_deref()
             .context("the Zcash role config names no zcash_key_file")?;
-        read_zcash_key_file(path, "role")
+        read_zcash_key_file(checked_key_file(path)?, "role")
     }
 
     fn chain(&self) -> Result<FundingChain> {
         FundingChain::for_profile(ZecRefundProfile::for_id(self.profile.id()))
     }
+}
+
+/// The configured Zcash key file, opened only by an absolute, normalised name.
+fn checked_key_file(path: &Path) -> Result<&Path> {
+    check_normalized_absolute(path).context("the Zcash role config's zcash_key_file is unsafe")
+}
+
+/// A role root the Node hands in: absolute and normalised, so every file
+/// joined under it stays there. Defence in depth: the Nodes build it from
+/// their vetted swaps root and a type-validated reservation id.
+fn checked_role_root(role_root: &Path) -> Result<&Path> {
+    check_normalized_absolute(role_root).context("the role root path is unsafe")
 }
 
 /// One role's own LEZ facts: the descriptor its sidecar runs under (whose
@@ -504,6 +516,7 @@ where
 /// role's long-lived Zcash key is not copied: the actor template names its
 /// own file ([`ZecRoleTemplate::zcash_key_file`]).
 fn write_role_secrets(role_root: &Path, preimage: Option<&[u8; 32]>) -> Result<()> {
+    let role_root = checked_role_root(role_root)?;
     let paths = material_paths(role_root, &role_root.join("state"));
     create_private_directory(role_root)?;
     create_private_directory(&paths.state_root)?;
@@ -693,6 +706,7 @@ where
     R: ZebraRpc,
     R::Error: std::error::Error + Send + Sync + 'static,
 {
+    let role_root = checked_role_root(role_root)?;
     let chain = config.chain()?;
     let mut taker_secret = SecretKey::from_slice(taker_zcash_secret)?;
     let taker_zcash_key = PublicKey::from_secret_key(&Secp256k1::signing_only(), &taker_secret);
@@ -838,6 +852,7 @@ pub fn write_zec_role_template(
     role_root: &Path,
     template: &ZecRoleTemplate,
 ) -> Result<PathBuf> {
+    let role_root = checked_role_root(role_root)?;
     let mut paths = material_paths(role_root, &role_root.join("state"));
     paths.capability.clone_from(&template.capability_file);
     paths.zcash_key.clone_from(&template.zcash_key_file);
@@ -972,6 +987,61 @@ mod tests {
         fs::create_dir(path).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
         fs::canonicalize(path).unwrap()
+    }
+
+    /// A role root the Node hands in, and the key file the role config
+    /// names, are absolute and normalised, or nothing is read or written.
+    #[test]
+    fn role_roots_and_key_files_that_walk_the_tree_are_refused() {
+        let directory = tempdir().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let parent = private_dir(&root.join("maker"));
+        let walking = parent.join("..").join("escaped");
+        assert!(begin_zec_taker_role(&walking).is_err());
+        assert!(begin_zec_taker_role(Path::new("relative-role")).is_err());
+        assert!(!root.join("escaped").exists());
+        assert!(!Path::new("relative-role").exists());
+
+        let template = ZecRoleTemplate {
+            role: ActorRole::Maker,
+            run_id: RunId::new("swap-zec-path-0001").unwrap(),
+            swap_id: SwapId::new("zec-path-swap-0001").unwrap(),
+            direction: SwapDirection::TakerSellsForeign,
+            bridge_endpoint: "http://127.0.0.1:1/".to_owned(),
+            capability_file: root.join("capability"),
+            runtime: lez(BridgeParticipant::Maker, 1).runtime,
+            zebra_genesis: Hex32::from_bytes([1; 32]),
+            lez_discovery: DiscoveryWindow::new(1, 32).unwrap(),
+            funding: None,
+            zcash_key_file: root.join("zcash.key"),
+        };
+        let error = write_zec_role_template(&config(&root), &walking, &template).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("role root path is unsafe"),
+            "{error:#}"
+        );
+
+        let key = root.join("zcash.key");
+        fs::write(&key, [7_u8; 32]).unwrap();
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+        let path = root.join("zec-role-walking.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1,
+                "profile": "deterministic-local-devnet-v5",
+                "zebra_endpoint": "http://127.0.0.1:18232",
+                "zcash_key_file": parent.join("..").join("zcash.key"),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let error = ZecRoleConfigV1::load(&path).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("zcash_key_file is unsafe"),
+            "{error:#}"
+        );
     }
 
     struct Round {

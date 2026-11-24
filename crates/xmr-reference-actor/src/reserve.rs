@@ -21,6 +21,7 @@ use std::{
 use anyhow::{Context as _, Result, anyhow, ensure};
 use lez_bridge_protocol::{Hex32, RequestId, RuntimeDescriptor};
 use lez_node_common::{XmrReserveRequestV1, XmrReserveResponseV1};
+use lez_swap_core::path_safety::{check_component, check_normalized_absolute};
 use lez_swap_store::MakerOfferId;
 use lez_xmr_monero_adapter::{LoopbackRpcEndpoint, MoneroNetwork};
 use lez_xmr_swap_sdk::{
@@ -200,12 +201,15 @@ impl XmrRoleConfigV1 {
         );
         config.wallet_password()?;
         ensure!(
-            config.effect_tools.values().all(|path| path.is_absolute()),
-            "a Monero effect tool path is not absolute"
+            config
+                .effect_tools
+                .values()
+                .all(|path| check_normalized_absolute(path).is_ok()),
+            "a Monero effect tool path is not absolute and normalised"
         );
         ensure!(
-            config.stage_a_planner.is_absolute(),
-            "the Stage-A planner path is not absolute"
+            check_normalized_absolute(&config.stage_a_planner).is_ok(),
+            "the Stage-A planner path is not absolute and normalised"
         );
         config.stage_a_planner_sha256 = file_sha256(&config.stage_a_planner)?;
         Ok(config)
@@ -322,6 +326,9 @@ fn endpoint(url: &str, login_file: &Path, label: &'static str) -> Result<Loopbac
 }
 
 pub(crate) fn read_secret_line(path: &Path, label: &'static str) -> Result<Zeroizing<String>> {
+    // A configured file is opened by exactly the absolute, normalised name
+    // the role config gives.
+    check_normalized_absolute(path).with_context(|| format!("{label} path is unsafe"))?;
     let bytes = Zeroizing::new(read_bounded_file(
         open_path_no_symlinks(path, label)?,
         MAX_LOGIN_FILE_BYTES,
@@ -335,6 +342,7 @@ pub(crate) fn read_secret_line(path: &Path, label: &'static str) -> Result<Zeroi
 }
 
 fn file_sha256(path: &Path) -> Result<[u8; 32]> {
+    check_normalized_absolute(path).context("the Stage-A planner path is unsafe")?;
     let bytes = std::fs::read(path).context("the Stage-A planner is unreadable")?;
     Ok(Sha256::digest(bytes).into())
 }
@@ -939,6 +947,8 @@ pub(crate) fn read_role_file(
     max_bytes: u64,
     label: &'static str,
 ) -> Result<Vec<u8>> {
+    // One plain name inside the role root, never a path that leaves it.
+    let name = check_component(name).with_context(|| format!("{label} name is unsafe"))?;
     let root = open_private_directory(role_root, "private role root")?;
     let file = openat(
         &root,
@@ -959,6 +969,8 @@ pub(crate) fn write_role_file(
     bytes: &[u8],
     label: &'static str,
 ) -> Result<()> {
+    // One plain name inside the role root, never a path that leaves it.
+    let name = check_component(name).with_context(|| format!("{label} name is unsafe"))?;
     let root = open_private_directory(role_root, "private role root")?;
     let max = MAX_XMR_AGREEMENT_WIRE_BYTES.max(MAX_XMR_ACTIVATION_WIRE_BYTES) as u64;
     match openat(
@@ -1638,5 +1650,62 @@ pub(crate) mod tests {
         );
         fs::write(&planner, b"#!/bin/sh\ncat >/dev/null\necho changed\n").unwrap();
         assert!(loaded.stage_a_planner().plan(&input).is_err());
+    }
+
+    /// A role file is one plain name inside the role root, and every file the
+    /// role config names is an absolute, normalised path.
+    #[test]
+    fn role_files_and_configured_files_never_leave_their_place() {
+        let directory = TempDir::new().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let role_root = private_dir(&root.join("role"));
+        private_file(&root.join("outside"), b"outside");
+        for name in [
+            "",
+            ".",
+            "..",
+            "../outside",
+            "/abs",
+            "a/b",
+            "a\\b",
+            "a\0b",
+            "C:x",
+        ] {
+            assert!(
+                read_role_file(&role_root, name, 64, "test file").is_err(),
+                "{name:?}"
+            );
+            assert!(
+                write_role_file(&role_root, name, b"x", "test file").is_err(),
+                "{name:?}"
+            );
+        }
+        assert_eq!(fs::read(root.join("outside")).unwrap(), b"outside");
+        write_role_file(&role_root, "plain.bin", b"x", "test file").unwrap();
+        assert_eq!(
+            read_role_file(&role_root, "plain.bin", 64, "test file").unwrap(),
+            b"x"
+        );
+
+        let walking = root.join("role").join("..").join("planner");
+        let relative = "daemon.login";
+        let walking_login = root.join("role").join("..").join("daemon.login");
+        for (field, value) in [
+            ("stage_a_planner", serde_json::json!(walking)),
+            (
+                "effect_tools",
+                serde_json::json!({ "monero_fund": walking }),
+            ),
+            ("monerod_login_file", serde_json::json!(walking_login)),
+            ("monerod_login_file", serde_json::json!(relative)),
+            ("wallet_password_file", serde_json::json!(walking_login)),
+        ] {
+            let path = write_config(&root, |json| {
+                json[field] = value.clone();
+            });
+            assert!(XmrRoleConfigV1::load(&path).is_err(), "{field}");
+        }
+        assert!(read_secret_line(&walking_login, "test login").is_err());
+        assert!(read_secret_line(&root.join("daemon.login"), "test login").is_ok());
     }
 }

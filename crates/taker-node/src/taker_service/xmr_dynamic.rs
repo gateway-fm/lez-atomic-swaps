@@ -28,7 +28,7 @@ use lez_node_common::{
     XmrCeremonyReserveRequestV1, XmrCeremonyReserveResponseV1, XmrChatStageARequestV1,
     XmrChatStageAResponseV1, XmrReserveResponseV1,
 };
-use lez_swap_core::{Pair, SwapDirection, SwapId};
+use lez_swap_core::{Pair, SwapDirection, SwapId, path_safety::join_component};
 use lez_swap_store::{MakerOfferId, maker_xmr_chat_swap_id};
 use lez_xmr_monero_adapter::MoneroChainIdentityAttestor;
 use lez_xmr_swap_sdk::{XmrAgreementV1, XmrWindowsV1};
@@ -158,7 +158,7 @@ impl DynamicXmrRole {
         &self.btc
     }
 
-    pub(super) fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
+    pub(super) fn layout(&self, reservation_id: &RequestId) -> Result<SwapLayout> {
         self.btc.layout(reservation_id)
     }
 
@@ -182,9 +182,19 @@ impl DynamicXmrRole {
         Ok(state.join("wallet.lock"))
     }
 
+    /// Every directory entry of the swaps root, each rebuilt as one checked
+    /// name directly under it.
     fn swap_directories(&self) -> Vec<PathBuf> {
-        fs::read_dir(&self.btc.runtime().config().swaps_root)
-            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+        let swaps_root = &self.btc.runtime().config().swaps_root;
+        fs::read_dir(swaps_root)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|entry| {
+                        join_component(swaps_root, entry.file_name().to_str()?).ok()
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -212,10 +222,10 @@ impl DynamicXmrRole {
         std::thread::spawn(move || {
             loop {
                 for configured in role.persisted_entries() {
-                    let layout = role.layout(&configured.reservation_id);
-                    if let Err(error) =
+                    let ensured = role.layout(&configured.reservation_id).and_then(|layout| {
                         SwapSidecar::ensure(role.btc.runtime(), &layout, &configured.reservation_id)
-                    {
+                    });
+                    if let Err(error) = ensured {
                         eprintln!(
                             "taker XMR swap {}: sidecar unavailable: {error:#}",
                             configured.swap_id.as_str()
@@ -602,7 +612,7 @@ pub(super) async fn prepare(
         "not a Monero TakerSellsLez route"
     );
     let reservation_id = derived_request_id(&request.request_id, "xmr", b"node-reservation")?;
-    let layout = dynamic.layout(&reservation_id);
+    let layout = dynamic.layout(&reservation_id)?;
     let prepared_file = layout.root().join(PREPARED_FILE);
     if layout.exists()
         && let Ok(bytes) = read_private(&prepared_file, MAX_FACTS_BYTES)

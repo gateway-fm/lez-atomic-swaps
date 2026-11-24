@@ -771,7 +771,7 @@ impl SwapLez {
     fn connect(dynamic: &DynamicXmrRole, reservation_id: &RequestId) -> Result<Self> {
         let btc = dynamic.btc();
         let runtime = btc.runtime();
-        let layout = dynamic.layout(reservation_id);
+        let layout = dynamic.layout(reservation_id)?;
         let sidecar = SwapSidecar::ensure(runtime, &layout, reservation_id)?;
         let capability = Zeroizing::new(String::from_utf8(read_private(
             sidecar.capability_file(),

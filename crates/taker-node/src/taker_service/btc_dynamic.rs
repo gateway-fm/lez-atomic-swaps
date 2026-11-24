@@ -141,7 +141,9 @@ impl DynamicBtcRole {
         found
     }
 
-    pub(super) fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
+    /// The reservation's swap directory, one checked name under the swaps
+    /// root (defence in depth: the id is already validated by its type).
+    pub(super) fn layout(&self, reservation_id: &RequestId) -> Result<SwapLayout> {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
     }
 
@@ -373,7 +375,7 @@ pub(super) async fn prepare(
     now: u64,
 ) -> Result<DynamicTake> {
     let reservation_id = reservation_id_for(&request.request_id)?;
-    let layout = dynamic.layout(&reservation_id);
+    let layout = dynamic.layout(&reservation_id)?;
     let direction = request.route.direction();
     ensure!(request.route.pair() == Pair::Bitcoin, "not a Bitcoin route");
     let prepared_file = layout.root().join("taker-prepared.json");
@@ -697,7 +699,7 @@ pub(super) async fn execute(
     foreign_units: u64,
     now: u64,
 ) -> Result<()> {
-    let layout = dynamic.layout(reservation_id);
+    let layout = dynamic.layout(reservation_id)?;
     ensure!(layout.exists(), "unknown swap");
     let mut record = TakerSwapRecordV1::load(&layout)?;
     let role_root = layout.role_root();
@@ -951,7 +953,7 @@ pub(super) async fn lock(
     dynamic: &DynamicBtcRole,
     reservation_id: &RequestId,
 ) -> Result<(&'static str, String, bool)> {
-    let layout = dynamic.layout(reservation_id);
+    let layout = dynamic.layout(reservation_id)?;
     ensure!(layout.exists(), "unknown swap");
     let mut record = TakerSwapRecordV1::load(&layout)?;
     ensure!(record.actor_activated, "the swap is not active yet");
@@ -1040,7 +1042,7 @@ async fn wait_for_lez_nonce(runtime: &BtcRoleRuntime, target: u64) -> Result<u64
 /// Keeps the swap's sidecar running (respawns it after a Node restart) so the
 /// actor's LEZ observations have somewhere to go.
 pub(super) fn ensure_sidecar(dynamic: &DynamicBtcRole, reservation_id: &RequestId) -> Result<()> {
-    let layout = dynamic.layout(reservation_id);
+    let layout = dynamic.layout(reservation_id)?;
     ensure!(layout.exists(), "unknown swap");
     SwapSidecar::ensure(&dynamic.runtime, &layout, reservation_id).map(|_| ())
 }
@@ -1052,7 +1054,7 @@ pub(super) fn first_lock_chain(
     dynamic: &DynamicBtcRole,
     reservation_id: &RequestId,
 ) -> Option<&'static str> {
-    let layout = dynamic.layout(reservation_id);
+    let layout = dynamic.layout(reservation_id).ok()?;
     let record = TakerSwapRecordV1::load(&layout).ok()?;
     if record.funding_plan.is_some() {
         Some("bitcoin")

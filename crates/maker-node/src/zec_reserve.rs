@@ -227,7 +227,9 @@ impl ZecMakerReservations {
         })
     }
 
-    fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
+    /// The reservation's swap directory, one checked name under the swaps
+    /// root (defence in depth: the id is already validated by its type).
+    fn layout(&self, reservation_id: &RequestId) -> anyhow::Result<SwapLayout> {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
     }
 
@@ -250,7 +252,7 @@ impl ZecMakerReservations {
             .flatten()
             .filter_map(|entry| {
                 let reservation_id = RequestId::new(entry.file_name().to_str()?.to_owned()).ok()?;
-                let layout = self.layout(&reservation_id);
+                let layout = self.layout(&reservation_id).ok()?;
                 let record = ZecReservationRecordV1::load(layout.root()).ok()?;
                 Some((reservation_id, layout, record))
             })
@@ -295,7 +297,9 @@ impl ZecMakerReservations {
         reservation_id: &RequestId,
         final_agreement_wire: &[u8],
     ) -> RpcResult<()> {
-        let layout = self.layout(reservation_id);
+        let Ok(layout) = self.layout(reservation_id) else {
+            return Ok(());
+        };
         if ZecReservationRecordV1::load(layout.root()).is_err() {
             return Ok(());
         }
@@ -313,7 +317,9 @@ impl ZecMakerReservations {
     /// started and hold the outpoint only inside the grace.
     pub(super) fn refuse(&self, reservation_id: &RequestId) {
         let _serial = self.rounds.blocking_lock();
-        let layout = self.layout(reservation_id);
+        let Ok(layout) = self.layout(reservation_id) else {
+            return;
+        };
         if ZecReservationRecordV1::load(layout.root()).is_err() {
             return;
         }
@@ -354,7 +360,9 @@ impl ZecMakerReservations {
         draft_wire: &[u8],
         now: u64,
     ) -> RpcResult<()> {
-        let layout = self.layout(reservation_id);
+        let Ok(layout) = self.layout(reservation_id) else {
+            return Ok(());
+        };
         let Ok(record) = ZecReservationRecordV1::load(layout.root()) else {
             return Ok(());
         };
@@ -386,7 +394,9 @@ impl ZecMakerReservations {
         final_agreement_wire: &[u8],
     ) -> RpcResult<Materialized> {
         let _serial = self.rounds.blocking_lock();
-        let layout = self.layout(reservation_id);
+        let Ok(layout) = self.layout(reservation_id) else {
+            return Ok(Materialized::NotTakeTime);
+        };
         let Ok(record) = ZecReservationRecordV1::load(layout.root()) else {
             return Ok(Materialized::NotTakeTime);
         };
@@ -526,7 +536,9 @@ pub(super) async fn reserve(
         .as_ref()
         .ok_or_else(|| invalid_request("maker Chat signer is unavailable"))?;
     let _serial = reservations.rounds.lock().await;
-    let layout = reservations.layout(&request.reservation_id);
+    let layout = reservations
+        .layout(&request.reservation_id)
+        .map_err(invalid_request)?;
     let digest: [u8; 32] =
         Sha256::digest(serde_json::to_vec(&request).map_err(|error| internal(&error))?).into();
     if layout.root().exists() {

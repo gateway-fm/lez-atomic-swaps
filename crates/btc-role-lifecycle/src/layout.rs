@@ -14,10 +14,10 @@ use std::{
 use anyhow::{Context as _, Result, ensure};
 use btc_role_preflight::RoleRootLayout;
 use lez_bridge_protocol::RequestId;
+use lez_swap_core::path_safety::{PathSafetyError, check_normalized_absolute, join_component};
 use rustix::fs::{Mode, OFlags};
 use std::fs::{File, Metadata};
 use std::io::Read as _;
-use std::path::Component;
 
 /// The directory under a swaps root where reservations are composed before
 /// one rename publishes each as its swap directory. Its name is no
@@ -32,11 +32,18 @@ pub struct SwapLayout {
 
 impl SwapLayout {
     /// The layout for `reservation_id` under `swaps_root` (not created yet).
-    #[must_use]
-    pub fn new(swaps_root: &Path, reservation_id: &RequestId) -> Self {
-        Self {
-            root: swaps_root.join(reservation_id.as_str()),
-        }
+    ///
+    /// The swap directory is one plain name directly under `swaps_root`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the id is not one plain path component. Defence in depth:
+    /// [`RequestId`] already admits only such names.
+    pub fn new(swaps_root: &Path, reservation_id: &RequestId) -> Result<Self> {
+        let root = join_component(swaps_root, reservation_id.as_str()).with_context(|| {
+            format!("{:?} cannot name a swap directory", reservation_id.as_str())
+        })?;
+        Ok(Self { root })
     }
 
     /// Creates the swap directory owner-private; fails if it already exists.
@@ -112,7 +119,8 @@ impl SwapLayout {
             "{} must be an owner-private directory",
             stages.display()
         );
-        let stage = stages.join(format!("{name}.{pair}"));
+        let stage = join_component(&stages, &format!("{name}.{pair}"))
+            .with_context(|| format!("{name:?}.{pair:?} cannot name a stage"))?;
         match fs::remove_dir_all(&stage) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -226,6 +234,7 @@ impl SwapLayout {
 ///
 /// Fails when the file exists with different content or cannot be created.
 pub fn write_private_exact(path: &Path, bytes: &[u8]) -> Result<bool> {
+    vet_configured_path(path, "file path")?;
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             ensure!(
@@ -279,6 +288,7 @@ pub fn write_private_exact(path: &Path, bytes: &[u8]) -> Result<bool> {
 ///
 /// Fails when the temporary file cannot be written, synced or renamed.
 pub fn replace_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    vet_configured_path(path, "file path")?;
     let staging = staging_path(path)?;
     let _ = fs::remove_file(&staging);
     let written = (|| -> Result<()> {
@@ -307,11 +317,10 @@ fn staging_path(path: &Path) -> Result<PathBuf> {
         .with_context(|| format!("{} has no directory", path.display()))?;
     let name = path
         .file_name()
+        .and_then(|name| name.to_str())
         .with_context(|| format!("{} has no file name", path.display()))?;
-    let mut staging = std::ffi::OsString::from(".");
-    staging.push(name);
-    staging.push(format!(".tmp-{}", std::process::id()));
-    Ok(parent.join(staging))
+    join_component(parent, &format!(".{name}.tmp-{}", std::process::id()))
+        .with_context(|| format!("{} has no staging name", path.display()))
 }
 
 fn sync_parent(path: &Path) -> Result<()> {
@@ -332,18 +341,17 @@ fn sync_parent(path: &Path) -> Result<()> {
 ///
 /// Fails when `path` is relative or contains a `.` or `..` component.
 pub fn vet_configured_path(path: &Path, label: &str) -> Result<()> {
-    ensure!(
-        path.is_absolute(),
-        "{label} must be an absolute path: {}",
-        path.display()
-    );
-    ensure!(
-        path.components()
-            .all(|component| matches!(component, Component::RootDir | Component::Normal(_))),
-        "{label} must not contain `.` or `..` components: {}",
-        path.display()
-    );
-    Ok(())
+    match check_normalized_absolute(path) {
+        Ok(_) => Ok(()),
+        Err(PathSafetyError::NotAbsolute) => Err(anyhow::anyhow!(
+            "{label} must be an absolute path: {}",
+            path.display()
+        )),
+        Err(_) => Err(anyhow::anyhow!(
+            "{label} must not contain `.` or `..` components: {}",
+            path.display()
+        )),
+    }
 }
 
 /// Opens `path` without following a final symlink, requires a regular file no
@@ -429,7 +437,7 @@ mod tests {
 
     use lez_bridge_protocol::RequestId;
 
-    use super::{STAGE_DIRECTORY, SwapLayout, read_private, replace_private};
+    use super::{STAGE_DIRECTORY, SwapLayout, read_private, replace_private, write_private_exact};
 
     /// A replaced file holds the new bytes, stays owner-private, and leaves
     /// no temporary file beside it, also over a stale one from a crash.
@@ -472,7 +480,7 @@ mod tests {
         let swaps = run.path().join("swaps");
         private_dir(&swaps);
         let id = RequestId::new("victim-reservation-01").unwrap();
-        let layout = SwapLayout::new(&swaps, &id);
+        let layout = SwapLayout::new(&swaps, &id).unwrap();
         for pair in ["xmr", "zec", "btc"] {
             for suffix in [format!(".{pair}-stage"), format!(".{pair}")] {
                 let funded = swaps.join(format!("{}{suffix}", id.as_str()));
@@ -501,7 +509,8 @@ mod tests {
         let run = tempfile::tempdir().unwrap();
         let swaps = run.path().join("swaps");
         private_dir(&swaps);
-        let layout = SwapLayout::new(&swaps, &RequestId::new("stale-reservation-1").unwrap());
+        let layout =
+            SwapLayout::new(&swaps, &RequestId::new("stale-reservation-1").unwrap()).unwrap();
         let stage = layout.fresh_stage("xmr").unwrap();
         fs::write(stage.join("half"), b"x").unwrap();
         assert_eq!(layout.fresh_stage("xmr").unwrap(), stage);
@@ -515,14 +524,47 @@ mod tests {
         let run = tempfile::tempdir().unwrap();
         let swaps = run.path().join("swaps");
         private_dir(&swaps);
-        let dotted = SwapLayout::new(&swaps, &RequestId::new("victim-01.xmr-stage").unwrap());
+        let dotted =
+            SwapLayout::new(&swaps, &RequestId::new("victim-01.xmr-stage").unwrap()).unwrap();
         assert!(dotted.create().is_err());
         assert!(dotted.fresh_stage("xmr").is_err());
         assert!(!dotted.root().exists());
-        let good = SwapLayout::new(&swaps, &RequestId::new("good_reservation-01").unwrap());
+        let good =
+            SwapLayout::new(&swaps, &RequestId::new("good_reservation-01").unwrap()).unwrap();
         assert!(good.fresh_stage("x.y").is_err());
         assert!(good.fresh_stage("").is_err());
         good.create().unwrap();
+    }
+
+    /// A swap directory is always one name directly under the swaps root.
+    /// No [`RequestId`] can hold a separator or be `.`/`..`, so no hostile id
+    /// can be built here; the grammar's edge cases still land directly under
+    /// the root.
+    #[test]
+    fn a_swap_directory_is_a_direct_child_of_the_swaps_root() {
+        let swaps = Path::new("/var/lib/lez/swaps");
+        for id in ["........", "..-..-..", "a.b.c.d.e"] {
+            let layout = SwapLayout::new(swaps, &RequestId::new(id).unwrap()).unwrap();
+            assert_eq!(layout.root(), swaps.join(id));
+            assert_eq!(layout.root().parent(), Some(swaps));
+        }
+        assert!(RequestId::new("../../etc").is_err());
+        assert!(RequestId::new("/etc/passwd").is_err());
+    }
+
+    /// The write sinks refuse a path that is relative or walks the tree.
+    #[test]
+    fn writes_refuse_a_path_that_walks_the_tree() {
+        let run = tempfile::tempdir().unwrap();
+        let root = run.path().join("swap");
+        private_dir(&root);
+        let walking = root.join("..").join("escaped.json");
+        assert!(write_private_exact(&walking, b"x").is_err());
+        assert!(replace_private(&walking, b"x").is_err());
+        assert!(write_private_exact(Path::new("relative.json"), b"x").is_err());
+        assert!(replace_private(Path::new("relative.json"), b"x").is_err());
+        assert!(!run.path().join("escaped.json").exists());
+        assert!(!Path::new("relative.json").exists());
     }
 
     #[test]

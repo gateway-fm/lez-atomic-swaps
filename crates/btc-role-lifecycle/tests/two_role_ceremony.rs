@@ -145,8 +145,8 @@ fn both_roles_converge_and_synthesize_actor_configurations() {
     let taker_runtime =
         BtcRoleRuntime::load(Participant::Taker, &role_config(&taker_home, Some("taker"))).unwrap();
     let reservation = RequestId::new("m9-reservation-0001").unwrap();
-    let maker_layout = SwapLayout::new(&maker_runtime.config().swaps_root, &reservation);
-    let taker_layout = SwapLayout::new(&taker_runtime.config().swaps_root, &reservation);
+    let maker_layout = SwapLayout::new(&maker_runtime.config().swaps_root, &reservation).unwrap();
+    let taker_layout = SwapLayout::new(&taker_runtime.config().swaps_root, &reservation).unwrap();
     maker_layout.create().unwrap();
     taker_layout.create().unwrap();
 
