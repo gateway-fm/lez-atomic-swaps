@@ -13,6 +13,16 @@ name: builder-image
 #
 # The package is created private on first push: make it public once in the
 # repository's package settings so from-scratch.sh can pull it anonymously.
+#
+# Layer cache: each architecture builds with BuildKit (docker-container driver,
+# the moby/buildkit image pinned by digest) against a registry cache,
+# $IMAGE-cache:<arch>, mode=max, so an unchanged layer (above all the r0vm
+# and cargo-risczero compile) is pulled instead of rebuilt. Every run
+# reads the cache; only a push to main and a manual dispatch write it, so a
+# pull request never seeds layers that main later reuses. A dispatch with
+# `no-cache` rebuilds every layer from source (fresh base image and apt
+# packages) and writes the result back. Nothing else is cached here; the
+# escrow guest and ImageID builds stay uncached in the workflows that run them.
 
 on:
   push:
@@ -27,6 +37,11 @@ on:
       - deploy/builder/Dockerfile
       - .github/workflows/builder-image.yml
   workflow_dispatch:
+    inputs:
+      no-cache:
+        description: Rebuild every layer from source, ignoring the layer cache
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,6 +52,7 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}/lez-builder
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
 
 jobs:
   build:
@@ -60,11 +76,30 @@ jobs:
           persist-credentials: false
       - name: Free runner disk
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+      - name: BuildKit builder for the registry layer cache
+        run: docker buildx create --name lez-builder --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE" --use --bootstrap
       - name: Build
         env:
           SHORT_SHA: ${{ github.sha }}
           ARCH: ${{ matrix.arch }}
-        run: docker build --platform "linux/$ARCH" -t "$IMAGE:sha-${SHORT_SHA:0:7}-$ARCH" deploy/builder
+          CACHE_WRITE: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+          NO_CACHE: ${{ github.event_name == 'workflow_dispatch' && inputs.no-cache }}
+        run: |
+          set -euo pipefail
+          cache="$IMAGE-cache:$ARCH"
+          args=(--cache-from "type=registry,ref=$cache")
+          if [[ "$CACHE_WRITE" == true ]]; then
+            args+=(--cache-to "type=registry,ref=$cache,mode=max,image-manifest=true,oci-mediatypes=true")
+          fi
+          if [[ "$NO_CACHE" == true ]]; then
+            args+=(--no-cache)
+          fi
+          docker buildx build --builder lez-builder --platform "linux/$ARCH" "${args[@]}" \
+            --load -t "$IMAGE:sha-${SHORT_SHA:0:7}-$ARCH" deploy/builder
       - name: Versions the image carries
         env:
           SHORT_SHA: ${{ github.sha }}
@@ -75,12 +110,10 @@ jobs:
             'dpkg --print-architecture; /opt/lez-tools/bin/rzup --version; /opt/lez-tools/bin/r0vm --version; /opt/lez-tools/bin/cargo-risczero risczero --version; sha256sum /opt/lez-tools/rapidsnark/librapidsnark.a "$RECURSION_SRC_PATH"; cargo +1.96.0 --version; cargo +1.94.0 --version'
       - name: Push
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHORT_SHA: ${{ github.sha }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
           docker push "$IMAGE:sha-${SHORT_SHA:0:7}-$ARCH"
           docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:sha-${SHORT_SHA:0:7}-$ARCH"
 

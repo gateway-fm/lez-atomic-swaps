@@ -511,6 +511,20 @@ rg -qx 'ghcr\.io/gateway-fm/lez-atomic-swaps/lez-builder@sha256:[0-9a-f]{64}' de
   || fail "deploy/builder/image.lock must hold exactly one pinned lez-builder digest"
 ! rg -n 'docker build[^\n]*deploy/builder|-t lez-builder:local' .github/workflows --glob '!builder-image.yml' \
   || fail "a release workflow builds the builder image; pull the digest pinned in deploy/builder/image.lock"
+# Both architectures build against their registry layer cache; only a push
+# to main or a manual dispatch writes it, never a pull request.
+require_fixed 'BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe' "$builder_workflow"
+require_fixed 'docker buildx create --name lez-builder --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE" --use --bootstrap' "$builder_workflow"
+require_fixed 'cache="$IMAGE-cache:$ARCH"' "$builder_workflow"
+require_fixed 'args=(--cache-from "type=registry,ref=$cache")' "$builder_workflow"
+require_fixed 'args+=(--cache-to "type=registry,ref=$cache,mode=max,image-manifest=true,oci-mediatypes=true")' "$builder_workflow"
+require_fixed "CACHE_WRITE: \${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}" "$builder_workflow"
+require_fixed 'if [[ "$CACHE_WRITE" == true ]]; then' "$builder_workflow"
+require_fixed 'docker buildx build --builder lez-builder --platform "linux/$ARCH" "${args[@]}"' "$builder_workflow"
+[[ "$(rg -c 'cache-to' "$builder_workflow")" == 1 ]] \
+  || fail "$builder_workflow must write the layer cache from exactly one guarded place"
+! rg -n '^\s*(run: )?docker build ' "$builder_workflow" \
+  || fail "$builder_workflow builds without the registry layer cache"
 
 if rg -Uq $'readonly REPOSITORY_ROOT\nREPOSITORY_ROOT=|readonly repository_root\nrepository_root=' scripts; then
   fail "a shell wrapper assigns a variable only after marking it readonly"
