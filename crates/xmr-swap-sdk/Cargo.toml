@@ -29,6 +29,10 @@ thiserror = "=2.0.18"
 zeroize = "=1.9.0"
 
 [[example]]
+name = "full-lifecycle"
+path = "examples/full-lifecycle.rs"
+
+[[example]]
 name = "lifecycle-wiring"
 path = "examples/lifecycle-wiring.rs"
 

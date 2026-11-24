@@ -16,8 +16,10 @@ only: the Taker sells LEZ and locks first. The Nodes run it under the
 `AcceleratedRegtest` or the `PublicStagenet` profile; on Monero Stagenet
 they completed, refunded and punished a swap on 2026-11-21, and the SDK and the
 adapter alone ran the Monero leg of the completed swap of
-`examples/full-lifecycle.rs`, with the LEZ escrow modelled
-([Stagenet guide](monero-stagenet-guide.md)). The crate's own documentation says it "does not claim production
+`xmr-reference-actor`'s `examples/full-lifecycle.rs`, with the LEZ escrow
+modelled ([Stagenet guide](monero-stagenet-guide.md)). The crate's
+[README](../crates/xmr-swap-sdk/README.md) gives the lifecycle and the
+recovery cases in short. The crate's own documentation says it "does not claim production
 cryptographic acceptance"; the construction has had no third-party review.
 
 Its order departs from the common flow of BTC and ZEC (the Taker authorises, the Maker claims LEZ first); [ADR 0217](architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md) records that exception.
@@ -36,7 +38,7 @@ the same file unless stated otherwise; they run in CI under
 | The LEZ lock check | `XmrLezInitializePlanV1`, `XmrLezLockCandidateV1`, `XmrValidatedLezLockCandidateV1` | `agreement_v1.rs` | `canonical_stage_b_activation_enables_lez_init_and_candidate_validation`, `lez_lock_candidate_checks_exact_terms_finality_and_funding_cutoff` |
 | Cross-curve DLEQ | `CrossCurveScalar::{generate, from_monero_little_endian, adaptor_scalar_big_endian, monero_public_key}`, `CrossCurveDleqProofV1::{prove, verify, verify_scalar, to_wire_bytes, from_wire_bytes}` | `cross_curve.rs` | [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs): `dleq_vectors_reproduce_and_verify_from_fixed_bytes`, `tampered_proof_and_commitment_are_rejected`, `wrong_point_on_either_curve_is_rejected`, `truncated_and_over_long_encodings_are_rejected`, `trailing_proof_bytes_are_rejected`, `non_minimal_inner_proof_encoding_is_rejected`, `alternate_generators_are_the_published_nums_points`, `proofs_interoperate_with_the_eigenwallet_parameters`, `archived_xmr_btc_swap_basepoint_parameters_are_refused` |
 | Shared address and key-share recovery | `MoneroPrivateViewKey`, `MoneroSharedAddressV1::{derive, derive_from_public_view_key}`, `ReconstructedMoneroSpendKey::reconstruct`, `MoneroAddressNetworkV1` | `shared_spend.rs` | `claim_and_signed_refund_reveal_orders_reconstruct_the_same_spend_key`, `unrelated_extracted_or_retained_share_cannot_open_the_funded_address`; `tests/cross_curve_vectors.rs`: `recovery_vector_reconstructs_the_same_key_on_both_paths`, `share_that_does_not_match_is_rejected` |
-| Recovery without the adaptor journal | `XmrActivatedAgreementV1::{recover_claim_spend_key, recover_refund_spend_key}` | `agreement_v1.rs` | `a_role_without_its_journal_recovers_the_spend_key_from_public_data` |
+| Recovery without the adaptor journal | `XmrActivatedAgreementV1::{recover_claim_spend_key, recover_refund_spend_key}` | `agreement_v1.rs` | `a_role_without_its_journal_recovers_the_spend_key_from_public_data`; [`tests/full_lifecycle.rs`](../crates/xmr-swap-sdk/tests/full_lifecycle.rs): `a_taker_without_its_session_state_recovers_the_original_key_after_the_claim`, `a_maker_without_its_session_state_recovers_the_original_key_after_the_refund`, `a_refund_after_an_unanswered_authorisation_recovers_the_original_key`, `a_punished_swap_reveals_no_share_and_no_key_can_be_recovered` |
 | A lifecycle facade | `XmrPairSdk`, `ActiveXmrSwap`, `XmrRoleActorPort`, `XmrNegotiationEnvelopeV1`, `XmrLifecyclePhaseV1` | `sdk.rs` | `lifecycle_transition_graph_accepts_claim_refund_and_exact_replay`, `negotiation_envelope_rejects_empty_trailing_and_unknown_schema`; see [the facade](#the-facade-is-not-what-the-nodes-run) |
 
 ### The agreement stages
@@ -159,6 +161,44 @@ packets at 270 KiB, ceremony packets at 8 KiB.
 
 ## The full-lifecycle example
 
+[`examples/full-lifecycle.rs`](../crates/xmr-swap-sdk/examples/full-lifecycle.rs)
+walks four swaps through the whole lifecycle for both roles, offline, on this
+crate's public API and `lez-adaptor-signature`'s adaptor sessions:
+
+```sh
+cargo run -p lez-xmr-swap-sdk --example full-lifecycle
+```
+
+| Swap | What happens | Information lost, and what still works |
+| --- | --- | --- |
+| 1, completed | Stage A, both sessions, Stage B, tag 13, the Maker's lock check before C (a lock final after C refused), the Monero funding and the Taker's check of it with its view key; tag 14 (another partial refused), tag 15, the Taker's sweep | The Maker restarts after tag 14 without its adaptor journal and claims from Stage B and the published partial with its share. The Taker rebuilds the key from its journal, restarts without it, and rebuilds the same key with `recover_claim_spend_key` |
+| 2, refunded | No claim; tag 16 before R and tag 17 before P refused; tag 16 in [R, P); tag 17 after it refused; the Maker's sweep back | The Taker loses its journal before tag 14: its withheld claim partial is gone, it cannot authorise, and it refunds from Stage B's refund presignature and its share. The Maker rebuilds the key from its journal, restarts without it, and rebuilds the same key with `recover_refund_spend_key` |
+| 3, refunded after tag 14 | Tag 14, no tag 15 before R (the Maker's tag 15 at R refused), tag 16 from `XmrClaimAuthorized` | The Maker, restarted without its journal, rebuilds the key with `recover_refund_spend_key` |
+| 4, punished | The Taker silent; tag 16 at P and a tag 17 by the Taker refused; tag 17 by the Maker from P | Neither role can rebuild the key: no tag 15 or 16 reveals a share, and the Monero stays at the shared address |
+
+After each recovery the SDK refuses another own share, a partial Stage B does
+not commit to and the other session's signature, and a second sweep of the
+output is refused. The keys, shares, DLEQ proofs, Stage A, both `MuSig2`
+adaptor sessions (the Taker's claim partial withheld and only committed in
+Stage B), Stage B, the signatures, the share extraction and the recovery are
+real. The LEZ escrow is modelled in memory with the guest's states, the
+`fast` profile's windows on a model LEZ clock, the tag-14 commitment check and
+the BIP-340 check of tags 15 and 16 under the swap's aggregate keys; the
+Monero output is modelled as an output at the shared address that only the
+key of its public spend key sweeps. Chat is a function call. Keys follow a
+fixed seed; the `MuSig2` nonces come from the operating system. It prints
+public values only.
+
+[`tests/full_lifecycle.rs`](../crates/xmr-swap-sdk/tests/full_lifecycle.rs)
+runs the same swaps (the shared code is `tests/support/lifecycle.rs`) and
+asserts each outcome: the escrow state, who received the LEZ and who swept
+the Monero, every refusal, and that every rebuilt key, from the journal and
+after the restart, equals the shared address's private spend key computed
+from both shares. CI runs the tests in the workspace run and the example in
+the `rust` job.
+
+## The actor layer's full-lifecycle example
+
 [`crates/xmr-reference-actor/examples/full-lifecycle.rs`](../crates/xmr-reference-actor/examples/full-lifecycle.rs)
 walks two swaps through the whole lifecycle for both roles in one process, on
 the types the Nodes run (this SDK, `xmr-reference-actor`,
@@ -195,8 +235,11 @@ The example's header lists its environment (endpoints, the Digest login
 directory, the funding wallet, the seed); `LEZ_XMR_EXAMPLE_MONERO=off` runs it
 without Monero and says so at each Monero step. Keys and addresses follow the
 seed; the MuSig2 nonces do not, so Stage B and the signatures differ between
-runs. It prints public values only. CI compiles it (`--all-targets`) but does
-not run it; no run of it is recorded in the repository.
+runs. It prints public values only. CI runs it in the `rust` job with
+`LEZ_XMR_EXAMPLE_MONERO=off`: both swaps to the end, the Monero funding,
+check and sweep skipped; the live Monero leg needs the devnet's funded
+regtest. Its run on Monero Stagenet of 2026-11-21 is in the
+[Stagenet guide](monero-stagenet-guide.md#the-sdk-examples-run-of-2026-11-21).
 
 Recovery after the adaptor journal is lost goes through the public API:
 `XmrActivatedAgreementV1::recover_claim_spend_key` for the Taker after the
@@ -222,8 +265,7 @@ values only (`private_key_bytes_emitted=false`):
 cargo run --locked -p lez-xmr-swap-sdk --example dleq-spike
 ```
 
-It needs no feature flag and no network. CI compiles it (`--all-targets`) but
-does not run it; a run of it is not recorded. The refund order, and an
+It needs no feature flag and no network. CI runs it in the `rust` job. The refund order, and an
 unrelated share being refused, are the unit tests named in the table above.
 
 ## The facade is not what the Nodes run
@@ -235,8 +277,9 @@ take-time Chat rounds and their Monero actors directly on
 `xmr-reference-actor`, which uses the agreement, DLEQ and recovery types
 above. [`examples/lifecycle-wiring.rs`](../crates/xmr-swap-sdk/examples/lifecycle-wiring.rs)
 is a **type-checked skeleton**, not a runnable lifecycle: its actor port's
-`activate` and `drive` are `unreachable!()`. The runnable lifecycle is
-[the full-lifecycle example](#the-full-lifecycle-example), which uses the
+`activate` and `drive` are `unreachable!()`. The runnable lifecycles are
+[the full-lifecycle example](#the-full-lifecycle-example) and
+[the actor layer's](#the-actor-layers-full-lifecycle-example), which use the
 types the Nodes use and not this facade.
 
 ## How the Nodes use it

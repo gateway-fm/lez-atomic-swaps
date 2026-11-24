@@ -282,6 +282,16 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace --all-targets
+      # The XMR pair's examples run to the end, offline. The actor layer's
+      # full-lifecycle example leaves out its Monero leg, which needs the
+      # devnet's funded Monero regtest (LEZ_XMR_EXAMPLE_MONERO=off).
+      - name: Run the XMR SDK and actor full-lifecycle examples offline
+        env:
+          LEZ_XMR_EXAMPLE_MONERO: "off"
+        run: |
+          cargo run --locked -p lez-xmr-swap-sdk --example full-lifecycle
+          cargo run --locked -p lez-xmr-swap-sdk --example dleq-spike
+          cargo run --locked -p xmr-reference-actor --example full-lifecycle
       # Nine Node test files are `#![cfg(feature = "pair-zec")]`, so the default
       # workspace run above compiles them to nothing and reports zero tests.
       # M2 is the ZEC leg, so they run here; the two Maker supervisor files
