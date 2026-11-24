@@ -5,9 +5,48 @@ on:
   push:
     branches: [main]
     tags: ["m*-complete*"]
+  # A maintainer's full run of a branch; with save-caches it also saves the
+  # build caches, scoped to that branch (see CI_CACHE_SAVE below).
+  workflow_dispatch:
+    inputs:
+      save-caches:
+        description: Save the build caches of this run, scoped to the branch it runs on
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+# Build caches. Every job restores; only a run with CI_CACHE_SAVE true saves.
+# GitHub scopes a cache to the ref that saved it, and a run restores from its
+# own ref, its pull request's base branch and the default branch. A push to
+# main therefore saves what every run restores; a dispatch with save-caches
+# on a branch saves what only later runs on that branch, and pull requests
+# based on it, restore. A pull request never saves, so nothing a pull request
+# builds reaches a run of main. Guest ELFs and ImageIDs are never cached.
+#
+# Budget. The repository may hold 10 GB of caches (GitHub's default; `gh api
+# repos/{owner}/{repo}/actions/cache/storage-limit`), unused caches expire
+# after 7 days, and beyond the limit GitHub evicts the least recently used.
+# scripts/ci-cache-gate.sh measures what GitHub stores, the zstd archive, and
+# saves nothing above the cap passed to it. One generation of every cache:
+#   basecamp-nix-store              2048 MiB
+#   lez-v02-provisional (Cargo)     1792 MiB
+#   lez-v02-provisional-tools        768 MiB
+#   rust-workspace                  1024 MiB
+#   lez-v02-sidecar                  768 MiB
+#   lint-provisional-lez-v02         512 MiB
+#   lez-v02-xmr-release-service      256 MiB
+#   caps together                   7168 MiB
+#   other actions' caches           1300 MiB (trivy-action's database, about
+#                                   100 MB per ref and day, its binary, and
+#                                   setup-node's npm cache)
+#   total                           8468 MiB of the 9536 MiB in 10 GB
+# The remaining 1 GiB holds a second generation of a cache whose key changed
+# until the first expires. A dispatch's caches, which count as well, are the
+# first that GitHub evicts once that branch stops running.
+env:
+  CI_CACHE_SAVE: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.save-caches) }}
 
 # A newer push to a pull request supersedes its older run. A commit on main
 # and a tag always get a complete run: outside pull requests the group also
@@ -65,6 +104,18 @@ jobs:
             manifests: compat/lez-v0_2-xmr-release-service/Cargo.toml
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # Cached Cargo jobs build with line tables only (file and line in
+      # panics and backtraces, no variable or type information) and without
+      # incremental state, which shrinks the cached targets; the keys name
+      # the setting.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_CACHE_PATHS: |
+        ~/.cargo/registry/index
+        ~/.cargo/registry/cache
+        ~/.cargo/git/db
+        target/check-all
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,12 +134,8 @@ jobs:
         if: matrix.cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/check-all
-          key: ${{ matrix.cache }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0.2-provisional/Cargo.lock') }}
+          path: ${{ env.CARGO_CACHE_PATHS }}
+          key: ${{ matrix.cache }}-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0.2-provisional/Cargo.lock') }}
       - name: Prune the restored Cargo target of this shard's own crates
         if: matrix.cache
         run: ./scripts/ci-cargo-cache-prune.sh target/check-all compat/lez-v0.2-provisional/Cargo.toml
@@ -103,23 +150,23 @@ jobs:
             args+=(--workspace "$manifest")
           done
           ./scripts/check-all.sh --separate --rust-only "${args[@]}"
-      - name: Prune this shard's own crates before saving
-        id: cargo-prune
-        if: matrix.cache && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+      - name: Prune and measure this shard's Cargo cache before saving
+        id: cargo-gate
+        if: matrix.cache
         env:
-          CI_CACHE_MAX_GIB: "2"
+          CACHE_NAME: ${{ matrix.cache }}
+          CI_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+          CI_CACHE_MATCHED_KEY: ${{ steps.cargo-cache.outputs.cache-matched-key }}
         run: |
-          echo "fits=true" >>"$GITHUB_OUTPUT"
-          ./scripts/ci-cargo-cache-prune.sh target/check-all compat/lez-v0.2-provisional/Cargo.toml
+          if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
+            ./scripts/ci-cargo-cache-prune.sh target/check-all compat/lez-v0.2-provisional/Cargo.toml
+          fi
+          ./scripts/ci-cache-gate.sh "$CACHE_NAME" 512 "$CARGO_CACHE_PATHS"
       - name: Save this shard's Cargo registry and dependency builds
-        if: matrix.cache && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        if: matrix.cache && env.CI_CACHE_SAVE == 'true' && steps.cargo-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/check-all
+          path: ${{ env.CARGO_CACHE_PATHS }}
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   ci-quality:
@@ -133,6 +180,7 @@ jobs:
         run: ./scripts/install-ci-ripgrep.sh
       - run: ./scripts/test-lez-cost-evidence.sh
       - run: ./scripts/test-ci-hardening-policy.sh
+      - run: ./scripts/test-ci-cache-scripts.sh
       - run: ./scripts/test-spin-lock-remediation.sh
       - run: ./scripts/check-github-action-pins.sh
       - run: ./scripts/run-ci-quality-gates.sh
@@ -185,6 +233,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_BUILD_JOBS: "2"
+      # Cached Cargo jobs build with line tables only (file and line in
+      # panics and backtraces, no variable or type information) and without
+      # incremental state, which shrinks the cached targets; the keys name
+      # the setting.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_CACHE_PATHS: |
+        ~/.cargo/registry/index
+        ~/.cargo/registry/cache
+        ~/.cargo/git/db
+        target
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
       PUPPETEER_SKIP_DOWNLOAD: "true"
     steps:
@@ -208,12 +267,8 @@ jobs:
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: rust-workspace-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
+          path: ${{ env.CARGO_CACHE_PATHS }}
+          key: rust-workspace-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
       - name: Prune the restored Cargo target of the workspace's own crates
         run: ./scripts/ci-cargo-cache-prune.sh target Cargo.toml
       - name: Install pinned Node tooling
@@ -274,23 +329,21 @@ jobs:
         run: cargo doc --locked --workspace --no-deps
       - run: ./scripts/check-requirements-traceability.sh
       - run: ./scripts/check-architecture-diagrams.sh
-      - name: Prune the workspace's own crates before saving
-        id: cargo-prune
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+      - name: Prune and measure the Cargo cache before saving
+        id: cargo-gate
         env:
-          CI_CACHE_MAX_GIB: "4"
+          CI_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+          CI_CACHE_MATCHED_KEY: ${{ steps.cargo-cache.outputs.cache-matched-key }}
         run: |
-          echo "fits=true" >>"$GITHUB_OUTPUT"
-          ./scripts/ci-cargo-cache-prune.sh target Cargo.toml
+          if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
+            ./scripts/ci-cargo-cache-prune.sh target Cargo.toml
+          fi
+          ./scripts/ci-cache-gate.sh rust-workspace 1024 "$CARGO_CACHE_PATHS"
       - name: Save the Cargo registry and dependency builds
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        if: env.CI_CACHE_SAVE == 'true' && steps.cargo-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
+          path: ${{ env.CARGO_CACHE_PATHS }}
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   basecamp-ui:
@@ -301,15 +354,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Only the store paths cache.nixos.org does not serve are cached (the
-      # Chat and Delivery modules, the Logos SDK builds, vendored crates);
-      # the two checks and two catalog packages the test builds never are.
-      # Only a push to main saves, so a pull request restores main's cache.
+      # What the test builds from the repository is built every run; what it
+      # is built from is cached, minus what cache.nixos.org serves and what
+      # only built those dependencies (scripts/ci-basecamp-nix-store-cache.sh).
       - name: Restore the Basecamp Nix build dependencies
         id: basecamp-nix-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/basecamp-nix-store/store.nar.gz
+          path: ${{ runner.temp }}/basecamp-nix-store/store
           key: basecamp-nix-store-${{ runner.os }}-${{ runner.arch }}-nix-2.30.2-${{ hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh') }}
           restore-keys: |
             basecamp-nix-store-${{ runner.os }}-${{ runner.arch }}-nix-2.30.2-
@@ -319,7 +371,7 @@ jobs:
       - name: Run both role packages in the official Basecamp test harness
         env:
           NIX_CONFIG: access-tokens = github.com=${{ github.token }}
-          BASECAMP_NIX_CACHE_SAVE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.basecamp-nix-cache.outputs.cache-hit != 'true' }}
+          BASECAMP_NIX_CACHE_SAVE: ${{ env.CI_CACHE_SAVE == 'true' && steps.basecamp-nix-cache.outputs.cache-hit != 'true' }}
         run: >-
           mkdir -p "${RUNNER_TEMP}/basecamp-nix-store" &&
           docker run --rm
@@ -333,11 +385,18 @@ jobs:
           'bash /repo/scripts/ci-basecamp-nix-store-cache.sh import
           && bash /repo/scripts/test-m6-basecamp-integration.sh
           && bash /repo/scripts/ci-basecamp-nix-store-cache.sh export'
+      - name: Measure the Basecamp Nix build dependencies before saving
+        id: basecamp-nix-gate
+        env:
+          CI_CACHE_HIT: ${{ steps.basecamp-nix-cache.outputs.cache-hit }}
+          CI_CACHE_MATCHED_KEY: ${{ steps.basecamp-nix-cache.outputs.cache-matched-key }}
+          CI_CACHE_NOTE_FILE: ${{ runner.temp }}/basecamp-nix-store/export-status
+        run: ./scripts/ci-cache-gate.sh basecamp-nix-store 2048 "${RUNNER_TEMP}/basecamp-nix-store/store"
       - name: Save the Basecamp Nix build dependencies
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.basecamp-nix-cache.outputs.cache-hit != 'true'
+        if: env.CI_CACHE_SAVE == 'true' && steps.basecamp-nix-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/basecamp-nix-store/store.nar.gz
+          path: ${{ runner.temp }}/basecamp-nix-store/store
           key: ${{ steps.basecamp-nix-cache.outputs.cache-primary-key }}
 
   dependencies:
@@ -435,6 +494,17 @@ jobs:
       # absolute paths); a hosted runner runs one job at a time.
       CARGO_HOME: /tmp/lez-v02-sidecar-cargo
       CARGO_TARGET_DIR: /tmp/lez-v02-sidecar-target
+      # Cached Cargo jobs build with line tables only (file and line in
+      # panics and backtraces, no variable or type information) and without
+      # incremental state, which shrinks the cached targets; the keys name
+      # the setting.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_CACHE_PATHS: |
+        /tmp/lez-v02-sidecar-cargo/registry/index
+        /tmp/lez-v02-sidecar-cargo/registry/cache
+        /tmp/lez-v02-sidecar-cargo/git/db
+        /tmp/lez-v02-sidecar-target
       RAPIDSNARK_ARCHIVE_SHA256: 59bdd709eed96235de061f352893f4650c923b54b591052118593012bb1cd831
       RAPIDSNARK_ARCHIVE_URL: https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip
       RAPIDSNARK_LIB_DIR: /tmp/lez-v02-rapidsnark-${{ github.run_id }}-${{ github.run_attempt }}/rapidsnark-linux-x86_64-pic-v0.0.8/lib
@@ -457,12 +527,8 @@ jobs:
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            /tmp/lez-v02-sidecar-cargo/registry/index
-            /tmp/lez-v02-sidecar-cargo/registry/cache
-            /tmp/lez-v02-sidecar-cargo/git/db
-            /tmp/lez-v02-sidecar-target
-          key: lez-v02-sidecar-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0_2-sidecar/Cargo.lock') }}
+          path: ${{ env.CARGO_CACHE_PATHS }}
+          key: lez-v02-sidecar-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0_2-sidecar/Cargo.lock') }}
       - name: Prune the restored Cargo target of the sidecar's own crates
         run: ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml
       - name: Provision checksum-verified sidecar native and audit inputs
@@ -504,23 +570,21 @@ jobs:
             advisories
       - name: Verify LEZ v0.2 sidecar with Cargo offline
         run: ./scripts/verify-lez-v02-sidecar.sh
-      - name: Prune the sidecar's own crates before saving
-        id: cargo-prune
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+      - name: Prune and measure the sidecar Cargo cache before saving
+        id: cargo-gate
         env:
-          CI_CACHE_MAX_GIB: "3"
+          CI_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+          CI_CACHE_MATCHED_KEY: ${{ steps.cargo-cache.outputs.cache-matched-key }}
         run: |
-          echo "fits=true" >>"$GITHUB_OUTPUT"
-          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml
+          if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
+            ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml
+          fi
+          ./scripts/ci-cache-gate.sh lez-v02-sidecar 768 "$CARGO_CACHE_PATHS"
       - name: Save the sidecar Cargo registry and dependency builds
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        if: env.CI_CACHE_SAVE == 'true' && steps.cargo-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            /tmp/lez-v02-sidecar-cargo/registry/index
-            /tmp/lez-v02-sidecar-cargo/registry/cache
-            /tmp/lez-v02-sidecar-cargo/git/db
-            /tmp/lez-v02-sidecar-target
+          path: ${{ env.CARGO_CACHE_PATHS }}
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   lez-v02-xmr-release-service:
@@ -532,6 +596,17 @@ jobs:
       # absolute paths); a hosted runner runs one job at a time.
       CARGO_HOME: /tmp/lez-v02-xmr-release-service-cargo
       CARGO_TARGET_DIR: /tmp/lez-v02-xmr-release-service-target
+      # Cached Cargo jobs build with line tables only (file and line in
+      # panics and backtraces, no variable or type information) and without
+      # incremental state, which shrinks the cached targets; the keys name
+      # the setting.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_CACHE_PATHS: |
+        /tmp/lez-v02-xmr-release-service-cargo/registry/index
+        /tmp/lez-v02-xmr-release-service-cargo/registry/cache
+        /tmp/lez-v02-xmr-release-service-cargo/git/db
+        /tmp/lez-v02-xmr-release-service-target
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -546,33 +621,27 @@ jobs:
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            /tmp/lez-v02-xmr-release-service-cargo/registry/index
-            /tmp/lez-v02-xmr-release-service-cargo/registry/cache
-            /tmp/lez-v02-xmr-release-service-cargo/git/db
-            /tmp/lez-v02-xmr-release-service-target
-          key: lez-v02-xmr-release-service-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0_2-xmr-release-service/Cargo.lock') }}
+          path: ${{ env.CARGO_CACHE_PATHS }}
+          key: lez-v02-xmr-release-service-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0_2-xmr-release-service/Cargo.lock') }}
       - name: Prune the restored Cargo target of the release service's own crates
         run: ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-xmr-release-service-target compat/lez-v0_2-xmr-release-service/Cargo.toml
       - name: Format, test, lint and document the release service
         run: ./scripts/verify-lez-v02-xmr-release-service.sh
-      - name: Prune the release service's own crates before saving
-        id: cargo-prune
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+      - name: Prune and measure the release service Cargo cache before saving
+        id: cargo-gate
         env:
-          CI_CACHE_MAX_GIB: "2"
+          CI_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+          CI_CACHE_MATCHED_KEY: ${{ steps.cargo-cache.outputs.cache-matched-key }}
         run: |
-          echo "fits=true" >>"$GITHUB_OUTPUT"
-          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-xmr-release-service-target compat/lez-v0_2-xmr-release-service/Cargo.toml
+          if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
+            ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-xmr-release-service-target compat/lez-v0_2-xmr-release-service/Cargo.toml
+          fi
+          ./scripts/ci-cache-gate.sh lez-v02-xmr-release-service 256 "$CARGO_CACHE_PATHS"
       - name: Save the release service Cargo registry and dependency builds
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        if: env.CI_CACHE_SAVE == 'true' && steps.cargo-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            /tmp/lez-v02-xmr-release-service-cargo/registry/index
-            /tmp/lez-v02-xmr-release-service-cargo/registry/cache
-            /tmp/lez-v02-xmr-release-service-cargo/git/db
-            /tmp/lez-v02-xmr-release-service-target
+          path: ${{ env.CARGO_CACHE_PATHS }}
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   lez-v02-provisional:
@@ -588,6 +657,20 @@ jobs:
       LEZ_V02_GUEST_TARGET_DIR: /tmp/lez-v02-provisional-guest-target
       LEZ_V02_ARTIFACT_TARGET_DIR: /tmp/lez-v02-provisional-artifact-target
       LEZ_V02_TOOL_DIR: /tmp/lez-v02-provisional-tools
+      # Cached Cargo jobs build with line tables only (file and line in
+      # panics and backtraces, no variable or type information) and without
+      # incremental state, which shrinks the cached targets; the keys name
+      # the setting.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      TOOLS_CACHE_PATHS: /tmp/lez-v02-provisional-tools
+      CARGO_CACHE_PATHS: |
+        ~/.cargo/registry/index
+        ~/.cargo/registry/cache
+        ~/.cargo/git/db
+        /tmp/lez-v02-provisional-target
+        /tmp/lez-v02-provisional-guest-target
+        /tmp/lez-v02-provisional-artifact-target
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -608,10 +691,7 @@ jobs:
         id: tools-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            /tmp/lez-v02-provisional-tools
-            !/tmp/lez-v02-provisional-tools/cargo-home/registry
-            !/tmp/lez-v02-provisional-tools/cargo-home/git
+          path: ${{ env.TOOLS_CACHE_PATHS }}
           key: lez-v02-provisional-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}
       # Third-party build output only. The prune step removes every crate of
       # the four workspaces and every guest build before Cargo runs, so the
@@ -620,16 +700,8 @@ jobs:
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            /tmp/lez-v02-provisional-target
-            /tmp/lez-v02-provisional-guest-target
-            /tmp/lez-v02-provisional-artifact-target
-            !/tmp/lez-v02-provisional-artifact-target/riscv-guest
-            !/tmp/lez-v02-provisional-artifact-target/docker-guest-source
-          key: lez-v02-provisional-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0.2-provisional/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/methods/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock') }}
+          path: ${{ env.CARGO_CACHE_PATHS }}
+          key: lez-v02-provisional-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0.2-provisional/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/methods/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.lock', 'compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock') }}
       - name: Prune the restored Cargo targets of the workspaces' own crates and guest builds
         run: |
           ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
@@ -640,38 +712,41 @@ jobs:
         env:
           RZUP_GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/verify-lez-v02-provisional.sh
-      - name: Save the provisional LEZ v0.2 Risc0 tools
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tools-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            /tmp/lez-v02-provisional-tools
-            !/tmp/lez-v02-provisional-tools/cargo-home/registry
-            !/tmp/lez-v02-provisional-tools/cargo-home/git
-          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
-      - name: Prune the workspaces' own crates and guest builds before saving
-        id: cargo-prune
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+      - name: Measure the provisional LEZ v0.2 Risc0 tools before saving
+        id: tools-gate
         env:
-          CI_CACHE_MAX_GIB: "4"
+          CI_CACHE_HIT: ${{ steps.tools-cache.outputs.cache-hit }}
+          CI_CACHE_MATCHED_KEY: ${{ steps.tools-cache.outputs.cache-matched-key }}
+        # The crate sources the tool builds downloaded are not kept; Cargo
+        # fetches them again if a tool is ever rebuilt.
         run: |
-          echo "fits=true" >>"$GITHUB_OUTPUT"
-          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
-          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
-          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
-      - name: Save the provisional LEZ v0.2 Cargo registry and dependency builds
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+          if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
+            rm -rf -- "${LEZ_V02_TOOL_DIR}/cargo-home/registry" "${LEZ_V02_TOOL_DIR}/cargo-home/git"
+          fi
+          ./scripts/ci-cache-gate.sh lez-v02-provisional-tools 768 "$TOOLS_CACHE_PATHS"
+      - name: Save the provisional LEZ v0.2 Risc0 tools
+        if: env.CI_CACHE_SAVE == 'true' && steps.tools-gate.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            /tmp/lez-v02-provisional-target
-            /tmp/lez-v02-provisional-guest-target
-            /tmp/lez-v02-provisional-artifact-target
-            !/tmp/lez-v02-provisional-artifact-target/riscv-guest
-            !/tmp/lez-v02-provisional-artifact-target/docker-guest-source
+          path: ${{ env.TOOLS_CACHE_PATHS }}
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
+      - name: Prune and measure the workspaces' Cargo cache before saving
+        id: cargo-gate
+        env:
+          CI_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+          CI_CACHE_MATCHED_KEY: ${{ steps.cargo-cache.outputs.cache-matched-key }}
+        run: |
+          if [[ "$CI_CACHE_SAVE" == true && "$CI_CACHE_HIT" != true ]]; then
+            ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml
+            ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
+            ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
+          fi
+          ./scripts/ci-cache-gate.sh lez-v02-provisional 1792 "$CARGO_CACHE_PATHS"
+      - name: Save the provisional LEZ v0.2 Cargo registry and dependency builds
+        if: env.CI_CACHE_SAVE == 'true' && steps.cargo-gate.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CARGO_CACHE_PATHS }}
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   bitcoin-core-regtest:

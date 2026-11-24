@@ -10,9 +10,11 @@ set -euo pipefail
 # artifacts, fingerprints and build-script output, so the job builds and tests
 # the repository's own code from source on every run. Run it right after the
 # restore, before any Cargo command, and again before the save. Removed always:
-# incremental state, rustdoc output, and every Risc0 guest build (the
-# risc0-build `riscv-guest` tree and the verifier's run-local Docker guest
-# source), so a guest ELF and its ImageID never come from a cache.
+# incremental state, rustdoc output, the tests' scratch directory (`tmp`), and
+# every Risc0 guest build (the risc0-build `riscv-guest` tree and the
+# verifier's run-local Docker guest source), so a guest ELF and its ImageID
+# never come from a cache. scripts/ci-cache-gate.sh then decides whether what
+# is left is saved.
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 shopt -s nullglob
@@ -33,7 +35,8 @@ done
 
 [[ -d "$target_dir" ]] || exit 0
 
-rm -rf -- "${target_dir}/riscv-guest" "${target_dir}/docker-guest-source" "${target_dir}/doc"
+rm -rf -- "${target_dir}/riscv-guest" "${target_dir}/docker-guest-source" "${target_dir}/doc" \
+  "${target_dir}/tmp"
 find "$target_dir" -mindepth 1 -maxdepth 3 -type d \( -name incremental -o -name riscv-guest \) \
   -prune -exec rm -rf -- {} +
 
@@ -56,6 +59,9 @@ done
 }
 pattern="$(printf '%s\n' "${names[@]}" | sort -u | sed 's/[.[\*^$+?(){}|]/\\&/g' | paste -sd '|' -)"
 
+# Compiled artifacts carry a 16-hex-digit hash; the copies Cargo places in the
+# profile directory itself (binaries, rlibs, their .d files) carry none, and
+# Cargo places them there for the workspace's own targets only.
 while IFS= read -r fingerprint; do
   profile="${fingerprint%/.fingerprint}"
   for kind in .fingerprint build deps examples; do
@@ -66,17 +72,17 @@ while IFS= read -r fingerprint; do
       fi
     done
   done
+  for entry in "${profile}"/*; do
+    [[ -f "$entry" ]] || continue
+    if [[ "${entry##*/}" =~ ^(lib)?(${pattern})([.].*)?$ ]]; then
+      rm -f -- "$entry"
+    fi
+  done
 done < <(find "$target_dir" -mindepth 2 -maxdepth 3 -type d -name .fingerprint)
 
 size_kib="$(du -sk "$target_dir" | cut -f1)"
 echo "pruned workspace and guest build output from ${target_dir}: $((size_kib / 1024)) MiB left"
-
-# CI_CACHE_MAX_GIB bounds what a save may add to the repository's 10 GB of
-# caches. Above it the step output `fits` is set to false and the job's save
-# step does not run; the run itself is unaffected.
-if [[ -n "${CI_CACHE_MAX_GIB:-}" ]] && (( size_kib > CI_CACHE_MAX_GIB * 1024 * 1024 )); then
-  echo "::warning::${target_dir} holds $((size_kib / 1024)) MiB after pruning, above the ${CI_CACHE_MAX_GIB} GiB cache cap; not saving it"
-  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-    echo "fits=false" >>"$GITHUB_OUTPUT"
-  fi
-fi
+# Where the rest is, for whoever sizes the cache.
+find "$target_dir" -mindepth 1 -maxdepth 2 -type d -exec du -sk {} + \
+  | sort -rn | head -n 8 \
+  | while read -r kib path; do echo "  $((kib / 1024)) MiB ${path}"; done || true

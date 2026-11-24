@@ -67,7 +67,8 @@ as well (sign-off, tests with every behavioural change).
   no excludes, as `ci.yml` runs them), the Node
   suites with `--features pair-zec` and with `--all-features`,
   `python3 -m unittest discover -s deploy/tests`,
-  `scripts/test-check-all-workspaces.sh`, `scripts/test-ci-hardening-policy.sh`
+  `scripts/test-check-all-workspaces.sh`, `scripts/test-ci-hardening-policy.sh`,
+  `scripts/test-ci-cache-scripts.sh`
   and `scripts/check-runtime-profiles.py`, and, when the Zcash adapter,
   SDK or contract changed, `scripts/run-zebra-e2e.sh` in its own project.
   When docs changed, run `scripts/check-requirements-traceability.sh`,
