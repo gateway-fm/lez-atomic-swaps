@@ -15,6 +15,7 @@ readonly check_all="scripts/check-all.sh"
 readonly ci_workflow=".github/workflows/ci.yml"
 readonly provisional_verifier="scripts/verify-lez-v02-provisional.sh"
 readonly sidecar_verifier="scripts/verify-lez-v02-sidecar.sh"
+readonly release_service_verifier="scripts/verify-lez-v02-xmr-release-service.sh"
 readonly spel_verifier="scripts/verify-spel-compatibility.sh"
 readonly standalone_runner="scripts/run-lez-standalone-e2e.sh"
 
@@ -121,6 +122,17 @@ for needle in \
   grep -Fq -- "$needle" <<<"$sidecar_flags" \
     || fail "${sidecar_verifier} no longer runs: ${needle} (update ${check_all} with it)"
 done
+
+# M4 XMR release service.
+release_service_flags="$(tr -s ' \\\n' ' ' <"$release_service_verifier")"
+for needle in \
+  'cargo +1.96.0 clippy --manifest-path "${manifest}" --locked --all-targets --all-features -- -D warnings' \
+  'cargo +1.96.0 rustdoc --manifest-path "${manifest}" --locked --all-features --lib -- -D warnings' \
+  'readonly crate_dir="${repository_root}/compat/lez-v0_2-xmr-release-service"'; do
+  grep -Fq -- "$needle" <<<"$release_service_flags" \
+    || fail "${release_service_verifier} no longer runs: ${needle} (update ${check_all} with it)"
+done
+require_fixed 'run: ./scripts/verify-lez-v02-xmr-release-service.sh' "$ci_workflow"
 
 # SPEL v0.1 escrow and the standalone LEZ end-to-end workspaces.
 require_fixed 'fixture="compat/spel-zec-escrow/Cargo.toml"' "$spel_verifier"

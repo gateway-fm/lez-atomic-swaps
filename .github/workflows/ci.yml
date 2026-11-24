@@ -61,6 +61,8 @@ jobs:
               compat/spel-zec-escrow/methods/guest/Cargo.toml
               compat/spel-zec-escrow/methods/Cargo.toml
               compat/lez-standalone-e2e/Cargo.toml
+          - shard: M4 XMR release service
+            manifests: compat/lez-v0_2-xmr-release-service/Cargo.toml
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -519,6 +521,58 @@ jobs:
             /tmp/lez-v02-sidecar-cargo/registry/cache
             /tmp/lez-v02-sidecar-cargo/git/db
             /tmp/lez-v02-sidecar-target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  lez-v02-xmr-release-service:
+    name: isolated M4 XMR release service
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Fixed paths so that a cached target stays fresh (Cargo records
+      # absolute paths); a hosted runner runs one job at a time.
+      CARGO_HOME: /tmp/lez-v02-xmr-release-service-cargo
+      CARGO_TARGET_DIR: /tmp/lez-v02-xmr-release-service-target
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        id: toolchain
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      # Third-party build output and the locked sources only.
+      - name: Restore the release service Cargo registry and dependency builds
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/lez-v02-xmr-release-service-cargo/registry/index
+            /tmp/lez-v02-xmr-release-service-cargo/registry/cache
+            /tmp/lez-v02-xmr-release-service-cargo/git/db
+            /tmp/lez-v02-xmr-release-service-target
+          key: lez-v02-xmr-release-service-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('compat/lez-v0_2-xmr-release-service/Cargo.lock') }}
+      - name: Prune the restored Cargo target of the release service's own crates
+        run: ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-xmr-release-service-target compat/lez-v0_2-xmr-release-service/Cargo.toml
+      - name: Format, test, lint and document the release service
+        run: ./scripts/verify-lez-v02-xmr-release-service.sh
+      - name: Prune the release service's own crates before saving
+        id: cargo-prune
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        env:
+          CI_CACHE_MAX_GIB: "2"
+        run: |
+          echo "fits=true" >>"$GITHUB_OUTPUT"
+          ./scripts/ci-cargo-cache-prune.sh /tmp/lez-v02-xmr-release-service-target compat/lez-v0_2-xmr-release-service/Cargo.toml
+      - name: Save the release service Cargo registry and dependency builds
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true' && steps.cargo-prune.outputs.fits == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/lez-v02-xmr-release-service-cargo/registry/index
+            /tmp/lez-v02-xmr-release-service-cargo/registry/cache
+            /tmp/lez-v02-xmr-release-service-cargo/git/db
+            /tmp/lez-v02-xmr-release-service-target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   lez-v02-provisional:

@@ -173,8 +173,8 @@ readonly cache_restore='uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e
 readonly cache_save='uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
 readonly cargo_prune='scripts/ci-cargo-cache-prune.sh'
 readonly nix_store_cache='scripts/ci-basecamp-nix-store-cache.sh'
-readonly expected_cache_restores=6
-readonly expected_cache_saves=6
+readonly expected_cache_restores=7
+readonly expected_cache_saves=7
 [[ -x "$cargo_prune" && -x "$nix_store_cache" ]] || fail "cache scripts must remain executable"
 for workflow in "$ci_workflow" "$public_workflow"; do
   ! rg -q 'uses: actions/cache@' "$workflow" \
@@ -198,20 +198,21 @@ while IFS= read -r key; do
   [[ "$key" == *'cache-primary-key'* || "$key" == *'runner.os'*'runner.arch'* ]] \
     || fail "cache key does not name the runner: $key"
 done < <(rg '^ +key: ' "$ci_workflow")
-[[ "$(rg -Fc 'rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 4 ]] \
+[[ "$(rg -Fc 'rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 5 ]] \
   || fail "every Cargo cache key must name the rustc version and hash the lock files"
 require_fixed "key: lez-v02-provisional-tools-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}" "$ci_workflow"
 require_fixed "hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh')" "$ci_workflow"
 ! rg -q 'advisory-db|/bin$' "$ci_workflow" \
   || fail "the cargo-deny advisory database and Cargo bin directories are never cached"
-[[ "$(rg -Fc "steps.cargo-prune.outputs.fits == 'true'" "$ci_workflow")" == 4 \
-  && "$(rg -Fc 'CI_CACHE_MAX_GIB: ' "$ci_workflow")" == 4 ]] \
+[[ "$(rg -Fc "steps.cargo-prune.outputs.fits == 'true'" "$ci_workflow")" == 5 \
+  && "$(rg -Fc 'CI_CACHE_MAX_GIB: ' "$ci_workflow")" == 5 ]] \
   || fail "every Cargo cache save must be bounded by CI_CACHE_MAX_GIB"
 require_fixed 'echo "fits=false" >>"$GITHUB_OUTPUT"' "$cargo_prune"
 # Each Cargo cache is pruned after its restore and before Cargo runs.
 for target in 'target Cargo.toml' \
   'target/check-all compat/lez-v0.2-provisional/Cargo.toml' \
   '/tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml' \
+  '/tmp/lez-v02-xmr-release-service-target compat/lez-v0_2-xmr-release-service/Cargo.toml' \
   '/tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml' \
   '/tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml' \
   '/tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml'; do
