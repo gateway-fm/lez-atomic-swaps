@@ -8,6 +8,7 @@ class LezZcashNodeBackend : public LezZcashNodeSimpleSource,
 {
 public:
     QString status() override;
+    QString restartNode() override;
     QString resetChain() override;
     void onContextReady() override;
 

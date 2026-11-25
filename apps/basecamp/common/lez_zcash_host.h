@@ -14,7 +14,8 @@
 //
 // The JSON-RPC the module opens with exposeJsonRpc keeps Zebra's cookie
 // authentication: the cookie is <cacheDir>/.cookie, owner-only, new at every
-// start. resetChain() is for Regtest only: it stops the node, deletes the chain
+// start. restart() stops the node and starts it again with the settings read
+// again; its chain stays. resetChain() is for Regtest only: it stops the node, deletes the chain
 // under cacheDir and starts a new one with the same settings.
 //
 // Each returns what it did or what the node reports, as one JSON object, for
@@ -93,6 +94,22 @@ QString status(Zebra& zebra)
             status.insert(QLatin1String(key), QJsonValue::fromVariant(node.value(QLatin1String(key))));
     if (status.isEmpty()) status.insert(QStringLiteral("zcash_node"), network().isEmpty() ? QStringLiteral("nothing configured") : QStringLiteral("no status yet"));
     return QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact));
+}
+
+template <typename Zebra>
+QString restart(Zebra& zebra)
+{
+    QJsonObject status;
+    const QString net = network();
+    if (net.isEmpty()) {
+        status.insert(QStringLiteral("zcash_node"), QStringLiteral("nothing configured"));
+        return report(status);
+    }
+    const auto stopped = zebra.stop();
+    status.insert(QStringLiteral("zcash_node"),
+                  stopped.success ? QStringLiteral("restarted: ") + configureAndStart(zebra, net)
+                                  : QStringLiteral("not restarted: stop failed: ") + stopped.template getError<QString>());
+    return report(status);
 }
 
 template <typename Zebra>

@@ -2,7 +2,8 @@ import QtQuick
 import QtQuick.Controls
 
 // The Zcash Node desk: shows the Zcash node (Zebra, zebrad_module) this
-// Basecamp hosts as its backend reports it, refreshed every five seconds. On
+// Basecamp hosts as its backend reports it, refreshed every five seconds.
+// Restart node stops the node and starts it again (its chain stays). On
 // Regtest, Reset chain stops the node, deletes its chain and starts a new one
 // (tests/fixtures/zec-catalog-fixture.sh presses it for a worn chain or one on
 // another consensus branch).
@@ -37,6 +38,17 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             text: root.status
+        }
+
+        Button {
+            objectName: "restartNodeButton"
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "Restart node"
+            enabled: !!root.backend
+            onClicked: {
+                root.status = "restarting the node"
+                logos.watch(root.backend.restartNode(), function(value) { root.status = String(value) })
+            }
         }
 
         Button {

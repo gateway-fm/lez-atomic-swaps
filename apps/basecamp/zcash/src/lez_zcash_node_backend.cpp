@@ -17,6 +17,14 @@ QString LezZcashNodeBackend::status()
     return node.contains(QStringLiteral("\"state\"")) ? node : started_;
 }
 
+QString LezZcashNodeBackend::restartNode()
+{
+    // The node stopped and started again in this Basecamp, its settings read
+    // again; its chain stays.
+    started_ = lez_zcash_host::restart(modules().zebrad_module);
+    return started_;
+}
+
 QString LezZcashNodeBackend::resetChain()
 {
     // A new Regtest chain under the same settings (a worn chain, or one on
