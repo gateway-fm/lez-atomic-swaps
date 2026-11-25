@@ -390,7 +390,10 @@ struct PathBindings {
 }
 
 impl PathBindings {
-    fn local(&self) -> Vec<&FileLocation> {
+    /// The role's own files: keys, preimage, state, journal, capability and a
+    /// copied API key. Within one config they are pairwise distinct, and two
+    /// roles of a pair never share one.
+    fn role_private(&self) -> Vec<&FileLocation> {
         let mut local = vec![
             &self.role_state,
             &self.claim_key,
@@ -399,8 +402,15 @@ impl PathBindings {
             &self.capability,
         ];
         local.extend(self.preimage.iter());
-        local.extend(self.cookie.iter());
         local.extend(self.api_key.iter());
+        local
+    }
+
+    /// Every file this one config reads besides the agreement: its role-private
+    /// files and its Zebra node's cookie, pairwise distinct within the config.
+    fn local(&self) -> Vec<&FileLocation> {
+        let mut local = self.role_private();
+        local.extend(self.cookie.iter());
         local
     }
 
@@ -1098,12 +1108,7 @@ impl ActorConfig {
             .cookie_file()
             .zip(self.bindings.cookie.as_ref())
             .map(|(path, expected)| {
-                let mut bytes = self.read_command_file(
-                    path,
-                    MAX_COOKIE_FILE_BYTES,
-                    FilePrivacy::OwnerPrivate,
-                    expected,
-                )?;
+                let mut bytes = self.read_node_credential(path, MAX_COOKIE_FILE_BYTES, expected)?;
                 trim_line_ending(bytes.as_mut());
                 let separator = bytes.iter().position(|byte| *byte == b':');
                 if bytes.len() > MAX_COOKIE_BYTES
@@ -1153,6 +1158,35 @@ impl ActorConfig {
         let mut value = Zeroizing::new([0_u8; N]);
         value.copy_from_slice(bytes.as_slice());
         Ok(value)
+    }
+
+    /// Reads the Zebra node's cookie: owner-private and bounded like every
+    /// command file, and at the path the config names. Unlike a role's own
+    /// files it is not held to the file found at load: Zebra writes a new
+    /// cookie at every start, so a running actor reads the node's current one.
+    /// It still may be none of this config's other files.
+    fn read_node_credential(
+        &self,
+        path: &Path,
+        maximum: usize,
+        expected: &FileLocation,
+    ) -> Result<Zeroizing<Vec<u8>>, ActorConfigError> {
+        let (bytes, current) = read_bounded_identified(path, maximum, FilePrivacy::OwnerPrivate)
+            .map_err(|error| match error {
+                SecureFileError::Unavailable => ActorConfigError::CommandMaterialUnavailable,
+                SecureFileError::Unsafe => ActorConfigError::UnsafeCommandMaterialFile,
+            })?;
+        let aliases_other_binding = self
+            .bindings
+            .all()
+            .into_iter()
+            .chain(std::iter::once(&self.source_identity))
+            .filter(|binding| !std::ptr::eq(*binding, expected))
+            .any(|binding| current.aliases(binding));
+        if !expected.same_path(&current) || aliases_other_binding {
+            return Err(ActorConfigError::UnsafeCommandMaterialFile);
+        }
+        Ok(bytes)
     }
 
     fn read_command_file(
@@ -1473,15 +1507,33 @@ fn actor_pair_invariants_differ(left: &ActorConfig, right: &ActorConfig) -> bool
         || left.is_local_zcash_funder() == right.is_local_zcash_funder()
         || left.owns_claim_preimage() == right.owns_claim_preimage()
         || left.source_identity.aliases(&right.source_identity)
+        || node_credentials_cross_roles(left, right)
+        || node_credentials_cross_roles(right, left)
         || left
             .bindings
-            .local()
+            .role_private()
             .iter()
-            .any(|path| contains_location(&right.bindings.local(), path))
+            .any(|path| contains_location(&right.bindings.role_private(), path))
         || contains_location(&left.bindings.local(), &right.source_identity)
         || contains_location(&right.bindings.local(), &left.source_identity)
         || contains_location(&left.bindings.local(), &right.bindings.agreement)
         || contains_location(&right.bindings.local(), &left.bindings.agreement)
+}
+
+/// The Zebra cookie is the node's credential, not a role's: both roles of a
+/// pair name the one node (`same_route` holds their endpoints equal), and
+/// Zebra writes one cookie for it, so the two roles may name the same cookie
+/// file. Every role-private file stays strictly disjoint across the pair, and
+/// one role's cookie may be none of the other role's files: not a key, the
+/// preimage, state, a journal, the capability, an API key, its config or its
+/// agreement. Each config still keeps its cookie apart from its own files
+/// (`ActorConfig::validate`), and the cookie is read owner-private at each use.
+fn node_credentials_cross_roles(left: &ActorConfig, right: &ActorConfig) -> bool {
+    left.bindings.cookie.as_ref().is_some_and(|cookie| {
+        contains_location(&right.bindings.role_private(), cookie)
+            || cookie.aliases(&right.source_identity)
+            || cookie.aliases(&right.bindings.agreement)
+    })
 }
 
 fn same_runtime(left: &RuntimeDescriptor, right: &RuntimeDescriptor) -> bool {

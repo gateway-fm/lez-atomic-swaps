@@ -1151,11 +1151,16 @@ pub async fn provision_local_v0_2_corridor_with_material(
     }
     write_private_new(&maker_paths.capability, maker_capability.as_slice())?;
     write_private_new(&taker_paths.capability, taker_capability.as_slice())?;
-    // Each actor reads its own copy of an API key, beside its keys. A cookie
-    // is named where Zebra writes it, since Zebra writes a new one at every
-    // start: a copy would lock the actor out after Zebra's next restart.
-    if let (Some(secret), LocalPocZebraRoute::TatumTestnetXApiKey { .. }) =
-        (&zebra_credential, &spec.zebra_route)
+    // A Testnet route's credential (an API key, or a self-hosted Zebra's
+    // cookie the dealer was handed as a file) is copied beside each role's
+    // keys: the dealer's own path is not one the Nodes can read. The devnet's
+    // Regtest cookie is named where Zebra writes it, on the volume the Nodes
+    // mount, since Zebra writes a new one at every start.
+    if let (
+        Some(secret),
+        LocalPocZebraRoute::TatumTestnetXApiKey { .. }
+        | LocalPocZebraRoute::SelfHostedCookie { .. },
+    ) = (&zebra_credential, &spec.zebra_route)
     {
         write_private_new(&maker_paths.zebra_credential, secret.as_slice())?;
         write_private_new(&taker_paths.zebra_credential, secret.as_slice())?;
@@ -1187,60 +1192,17 @@ pub async fn provision_local_v0_2_corridor_with_material(
             .context("failed to encode taker runtime descriptor")?,
     )?;
     let zebra_genesis = block_hash_display_hex(genesis_hash);
-    let (maker_candidates, taker_candidates) = match spec.direction.zcash_funder() {
-        ActorRole::Maker => (vec![fixture.zcash_candidate], Vec::new()),
-        ActorRole::Taker => (Vec::new(), vec![fixture.zcash_candidate]),
-    };
-
-    let maker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
-        &RoleCorridor::of_spec(&spec, ActorRole::Maker),
+    write_validated_actor_pair(
+        &spec,
         &swap_id,
-        ActorRole::Maker,
         &agreement_file,
         fixture.sha256,
-        &maker_paths,
-        (spec.direction.preimage_owner() == ActorRole::Maker)
-            .then(|| maker_paths.claim_preimage.clone()),
-        maker_runtime,
+        (&maker_paths, &taker_paths),
+        (maker_runtime, taker_runtime),
         zebra_genesis,
         discovery,
-        maker_candidates,
-    ))
-    .context("failed to encode maker actor config")?;
-    let taker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
-        &RoleCorridor::of_spec(&spec, ActorRole::Taker),
-        &swap_id,
-        ActorRole::Taker,
-        &agreement_file,
-        fixture.sha256,
-        &taker_paths,
-        (spec.direction.preimage_owner() == ActorRole::Taker)
-            .then(|| taker_paths.claim_preimage.clone()),
-        taker_runtime,
-        zebra_genesis,
-        discovery,
-        taker_candidates,
-    ))
-    .context("failed to encode taker actor config")?;
-    write_private_new(&maker_paths.config, &maker_config)?;
-    write_private_new(&taker_paths.config, &taker_config)?;
-
-    let maker = ActorConfig::load_private(&maker_paths.config)
-        .context("provisioned maker config did not reload")?;
-    let taker = ActorConfig::load_private(&taker_paths.config)
-        .context("provisioned taker config did not reload")?;
-    ensure!(
-        maker.bridge_runtime().escrow_program_id == spec.lez_runtime.escrow_program_id
-            && taker.bridge_runtime().escrow_program_id == spec.lez_runtime.escrow_program_id,
-        "provisioned actor runtime changed the checked escrow program"
-    );
-    validate_actor_pair(&maker, &taker).context("provisioned actor pair is not isolated")?;
-    let _maker_material = maker
-        .load_activate_material()
-        .context("provisioned maker activation material is invalid")?;
-    let _taker_material = taker
-        .load_activate_material()
-        .context("provisioned taker activation material is invalid")?;
+        fixture.zcash_candidate,
+    )?;
 
     Ok(LocalPocProvisionSummary {
         schema_version: 1,
@@ -1328,6 +1290,79 @@ pub fn prepare_local_v0_2_chat_draft(
         offer_expires_at_unix_seconds,
         private_material_disclosed: false,
     })
+}
+
+/// Writes both roles' actor configs for one dealer-provisioned corridor,
+/// reloads them as the actors will, and checks that they form one isolated
+/// pair whose activation material loads.
+#[cfg(feature = "dealer-fixture")]
+#[allow(clippy::too_many_arguments)]
+fn write_validated_actor_pair(
+    spec: &ProvisionSpec,
+    swap_id: &SwapId,
+    agreement_file: &Path,
+    agreement_sha256: Hex32,
+    (maker_paths, taker_paths): (&MaterialPaths, &MaterialPaths),
+    (maker_runtime, taker_runtime): (RuntimeDescriptor, RuntimeDescriptor),
+    zebra_genesis: Hex32,
+    discovery: DiscoveryWindow,
+    candidate: CandidateOutpoint,
+) -> Result<(ActorConfig, ActorConfig)> {
+    let (maker_candidates, taker_candidates) = match spec.direction.zcash_funder() {
+        ActorRole::Maker => (vec![candidate], Vec::new()),
+        ActorRole::Taker => (Vec::new(), vec![candidate]),
+    };
+
+    let maker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
+        &RoleCorridor::of_spec(spec, ActorRole::Maker),
+        swap_id,
+        ActorRole::Maker,
+        agreement_file,
+        agreement_sha256,
+        maker_paths,
+        (spec.direction.preimage_owner() == ActorRole::Maker)
+            .then(|| maker_paths.claim_preimage.clone()),
+        maker_runtime,
+        zebra_genesis,
+        discovery,
+        maker_candidates,
+    ))
+    .context("failed to encode maker actor config")?;
+    let taker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
+        &RoleCorridor::of_spec(spec, ActorRole::Taker),
+        swap_id,
+        ActorRole::Taker,
+        agreement_file,
+        agreement_sha256,
+        taker_paths,
+        (spec.direction.preimage_owner() == ActorRole::Taker)
+            .then(|| taker_paths.claim_preimage.clone()),
+        taker_runtime,
+        zebra_genesis,
+        discovery,
+        taker_candidates,
+    ))
+    .context("failed to encode taker actor config")?;
+    write_private_new(&maker_paths.config, &maker_config)?;
+    write_private_new(&taker_paths.config, &taker_config)?;
+
+    let maker = ActorConfig::load_private(&maker_paths.config)
+        .context("provisioned maker config did not reload")?;
+    let taker = ActorConfig::load_private(&taker_paths.config)
+        .context("provisioned taker config did not reload")?;
+    ensure!(
+        maker.bridge_runtime().escrow_program_id == spec.lez_runtime.escrow_program_id
+            && taker.bridge_runtime().escrow_program_id == spec.lez_runtime.escrow_program_id,
+        "provisioned actor runtime changed the checked escrow program"
+    );
+    validate_actor_pair(&maker, &taker).context("provisioned actor pair is not isolated")?;
+    let _maker_material = maker
+        .load_activate_material()
+        .context("provisioned maker activation material is invalid")?;
+    let _taker_material = taker
+        .load_activate_material()
+        .context("provisioned taker activation material is invalid")?;
+    Ok((maker, taker))
 }
 
 /// Validates a real Chat result against its chain-fact template and produces a
@@ -1585,6 +1620,10 @@ pub(crate) struct RoleCorridor<'a> {
     pub(crate) zebra_endpoint: &'a Url,
     pub(crate) zebra_route: &'a LocalPocZebraRoute,
     pub(crate) profile: ZecProfileId,
+    /// A self-hosted Testnet Zebra's cookie was copied beside the role's keys
+    /// (the dealer fixture: its own path is not one the Nodes read); otherwise
+    /// the actor names the cookie where the route names it.
+    pub(crate) cookie_copied: bool,
 }
 
 #[cfg(feature = "dealer-fixture")]
@@ -1599,6 +1638,7 @@ impl<'a> RoleCorridor<'a> {
             zebra_endpoint: &spec.zebra_endpoint,
             zebra_route: &spec.zebra_route,
             profile: spec.profile().id(),
+            cookie_copied: true,
         }
     }
 }
@@ -1646,7 +1686,11 @@ pub(crate) fn actor_config_input(
             }
             LocalPocZebraRoute::SelfHostedCookie { cookie_file } => {
                 ProvisionedZebraRoute::SelfHostedTestnetCookie {
-                    cookie_file: cookie_file.clone(),
+                    cookie_file: if corridor.cookie_copied {
+                        paths.zebra_credential.clone()
+                    } else {
+                        cookie_file.clone()
+                    },
                 }
             }
             LocalPocZebraRoute::TatumTestnetXApiKey { .. } => {
@@ -3383,6 +3427,98 @@ pub(crate) mod testnet_provision_tests {
         assert_eq!(agreement.revealing_claimant(), Participant::Taker);
         let digest: [u8; 32] = Sha256::digest(&fixture.preimage[..]).into();
         assert_eq!(&digest, agreement.secret_digest());
+    }
+
+    /// The dealer fixture writes both roles' configs against one Zebra. On the
+    /// devnet's Regtest route both name that node's live cookie and the pair
+    /// is still isolated (config.rs `node_credentials_cross_roles`); a
+    /// self-hosted Testnet Zebra's cookie is copied beside each role's keys.
+    #[cfg(feature = "dealer-fixture")]
+    #[test]
+    fn a_dealer_pair_on_a_cookie_route_names_the_one_live_cookie_and_is_isolated() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        for (profile, kind) in [
+            ("deterministic-local-devnet-v5", "deterministic_local"),
+            ("public-testnet-v2", "self_hosted_cookie"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = fs::canonicalize(directory.path()).unwrap().join("corridor");
+            create_private_directory(&root).unwrap();
+            let node = root.join("node");
+            create_private_directory(&node).unwrap();
+            let cookie = node.join(".cookie");
+            fs::write(&cookie, b"__cookie__:secret").unwrap();
+            fs::set_permissions(&cookie, fs::Permissions::from_mode(0o600)).unwrap();
+            let route = serde_json::json!({"kind": kind, "cookie_file": cookie});
+            let mut spec = spec(profile, &route);
+            spec.zebra_endpoint = Url::parse("http://127.0.0.1:18232").unwrap();
+            validate_spec(&spec).unwrap();
+            let swap_id = SwapId::new(spec.swap_id.clone()).unwrap();
+
+            let shared = root.join("shared");
+            create_private_directory(&shared).unwrap();
+            let agreement = shared.join("agreement-v2.borsh");
+            write_private_new(&agreement, b"signed agreement wire").unwrap();
+            let sha256 = Hex32::from_bytes(Sha256::digest(b"signed agreement wire").into());
+            let mut paths = Vec::new();
+            for (index, role) in ["maker", "taker"].into_iter().enumerate() {
+                let role_root = root.join(role);
+                create_private_directory(&role_root).unwrap();
+                create_private_directory(&role_root.join("state")).unwrap();
+                let role_paths = material_paths(&role_root, &role_root.join("state"));
+                let byte = u8::try_from(index).unwrap() + 1;
+                write_private_new(&role_paths.claim_recovery_key, &[byte; 32]).unwrap();
+                write_private_new(&role_paths.zcash_key, &[byte + 2; 32]).unwrap();
+                write_private_new(&role_paths.capability, &random_capability().unwrap()).unwrap();
+                paths.push(role_paths);
+            }
+            write_private_new(&paths[1].claim_preimage, &[9; 32]).unwrap();
+            let copied = kind == "self_hosted_cookie";
+            if copied {
+                for role_paths in &paths {
+                    write_private_new(&role_paths.zebra_credential, b"__cookie__:secret").unwrap();
+                }
+            }
+            let (maker, taker) = write_validated_actor_pair(
+                &spec,
+                &swap_id,
+                &agreement,
+                sha256,
+                (&paths[0], &paths[1]),
+                (
+                    runtime_descriptor(&spec, BridgeParticipant::Maker, Hex32::from_bytes([7; 32])),
+                    runtime_descriptor(&spec, BridgeParticipant::Taker, Hex32::from_bytes([8; 32])),
+                ),
+                Hex32::from_bytes([6; 32]),
+                DiscoveryWindow::new(1, 4096).unwrap(),
+                CandidateOutpoint::new(Hex32::from_bytes([5; 32]), 0),
+            )
+            .unwrap_or_else(|error| panic!("{kind}: {error:#}"));
+            for (role, config) in [("maker", &maker), ("taker", &taker)] {
+                let raw: serde_json::Value = serde_json::from_slice(
+                    &fs::read(root.join(role).join("actor-config.json")).unwrap(),
+                )
+                .unwrap();
+                let named = if copied {
+                    root.join(role).join("zebra.credential")
+                } else {
+                    cookie.clone()
+                };
+                assert_eq!(
+                    raw["zebra"]["route"]["cookie_file"],
+                    named.to_str().unwrap(),
+                    "{kind}"
+                );
+                assert!(
+                    config
+                        .load_drive_material()
+                        .unwrap()
+                        .zebra_cookie()
+                        .is_some()
+                );
+            }
+        }
     }
 
     #[cfg(feature = "dealer-fixture")]

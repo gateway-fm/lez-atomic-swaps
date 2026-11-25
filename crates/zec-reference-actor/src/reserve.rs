@@ -880,6 +880,7 @@ pub fn write_zec_role_template(
         zebra_endpoint: &config.zebra_endpoint,
         zebra_route: &config.zebra_route,
         profile: config.profile_for(template.direction),
+        cookie_copied: false,
     };
     let bytes = encode_deterministic_local_v0_2_actor_config(actor_config_input(
         &corridor,

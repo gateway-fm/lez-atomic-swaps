@@ -62,6 +62,13 @@ impl FileLocation {
         true
     }
 
+    /// The same canonical path, whatever file it names now: a credential the
+    /// node writes anew at every start (Zebra's `.cookie`) is bound by its
+    /// path, not by one file's identity.
+    pub(crate) fn same_path(&self, current: &Self) -> bool {
+        self.canonical == current.canonical
+    }
+
     /// The same path still names the same file (device and inode), whatever
     /// was written to it: a database rewritten in place keeps this, a file
     /// replaced by a rename does not. Content reads use [`Self::unchanged`].

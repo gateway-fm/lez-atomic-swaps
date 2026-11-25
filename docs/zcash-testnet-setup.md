@@ -155,8 +155,12 @@ logosctl call zebrad_module status
 
 The cookie is `<cacheDir>/.cookie` (`logosctl call zebrad_module getConfig
 testnet` names `cacheDir`), owner-only and new at every start; a Node run by
-the same Basecamp runs as its user, so the route can name that file directly
-(the public lane's `LEZ_ZEC_SELF_HOSTED_COOKIE_FILE`, `--zebra-cookie-file`).
+the same Basecamp runs as its user, so its Zcash role can name that file
+directly and its actors read the current cookie at each call. The public
+lane's dealer fixture instead copies the file it is given
+(`LEZ_ZEC_SELF_HOSTED_COOKIE_FILE`) beside each role's keys when it
+provisions a corridor; a corridor provisioned that way needs provisioning
+again after the Zebra restarts.
 
 Generate a configuration into a run-specific directory:
 
