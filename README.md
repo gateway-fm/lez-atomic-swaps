@@ -9,13 +9,26 @@ It uses Taproot/MuSig2 adaptor signatures on Bitcoin, witnessed escrow on LEZ,
 signed offer discovery over Logos Delivery, and private negotiation over Logos
 Chat.
 
-The same desks and Nodes also swap Zcash and LEZ (Milestone 2, release
-v0.3.0): a BIP-199 hash-time-locked contract on Zcash's transparent pool
-against the same LEZ escrow, on Zebra 7 regtest and the private LEZ devnet.
-The SDK and its lifecycle are in [`docs/sdk-lez-zec.md`](docs/sdk-lez-zec.md),
-node setup in [`docs/zcash-testnet-setup.md`](docs/zcash-testnet-setup.md),
-and the release record on the
-[v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
+The same desks and Nodes also swap Zcash and LEZ (Milestone 2, submitted as
+release [v0.3.4](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.4)):
+a BIP-199 hash-time-locked contract on Zcash's transparent pool against the
+same LEZ escrow, on Zebra 7 regtest and the private LEZ devnet. The SDK and
+its lifecycle are in [`docs/sdk-lez-zec.md`](docs/sdk-lez-zec.md), node setup
+in [`docs/zcash-testnet-setup.md`](docs/zcash-testnet-setup.md).
+
+Version 0.4.0 adds Monero and LEZ (Milestone 4), in one direction, the Taker
+selling LEZ: a 2-of-2 Monero key split whose shares are revealed by MuSig2
+adaptor signatures on the LEZ escrow, bound to the Monero keys by a
+cross-curve DLEQ proof. It runs through both Nodes and both desks on Monero
+regtest and the private LEZ devnet; the Nodes, without the desks, also
+completed, refunded and punished a swap once on public Monero Stagenet with
+LEZ on the devnet
+([`docs/monero-stagenet-guide.md`](docs/monero-stagenet-guide.md)). The SDK is in
+[`docs/sdk-lez-xmr.md`](docs/sdk-lez-xmr.md), the order and its departures
+from the BTC/ZEC flow in
+[ADR 0217](docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md),
+and each deliverable with its proof in
+[`docs/m4-acceptance-checklist.md`](docs/m4-acceptance-checklist.md).
 
 [**Watch the 1:53 product walkthrough**](media/lez-btc-ui-swap-demo.mp4) ·
 [**Open the interactive deck**](media/lez-btc-m1-m3-m6-submission.html) ·
@@ -24,8 +37,8 @@ and the release record on the
 
 [![Maker and Taker complete a BTC-to-LEZ swap](media/screenshots/lez-btc-m1-m3-m6-submission-cover.png)](media/lez-btc-ui-swap-demo.mp4)
 
-> **Project status:** the private-local BTC/LEZ and ZEC/LEZ product paths work end to end
-> and is covered by real-chain, recovery, concurrency, UI, and offline tests.
+> **Project status:** the private-local BTC/LEZ, ZEC/LEZ and XMR/LEZ product paths work end to end
+> and are covered by real-chain, recovery, concurrency, UI, and offline tests.
 > Public-network operation, production key management, and an independent
 > cryptographic audit are still in progress.
 
@@ -35,6 +48,7 @@ and the release record on the
 |---|---|
 | Native BTC ↔ LEZ settlement | Bitcoin Core regtest plus a private LEZ v0.2 devnet; no wrapped asset |
 | Native ZEC ↔ LEZ settlement | Zebra 7.0.0 regtest (NU7) plus the same LEZ devnet; a BIP-199 HTLC on Zcash's transparent pool |
+| Native XMR ↔ LEZ settlement | Monero 0.18.5.1 regtest plus the same LEZ devnet; the Taker sells LEZ only; Monero is off unless the stack starts with `LEZ_MONERO=1` |
 | Maker liquidity | Wallet-owned offers, inventory, withdrawal, active swaps, and history |
 | Taker flow | Authenticated discovery, offer acceptance, progress, and role-owned actions |
 | Network transport | Signed offer broadcasts over Logos Delivery and private per-Taker negotiation over Logos Chat |
@@ -59,7 +73,7 @@ and GNU `timeout`; macOS ships bash 3.2, so on a Mac run
 [latest release](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest):
 
 ```sh
-tar -xzf lez-swap-stack-v0.3.6-arm64.tar.gz && cd lez-swap-stack-v0.3.6-arm64
+tar -xzf lez-swap-stack-v0.4.0-arm64.tar.gz && cd lez-swap-stack-v0.4.0-arm64
 ./scripts/start.sh               # pull images → wallet identities → chains → market bootstrap → desk suites
 ```
 
@@ -232,11 +246,16 @@ licence, architecture, DCO, and security-review requirements.
 | [`submission/`](submission/) | M1/M3/M6 reviewer map, evidence index, reproduction guide, and release checksums |
 | [`media/`](media/) | Interactive deck, PDF, walkthrough, captions, and screenshots |
 
-The current public release, v0.3.6, covers the M1 protocol foundation, the M2
-ZEC/LEZ pair, the M3 BTC/LEZ vertical slice, and the M6 Maker/Taker
-experience, on private local chains. Monero and public-network operation are
-not part of it (release notes on the
-[release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest)).
+The current public release, v0.4.0, covers the M1 protocol foundation, the M2
+ZEC/LEZ pair, the M3 BTC/LEZ vertical slice, the M4 XMR/LEZ pair (one
+direction, the Taker selling LEZ, see
+[`docs/sdk-lez-xmr.md`](docs/sdk-lez-xmr.md)) and the M6 Maker/Taker
+experience, with LEZ on private local chains. Public-network operation is not
+part of it, apart from Monero Stagenet: the Nodes completed, refunded and
+punished a swap there once, with LEZ on the devnet
+([`docs/monero-stagenet-guide.md`](docs/monero-stagenet-guide.md)). Release
+notes are on the
+[release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest).
 
 ## Contributing and security
 

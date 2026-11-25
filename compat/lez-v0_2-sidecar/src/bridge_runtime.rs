@@ -659,6 +659,14 @@ impl BridgeRuntime {
         &self,
         request: &lez_bridge_protocol::PrepareNativeXmrClaimV3Request,
     ) -> Result<lez_bridge_protocol::PrepareNativeXmrClaimV3Result, BridgeRuntimeError> {
+        // TEST-ONLY (feature `test-hooks`, the devnet's xmr-kill-maker kill
+        // point "claim preparation held"): while `hold-claim-preparations`
+        // holds a count, the Maker's tag-15 preparation waits here, before
+        // anything of it is durable, for the kill that comes for it.
+        #[cfg(feature = "test-hooks")]
+        if crate::test_hooks::take("hold-claim-preparations") {
+            std::future::pending::<()>().await;
+        }
         self.planner
             .prepare_native_xmr_claim_v3(request)
             .await
@@ -783,18 +791,99 @@ impl BridgeRuntime {
 
     /// Prepares one exact signed tag-17 punishment without submission.
     ///
+    /// The Maker's LEZ owner signs every pair's transactions at its live
+    /// nonce, so another one may take the punishment's nonce first; the
+    /// punishment can then never be included, and after the punish time
+    /// nobody else can move the escrow. A reserved punishment the node has not
+    /// included while the account's sequenced nonce is above its own is
+    /// therefore re-planned at that nonce (the nonce is the one part of the
+    /// message nothing commits). The nonce is read before the inclusion, so a
+    /// punishment included in between is seen and kept.
+    ///
     /// # Errors
     ///
     /// Preserves strict Maker role, runtime, terms, claimant, nonce, message
-    /// hash, ABI, signature, and durable-reservation failures from the planner.
+    /// hash, ABI, signature, re-plan bound and durable-reservation failures
+    /// from the planner; `Unavailable` for node facts.
     pub async fn prepare_native_xmr_punish_v3(
         &self,
         request: &lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
     ) -> Result<lez_bridge_protocol::PrepareNativeXmrPunishV3Result, BridgeRuntimeError> {
+        let prepared = self.planner.prepare_native_xmr_punish_v3(request).await?;
+        let live_nonce = self
+            .planner
+            .live_signer_nonce()
+            .await
+            .map_err(|_| BridgeRuntimeError::Unavailable)?;
+        if !self
+            .planner
+            .native_xmr_punish_nonce_passed(&prepared.punish, live_nonce)?
+            || self
+                .node
+                .prepared_transaction_is_included(&prepared.punish)
+                .await?
+        {
+            return Ok(prepared);
+        }
         self.planner
-            .prepare_native_xmr_punish_v3(request)
+            .supersede_native_xmr_punish_v3(request, prepared.punish.transaction_id, live_nonce)
             .await
             .map_err(Into::into)
+    }
+
+    /// Restores the durable tag-17 lineage at startup without a node call.
+    ///
+    /// # Errors
+    ///
+    /// Preserves the planner's durable-state and drift failures.
+    pub async fn restore_native_xmr_punish_v3(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
+        expected: &lez_bridge_protocol::PrepareNativeXmrPunishV3Result,
+    ) -> Result<(), BridgeRuntimeError> {
+        self.planner
+            .restore_native_xmr_punish_v3(request, expected)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Reads one XMR-native escrow's metadata state at the sequencer tip, under
+    /// one unchanged tip (read again, a bounded number of times, when it
+    /// moved). The tip is not finalized: this is what the sequencer holds
+    /// now, which a refund must not race. It performs no submission.
+    ///
+    /// # Errors
+    ///
+    /// `MovingTip` when the tip moved under every read, `Unavailable` for node
+    /// facts, `InvalidObservation` for metadata the terms do not bind.
+    pub async fn observe_native_xmr_escrow_tip_v3(
+        &self,
+        request: &lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Request,
+    ) -> Result<lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Result, BridgeRuntimeError> {
+        let metadata_id = AccountId::new(*request.terms.to_input().metadata_account_id.as_bytes());
+        for _ in 0..3 {
+            let before = self.node.sequencer_tip().await?;
+            let account = self.node.native_account(metadata_id).await?;
+            if self.node.sequencer_tip().await? != before {
+                continue;
+            }
+            let state = if account == Account::default() {
+                None
+            } else {
+                Some(crate::finalized_xmr_observation::xmr_metadata_state(
+                    &request.terms,
+                    account.program_owner,
+                    account.data.as_ref(),
+                )?)
+            };
+            return Ok(lez_bridge_protocol::ObserveNativeXmrEscrowTipV3Result::new(
+                request.context.clone(),
+                request.terms,
+                before,
+                state,
+            ));
+        }
+        Err(BridgeRuntimeError::MovingTip)
     }
 
     /// Classifies one exact persisted XMR-native Fund in stable finalized history.
@@ -1516,19 +1605,32 @@ impl BridgeRuntime {
         )
     }
 
+    /// Whether these exact bytes are an owned XMR recovery the request journal
+    /// decides again on every submission (the completed tag-16 refund).
+    pub async fn xmr_recovery_submission(&self, prepared: &PreparedTransaction) -> bool {
+        self.planner.xmr_recovery_submission(prepared).await
+    }
+
+    /// Whether these exact bytes are the Maker's completed tag-15 claim, which
+    /// the request journal decides again on every submission as well.
+    pub async fn xmr_claim_submission(&self, prepared: &PreparedTransaction) -> bool {
+        self.planner.xmr_claim_submission(prepared).await
+    }
+
     /// Whether an unknown outcome, or the in-flight marker of a submission
     /// whose sidecar stopped mid-send, that the request journal holds for
     /// these exact bytes is decided on the chain again (looked up, then sent
     /// once more) instead of replayed: every owned submission whose caller
     /// sends the same request id again, only after it observed the
-    /// transaction absent and inside its own window. That is the native
-    /// escrow pair and its re-plans, the revealing claim and its re-plans
-    /// (also the Maker's follow-up claim) and the native refund (the ZEC
-    /// `lez_refund` and the BTC actor's witnessed refund alike). Identical
-    /// bytes carry one transaction id and one nonce and are included at most
-    /// once.
+    /// transaction absent and inside its own window. That is the XMR tag-13
+    /// pair, tag 15, tag 16 and tag 17, the native escrow pair and its
+    /// re-plans, the revealing claim and its re-plans (also the Maker's
+    /// follow-up claim) and the native refund (the ZEC `lez_refund` and the
+    /// BTC actor's witnessed refund alike). Identical bytes carry one
+    /// transaction id and one nonce and are included at most once.
     pub async fn submission_unknown_decided_again(&self, prepared: &PreparedTransaction) -> bool {
         self.submission_success_decided_again(prepared).await
+            || self.planner.xmr_escrow_submission(prepared).await
     }
 
     /// Whether a success the request journal holds for these exact bytes is
@@ -1536,9 +1638,15 @@ impl BridgeRuntime {
     /// observed absent although accepted (a sequencer that admitted them and
     /// dropped them), and those whose nonce can be taken and re-planned. The
     /// native refund is one: replayed as accepted, a refund the sequencer
-    /// dropped would hold the LEZ in its escrow for good.
+    /// dropped would hold the LEZ in its escrow for good. The XMR tag-13 pair
+    /// is not: its supervisor submits it on every lock step until it is final
+    /// without first finding it absent, so a decided-again acceptance would
+    /// re-broadcast it in every send-to-inclusion gap, while one the
+    /// sequencer dropped ends the swap cleanly at C with nothing locked.
     pub async fn submission_success_decided_again(&self, prepared: &PreparedTransaction) -> bool {
-        self.native_escrow_lineage_member(prepared).await
+        self.xmr_recovery_submission(prepared).await
+            || self.xmr_claim_submission(prepared).await
+            || self.native_escrow_lineage_member(prepared).await
             || self.revealing_claim_lineage_member(prepared).await
             || self.planner.native_refund_submission(prepared).await
     }
@@ -1580,6 +1688,12 @@ impl BridgeRuntime {
                 request.transaction.transaction_id,
                 SubmissionOutcome::AlreadyKnown,
             ));
+        }
+        #[cfg(feature = "test-hooks")]
+        if matches!(ownership, OwnedSubmission::XmrPunish)
+            && crate::test_hooks::take("punish-nonce-thefts")
+        {
+            return self.steal_punish_nonce(request).await;
         }
         // A native escrow transaction whose signer nonce the account has
         // already passed (another transaction of this signer took it first,
@@ -1667,18 +1781,51 @@ impl BridgeRuntime {
         ))
     }
 
-    /// TEST-ONLY (feature `test-hooks`, the devnet's zec-kill-maker-claim
-    /// kill point "claim submission in flight"): while
-    /// `hold-claim-submissions` holds a count, a revealing claim's
-    /// submission waits here for good, its in-flight marker journaled and
-    /// nothing looked up or sent, for the kill that comes for it.
+    /// TEST-ONLY (feature `test-hooks`, the devnet's kill points "claim
+    /// submission in flight" of zec-kill-maker-claim and "claim tool running"
+    /// of xmr-kill-maker): while `hold-claim-submissions` holds a count, a
+    /// revealing claim's submission or the Maker's tag-15 claim submission
+    /// waits here for good, its in-flight marker journaled and nothing looked
+    /// up or sent, for the kill that comes for it.
     #[cfg(feature = "test-hooks")]
     async fn hold_claim_submission(&self, prepared: &PreparedTransaction) {
-        if self.revealing_claim_lineage_member(prepared).await
+        if (self.revealing_claim_lineage_member(prepared).await
+            || self.planner.xmr_claim_submission(prepared).await)
             && crate::test_hooks::take("hold-claim-submissions")
         {
             std::future::pending::<()>().await;
         }
+    }
+
+    /// TEST-ONLY (feature `test-hooks`, the devnet's punish re-plan
+    /// scenario): while `punish-nonce-thefts` holds a count, another
+    /// transaction of the signer takes the punishment's nonce first and the
+    /// punishment itself is not sent, as if the sequencer dropped it; the
+    /// next drive re-plans it.
+    #[cfg(feature = "test-hooks")]
+    async fn steal_punish_nonce(
+        &self,
+        request: &SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
+        let theft = self
+            .planner
+            .punish_nonce_theft(&request.transaction)
+            .await?;
+        self.node
+            .submit_prepared_transaction(&theft)
+            .await
+            .map_err(|_| BridgeRuntimeError::UnknownSubmissionOutcome)?;
+        for _ in 0..60 {
+            if self.node.prepared_transaction_is_included(&theft).await? {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        Ok(SubmitTransactionResult::new(
+            request.context.clone(),
+            request.transaction.transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
     }
 
     /// Whether either account a native escrow initialization creates (the

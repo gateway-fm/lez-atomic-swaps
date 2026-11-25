@@ -27,6 +27,10 @@
 #                            for the evidence run; no desk suites
 #   LEZ_EXPLORERS=1          also start the block explorers (Compose profile
 #                            "explorers", off by default)
+#   LEZ_MONERO=1             also Monero regtest on every lane (Compose profile
+#                            "monero", off by default; kept in runtime.env,
+#                            LEZ_MONERO=0 turns it off again); stage it first
+#                            with LEZ_MONERO=1 scripts/stage-assets.sh
 #
 # Requires the payloads staged by from-scratch.sh (images/*/ contexts, the
 # provision directory, the market root). SKIP_UI_VERIFY=1 skips the UI suites.
@@ -105,7 +109,10 @@ wait_healthy() { # wait_healthy <seconds> <container>...
 }
 
 if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
+  # (the caller's LEZ_MONERO, when given, wins over the one runtime.env recorded)
+  monero_asked="${LEZ_MONERO-}"
   load_env
+  [[ -z "$monero_asked" ]] || LEZ_MONERO="$monero_asked"
   stamp="$(date +%s)"
   echo "[lez] recreating the LEZ chain; old state → runtime/lez-broken-$stamp"
   # Forget the swaps that referenced the old chain first, while the Nodes still
@@ -177,6 +184,13 @@ fi
 bash scripts/gen-config.sh runtime
 env_after="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
 load_env
+# Monero's services (LEZ_MONERO, as runtime.env now records it); none when off.
+monero_services=()
+monero_profile=()
+# (On Stagenet the operator's own monerod and wallet-rpcs serve the Nodes:
+# compose.stagenet.yaml, no lane chain.)
+[[ "${LEZ_MONERO:-0}" != 1 || "${LEZ_MONERO_NETWORK:-regtest}" == stagenet ]] ||
+  { monero_services=(monerod xmr-funding-wallet maker-xmr-wallet taker-xmr-wallet); monero_profile=(--profile monero); }
 
 stage "images"
 echo "[2/6] images…"
@@ -209,15 +223,25 @@ case "${LEZ_IMAGES:-build}" in
     else
       echo "  all images present (use --build to rebuild)"
     fi
+    # Monero's image is outside the default profile: built here, once it is staged.
+    if (( ${#monero_services[@]} )) &&
+       { [[ "$BUILD" == 1 ]] || ! docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1; }; then
+      [[ -x images/monerod/bin/monerod ]] || { echo "Monero is not staged: LEZ_MONERO=1 scripts/stage-assets.sh" >&2; exit 1; }
+      # (the isolated lane's Dockerfile, copied into the context: compose.yaml)
+      cmp -s ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile ||
+        install -m 0644 ../tests/e2e/monero/Dockerfile images/monerod/Dockerfile
+      docker compose --profile monero build monerod
+    fi
     ;;
   pull)
     echo "  pulling ${LEZ_IMAGE_PREFIX:-lez}-*:${LEZ_IMAGE_TAG:-local}…"
-    docker compose --profile tools --profile explorers pull --quiet
+    # (Monero's image too when it is on: a release publishes it, lez-monerod)
+    docker compose --profile tools --profile explorers ${monero_profile[@]+"${monero_profile[@]}"} pull --quiet
     ;;
   present)
     # A developer's bundle run on images built locally (tag `local`): nothing is
     # pulled; every image the compose file names must already exist.
-    for image in $(docker compose config --images 2>/dev/null | sort -u); do
+    for image in $(docker compose ${monero_profile[@]+"${monero_profile[@]}"} config --images 2>/dev/null | sort -u); do
       docker image inspect "$image" >/dev/null 2>&1 || { echo "image $image is not present locally" >&2; exit 1; }
     done
     ;;
@@ -239,7 +263,9 @@ done
 # Basecamps (now the one network Basecamp, whose aliases they would shadow) and
 # the init containers the images' own data directories replaced.
 docker rm -f "$LEZ_STACK_PREFIX"-{bedrock,indexer,state-init,bitcoin-init,zebra-init} >/dev/null 2>&1 || true
-docker compose up -d --no-build bitcoin-core btc-miner zebra network sequencer
+# (Monero's services start when named; nothing waits for them: the Nodes do not
+# need them to start, and the harness waits for their RPC itself)
+docker compose up -d --no-build bitcoin-core btc-miner zebra network sequencer ${monero_services[@]+"${monero_services[@]}"}
 [[ "${LEZ_EXPLORERS:-0}" != 1 ]] || docker compose --profile explorers up -d --no-build btc-explorer lez-explorer
 stage "chains healthy"
 wait_healthy 2400 "$LEZ_CONTAINER_PREFIX-bitcoin-core" "$LEZ_CONTAINER_PREFIX-zebra" "$LEZ_STACK_PREFIX-network" "$LEZ_STACK_PREFIX-sequencer"
@@ -254,10 +280,13 @@ wait_healthy 2400 "$LEZ_CONTAINER_PREFIX-bitcoin-core" "$LEZ_CONTAINER_PREFIX-ze
 # (LEZ_FRESH_FINALITY_SECONDS, 60), and start another chain if either never comes.
 if [[ "$FRESH_LEZ" == 1 ]]; then
   stage "the new chain finalizes"
+  # An indexer that does not answer yet (connection refused, a timeout) is an
+  # empty read, not an error: under `set -e -o pipefail` curl's exit status
+  # would otherwise end this script on the first read instead of polling.
   lez_finalized() {
     curl -s --max-time 10 -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
-      "$LEZ_STACK_INDEXER_URL" 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
+      "$LEZ_STACK_INDEXER_URL" 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p' || true
   }
   # read every 2 s: once it serves a height, a healthy chain finalizes every second or two
   first=""; moved=0; now=""

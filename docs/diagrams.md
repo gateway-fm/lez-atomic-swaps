@@ -1,7 +1,7 @@
 # LEZ/BTC architecture and atomic flow
 
 These diagrams describe the bilateral Bitcoin milestone and the private-local
-M3+ product stack on this branch. The construction is a conditional atomic
+M3+ product stack on `main`. The construction is a conditional atomic
 swap across two independent ledgers; it is not a single cross-chain
 transaction.
 

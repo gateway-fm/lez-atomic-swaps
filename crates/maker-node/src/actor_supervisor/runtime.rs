@@ -649,6 +649,10 @@ fn run_claimed_attempt_with_lock(
             Ok(command) => command,
             Err(attempt) => return Ok(attempt),
         };
+        if activation_held(lease.record().manifest().kind(), command) {
+            attempted = command.name();
+            return Ok(ClaimedAttempt::Backoff("test_hook_activation_held"));
+        }
         let admitted = match effect_held_back(store, lease, config, command, &status) {
             Ok(admitted) => admitted,
             Err(class) => return Ok(ClaimedAttempt::Backoff(class)),
@@ -710,6 +714,47 @@ fn run_claimed_attempt_with_lock(
         progress,
         held_lock: Some(held_lock),
     })
+}
+
+/// Whether the devnet's test hook `hold-zec-activations` holds back this
+/// attempt: a Zcash actor's activation while the flag file is present (the
+/// scenario zec-activate-after-expiry stops the Maker between the take and the
+/// activation). Always false without the `test-hooks` feature.
+fn activation_held(kind: MakerActorKindV1, command: ActorEffectCommand) -> bool {
+    #[cfg(feature = "test-hooks")]
+    return kind == MakerActorKindV1::Zcash
+        && command == ActorEffectCommand::Activate
+        && test_hooks::flag("hold-zec-activations");
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        let _ = (kind, command);
+        false
+    }
+}
+
+/// The devnet's test hooks: files in the directory `LEZ_TEST_HOOKS_DIR`
+/// names, read on every use. Built only with the `test-hooks` feature, which
+/// the devnet's build enables and no release build does: a Node built without
+/// it has none of this.
+#[cfg(feature = "test-hooks")]
+pub(super) mod test_hooks {
+    use std::path::PathBuf;
+
+    // A release build (the release workflows and packagers set
+    // LEZ_RELEASE_BUILD) cannot carry the test hooks: it does not compile.
+    const _: () = assert!(
+        option_env!("LEZ_RELEASE_BUILD").is_none(),
+        "the devnet test hooks (feature test-hooks) are never part of a release build (LEZ_RELEASE_BUILD)"
+    );
+
+    fn file(name: &str) -> Option<PathBuf> {
+        std::env::var_os("LEZ_TEST_HOOKS_DIR").map(|directory| PathBuf::from(directory).join(name))
+    }
+
+    /// A flag file that is present.
+    pub(crate) fn flag(name: &str) -> bool {
+        file(name).is_some_and(|path| path.exists())
+    }
 }
 
 /// The effect one attempt runs: the owner's queued action if there is one,
@@ -827,8 +872,8 @@ fn run_child_until(
 ) -> Result<Vec<u8>, ChildRunError> {
     ensure_invocation_admitted(invocation, config, cancellation)?;
     let actor_command = invocation.name();
-    let artifacts =
-        prepare_maker_actor(lease.record()).map_err(|error| classify_deployment(&error))?;
+    let deployment_failure = |error| classify_deployment(&error, lease, actor_command);
+    let artifacts = prepare_maker_actor(lease.record()).map_err(deployment_failure)?;
     let transfers_lock =
         lease.record().manifest().kind() == MakerActorKindV1::Monero && invocation.is_effect();
     let mut command = if transfers_lock {
@@ -836,11 +881,14 @@ fn run_child_until(
     } else {
         artifacts.into_command(held_lock)
     }
-    .map_err(|error| classify_deployment(&error))?;
+    .map_err(deployment_failure)?;
     ensure_invocation_admitted(invocation, config, cancellation)?;
     command
         .args(["--config-fd", "196", actor_command])
         .env_clear()
+        // The one variable an actor keeps: where systemd put this unit's
+        // credentials, so a role key named there passes its reader's rule.
+        .envs(std::env::var_os("CREDENTIALS_DIRECTORY").map(|dir| ("CREDENTIALS_DIRECTORY", dir)))
         .current_dir("/")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -929,12 +977,24 @@ fn run_child_until(
     Ok(output)
 }
 
-fn classify_deployment(error: &MakerActorProcessError) -> ChildRunError {
+fn classify_deployment(
+    error: &MakerActorProcessError,
+    lease: &MakerActorLeaseV1,
+    actor_command: &str,
+) -> ChildRunError {
     match error {
         MakerActorProcessError::ArtifactPreparation | MakerActorProcessError::LockInheritance => {
             ChildRunError::Retry("actor_spawn_failed")
         }
-        _ => ChildRunError::Fail("actor_deployment_invalid"),
+        _ => {
+            // A permanent failure says which check refused it: the class alone
+            // does not, and the schedule stays failed until an operator acts.
+            eprintln!(
+                "maker actor {}: {actor_command} attempt fails (actor_deployment_invalid: {error})",
+                lease.record().swap_id().as_str()
+            );
+            ChildRunError::Fail("actor_deployment_invalid")
+        }
     }
 }
 
@@ -1661,7 +1721,10 @@ fn exact_xmr_pre_effect_status_shape(value: &Value) -> bool {
     value.as_object().is_some_and(|object| {
         object.len() == KEYS.len()
             && KEYS.iter().all(|key| object.contains_key(*key))
-            && object.get("chain_effect_executed").and_then(Value::as_bool) == Some(false)
+            && object
+                .get("chain_effect_executed")
+                .and_then(Value::as_bool)
+                .is_some()
     })
 }
 
@@ -1685,14 +1748,11 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()
             let next_action = value.get("next_action").and_then(Value::as_str).ok_or(())?;
             let revision = value.get("revision").and_then(Value::as_u64).ok_or(())?;
             let progress = parse_active_progress(&value, kind)?;
-            if terminal_phase(phase) != (next_action == "complete") {
+            if kind_terminal_phase(kind, phase) != (next_action == "complete") {
                 return Err(());
             }
             let decision = if kind == MakerActorKindV1::Monero {
-                if phase != "offered" || revision != 0 || !xmr_next_action_accepted(next_action) {
-                    return Err(());
-                }
-                StatusDecision::Blocked
+                xmr_status_decision(&value, phase, revision, next_action)?
             } else if terminal_phase(phase) {
                 StatusDecision::Terminal
             } else if kind == MakerActorKindV1::Zcash
@@ -1757,10 +1817,10 @@ fn parse_effect(
     let revision = value.get("revision").and_then(Value::as_u64).ok_or(())?;
     let progress = parse_active_progress(&value, kind)?;
     let next_action = value.get("next_action").and_then(Value::as_str).ok_or(())?;
-    if terminal_phase(phase) != (next_action == "complete") {
+    if kind_terminal_phase(kind, phase) != (next_action == "complete") {
         return Err(());
     }
-    let terminal = terminal_phase(phase);
+    let terminal = kind_terminal_phase(kind, phase);
     let projected_zec_claim = kind == MakerActorKindV1::Zcash
         && matches!(
             command,
@@ -1829,6 +1889,8 @@ fn exact_absorbing_effect(
             (command, outcome, phase),
             (ActorEffectCommand::Claim, "completed", "completed")
                 | (ActorEffectCommand::Recover, "refunded", "refunded")
+                | (ActorEffectCommand::Recover, "punished", "punished")
+                | (ActorEffectCommand::Drive, "unchanged", "expired")
         ),
         MakerActorKindV1::Zcash => matches!(
             (command, outcome, phase),
@@ -1864,7 +1926,11 @@ fn parse_active_progress(
     let phase = value.get("phase").and_then(Value::as_str).ok_or(())?;
     let revision = value.get("revision").and_then(Value::as_u64).ok_or(())?;
     let next_action = value.get("next_action").and_then(Value::as_str).ok_or(())?;
-    if !known_phase(phase) || !known_next_action(kind, next_action) {
+    if !(known_phase(phase)
+        || (kind == MakerActorKindV1::Monero
+            && (xmr_only_phase(phase) || phase == "maker_funding_in_doubt")))
+        || !known_next_action(kind, next_action)
+    {
         return Err(());
     }
     MakerActorProgressObservationV1::active(phase, revision, next_action).map_err(|_| ())
@@ -1922,12 +1988,22 @@ fn known_effect_outcome(
                 | "refunded"
         ),
         (MakerActorKindV1::Monero, ActorEffectCommand::Recover) => {
-            matches!(outcome, "awaiting_observation" | "refunded")
+            matches!(outcome, "awaiting_observation" | "refunded" | "punished")
         }
         (MakerActorKindV1::Monero, ActorEffectCommand::Claim) => {
             matches!(outcome, "awaiting_observation" | "completed")
         }
-        (MakerActorKindV1::Monero, ActorEffectCommand::Activate | ActorEffectCommand::Drive)
+        (MakerActorKindV1::Monero, ActorEffectCommand::Drive) => matches!(
+            outcome,
+            "unchanged"
+                | "observed"
+                | "submitted"
+                | "awaiting_observation"
+                | "refund_seen_funding_unreconciled"
+                | "reconciled"
+                | "activated"
+        ),
+        (MakerActorKindV1::Monero, ActorEffectCommand::Activate)
         | (MakerActorKindV1::Bitcoin, ActorEffectCommand::Claim) => false,
     }
 }
@@ -1996,13 +2072,74 @@ const fn xmr_status_accepted(_value: &Value) -> bool {
     false
 }
 
+/// The Monero next actions: the actor's own steps, and the pre-effect
+/// action of an actor that composes no chain effect.
 #[cfg(feature = "pair-xmr")]
 fn xmr_next_action_accepted(next_action: &str) -> bool {
     next_action == XMR_MAKER_ACTOR_NEXT_ACTION
+        || matches!(
+            next_action,
+            "observe_lez_lock"
+                | "fund_monero"
+                | "observe_claim_or_refund"
+                | "claim_lez"
+                | "refund_monero"
+                | "punish_lez"
+        )
 }
 
 #[cfg(not(feature = "pair-xmr"))]
 const fn xmr_next_action_accepted(_next_action: &str) -> bool {
+    false
+}
+
+/// The Monero Maker's own terminal phases beside the shared two: the swap
+/// expired with no Monero funded, or the Maker punished.
+fn xmr_only_phase(phase: &str) -> bool {
+    matches!(phase, "expired" | "punished")
+}
+
+fn kind_terminal_phase(kind: MakerActorKindV1, phase: &str) -> bool {
+    terminal_phase(phase) || (kind == MakerActorKindV1::Monero && xmr_only_phase(phase))
+}
+
+/// What a Monero status asks for: its claim (tag 15) or recovery (the
+/// Monero refund sweep or tag 17) once a branch is selected, else a drive,
+/// which observes and funds. The pre-effect status stays blocked.
+fn xmr_status_decision(
+    value: &Value,
+    phase: &str,
+    revision: u64,
+    next_action: &str,
+) -> Result<StatusDecision, ()> {
+    if xmr_pre_effect_action(next_action) {
+        return if phase == "offered"
+            && revision == 0
+            && value.get("chain_effect_executed").and_then(Value::as_bool) == Some(false)
+        {
+            Ok(StatusDecision::Blocked)
+        } else {
+            Err(())
+        };
+    }
+    Ok(match next_action {
+        "complete" => StatusDecision::Terminal,
+        "claim_lez" => StatusDecision::Run(ActorEffectCommand::Claim),
+        "refund_monero" | "punish_lez" => StatusDecision::Run(ActorEffectCommand::Recover),
+        "observe_lez_lock" | "fund_monero" | "observe_claim_or_refund" => {
+            StatusDecision::Run(ActorEffectCommand::Drive)
+        }
+        _ => return Err(()),
+    })
+}
+
+#[cfg(feature = "pair-xmr")]
+fn xmr_pre_effect_action(next_action: &str) -> bool {
+    next_action == XMR_MAKER_ACTOR_NEXT_ACTION
+}
+
+#[cfg(not(feature = "pair-xmr"))]
+const fn xmr_pre_effect_action(_next_action: &str) -> bool {
     false
 }
 
@@ -2250,6 +2387,191 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[cfg(feature = "pair-xmr")]
+    fn xmr_status(phase: &str, revision: u64, next_action: &str, executed: bool) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "actor_program": XMR_MAKER_ACTOR_PROGRAM_ID,
+            "actor_abi": XMR_MAKER_ACTOR_ABI_V1,
+            "role": "maker",
+            "state": "active",
+            "phase": phase,
+            "revision": revision,
+            "next_action": next_action,
+            "chain_effect_executed": executed
+        }))
+        .unwrap()
+    }
+
+    #[cfg(feature = "pair-xmr")]
+    #[test]
+    fn xmr_status_routes_every_next_action() {
+        for (phase, revision, next_action, executed, expected) in [
+            ("offered", 0, "observe_lez_lock", false, Some("drive")),
+            (
+                "taker_lock_confirmed",
+                1,
+                "fund_monero",
+                false,
+                Some("drive"),
+            ),
+            (
+                "taker_lock_confirmed",
+                2,
+                "fund_monero",
+                true,
+                Some("drive"),
+            ),
+            (
+                "both_legs_locked",
+                3,
+                "observe_claim_or_refund",
+                true,
+                Some("drive"),
+            ),
+            (
+                "claim_evidence_available",
+                4,
+                "claim_lez",
+                true,
+                Some("claim"),
+            ),
+            (
+                "maker_recovery_available",
+                4,
+                "refund_monero",
+                true,
+                Some("recover"),
+            ),
+            (
+                "maker_recovery_available",
+                4,
+                "punish_lez",
+                true,
+                Some("recover"),
+            ),
+            ("completed", 5, "complete", true, None),
+            ("refunded", 5, "complete", true, None),
+            ("punished", 5, "complete", true, None),
+            ("expired", 0, "complete", false, None),
+            ("expired", 1, "complete", false, None),
+        ] {
+            let parsed = parse_status(
+                &xmr_status(phase, revision, next_action, executed),
+                MakerActorKindV1::Monero,
+            )
+            .unwrap_or_else(|()| panic!("{phase}/{next_action} must parse"));
+            match (parsed.decision, expected) {
+                (StatusDecision::Run(command), Some(name)) => assert_eq!(command.name(), name),
+                (StatusDecision::Terminal, None) => {}
+                _ => panic!("{phase}/{next_action} routed wrongly"),
+            }
+            assert_eq!(
+                parsed.progress,
+                MakerActorProgressObservationV1::active(phase, revision, next_action).unwrap()
+            );
+        }
+        for (phase, next_action) in [
+            // A terminal phase must complete, and only it may.
+            ("expired", "fund_monero"),
+            ("punished", "punish_lez"),
+            ("both_legs_locked", "complete"),
+            // Another pair's actions are not the Monero Maker's.
+            ("both_legs_locked", "wait"),
+            ("both_legs_locked", "claim_zcash"),
+            // The pre-effect action only before any effect.
+            ("both_legs_locked", XMR_MAKER_ACTOR_NEXT_ACTION),
+        ] {
+            assert!(
+                parse_status(
+                    &xmr_status(phase, 3, next_action, true),
+                    MakerActorKindV1::Monero
+                )
+                .is_err(),
+                "{phase}/{next_action} must be refused"
+            );
+        }
+        // Other pairs keep their own phases.
+        for kind in [MakerActorKindV1::Zcash, MakerActorKindV1::Bitcoin] {
+            assert!(parse_status(&status("punished", 3, "complete"), kind).is_err());
+            assert!(parse_status(&status("expired", 3, "complete"), kind).is_err());
+        }
+    }
+
+    #[cfg(feature = "pair-xmr")]
+    #[test]
+    fn xmr_drive_and_punish_effects_parse_exactly() {
+        for (outcome, phase, next_action, terminal) in [
+            ("unchanged", "offered", "observe_lez_lock", false),
+            ("observed", "taker_lock_confirmed", "fund_monero", false),
+            ("submitted", "taker_lock_confirmed", "fund_monero", false),
+            (
+                "awaiting_observation",
+                "taker_lock_confirmed",
+                "fund_monero",
+                false,
+            ),
+            (
+                "refund_seen_funding_unreconciled",
+                "maker_funding_in_doubt",
+                "fund_monero",
+                false,
+            ),
+            (
+                "reconciled",
+                "both_legs_locked",
+                "observe_claim_or_refund",
+                false,
+            ),
+            ("activated", "claim_evidence_available", "claim_lez", false),
+            ("activated", "maker_recovery_available", "punish_lez", false),
+            ("unchanged", "expired", "complete", true),
+        ] {
+            let parsed = parse_effect(
+                &effect("drive", outcome, phase, 3, next_action),
+                ActorEffectCommand::Drive,
+                MakerActorKindV1::Monero,
+            )
+            .unwrap_or_else(|()| panic!("drive {outcome}/{phase} must parse"));
+            assert_eq!(parsed.terminal, terminal);
+        }
+        let punished = parse_effect(
+            &effect("recover", "punished", "punished", 5, "complete"),
+            ActorEffectCommand::Recover,
+            MakerActorKindV1::Monero,
+        )
+        .unwrap();
+        assert!(punished.terminal);
+        for crossed in [
+            effect("drive", "completed", "completed", 5, "complete"),
+            effect("drive", "activated", "punished", 5, "complete"),
+            effect(
+                "drive",
+                "projected",
+                "both_legs_locked",
+                3,
+                "observe_claim_or_refund",
+            ),
+        ] {
+            assert!(
+                parse_effect(
+                    &crossed,
+                    ActorEffectCommand::Drive,
+                    MakerActorKindV1::Monero
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            parse_effect(
+                &effect("recover", "punished", "refunded", 5, "complete"),
+                ActorEffectCommand::Recover,
+                MakerActorKindV1::Monero,
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -212,6 +212,187 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
 
 #[cfg(feature = "pair-zec")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restart_while_delivery_is_unreadable_restores_the_swap_and_refuses_discovery() {
+    // R2: a Taker restarted during a Delivery outage (its source directory
+    // unreadable, as the devnet's outage cut leaves it) starts and keeps the
+    // swap it took; only discovery, which needs Delivery, fails until it is back.
+    let fixture = ProcessInitiationFixture::new();
+    let runtime = private_directory(fixture.root.join("runtime"));
+    let socket = runtime.join("taker.sock");
+    let mut service = TestService::spawn(&fixture.config, &socket);
+    wait_until_ready(&mut service, &socket).await;
+    let request = fixture.request();
+    let first: TakerInitiationCommitV1 =
+        call_local_rpc(&socket, "taker_swap_initiate_v1", &request)
+            .await
+            .unwrap();
+    assert!(service.terminate().await.success());
+
+    let delivery = fixture.delivery_offer.parent().unwrap().to_path_buf();
+    fs::set_permissions(&delivery, fs::Permissions::from_mode(0o000)).unwrap();
+    let mut restarted = TestService::spawn(&fixture.config, &socket);
+    wait_until_ready(&mut restarted, &socket).await;
+    let replay: TakerInitiationCommitV1 =
+        call_local_rpc(&socket, "taker_swap_initiate_v1", &request)
+            .await
+            .expect("the taken swap replays without Delivery");
+    assert!(replay.was_replay);
+    assert_eq!(replay.swap, first.swap);
+    let listed: TakerSwapListV1 = call_local_rpc(
+        &socket,
+        "taker_swap_list_v1",
+        &TakerSwapListRequestV1 { schema_version: 1 },
+    )
+    .await
+    .unwrap();
+    assert_eq!(listed.swaps.len(), 1);
+    assert_eq!(listed.swaps[0].swap_id, first.swap.swap_id);
+    let offers = TakerOfferListRequestV1 {
+        schema_version: 1,
+        route: None,
+    };
+    assert!(
+        call_local_rpc::<_, TakerOfferListV1>(&socket, "taker_offer_list_v1", &offers)
+            .await
+            .is_err(),
+        "discovery must fail closed while Delivery is unreadable"
+    );
+    fs::set_permissions(&delivery, fs::Permissions::from_mode(0o700)).unwrap();
+    call_local_rpc::<_, TakerOfferListV1>(&socket, "taker_offer_list_v1", &offers)
+        .await
+        .expect("discovery once Delivery is back");
+    assert!(restarted.terminate().await.success());
+}
+
+#[cfg(feature = "pair-zec")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn taker_cli_swap_commands_reach_the_running_node_owner_rpcs() {
+    let fixture = ProcessInitiationFixture::new();
+    let runtime = private_directory(fixture.root.join("cli-runtime"));
+    let socket = runtime.join("taker.sock");
+    let mut service = TestService::spawn(&fixture.config, &socket);
+    wait_until_ready(&mut service, &socket).await;
+
+    let offers = taker_cli(
+        &socket,
+        &[
+            "swap",
+            "offers",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+        ],
+    );
+    let entry = &offers["offers"][0];
+    assert_eq!(entry["offer"]["id"], "m6-process-zec-offer-001");
+    assert_eq!(entry["maker_identity"], hex::encode(fixture.maker));
+
+    // The CLI fills the reviewed facts and the exact quote (2 LEZ units per
+    // foreign unit, 42 = 84) from the Node's listing of the offer.
+    let take_amount = |offer: &'static str, units: &'static str| {
+        [
+            "swap",
+            "take",
+            "--request-id",
+            "m6-process-initiation-request-001",
+            "--offer-id",
+            offer,
+            "--foreign-units",
+            units,
+        ]
+    };
+    for (offer, units, refusal) in [
+        (
+            "m6-process-zec-offer-001",
+            "10001",
+            "outside the offer bounds (bounds 1..=10000, 2 LEZ units per 1 foreign units)",
+        ),
+        (
+            "m6-process-unknown-offer",
+            "42",
+            "lists no live offer m6-process-unknown-offer",
+        ),
+    ] {
+        let output = taker_cli_output(&socket, &take_amount(offer, units));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success() && stderr.contains(refusal),
+            "{stderr}"
+        );
+    }
+    let take = take_amount("m6-process-zec-offer-001", "42");
+    let taken = taker_cli(&socket, &take);
+    assert_eq!(taken["was_replay"], false);
+    assert_eq!(taken["swap"]["swap_id"], "m6-process-zec-swap-001");
+    assert_eq!(taken["swap"]["lez_units"], 84);
+    assert_eq!(taker_cli(&socket, &take)["was_replay"], true);
+
+    let listed = taker_cli(&socket, &["swap", "list"]);
+    assert_eq!(listed["swaps"], json!([taken["swap"]]));
+    let swap = ["--swap-id", "m6-process-zec-swap-001"];
+    let monitored = taker_cli(&socket, &[&["swap", "monitor"][..], &swap].concat());
+    assert_eq!(monitored, taken["swap"]);
+
+    // An Initiating swap admits no lock, claim or refund and this Node has no
+    // wallet: each answer is the RPC's own refusal, never a parameter error.
+    // The lock answers a swap that is not a Node-owned Bitcoin swap with
+    // invalid params itself; its category tells that from a parameter error.
+    let lock = taker_cli_output(&socket, &[&["swap", "lock"][..], &swap].concat());
+    let stderr = String::from_utf8_lossy(&lock.stderr);
+    assert!(
+        stderr
+            .contains(r#"local RPC error -32602: Invalid params {"category":"lock_swap_unknown"}"#),
+        "lock: {stderr}"
+    );
+    let action = [
+        "--request-id",
+        "m6-process-action-001",
+        "--expected-generation",
+        "0",
+    ];
+    for arguments in [
+        [&["swap", "claim"][..], &swap, &action].concat(),
+        [&["swap", "refund"][..], &swap, &action].concat(),
+        vec!["balances"],
+    ] {
+        let output = taker_cli_output(&socket, &arguments);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{arguments:?} succeeded");
+        assert!(
+            stderr.contains("local RPC error") && stderr.contains(r#"{"category":""#),
+            "{arguments:?}: {stderr}"
+        );
+        for wrong in ["-32601", "-32602"] {
+            assert!(!stderr.contains(wrong), "{arguments:?}: {stderr}");
+        }
+    }
+    assert!(service.terminate().await.success());
+}
+
+#[cfg(feature = "pair-zec")]
+fn taker_cli_output(socket: &Path, arguments: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_lez-taker-cli"))
+        .arg("--socket")
+        .arg(socket)
+        .args(arguments)
+        .output()
+        .unwrap()
+}
+
+#[cfg(feature = "pair-zec")]
+fn taker_cli(socket: &Path, arguments: &[&str]) -> Value {
+    let output = taker_cli_output(socket, arguments);
+    assert!(
+        output.status.success(),
+        "{arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[cfg(feature = "pair-zec")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires the external pinned-Basecamp product driver"]
 async fn basecamp_prepared_offer_rendezvous_drives_the_production_taker_service() {
     let rendezvous = PathBuf::from(
@@ -323,7 +504,8 @@ async fn assert_initiating_reads_are_public_and_effect_free(
         .unwrap_err();
         assert_eq!(
             error.to_string(),
-            "local RPC error -32010: Taker dependency unavailable"
+            "local RPC error -32010: Taker dependency unavailable \
+             {\"category\":\"taker_action_execution_unavailable\"}"
         );
         terminal_errors.push(error);
     }
@@ -340,7 +522,7 @@ async fn assert_initiating_reads_are_public_and_effect_free(
     .unwrap_err();
     assert_eq!(
         unknown.to_string(),
-        "local RPC error -32014: Taker swap not found"
+        "local RPC error -32014: Taker swap not found {\"category\":\"swap_not_found\"}"
     );
 
     let public_wire = format!(

@@ -31,7 +31,11 @@ class RolePackages(unittest.TestCase):
     def test_linux_and_darwin_packages_carry_the_same_executables(self):
         linux = executables('package-role-node.sh')
         darwin = executables('package-role-node-darwin.sh')
-        self.assertEqual(linux, darwin)
+        # Monero has no macOS package: its executables are Linux-only.
+        monero = re.compile(r'^(lez-xmr-|lez-v02-xmr-|xmr-reference-)')
+        self.assertEqual({role: [b for b in bins if not monero.match(b)]
+                          for role, bins in linux.items()}, darwin)
+        self.assertIn('lez-xmr-maker-actor', linux['maker'])
         self.assertIn('lez-maker-node', linux['maker'])
         self.assertNotIn('lez-taker-node', linux['maker'])
         self.assertIn('lez-v02-bridge-poc', linux['taker'])

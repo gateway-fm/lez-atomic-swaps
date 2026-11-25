@@ -127,8 +127,7 @@ impl MoneroSharedAddressV1 {
     ///
     /// # Errors
     ///
-    /// Rejects either invalid DLEQ proof or an aggregate spend point equal to
-    /// the Ed25519 identity.
+    /// Rejects an aggregate spend point equal to the Ed25519 identity.
     pub fn derive(
         network: MoneroAddressNetworkV1,
         maker_proof: &CrossCurveDleqProofV1,
@@ -143,19 +142,21 @@ impl MoneroSharedAddressV1 {
     ///
     /// This boundary deliberately needs no private view material, allowing an
     /// untrusted agreement to be checked without exposing wallet authority.
+    /// Both proofs are already verified: a `CrossCurveDleqProofV1` is only
+    /// made by `prove` and `from_wire_bytes`, which verify it, and is
+    /// immutable, so they are not verified again here (each costs a fifth of
+    /// a second, and every Stage-A parse derives the address).
     ///
     /// # Errors
     ///
-    /// Rejects either invalid DLEQ proof, a malformed/non-prime-order public
-    /// view key, or an unsafe aggregate spend point.
+    /// Rejects a malformed/non-prime-order public view key or an unsafe
+    /// aggregate spend point.
     pub fn derive_from_public_view_key(
         network: MoneroAddressNetworkV1,
         maker_proof: &CrossCurveDleqProofV1,
         taker_proof: &CrossCurveDleqProofV1,
         public_view_key: [u8; 32],
     ) -> Result<Self, MoneroSharedSpendError> {
-        maker_proof.verify()?;
-        taker_proof.verify()?;
         let maker = validated_public_point(maker_proof.ed25519_public_key())?;
         let taker = validated_public_point(taker_proof.ed25519_public_key())?;
         let shared = maker + taker;
@@ -351,6 +352,24 @@ mod tests {
         let mut bytes = [0_u8; 32];
         bytes[0] = value;
         MoneroPrivateViewKey::from_monero_little_endian(bytes).expect("fixture view key")
+    }
+
+    #[test]
+    fn an_altered_proof_never_reaches_the_address_derivation() {
+        // derive_from_public_view_key does not verify the proofs again: the
+        // parse is what refuses a proof whose bytes changed anywhere.
+        let proof =
+            CrossCurveDleqProofV1::prove(&scalar(11), &mut ChaCha20Rng::from_seed([53; 32]))
+                .expect("DLEQ proof");
+        let wire = proof.to_wire_bytes().expect("proof wire");
+        for index in [wire.len() / 3, wire.len() / 2, wire.len() - 40] {
+            let mut altered = wire.clone();
+            altered[index] ^= 1;
+            assert!(
+                CrossCurveDleqProofV1::from_wire_bytes(&altered).is_err(),
+                "byte {index}"
+            );
+        }
     }
 
     #[test]

@@ -569,6 +569,19 @@ pub enum ActorCommandError {
     /// The durable lifecycle is not in a claim-capable phase.
     #[error("actor claim is not currently available")]
     ClaimUnavailable,
+    /// The revealing claim was refused, nothing sent, because the Zcash
+    /// funding it reveals against is not yet `required` deep (`actual`):
+    /// the same refusal as [`Self::ClaimUnavailable`], named with its counts
+    /// so the Node can say the claim is queued (issue #130).
+    #[error(
+        "the revealing claim waits for {required} Zcash confirmations of the funding ({actual} so far)"
+    )]
+    ClaimAwaitingZcashConfirmations {
+        /// Confirmations the reveal gate requires.
+        required: u32,
+        /// Confirmations the actor observed.
+        actual: u32,
+    },
     /// Fresh timeout-recovery material could not be loaded safely.
     #[error("actor recovery material is unavailable")]
     RecoveryMaterialUnavailable,
@@ -627,9 +640,21 @@ async fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComm
         .load_activate_material()
         .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
     let participant = config.role().sdk_participant();
+    // The agreement is accepted at the time this role accepted it, as its own
+    // provisioner recorded it in this owner-private config, not at the time
+    // the activation happens to run: a Node stopped between the take and the
+    // activation still activates after the offer expired, as every later step
+    // resumes from the recorded acceptance. A recorded time at or after the
+    // transcript's expiry is refused here as at the take. A config without
+    // one (a template, or one written before the time was recorded) is
+    // accepted at the current wall clock.
+    let accepted_at = match config.accepted_at() {
+        Some(accepted_at) => accepted_at,
+        None => trusted_wall_clock()?,
+    };
     let accepted = AcceptedZecAgreementV1::accept_wire_at(
         material.signed_agreement_wire(),
-        trusted_wall_clock()?,
+        accepted_at,
         participant,
         0,
     )
@@ -2065,6 +2090,17 @@ fn claim_attempt(
                 "actor claim refused: the revealing Zcash claim window closed: tip {tip_height} + {margin_blocks} blocks reaches the refund height {refund_height}; nothing was sent, the settlement is the LEZ refund"
             );
             Err(ActorCommandError::ClaimWindowClosed)
+        }
+        Err(lez_zec_swap_sdk::ZecSdkError::InvalidZcashFundingObservation(
+            lez_zec_swap_sdk::ZcashFundingObservationError::InsufficientConfirmations {
+                required,
+                actual,
+            },
+        )) => {
+            eprintln!(
+                "actor claim queued: the Zcash funding has {actual} of the {required} confirmations the reveal needs; nothing was sent"
+            );
+            Err(ActorCommandError::ClaimAwaitingZcashConfirmations { required, actual })
         }
         Err(error) => {
             eprintln!("actor claim unavailable: {error:?}");
@@ -3691,6 +3727,36 @@ mod tests {
                 ActorCommandError::ClaimUnavailable,
             ),
             Err(ActorCommandError::ClaimWindowClosed)
+        );
+    }
+
+    /// Issue #130: the reveal gate's depth shortfall is a refusal named with
+    /// its counts; nothing is sent either way.
+    #[test]
+    fn a_shallow_zcash_funding_names_the_queued_claims_confirmations() {
+        assert_eq!(
+            claim_attempt(
+                Err(ZecSdkError::InvalidZcashFundingObservation(
+                    lez_zec_swap_sdk::ZcashFundingObservationError::InsufficientConfirmations {
+                        required: 2,
+                        actual: 1,
+                    }
+                )),
+                ActorCommandError::ClaimUnavailable,
+            ),
+            Err(ActorCommandError::ClaimAwaitingZcashConfirmations {
+                required: 2,
+                actual: 1
+            })
+        );
+        assert_eq!(
+            claim_attempt(
+                Err(ZecSdkError::InvalidZcashFundingObservation(
+                    lez_zec_swap_sdk::ZcashFundingObservationError::CanonicalValueMismatch
+                )),
+                ActorCommandError::ClaimUnavailable,
+            ),
+            Err(ActorCommandError::ClaimUnavailable)
         );
     }
 

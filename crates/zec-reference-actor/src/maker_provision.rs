@@ -16,13 +16,14 @@ use rustix::{
     fs::{CWD, RenameFlags, renameat_with},
     io::Errno,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
     ActorConfig, ActorRole,
     config::encode_rebound_local_v0_2_actor_config,
     local_poc::{create_private_directory, validate_role_authority, write_private_new},
+    reserve::is_draft_wire,
     secure_file::{FilePrivacy, read_bounded_identified},
 };
 
@@ -216,8 +217,9 @@ fn provision_zec_actor_from_config(
     output_root: &Path,
     role: ActorRole,
 ) -> Result<ZecActorProvisionV1> {
-    let prepared = prepare_provision(source, final_agreement_wire, accepted_at, output_root, role)?;
     let paths = ProvisionPaths::new(output_root, role);
+    let accepted_at = first_acceptance(&paths, accepted_at);
+    let prepared = prepare_provision(source, final_agreement_wire, accepted_at, output_root, role)?;
     if output_root.exists() {
         validate_exact_replay(
             &paths,
@@ -264,6 +266,34 @@ fn provision_zec_actor_from_config(
     }
 }
 
+/// The acceptance time a published bundle already records, when it is not
+/// later than `accepted_at`; otherwise `accepted_at`.
+///
+/// A retried completion provisions again at its own, later clock. The bundle
+/// keeps the time of the first acceptance, so the retry is an exact replay and
+/// the actor still activates at the time this role first accepted. The value
+/// read here is only a candidate: [`validate_exact_replay`] then requires the
+/// whole bundle to be owner-private and byte-identical to the one this call
+/// derives from the agreement accepted at that time, so an unreadable,
+/// foreign or edited file fails the replay instead of choosing the time.
+fn first_acceptance(paths: &ProvisionPaths, accepted_at: UnixSeconds) -> UnixSeconds {
+    #[derive(Deserialize)]
+    struct RecordedAcceptance {
+        accepted_at_unix_seconds: Option<u64>,
+    }
+    let Ok((bytes, _)) =
+        read_bounded_identified(&paths.config, MAX_CONFIG_BYTES, FilePrivacy::OwnerPrivate)
+    else {
+        return accepted_at;
+    };
+    match serde_json::from_slice::<RecordedAcceptance>(bytes.as_slice()) {
+        Ok(RecordedAcceptance {
+            accepted_at_unix_seconds: Some(recorded),
+        }) if recorded != 0 && recorded <= accepted_at.value() => UnixSeconds::new(recorded),
+        _ => accepted_at,
+    }
+}
+
 fn prepare_provision(
     source: &ActorConfig,
     final_agreement_wire: &[u8],
@@ -280,9 +310,7 @@ fn prepare_provision(
     let source_material = source
         .load_activate_material()
         .context("source actor activation material is invalid")?;
-    let source_agreement =
-        ZecAgreementV1::from_wire_at(source_material.signed_agreement_wire(), accepted_at)
-            .context("source agreement is invalid at final acceptance")?;
+    let source_wire = source_material.signed_agreement_wire();
     let accepted = AcceptedZecAgreementV1::accept_wire_at(
         final_agreement_wire,
         accepted_at,
@@ -295,13 +323,17 @@ fn prepare_provision(
         agreement.application_swap_id() == source.swap_id().as_str(),
         "final agreement swap ID differs from source actor"
     );
-    let expected = ZecAgreementDraftV1::rebind_validated_transcript(
-        &source_agreement,
-        *agreement.transcript(),
-    );
-    let expected_wire = expected
-        .encode_wire()
-        .context("failed to encode expected Chat body")?;
+    let expected_wire = if is_draft_wire(source_wire, accepted_at) {
+        // A take-time template (reserve.rs) holds the reservation's unsigned
+        // draft, transcript included: the final body must be exactly it.
+        source_wire.to_vec()
+    } else {
+        let source_agreement = ZecAgreementV1::from_wire_at(source_wire, accepted_at)
+            .context("source agreement is invalid at final acceptance")?;
+        ZecAgreementDraftV1::rebind_validated_transcript(&source_agreement, *agreement.transcript())
+            .encode_wire()
+            .context("failed to encode expected Chat body")?
+    };
     let expected = ZecAgreementDraftV1::from_wire_at(&expected_wire, accepted_at)
         .context("expected Chat body did not revalidate")?;
     ensure!(
@@ -327,6 +359,7 @@ fn prepare_provision(
         agreement_sha256,
         paths.state_database.clone(),
         paths.bridge_journal.clone(),
+        accepted_at,
     )
     .context("failed to encode rebound actor config")?;
     let config_sha256 = Hex32::from_bytes(Sha256::digest(&config_bytes).into());

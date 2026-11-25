@@ -37,6 +37,9 @@
 #                            identities and keys, zebra/, zec/, e2e/, evidence/
 #   LEZ_ZEBRA_PORT, LEZ_ZEBRA_URL, LEZ_ZEBRA_HOST
 #                            the lane's Zebra on the host / inside the lane
+#   LEZ_MONEROD_PORT, LEZ_XMR_FUNDING_WALLET_PORT
+#                            the lane's monerod and funding wallet-rpc on the
+#                            host (LEZ_MONERO=1)
 #   LEZ_MAKER_VNC_PORT, LEZ_TAKER_VNC_PORT
 #   LEZ_LANE_MAKER_WALLET, LEZ_LANE_TAKER_WALLET   the market wallets it settles as
 #   LEZ_STACK_COMPOSE_ARGS   the docker compose arguments of the lane's project
@@ -102,7 +105,7 @@ fi
 LEZ_STACK_PREFIX="${LEZ_STACK_PREFIX:-$lane_recorded_prefix}"
 LEZ_STACK_PORT_OFFSET="${LEZ_STACK_PORT_OFFSET:-$lane_recorded_offset}"
 [[ "$LEZ_STACK_PREFIX" =~ ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ ]] || { echo "LEZ_STACK_PREFIX must be a lower-case name, not '$LEZ_STACK_PREFIX'" >&2; return 64 2>/dev/null || exit 64; }
-# (lanes add 10 per lane to the Zebra and VNC ports: an offset of 100 or more
+# (lanes add 10 per lane to the Zebra, Monero and VNC ports: an offset of 100 or more
 # keeps two stacks' lanes apart)
 [[ "$LEZ_STACK_PORT_OFFSET" =~ ^(0|[1-9][0-9]{0,4})$ ]] && (( LEZ_STACK_PORT_OFFSET <= 40000 )) ||
   { echo "LEZ_STACK_PORT_OFFSET must be 0 to 40000, not '$LEZ_STACK_PORT_OFFSET'" >&2; return 64 2>/dev/null || exit 64; }
@@ -127,6 +130,8 @@ if [[ "$LEZ_LANE" == 1 ]]; then
   LEZ_LANE_RUNTIME=runtime
   LEZ_ZEBRA_HOST=zebra
   LEZ_ZEBRA_PORT=$(( 18232 + LEZ_STACK_PORT_OFFSET ))
+  LEZ_MONEROD_PORT=$(( 18081 + LEZ_STACK_PORT_OFFSET ))
+  LEZ_XMR_FUNDING_WALLET_PORT=$(( 18083 + LEZ_STACK_PORT_OFFSET ))
   LEZ_MAKER_VNC_PORT=$(( 5901 + LEZ_STACK_PORT_OFFSET ))
   LEZ_TAKER_VNC_PORT=$(( 5902 + LEZ_STACK_PORT_OFFSET ))
   LEZ_STACK_COMPOSE_ARGS="${LEZ_STACK_COMPOSE_ARGS:---env-file runtime/runtime.env}"
@@ -135,6 +140,8 @@ else
   LEZ_LANE_RUNTIME="runtime/lanes/$LEZ_LANE"
   LEZ_ZEBRA_HOST="$LEZ_CONTAINER_PREFIX-zebra"
   LEZ_ZEBRA_PORT=$(( 18232 + LEZ_STACK_PORT_OFFSET + 10 * (LEZ_LANE - 1) ))
+  LEZ_MONEROD_PORT=$(( 18081 + LEZ_STACK_PORT_OFFSET + 10 * (LEZ_LANE - 1) ))
+  LEZ_XMR_FUNDING_WALLET_PORT=$(( 18083 + LEZ_STACK_PORT_OFFSET + 10 * (LEZ_LANE - 1) ))
   LEZ_MAKER_VNC_PORT=$(( 5901 + LEZ_STACK_PORT_OFFSET + 10 * (LEZ_LANE - 1) ))
   LEZ_TAKER_VNC_PORT=$(( 5902 + LEZ_STACK_PORT_OFFSET + 10 * (LEZ_LANE - 1) ))
   # Once per process: a lane's prefix is derived from the stack's, not stacked.
@@ -145,6 +152,7 @@ else
 fi
 LEZ_ZEBRA_URL="http://127.0.0.1:$LEZ_ZEBRA_PORT/"
 export LEZ_LANE LEZ_CONTAINER_PREFIX LEZ_LANE_RUNTIME LEZ_ZEBRA_HOST LEZ_ZEBRA_PORT LEZ_ZEBRA_URL \
+  LEZ_MONEROD_PORT LEZ_XMR_FUNDING_WALLET_PORT \
   LEZ_MAKER_VNC_PORT LEZ_TAKER_VNC_PORT LEZ_LANE_MAKER_WALLET LEZ_LANE_TAKER_WALLET LEZ_STACK_COMPOSE_ARGS
 # shellcheck disable=SC2034  # used by the scripts that source this
 read -r -a lane_compose <<<"$LEZ_STACK_COMPOSE_ARGS"

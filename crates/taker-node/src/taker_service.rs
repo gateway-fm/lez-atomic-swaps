@@ -6,10 +6,20 @@
 
 mod btc_dynamic;
 mod lifecycle;
+#[cfg(feature = "pair-xmr")]
+mod xmr_dynamic;
+#[cfg(feature = "pair-xmr")]
+mod xmr_supervisor;
+#[cfg(feature = "pair-zec")]
+mod zec_dynamic;
 #[cfg(feature = "pair-zec")]
 mod zec_supervisor;
 
 pub(crate) use btc_dynamic::DynamicBtcRole;
+#[cfg(feature = "pair-xmr")]
+pub(crate) use xmr_dynamic::DynamicXmrRole;
+#[cfg(feature = "pair-zec")]
+pub(crate) use zec_dynamic::DynamicZecRole;
 
 use std::{
     sync::{Arc, Mutex},
@@ -19,12 +29,15 @@ use std::{
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
 use lez_actor_supervision::LastOutcomes;
 use lez_btc_role_lifecycle::{DEFAULT_LEZ_FINALITY_STALL_SECONDS, LezFinalityWatch};
+use lez_node_common::route_health::ProcessRouteHealthProbe;
 use lez_swap_core::Pair;
+use lez_swap_store::MakerRouteV1;
 use serde_json::json;
 
 use crate::{
     ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
-    TakerBackendError, TakerHealthRequestV1, TakerOfferListRequestV1,
+    TakerBackendError, TakerDependencyStateV1, TakerHealthRequestV1, TakerOfferListRequestV1,
+    TakerRouteHealthV1, taker_pair_capabilities_v1,
 };
 
 const INVALID_PARAMS_CODE: i32 = -32_602;
@@ -39,6 +52,7 @@ struct TakerServiceState {
     /// Which pairs the prepared catalog holds, fixed at startup.
     btc_registered: bool,
     zec_registered: bool,
+    xmr_registered: bool,
     /// How long the Bitcoin observer waits between two sweeps.
     observer_sweep_interval: Duration,
     /// The LEZ chain's progress for `taker_health`, from the Node-owned
@@ -47,6 +61,8 @@ struct TakerServiceState {
     /// What each swap's actor last did or waits for, from the observer's,
     /// the Zcash supervisor's and the owner's attempts (`last_outcome`).
     last_outcomes: LastOutcomes,
+    /// Each route's foreign-chain probe (`--route-health-config`).
+    route_health: Option<Arc<ProcessRouteHealthProbe>>,
 }
 
 /// The Taker observer's production pause between two sweeps of the Node-owned
@@ -83,6 +99,7 @@ pub fn taker_service_rpc_module_with_sweep(
         context,
         observer_sweep_interval,
         DEFAULT_LEZ_FINALITY_STALL_SECONDS,
+        None,
     )
 }
 
@@ -90,7 +107,10 @@ pub fn taker_service_rpc_module_with_sweep(
 /// `lez_finality_stalled` once the finalized LEZ block id has stood still for
 /// `lez_finality_stall_seconds` while the sequencer's tip moved
 /// (`--lez-finality-stall-seconds`; the devnet passes its heartbeat's
-/// threshold). The chain is read only with the Node-owned lifecycle.
+/// threshold). The chain is read only with the Node-owned lifecycle. With
+/// `route_health` (`--route-health-config`, the Maker's format and probe
+/// rules), `taker_health` reports each named route's chain and a new take on
+/// an unavailable one is refused.
 ///
 /// # Errors
 ///
@@ -99,6 +119,7 @@ pub fn taker_service_rpc_module_with_timing(
     context: ConfiguredTakerServiceContext,
     observer_sweep_interval: Duration,
     lez_finality_stall_seconds: u64,
+    route_health: Option<ProcessRouteHealthProbe>,
 ) -> Result<RpcModule<()>, RegisterMethodError> {
     let (backend, initiation) = context.into_parts();
     let lez_finality = initiation
@@ -111,14 +132,19 @@ pub fn taker_service_rpc_module_with_timing(
     let zec_registered = initiation
         .as_ref()
         .is_some_and(|context| context.has_pair(Pair::Zcash));
+    let xmr_registered = initiation
+        .as_ref()
+        .is_some_and(|context| context.has_pair(Pair::Monero));
     let state = Arc::new(TakerServiceState {
         backend,
         initiation: initiation.map(|value| Arc::new(Mutex::new(value))),
         btc_registered,
         zec_registered,
+        xmr_registered,
         observer_sweep_interval,
         lez_finality,
         last_outcomes: LastOutcomes::new(),
+        route_health: route_health.map(Arc::new),
     });
     let mut module = RpcModule::new(());
 
@@ -141,11 +167,14 @@ pub fn taker_service_rpc_module_with_timing(
             if state.btc_registered {
                 health = health.with_btc_lifecycle_registered();
             }
+            if state.xmr_registered {
+                health = health.with_xmr_lifecycle_registered();
+            }
             // The LEZ chain's progress (#112); absent without the lifecycle.
             if let Some(watch) = state.lez_finality.as_ref() {
                 health = health.with_lez_chain(Some(watch.progress().await));
             }
-            Ok::<_, ErrorObjectOwned>(health)
+            Ok::<_, ErrorObjectOwned>(health.with_routes(route_states(&state).await))
         }
     })?;
 
@@ -167,6 +196,35 @@ pub fn taker_service_rpc_module_with_timing(
     lifecycle::register(&mut module, &state)?;
 
     Ok(module)
+}
+
+/// Each route the Taker can take whose chain the route-health configuration
+/// probes, with its state now; empty without the configuration.
+async fn route_states(state: &Arc<TakerServiceState>) -> Vec<TakerRouteHealthV1> {
+    let Some(probe) = state.route_health.clone() else {
+        return Vec::new();
+    };
+    // The probes are processes bounded by their own timeouts.
+    tokio::task::spawn_blocking(move || {
+        taker_pair_capabilities_v1()
+            .iter()
+            .filter_map(|capability| {
+                let route =
+                    MakerRouteV1::new(capability.pair(), capability.supported_direction()).ok()?;
+                let available = probe.route_available(route)?;
+                Some(TakerRouteHealthV1 {
+                    route,
+                    state: if available {
+                        TakerDependencyStateV1::Available
+                    } else {
+                        TakerDependencyStateV1::Unavailable
+                    },
+                })
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 fn map_backend_error(error: TakerBackendError) -> ErrorObjectOwned {

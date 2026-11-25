@@ -67,6 +67,31 @@ readonly lane_genesis
 heartbeat_seconds="${LEZ_HEARTBEAT_SECONDS:-20}"
 heartbeat_stall_seconds="${LEZ_HEARTBEAT_STALL_SECONDS:-60}"
 [[ "$heartbeat_seconds" =~ ^[0-9]+$ && "$heartbeat_stall_seconds" =~ ^[0-9]+$ ]] || { echo "LEZ_HEARTBEAT_SECONDS and LEZ_HEARTBEAT_STALL_SECONDS must be integers" >&2; exit 1; }
+# Monero on every lane (LEZ_MONERO=1: compose profile "monero", role_files
+# below), kept across reruns like the timing profile; off unless asked for.
+monero="${LEZ_MONERO:-}"
+[[ -n "$monero" || ! -s "$RUNTIME/runtime.env" ]] || monero="$(sed -n 's/^LEZ_MONERO=//p' "$RUNTIME/runtime.env" | head -1)"
+monero="${monero:-0}"
+[[ "$monero" =~ ^[01]$ ]] || { echo "LEZ_MONERO must be 0 or 1" >&2; exit 1; }
+# The Monero network of the Nodes' swaps (LEZ_MONERO_NETWORK, kept like
+# LEZ_MONERO): regtest, the lane's own offline chain, or stagenet, public
+# Monero Stagenet through the operator's own monerod and two wallet-rpcs
+# (docs/monero-stagenet-guide.md). On Stagenet no lane chain is started: the
+# Nodes' logins come from LEZ_XMR_STAGENET_LOGINS (monerod.login,
+# maker-wallet-rpc.login, taker-wallet-rpc.login, each user:password), and
+# compose.stagenet.yaml forwards to the hosts it names. Mainnet and testnet
+# are refused.
+monero_network="${LEZ_MONERO_NETWORK:-}"
+[[ -n "$monero_network" || ! -s "$RUNTIME/runtime.env" ]] || monero_network="$(sed -n 's/^LEZ_MONERO_NETWORK=//p' "$RUNTIME/runtime.env" | head -1)"
+monero_network="${monero_network:-regtest}"
+case "$monero_network" in
+  regtest) ;;
+  stagenet)
+    [[ "$monero" == 1 ]] || { echo "LEZ_MONERO_NETWORK=stagenet needs LEZ_MONERO=1" >&2; exit 1; }
+    [[ "${LEZ_LANE:-1}" == 1 ]] || { echo "Monero Stagenet runs on lane 1 only" >&2; exit 1; } ;;
+  mainnet|testnet) echo "LEZ_MONERO_NETWORK=$monero_network: Monero mainnet and testnet are refused; regtest or stagenet" >&2; exit 1 ;;
+  *) echo "LEZ_MONERO_NETWORK must be regtest or stagenet" >&2; exit 1 ;;
+esac
 
 # The stack this runtime belongs to (scripts/lane.sh derives its names and
 # ports): a prefix or port offset other than the default is recorded in
@@ -131,7 +156,7 @@ role_files() {
   # it; the ZEC ceremony binds Delivery identity, Chat key and Zcash key into one
   # key) and zebra mines to its transparent address, so the Maker owns the
   # coinbase the ZEC provisioner spends; the Taker's key funds Zcash in
-  # TakerSellsForeign (scripts/zec-provision.sh pays it once from the Maker's).
+  # TakerSellsForeign (tests/fixtures/zec-catalog-fixture.sh pays it once from the Maker's).
   # Nothing here is a constant: a fresh runtime mints fresh keys. The address
   # comes from zec-local-poc-identity, staged on the host by from-scratch.sh
   # --only rust or, once the stage is gone, run from the Taker image.
@@ -188,6 +213,53 @@ role_files() {
     echo "warning: zec-local-poc-identity unavailable (stage it with from-scratch.sh --only rust or build the Taker image); zebra keeps the template miner address and the ZEC lane cannot run" >&2
   fi
   chmod 0644 "$dir/zebra/zebrad.toml"
+  # Monero (LEZ_MONERO=1): the lane's monerod and its funding, Maker and Taker
+  # wallet-rpc each take a Digest RPC login, minted once under <dir>/monero and
+  # kept across reruns, and their configs carry them (0644 like bitcoin.conf:
+  # the containers read them as uid 65532; regtest only). Each role's Node gets
+  # monerod's login and its own wallet-rpc's beside its identity
+  # (node-entrypoint.sh: a Node without them has no Monero route); with Monero
+  # off they are taken away again.
+  local name
+  if [[ "$monero" == 1 && "$monero_network" == stagenet ]]; then
+    local logins="${LEZ_XMR_STAGENET_LOGINS:?LEZ_MONERO_NETWORK=stagenet needs LEZ_XMR_STAGENET_LOGINS, the directory of monerod.login, maker-wallet-rpc.login and taker-wallet-rpc.login}"
+    for role in maker taker; do
+      [[ -s "$logins/monerod.login" && -s "$logins/$role-wallet-rpc.login" ]] ||
+        { echo "LEZ_XMR_STAGENET_LOGINS ($logins) lacks monerod.login or $role-wallet-rpc.login" >&2; exit 1; }
+      install -m "$key_mode" "$logins/monerod.login" "$dir/lez/$role/monerod.login"
+      install -m "$key_mode" "$logins/$role-wallet-rpc.login" "$dir/lez/$role/monero-wallet-rpc.login"
+    done
+    echo "Monero: Stagenet, the operator's logins from $logins"
+  elif [[ "$monero" == 1 ]]; then
+    mkdir -p "$dir/monero"
+    for name in daemon funding maker taker; do
+      [[ -s "$dir/monero/$name.login" ]] || printf '%s:%s\n' "$name" "$(openssl rand -hex 16)" >"$dir/monero/$name.login"
+    done
+    # (the settings of the isolated lane, scripts/run-monero-e2e.sh; and
+    # keep-fakechain: a regtest monerod deletes its chain when it starts
+    # without it, so a restarted monerod would start a new one under the
+    # wallets and the swaps)
+    printf '%s\n' regtest=1 keep-fakechain=1 offline=1 fixed-difficulty=1 data-dir=/var/lib/monero \
+      p2p-bind-ip=127.0.0.1 p2p-bind-port=18080 rpc-bind-ip=0.0.0.0 rpc-bind-port=18081 confirm-external-bind=1 \
+      "rpc-login=$(cat "$dir/monero/daemon.login")" rpc-ssl=disabled no-zmq=1 disable-dns-checkpoints=1 \
+      check-updates=disabled no-igd=1 max-concurrency=1 log-file=/dev/stdout log-level=1 >"$dir/monero/monerod.conf"
+    for name in funding maker taker; do
+      printf '%s\n' wallet-dir=/var/lib/monero-wallet rpc-bind-ip=0.0.0.0 rpc-bind-port=18083 confirm-external-bind=1 \
+        "rpc-login=$(cat "$dir/monero/$name.login")" rpc-ssl=disabled daemon-address=monerod:18081 \
+        "daemon-login=$(cat "$dir/monero/daemon.login")" daemon-ssl=disabled trusted-daemon=1 \
+        allow-mismatched-daemon-version=1 no-initial-sync=1 non-interactive=1 max-concurrency=1 \
+        log-file=/dev/stdout log-level=1 >"$dir/monero/wallet-$name.conf"
+    done
+    chmod 0644 "$dir/monero/"*.conf
+    for role in maker taker; do
+      cp "$dir/monero/daemon.login" "$dir/lez/$role/monerod.login"
+      cp "$dir/monero/$role.login" "$dir/lez/$role/monero-wallet-rpc.login"
+      chmod "$key_mode" "$dir/lez/$role/monerod.login" "$dir/lez/$role/monero-wallet-rpc.login"
+    done
+    echo "Monero: $label/monero (monerod and the funding, Maker and Taker wallet-rpc)"
+  else
+    rm -f "$dir"/lez/{maker,taker}/{monerod,monero-wallet-rpc}.login
+  fi
 }
 
 # A regression lane (LEZ_LANE >= 2, scripts/lane.sh) renders its own role files
@@ -234,7 +306,9 @@ jq -e '
 # --- LEZ: deployment settings ------------------------------------------------
 # The timing profile is kept across reruns (read here, before the old file is
 # replaced): a rerun without LEZ_TIMING_PROFILE must not silently move the
-# Nodes back to `local`.
+# Nodes back to `local`. So is the Bitcoin actors' trace (LEZ_BTC_ACTOR_TRACE),
+# on unless set to 0: one line per effect decision, about 3 KB in eight swaps
+# of each Node's log, and the only account of why an actor refused a step.
 previous_timing_profile=""
 previous_actor_trace=""
 previous_lez_timing=()
@@ -565,6 +639,51 @@ case "$timing_profile" in
   *) echo "LEZ_TIMING_PROFILE must be local, fast or refund" >&2; exit 1 ;;
 esac
 timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
+# The Monero leg's windows (XmrWindowsV1, seconds after the take), for the
+# take-time agreement on Monero: the Maker's XMR funding cutoff, the Taker's
+# LEZ refund, the Maker's punishment. The funding must stand at the
+# agreement's fixed ten confirmations (REQUIRED_MONERO_CONFIRMATIONS), which
+# the devnet's regtest mines on demand (ten blocks and a wallet's refresh took
+# under 2 s on 2026-11-13; xmr_depth allows 2 s a block), so the cutoff is the
+# Bitcoin Maker lock cutoff plus that depth, and at least what the second of
+# two swaps taken one after the other needs: the windows start when the take
+# does, and its funding drive must start before C after the take (33 to 50 s
+# under three-lane load on 2026-11-16, xmr_take rounds that up) and three of
+# its drives' spacing (the worker finishing the first swap's drive, the drive
+# that records the Taker's lock, the one that funds: the two swaps' drives
+# alternate, 69 to 103 s apart for one swap that day). The Maker claims only on
+# a claim authorization it sees final before R - (R - C)/2 (lez-xmr-maker-actor),
+# and a Maker that does not act in time forfeits the claim to the Taker's refund, so
+# each half of R - C holds the Taker's look at the funding at depth, a LEZ step
+# and two of the Maker's drives: the Maker Node's one actor worker drives all
+# its swaps in turn, a Monero drive runs a sidecar scan or a wallet tool, and
+# one swap's drives came 37 to 84 s apart under three-lane load on 2026-11-14.
+# With the three heaviest Monero tests at once on three lanes, five times on
+# 2026-11-17 (the Maker's attempts also run the Bitcoin and Zcash swaps of
+# node:xmr:mixed-three-pair), one swap's drives started at most 50 s apart, a
+# take took at most 44 s and a swap's funding stood at depth at most 143 s
+# after its take started: xmr_drive allows 80 s, 1.5 times that spacing rounded
+# up, and C on `fast` (+320 s) is 2.2 times the latest funding. The
+# punishment opens once the Taker's refund has had a step, a stall, the margin
+# and two such drives. Regtest accepts any windows 10 s apart (agreement_v1.rs).
+xmr_depth=$(( 10 * 2 ))
+xmr_drive=80
+xmr_take=60
+xmr_cutoff=$(( timing[1] + xmr_depth ))
+(( xmr_cutoff >= xmr_take + 3 * xmr_drive + xmr_depth )) || xmr_cutoff=$(( xmr_take + 3 * xmr_drive + xmr_depth ))
+xmr_refund=$(( xmr_cutoff + 2 * (xmr_depth + lez_step_seconds + 2 * xmr_drive) ))
+xmr_punish=$(( xmr_refund + lez_step_seconds + lez_stall_seconds + timing[4] + 2 * xmr_drive ))
+# On Stagenet the windows are sized for its 2-minute blocks, whatever the
+# timing profile (docs/monero-stagenet-guide.md, "The windows"): C at +10 min
+# (the Taker's lock final and the Maker's submit-only funding), R - C twice
+# 55 min (eleven blocks and both roles' LEZ steps; PublicStagenet admits 100
+# min), P - R 2 h (the Taker's safety window for its refund, through an
+# outage of its Node; PublicStagenet admits no less).
+if [[ "$monero_network" == stagenet ]]; then
+  xmr_cutoff=600
+  xmr_refund=$(( xmr_cutoff + 2 * 55 * 60 ))
+  xmr_punish=$(( xmr_refund + 2 * 60 * 60 ))
+fi
 # The Maker's actor supervisor observes a live swap's actor 5 s after each
 # attempt and retries a failed one after 30 s (the Node's defaults, kept on
 # `local`). On the devnet's own profiles a step it waits for (the Taker's lock,
@@ -594,6 +713,10 @@ esac
 node_finality_stall="$heartbeat_stall_seconds"
 (( node_finality_stall >= 10 && node_finality_stall <= 86400 )) ||
   { echo "LEZ_HEARTBEAT_STALL_SECONDS must be 10..=86400 for the Nodes' stall threshold" >&2; exit 1; }
+# On Stagenet compose.stagenet.yaml comes on top (COMPOSE_FILE, which every
+# script exports with runtime.env).
+stagenet_compose=()
+[[ "$monero_network" != stagenet ]] || stagenet_compose=("COMPOSE_FILE=compose.yaml:compose.stagenet.yaml")
 printf '%s\n' \
   ${stack_lines[@]+"${stack_lines[@]}"} \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
@@ -614,7 +737,7 @@ printf '%s\n' \
   "LEZ_LEZ_STEP_SECONDS=$lez_step_seconds" \
   "LEZ_LEZ_STALL_SECONDS=$lez_stall_seconds" \
   "LEZ_BTC_BLOCK_SECONDS=$btc_block_seconds" \
-  "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
+  "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-${previous_actor_trace:-1}}" \
   "LEZ_MAKER_ACTOR_REQUEUE_SECONDS=${maker_actor[0]}" \
   "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS=${maker_actor[1]}" \
   "LEZ_TAKER_OBSERVER_SWEEP_SECONDS=$taker_sweep" \
@@ -631,6 +754,12 @@ printf '%s\n' \
   "LEZ_HEARTBEAT_ALLOCATION=$heartbeat_allocation" \
   "LEZ_HEARTBEAT_SECONDS=$heartbeat_seconds" \
   "LEZ_HEARTBEAT_STALL_SECONDS=$heartbeat_stall_seconds" \
+  "LEZ_MONERO=$monero" \
+  "LEZ_MONERO_NETWORK=$monero_network" \
+  ${stagenet_compose[@]+"${stagenet_compose[@]}"} \
+  "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS=$xmr_cutoff" \
+  "LEZ_XMR_REFUND_SECONDS=$xmr_refund" \
+  "LEZ_XMR_PUNISH_SECONDS=$xmr_punish" \
   >"$RUNTIME/runtime.env.tmp"
 chmod 0600 "$RUNTIME/runtime.env.tmp"
 # Replaced in one step: every harness script (and a running regression lane)

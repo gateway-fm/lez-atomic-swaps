@@ -25,16 +25,17 @@ QString formatBtc(qint64 sats)
 }
 
 // The desks render the pairs the Nodes settle themselves: Bitcoin (offers
-// the Maker desk publishes) and Zcash (prepared corridors from
-// scripts/zec-provision.sh, 1 ZEC = 100 000 000 zatoshis, 8 decimals like
-// Bitcoin). Any other pair is left out of the rows.
+// the Maker desk publishes) and Zcash (offers agreed at take time, 1 ZEC =
+// 100 000 000 zatoshis, 8 decimals like Bitcoin) and Monero (TakerSellsLez
+// only, 1 XMR = 10^12 piconero, 12 decimals). Any other pair is left out of the rows.
 bool nodePair(const QString& pair)
 {
-    return pair == QStringLiteral("Bitcoin") || pair == QStringLiteral("Zcash");
+    return pair == QStringLiteral("Bitcoin") || pair == QStringLiteral("Zcash") || pair == QStringLiteral("Monero");
 }
 
 QString pairSymbol(const QString& pair)
 {
+    if (pair == QStringLiteral("Monero")) return QStringLiteral("XMR");
     return pair == QStringLiteral("Zcash") ? QStringLiteral("ZEC") : QStringLiteral("BTC");
 }
 
@@ -43,8 +44,16 @@ QString formatZec(qint64 zatoshis)
     return QString::number(static_cast<double>(zatoshis) / 100000000.0, 'f', 8) + " ZEC";
 }
 
+// Piconero as XMR with all 12 decimals, in integers (a double would round them).
+QString formatXmr(qint64 piconero)
+{
+    return QString::number(piconero / 1000000000000LL) + QLatin1Char('.')
+        + QStringLiteral("%1").arg(piconero % 1000000000000LL, 12, 10, QLatin1Char('0')) + " XMR";
+}
+
 QString formatForeign(const QString& pair, qint64 units)
 {
+    if (pair == QStringLiteral("Monero")) return formatXmr(units);
     return pair == QStringLiteral("Zcash") ? formatZec(units) : formatBtc(units);
 }
 
@@ -67,9 +76,9 @@ QString directionDisplay(const QString& name, const QString& pair)
                                                      : pairSymbol(pair) + " → LEZ";
 }
 
-QJsonObject routeObject(const QString& direction)
+QJsonObject routeObject(const QString& pair, const QString& direction)
 {
-    return QJsonObject{{"pair", "Bitcoin"},
+    return QJsonObject{{"pair", pair},
                        {"direction", direction == QStringLiteral("taker_sells_lez")
                                          ? QStringLiteral("TakerSellsLez")
                                          : QStringLiteral("TakerSellsForeign")}};
@@ -113,7 +122,8 @@ QJsonObject offerRow(const QJsonObject& offer, const QString& state, const QStri
     qint64 minimumLez = 0, maximumLez = 0;
     const bool quotable = quoteLez(price, minimumSats, minimumLez) && quoteLez(price, maximumSats, maximumLez);
     const bool takerPaysBitcoin = direction == QStringLiteral("taker_sells_foreign");
-    const QString bitcoin = rangeDisplay(minimumSats, maximumSats, pair == QStringLiteral("Zcash") ? formatZec : formatBtc);
+    const QString bitcoin = rangeDisplay(minimumSats, maximumSats, pair == QStringLiteral("Monero") ? formatXmr
+                                                                  : pair == QStringLiteral("Zcash") ? formatZec : formatBtc);
     const QString lez = quotable ? rangeDisplay(minimumLez, maximumLez, formatLez) : QStringLiteral("unquotable");
     return QJsonObject{
         {"offer_id", offer.value("id").toString()},
@@ -192,6 +202,7 @@ constexpr qint64 kOutcomeFreshSeconds = 5 * 60;
 struct SwapWait {
     QString text;         // plain words with the bound, empty when none
     bool holds = false;   // a known bound the chain has not reached yet
+    QString kind;         // the Node's wait kind, for a row that names it
 };
 
 QString chainDisplay(const QString& chain)
@@ -268,6 +279,12 @@ SwapWait swapWait(const QJsonObject& lastOutcome, const QString& role)
                 timeHolds};
     if (kind == QStringLiteral("zcash_refund_after_lost_lez_claim"))
         return {"The LEZ claim can no longer land; refunding the Zcash", true};
+    // Issue #130: the Taker's admitted claim is held, nothing sent, until the
+    // Zcash funding it reveals against is deep enough; the Node retries it.
+    if (kind == QStringLiteral("zcash_funding_confirmations") && required > 0)
+        return {"Waiting for " + QString::number(required) + " Zcash confirmations of the funding ("
+                    + QString::number(qMax<qint64>(confirmations, 0)) + " so far); your Node sends the claim then",
+                confirmations < required, kind};
     // A kind this desk does not know yet, by its bound.
     if (until > 0) return {"Waiting for " + chain + " until " + clockDisplay(until) + nowTime, timeHolds};
     if (untilHeight > 0)
@@ -282,7 +299,8 @@ SwapWait swapWait(const QJsonObject& lastOutcome, const QString& role)
 bool waitSpeaksFor(const QString& rowState, const QString& action)
 {
     return action.isEmpty() && rowState != QStringLiteral("completed") && rowState != QStringLiteral("refunded")
-        && rowState != QStringLiteral("failed") && rowState != QStringLiteral("attention_required");
+        && rowState != QStringLiteral("failed") && rowState != QStringLiteral("attention_required")
+        && rowState != QStringLiteral("expired") && rowState != QStringLiteral("punished");
 }
 
 struct SwapRow {
@@ -358,6 +376,66 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         return {"attention_required", "LEZ claim waiting near its deadline", 80,
                 "Your Node sends one LEZ claim at a time; swap " + (heldBy.isEmpty() ? QStringLiteral("(unknown)") : heldBy.right(12))
                     + " is still finishing its claim. This swap claims as soon as that one is final", "", ""};
+    // Monero (TakerSellsLez only; the words are the Taker CLI's): the Node
+    // locks the LEZ itself, so there is no Lock button. Claim authorises the
+    // Maker's LEZ claim, whose signature hands the Taker the Monero key; the
+    // refund is valid only between the refund and the punish time, after
+    // which the Maker takes the LEZ and the Monero stays locked.
+    if (pair == QStringLiteral("Monero")) {
+        const QString punish = "; from the punish time the Maker takes your LEZ and the Monero stays locked";
+        if (nodeState == "awaiting_first_lock")
+            return {"lock_pending", "LEZ lock pending", 20,
+                    "Your Node is locking your LEZ (automatic, no Lock button); the desk follows it", "", ""};
+        if (attentionReason == QStringLiteral("xmr_lez_lock_unconfirmed"))
+            return {"attention_required", "LEZ lock not confirmed", 15,
+                    "The Maker's funding cutoff passed before your LEZ lock was seen final: your Node keeps looking for it and refunds it from the refund time if it landed", "", ""};
+        if (nodeState == "expired")
+            return {"expired", "Expired", 100,
+                    "Your LEZ was not locked before the Maker's funding cutoff: nothing of yours is locked and this take is over", "", ""};
+        if (nodeState == "awaiting_second_lock")
+            return {"awaiting_maker_lock", "Waiting for the Maker's Monero", 45,
+                    "Your LEZ is locked; waiting for the Maker's Monero and its 10 confirmations", "", ""};
+        if (nodeState == "claim_available" && availableAction == QStringLiteral("claim"))
+            return {"claim_ready", "Your Monero claim is ready", 65,
+                    "Your move — Claim " + theirs + " authorises the Maker's LEZ claim; its claim hands you the Monero key and your Node sweeps the Monero",
+                    "claim_xmr", "Claim " + theirs};
+        if (attentionReason == QStringLiteral("xmr_claim_sweep_in_doubt"))
+            return {"attention_required", "Monero sweep in doubt", 90,
+                    "The Monero sweep was started and not recorded, so it is never resent: recover it by hand from the wallet file the Node names", "", ""};
+        if (nodeState == "claim_in_progress" && actorPhase == QStringLiteral("claim_authorizing"))
+            return {"claiming_xmr", "Claiming: authorising the Maker's LEZ claim", 75,
+                    "Your Node authorises the Maker's LEZ claim on LEZ (tag 14) and follows it to finality", "", ""};
+        if (nodeState == "claim_in_progress" && actorPhase == QStringLiteral("sweeping"))
+            return {"claiming_xmr", "Sweeping the Monero", 90,
+                    "The Maker claimed the LEZ; your Node sweeps the Monero into your wallet", "", ""};
+        if (nodeState == "claim_in_progress")
+            return {"claiming_xmr", "Claim authorised", 80,
+                    "Waiting for the Maker to claim the LEZ (tag 15), which hands you the Monero key", "", ""};
+        if (attentionReason == QStringLiteral("refund_window_closing") && availableAction == QStringLiteral("refund"))
+            return {"attention_required", "Refund window closing", 70,
+                    "The refund window is half over: Refund " + mine + " now" + punish, "refund_lez", "Refund " + mine};
+        if (attentionReason == QStringLiteral("xmr_maker_did_not_claim") && availableAction == QStringLiteral("refund"))
+            return {"attention_required", "The Maker did not claim", 70,
+                    "The Maker did not claim before the refund time, so it no longer can: Refund " + mine + " before the punish time" + punish,
+                    "refund_lez", "Refund " + mine};
+        if (availableAction == QStringLiteral("refund"))
+            return {"refund_ready", "Refund window open", 60,
+                    "Refund " + mine + " (tag 16) before the punish time" + punish, "refund_lez", "Refund " + mine};
+        if (nodeState == "refund_in_progress")
+            return {"refunding", "LEZ refund sent", 80, "Your LEZ refund is sent; your Node sends it again until it is final", "", ""};
+        if (attentionReason == QStringLiteral("xmr_refund_not_final_by_punish_time"))
+            return {"attention_required", "Refund not final", 0,
+                    "Your LEZ refund was sent and did not land before the punish time: unless your Node still finds it final, the Maker can punish and take your LEZ", "", ""};
+        if (attentionReason == QStringLiteral("xmr_watching_for_maker_claim"))
+            return {"attention_required", "Watching for the Maker's claim", 90,
+                    "The punish time passed after your claim: your Node looks for the Maker's claim, which hands you the Monero, and for its punishment", "", ""};
+        if (attentionReason == QStringLiteral("xmr_maker_claim_scan_failing"))
+            return {"attention_required", "Cannot look for the Maker's claim", 90,
+                    "Your Node cannot read LEZ for the Maker's claim: if the Maker claimed before the refund time, the Monero is yours to sweep once it can again", "", ""};
+        if (nodeState == "punished")
+            return {"punished", "Punished", 100,
+                    "The refund window closed without a refund: your LEZ is the Maker's to take by its punishment, and the Monero stays locked", "", ""};
+    }
     if (pair == QStringLiteral("Zcash")) {
         // The Taker Node has no lock RPC for ZEC: its supervisor drives the
         // actor's first lock itself (the LEZ escrow when the Taker sells LEZ,
@@ -423,6 +501,11 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         // it in flight and re-drives it until final, so the row has nothing to
         // offer (it read "Retry claim" under NEEDS YOU while the claim was
         // landing). Once it is final the Maker's follow-up claim is awaited.
+        // Admitted but held by the actor until the Zcash funding is deep
+        // enough (issue #130): nothing was sent yet.
+        if (nodeState == "claim_in_progress" && wait.holds
+            && wait.kind == QStringLiteral("zcash_funding_confirmations"))
+            return {sellsBitcoin ? "claiming_lez" : "claiming_zec", "Claim queued", 80, wait.text, "", ""};
         if (nodeState == "claim_in_progress" && sellsBitcoin)
             return {"claiming_lez", "LEZ claim submitted", 85,
                     "Your Node follows the claim to finality; the Maker's follow-up Zcash claim completes the swap", "", ""};
@@ -521,6 +604,38 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
         return {"failed", "Actor stopped", 0,
                 "The supervisor gave up on this swap (" + (failureClass.isEmpty() ? QStringLiteral("no reason recorded") : failureClass)
                     + "); queue a claim or refund from the CLI to resume it", "", ""};
+    // Monero (TakerSellsLez): the Maker funds Monero once the Taker's LEZ
+    // lock is final, claims LEZ once the Taker authorises it, sweeps its
+    // Monero back after the Taker's LEZ refund, and takes the LEZ (punish)
+    // when the Taker misses its refund window; its Monero then stays at the
+    // shared address for good (ADR 0217: tag 17 reveals no share).
+    if (pair == QStringLiteral("Monero")) {
+        if (phase == "offered")
+            return {"awaiting_taker_lock", "Offered · waiting for the Taker's LEZ lock", 20,
+                    "Your Node funds Monero once the Taker's LEZ lock is final; nothing to click", "", ""};
+        if (phase == "taker_lock_confirmed")
+            return {"funding_xmr", "Taker's LEZ lock seen · funding Monero", 45,
+                    "Your Node funds the Monero leg on its own before the funding cutoff; on Stagenet its 10 confirmations then take about 25 minutes", "", ""};
+        if (phase == "maker_funding_in_doubt")
+            return {"attention_required", "Monero funding in doubt", 45,
+                    "Your Node sent the Monero funding and does not see it confirmed in time (past the funding cutoff on regtest, past the claim deadline on Stagenet, whose 10 confirmations take about 25 minutes); it is never resent. Check the Monero wallet and the Node log", "", ""};
+        if (phase == "both_legs_locked")
+            return {"awaiting_taker_claim", "Monero funded · waiting for the Taker's claim", 65,
+                    "The Taker authorises your LEZ claim, or refunds its LEZ from the refund time", "", ""};
+        if (phase == "claim_evidence_available")
+            return {"claiming_lez", "Claiming LEZ", 85,
+                    "The Taker authorised your LEZ claim; your Node claims the LEZ, which hands the Taker the Monero key", "", ""};
+        if (phase == "maker_recovery_available" && nextAction == QStringLiteral("refund_monero"))
+            return {"recovering", "Refund sweep: recovering your Monero", 75,
+                    "The Taker refunded its LEZ; your Node sweeps the Monero back into your wallet", "", ""};
+        if (phase == "maker_recovery_available")
+            return {"recovering", "Punish available: taking the Taker's LEZ", 75,
+                    "The Taker did not refund before the punish time; your Node takes its LEZ, and your Monero stays at the swap's shared address for good: no step of the swap returns it", "", ""};
+        if (phase == "punished")
+            return {"punished", "Punished", 100, "Your Node took the Taker's LEZ; your Monero stays at the swap's shared address for good: no step of the swap returns it", "", ""};
+        if (phase == "expired")
+            return {"expired", "Expired", 100, "The funding cutoff passed with none of your Monero funded; nothing of yours is at stake", "", ""};
+    }
     // The Node named why its actor is backing off: the account holds less LEZ
     // than the lot (TakerSellsForeign, where this Maker is the LEZ depositor).
     // Nothing to click: the next attempt funds the escrow once the account is.
@@ -780,11 +895,14 @@ QJsonArray takerOffers(const LocalJsonRpcClient& rpc, Reply* error)
 }
 
 QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet& wallet,
-                                const QSet<QString>& lockedSwaps, Reply* error)
+                                const QSet<QString>& lockedSwaps, Reply* error,
+                                const QJsonArray& logosOffers = {})
 {
     QJsonArray orderBook;
     QJsonObject offersById;
-    for (const QJsonValue& candidate : takerOffers(rpc, error)) {
+    QJsonArray offers = takerOffers(rpc, error);
+    for (const QJsonValue& logos : logosOffers) offers.append(logos);
+    for (const QJsonValue& candidate : offers) {
         const QJsonObject view = candidate.toObject();
         const QJsonObject offer = view.value("offer").toObject();
         if (!nodePair(offer.value("pair_configuration").toObject().value("route").toObject().value("pair").toString())) continue;
@@ -821,6 +939,22 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
             // A running row that asks nothing of the owner says what its
             // actor waits for, when the Node names it.
             if (!wait.text.isEmpty() && waitSpeaksFor(row.state, row.action)) row.detail = wait.text;
+            // A Monero swap on Stagenet names its network and its real waits:
+            // 2-minute blocks, ten confirmations for the Maker's funding and
+            // ten more before the swept Monero is spendable (the devnet's
+            // regtest mines them in seconds and says nothing more).
+            if (pair == QStringLiteral("Monero") && swap.value("monero_network").toString() == QStringLiteral("stagenet")) {
+                row.label += QStringLiteral(" · Monero Stagenet");
+                if (row.state == QStringLiteral("awaiting_maker_lock"))
+                    row.detail += QStringLiteral("; on Stagenet the funding and its 10 confirmations take about 25 minutes, longer on a slow stretch");
+                else if (row.state == QStringLiteral("claiming_xmr"))
+                    row.detail += QStringLiteral("; on Stagenet the swept Monero is spendable after 10 more confirmations, about 20 minutes");
+                else if (row.state == QStringLiteral("claim_ready"))
+                    row.detail += QStringLiteral("; on Stagenet the Maker's claim and your sweep follow within minutes, the sweep's 10 confirmations take about 20 more");
+            }
+            // A Monero sweep in doubt: the Node names the wallet that holds the spend key.
+            if (swap.value("attention_reason").toString() == QStringLiteral("xmr_claim_sweep_in_doubt"))
+                row.detail += " (" + swap.value("status_detail").toString() + ")";
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction, pair,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),
@@ -828,7 +962,7 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
                                        swap.value("effects").toArray(),
                                        swap.value("privacy_guidance").toString()));
             if (row.state == "completed") ++completed;
-            else if (row.state != "refunded") ++active;
+            else if (row.state != "refunded" && row.state != "expired" && row.state != "punished") ++active;
             if (!row.action.isEmpty()) ++needsAction;
         }
     }
@@ -854,21 +988,24 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
 } // namespace
 
 QString takerSnapshot(const LocalJsonRpcClient& rpc, const TakerWallet& wallet,
-                      const QSet<QString>& lockedSwaps)
+                      const QSet<QString>& lockedSwaps, const QJsonArray& logosOffers)
 {
     Reply error;
-    const QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &error);
+    const QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &error, logosOffers);
     if (!error.code.isEmpty() && !error.ok) return nodeFailure(error, QStringLiteral("The Taker Node did not answer"));
     return success(snapshot);
 }
 
 QString takerTake(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slowRpc,
                   const TakerWallet& wallet, const QString& requestId, const QString& offerId,
-                  qint64 foreignUnits, const QSet<QString>& lockedSwaps)
+                  qint64 foreignUnits, const QSet<QString>& lockedSwaps,
+                  const QJsonArray& logosOffers)
 {
     Reply error;
     QJsonObject selected;
-    for (const QJsonValue& candidate : takerOffers(rpc, &error)) {
+    QJsonArray offers = takerOffers(rpc, &error);
+    for (const QJsonValue& logos : logosOffers) offers.append(logos);
+    for (const QJsonValue& candidate : offers) {
         const QJsonObject view = candidate.toObject();
         if (view.value("offer").toObject().value("id").toString() == offerId) selected = view;
     }
@@ -883,14 +1020,17 @@ QString takerTake(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slowR
         return failure(QStringLiteral("nonintegral_quote"),
                        QStringLiteral("That amount does not quote to whole LEZ units at the offer's price"));
     }
-    const Reply initiated = decode(slowRpc.call("taker_swap_initiate_v1", compact({
+    QJsonObject request{
         {"schema_version", 1}, {"request_id", requestId}, {"offer_id", offerId},
         {"route", configuration.value("route")}, {"maker_identity", selected.value("maker_identity")},
         {"signed_envelope_sha256", selected.value("signed_envelope_sha256")},
-        {"foreign_units", foreignUnits}, {"expected_lez_units", lez}})));
+        {"foreign_units", foreignUnits}, {"expected_lez_units", lez}};
+    if (selected.contains("announcement_base64"))
+        request.insert("logos_offer_announcement_base64", selected.value("announcement_base64"));
+    const Reply initiated = decode(slowRpc.call("taker_swap_initiate_v1", compact(request)));
     if (!initiated.ok) return nodeFailure(initiated, QStringLiteral("The Taker Node could not take the offer"));
     Reply refreshError;
-    QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &refreshError);
+    QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &refreshError, logosOffers);
     snapshot.insert("taken", initiated.result);
     return success(snapshot);
 }
@@ -1042,7 +1182,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             swaps.append(swapRowObject(row, swapId, QString(), direction, pair, wallet.label,
                                        QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill, effects));
             if (row.state == "completed") ++completed;
-            else if (row.state != "refunded" && row.state != "failed") ++active;
+            else if (row.state != "refunded" && row.state != "failed" && row.state != "expired" && row.state != "punished") ++active;
         }
     }
     return QJsonObject{
@@ -1065,12 +1205,12 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
     };
 }
 
-qint64 revisionFor(const Reply& listed, const QString& direction)
+qint64 revisionFor(const Reply& listed, const QString& pair, const QString& direction)
 {
     for (const QJsonValue& candidate : listed.result.toArray()) {
         const QJsonObject entry = candidate.toObject();
         const QJsonObject route = entry.value("value").toObject().value("route").toObject();
-        if (route.value("pair").toString() == QStringLiteral("Bitcoin")
+        if (route.value("pair").toString() == pair
             && directionName(route.value("direction").toString()) == direction)
             return static_cast<qint64>(entry.value("revision").toDouble());
     }
@@ -1087,15 +1227,15 @@ QString makerSnapshot(const LocalJsonRpcClient& rpc, const MakerWallet& wallet)
     return success(snapshot);
 }
 
-QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
-                     const QString& requestId, const QString& direction, const RouteTerms& terms)
+QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet, const QString& requestId,
+                     const QString& pair, const QString& direction, const RouteTerms& terms)
 {
-    const QJsonObject route = routeObject(direction);
+    const QJsonObject route = routeObject(pair, direction);
     const Reply pairs = decode(rpc.call("maker_pair_list", "{}"));
     const Reply prices = decode(rpc.call("maker_local_price_list", "{}"));
     if (!pairs.ok || !prices.ok) return failure(QStringLiteral("node_failure"), QStringLiteral("The Maker Node's routes could not be read"));
-    const qint64 pairRevision = revisionFor(pairs, direction);
-    const qint64 priceRevision = revisionFor(prices, direction);
+    const qint64 pairRevision = revisionFor(pairs, pair, direction);
+    const qint64 priceRevision = revisionFor(prices, pair, direction);
     QJsonObject routeRequest{
         {"request_id", requestId + "-route"},
         {"configuration", QJsonObject{{"route", route}, {"enabled", true}, {"price_source", "local"},
@@ -1108,9 +1248,10 @@ QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
     if (pairRevision >= 0) routeRequest.insert("expected_pair_revision", pairRevision);
     if (priceRevision >= 0) routeRequest.insert("expected_price_revision", priceRevision);
     const Reply saved = decode(rpc.call("maker_local_route_save_v1", compact(routeRequest)));
-    if (!saved.ok) return nodeFailure(saved, QStringLiteral("The Bitcoin route could not be enabled"));
+    if (!saved.ok) return nodeFailure(saved, "The " + pair + " route could not be enabled");
     const QString offerId = QStringLiteral("offer-%1-%2")
-                                .arg(direction == QStringLiteral("taker_sells_lez") ? "sell-btc" : "sell-lez")
+                                .arg(direction == QStringLiteral("taker_sells_lez")
+                                         ? "sell-" + pairSymbol(pair).toLower() : QStringLiteral("sell-lez"))
                                 .arg(QDateTime::currentSecsSinceEpoch());
     // Guarded publication: exactly the revisions the save returned, or a
     // conflict if anything changed them in between.

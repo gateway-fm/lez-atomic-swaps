@@ -47,7 +47,7 @@ concurrency:
 
 env:
   # A release build: from-scratch.sh refuses to build the devnet's test hooks
-  # under it, and the sidecar does not compile them with it
+  # under it, and the crates that have them do not compile them with it
   # (deploy/tests/test_release_workflow.py, NoTestHooksInARelease).
   LEZ_RELEASE_BUILD: "1"
   LEZ_WORKSPACE: ${{ github.workspace }}/../lez-ws

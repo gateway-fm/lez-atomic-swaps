@@ -131,6 +131,7 @@ require_fixed './scripts/check-all.sh --separate --rust-only "${args[@]}"' "$ci_
 [[ "$(awk '/^jobs:/ { getline; while ($0 ~ /^ *#/) getline; sub(/:$/, ""); sub(/^ +/, ""); print; exit }' "$ci_workflow")" == lint ]] \
   || fail "$ci_workflow must open with the lint job"
 require_fixed './scripts/test-spin-lock-remediation.sh' "$ci_workflow"
+require_fixed './scripts/test-ci-cache-scripts.sh' "$ci_workflow"
 require_fixed './scripts/check-spin-lock-remediation.sh' "$ci_workflow"
 require_fixed './scripts/check-github-action-pins.sh' "$ci_workflow"
 require_fixed './scripts/install-ci-ripgrep.sh' "$ci_workflow"
@@ -161,20 +162,31 @@ require_fixed 'nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216
 require_fixed 'cargo fmt --all --check' "$ci_workflow"
 require_fixed 'cargo clippy --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo test --locked --workspace --all-targets' "$ci_workflow"
+require_fixed 'cargo run --locked -p lez-xmr-swap-sdk --example full-lifecycle' "$ci_workflow"
+require_fixed 'cargo run --locked -p xmr-reference-actor --example full-lifecycle' "$ci_workflow"
+require_fixed 'cargo test --locked --manifest-path compat/lez-v0.2-provisional/Cargo.toml -p lez-zec-escrow-v02 --lib' "$ci_workflow"
+require_fixed 'cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings' "$ci_workflow"
 require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 
 # Build caches (actions/cache restore and save, never the combined action,
-# which would also save from pull requests). Only a push to main saves, so a
-# pull request, a fork's included, only restores what main saved. Every key
-# names what it was built from; the steps below keep guest builds and the
-# repository's own crates out of every Cargo cache.
+# which would also save from pull requests). Only a run with CI_CACHE_SAVE
+# true saves: a push to main, or a maintainer's dispatch with save-caches,
+# whose caches GitHub scopes to the dispatched branch. A pull request, a
+# fork's included, only restores. Every key names what it was built from;
+# the steps below keep guest builds and the repository's own crates out of
+# every Cargo cache, and scripts/ci-cache-gate.sh bounds every save.
 readonly cache_restore='uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
 readonly cache_save='uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0'
 readonly cargo_prune='scripts/ci-cargo-cache-prune.sh'
+readonly cache_gate='scripts/ci-cache-gate.sh'
 readonly nix_store_cache='scripts/ci-basecamp-nix-store-cache.sh'
 readonly expected_cache_restores=6
-readonly expected_cache_saves=6
-[[ -x "$cargo_prune" && -x "$nix_store_cache" ]] || fail "cache scripts must remain executable"
+readonly expected_cache_saves=5
+# The sum of the caps passed to ci-cache-gate.sh, in MiB: what this
+# workflow's caches may hold at once, beside the 1300 MiB other actions'
+# caches hold, within the repository's 10 GB (the budget comment in ci.yml).
+readonly cache_cap_budget_mib=6976
+[[ -x "$cargo_prune" && -x "$nix_store_cache" && -x "$cache_gate" ]] || fail "cache scripts must remain executable"
 for workflow in "$ci_workflow" "$public_workflow"; do
   ! rg -q 'uses: actions/cache@' "$workflow" \
     || fail "$workflow uses actions/cache, which saves from pull requests; use restore and save"
@@ -185,57 +197,128 @@ done
   || fail "expected $expected_cache_saves pinned cache saves in $ci_workflow"
 [[ "$(rg -c 'uses: actions/cache/' "$ci_workflow")" == "$((expected_cache_restores + expected_cache_saves))" ]] \
   || fail "every cache step in $ci_workflow must use the pinned restore or save"
+# Which runs save is decided once, at the top of the workflow; the dispatch
+# input that opts in defaults to off.
+require_fixed "  CI_CACHE_SAVE: \${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.save-caches) }}" "$ci_workflow"
+[[ "$(rg -c 'CI_CACHE_SAVE: ' "$ci_workflow")" == 1 ]] \
+  || fail "$ci_workflow must set CI_CACHE_SAVE in exactly one place"
+dispatch_block="$(awk '/^  workflow_dispatch:$/ { found = 1 } found && /^[a-z]/ { exit } found { print }' "$ci_workflow")"
+for required in '      save-caches:' '        type: boolean' '        default: false'; do
+  rg -Fxq -- "$required" <<<"$dispatch_block" \
+    || fail "$ci_workflow must offer save-caches as a boolean dispatch input that defaults to off: $required"
+done
+! rg -q 'workflow_run:' "$ci_workflow" \
+  || fail "$ci_workflow must not run on workflow_run, which saves with the default branch's scope"
+# Every save runs only on a saving run, and only once its gate allowed it.
 unguarded_saves="$(awk '
-  /^      - / { if (step ~ /actions\/cache\/save@/ && step !~ /if: (matrix\.cache && )?github\.event_name == .push. && github\.ref == .refs\/heads\/main. && steps\.[a-z-]+\.outputs\.cache-hit != .true./) print step; step = "" }
+  function check() {
+    if (step ~ /actions\/cache\/save@/ && step !~ /\n        if: (matrix\.cache && )?env\.CI_CACHE_SAVE == .true. && steps\.[a-z-]+-gate\.outputs\.save == .true.\n/) print step
+  }
+  /^      - / { check(); step = "" }
   { step = step $0 "\n" }
-  END { if (step ~ /actions\/cache\/save@/ && step !~ /github\.ref == .refs\/heads\/main./) print step }
+  END { check() }
 ' "$ci_workflow")"
-[[ -z "$unguarded_saves" ]] || fail "a cache save runs outside a push to main: ${unguarded_saves}"
+[[ -z "$unguarded_saves" ]] || fail "a cache save runs without CI_CACHE_SAVE and its gate: ${unguarded_saves}"
+require_fixed 'if [[ "${CI_CACHE_SAVE:-false}" != true ]]; then' "$cache_gate"
+require_fixed 'if (( bytes > cap_bytes )); then' "$cache_gate"
+# The pinned actions/cache compresses with zstdmt (zstd -T0, level 3, no
+# --long); the gate must measure the same, or its sizes are not GitHub's.
+require_fixed '| zstd -T0 -3 -q -c | wc -c >"$size_file"' "$cache_gate"
+! rg -q -- '\| zstd .*--long' "$cache_gate" || fail "$cache_gate must compress as actions/cache does, without --long"
+require_fixed 'echo "$line" >>"$GITHUB_STEP_SUMMARY"' "$cache_gate"
+# One gate per save, each with a cap; together the caps fit the budget.
+mapfile -t gate_caps < <(rg -o '\./scripts/ci-cache-gate\.sh \S+ [0-9]+ ' "$ci_workflow" | cut -d' ' -f3)
+[[ "${#gate_caps[@]}" == "$expected_cache_saves" ]] \
+  || fail "every cache save in $ci_workflow must be measured by ci-cache-gate.sh with a cap (found ${#gate_caps[@]})"
+cap_sum=0
+for cap in "${gate_caps[@]}"; do
+  cap_sum=$((cap_sum + cap))
+done
+(( cap_sum <= cache_cap_budget_mib )) \
+  || fail "the cache caps in $ci_workflow add up to ${cap_sum} MiB, above the ${cache_cap_budget_mib} MiB budget"
+require_fixed "#   caps together                   ${cache_cap_budget_mib} MiB" "$ci_workflow"
+# A cache's restore, gate and save name the same paths: one job variable
+# for each Cargo and tools cache, one directory for the Nix store.
+for paths in CARGO_CACHE_PATHS TOOLS_CACHE_PATHS; do
+  gates="$(rg -c "ci-cache-gate\\.sh \\S+ [0-9]+ \"\\\$${paths}\"\$" "$ci_workflow" || echo 0)"
+  [[ "$(rg -Fxc "          path: \${{ env.${paths} }}" "$ci_workflow")" == "$((gates * 2))" ]] \
+    || fail "every cache on ${paths} must restore, measure and save the same paths"
+done
+# The lint shard restores the provisional job's cache read-only: same key,
+# same paths, same debug-info setting.
+[[ "$(rg -Fxc '          path: ${{ env.PROVISIONAL_CACHE_PATHS }}' "$ci_workflow")" == 1 ]] \
+  || fail "only the provisional lint shard restores the provisional job's cache"
+env_block() { # env_block NAME: the lines of a multi-line job variable
+  awk -v name="$1" '
+    $0 == "      " name ": |" { found = 1; next }
+    found && /^        / { print; next }
+    found { exit }
+  ' "$ci_workflow"
+}
+[[ -n "$(env_block PROVISIONAL_CACHE_PATHS)" \
+  && "$(env_block PROVISIONAL_CACHE_PATHS)" == "$(awk '/^  lez-v02-provisional:$/ { found = 1 } found' "$ci_workflow" \
+    | awk '$0 == "      CARGO_CACHE_PATHS: |" { f = 1; next } f && /^        / { print; next } f { exit }')" ]] \
+  || fail "the lint shard must restore the provisional cache with the provisional job's exact paths"
+[[ "$(rg -Fc "key: lez-v02-provisional-\${{ runner.os }}-\${{ runner.arch }}-\${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-" "$ci_workflow")" == 2 ]] \
+  || fail "the lint shard must restore the provisional job's key"
+! rg -q '^        /tmp/lez-v02-provisional-artifact-target' "$ci_workflow" \
+  || fail "the provisional methods and deployer target is not cached"
+[[ "$(rg -Fxc '          path: ${{ runner.temp }}/basecamp-nix-store/store' "$ci_workflow")" == 2 ]] \
+  || fail "the Basecamp Nix store restore and save must name the same directory"
+require_fixed './scripts/ci-cache-gate.sh basecamp-nix-store 384 "${RUNNER_TEMP}/basecamp-nix-store/store"' "$ci_workflow"
 while IFS= read -r key; do
   [[ "$key" == *'steps.'*'.outputs.cache-primary-key }}' || "$key" == *'hashFiles('* ]] \
     || fail "cache key does not hash its inputs: $key"
   [[ "$key" == *'cache-primary-key'* || "$key" == *'runner.os'*'runner.arch'* ]] \
     || fail "cache key does not name the runner: $key"
 done < <(rg '^ +key: ' "$ci_workflow")
-[[ "$(rg -Fc 'rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 4 ]] \
-  || fail "every Cargo cache key must name the rustc version and hash the lock files"
+[[ "$(rg -Fc '${{ env.CARGO_PROFILE_DEV_DEBUG }}-rustc-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles(' "$ci_workflow")" == 4 ]] \
+  || fail "every Cargo cache key must name the debug-info setting and the rustc version and hash the lock files"
+[[ "$(rg -c '^      CARGO_PROFILE_DEV_DEBUG: ' "$ci_workflow")" == 4 \
+  && "$(rg -Fxc '      CARGO_PROFILE_DEV_DEBUG: "0"' "$ci_workflow")" == 3 \
+  && "$(rg -Fxc '      CARGO_INCREMENTAL: "0"' "$ci_workflow")" == 4 ]] \
+  || fail "every job with a Cargo cache must set its debug-info and incremental settings"
 require_fixed "key: lez-v02-provisional-tools-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('scripts/verify-lez-v02-provisional.sh') }}" "$ci_workflow"
 require_fixed "hashFiles('apps/basecamp/flake.lock', 'apps/basecamp/flake.nix', 'apps/basecamp/*/flake.nix', 'scripts/ci-basecamp-nix-store-cache.sh')" "$ci_workflow"
 ! rg -q 'advisory-db|/bin$' "$ci_workflow" \
   || fail "the cargo-deny advisory database and Cargo bin directories are never cached"
-[[ "$(rg -Fc "steps.cargo-prune.outputs.fits == 'true'" "$ci_workflow")" == 4 \
-  && "$(rg -Fc 'CI_CACHE_MAX_GIB: ' "$ci_workflow")" == 4 ]] \
-  || fail "every Cargo cache save must be bounded by CI_CACHE_MAX_GIB"
-require_fixed 'echo "fits=false" >>"$GITHUB_OUTPUT"' "$cargo_prune"
 # Each Cargo cache is pruned after its restore and before Cargo runs.
-for target in 'target Cargo.toml' \
-  'target/check-all compat/lez-v0.2-provisional/Cargo.toml' \
-  '/tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml' \
-  '/tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml' \
-  '/tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml' \
-  '/tmp/lez-v02-provisional-artifact-target compat/lez-v0.2-provisional/escrow/methods/Cargo.toml compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml'; do
-  [[ "$(rg -Fc -- "./scripts/ci-cargo-cache-prune.sh ${target}" "$ci_workflow")" == 2 ]] \
+# The provisional root target is pruned three times: after the lint shard's
+# restore, after the provisional job's, and before that job's save.
+for target in 'target Cargo.toml|2' \
+  '/tmp/lez-v02-sidecar-target compat/lez-v0_2-sidecar/Cargo.toml|2' \
+  '/tmp/lez-v02-provisional-target compat/lez-v0.2-provisional/Cargo.toml|3' \
+  '/tmp/lez-v02-provisional-guest-target compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml|2'; do
+  count="${target##*|}"
+  target="${target%|*}"
+  [[ "$(rg -Fc -- "./scripts/ci-cargo-cache-prune.sh ${target}" "$ci_workflow")" == "$count" ]] \
     || fail "$ci_workflow must prune ${target%% *} after the restore and before the save"
 done
 provisional_order="$(rg -n -F -e 'Restore the provisional LEZ v0.2 Cargo registry' \
-  -e 'ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-artifact-target' \
+  -e 'ci-cargo-cache-prune.sh /tmp/lez-v02-provisional-guest-target' \
   -e 'run: ./scripts/verify-lez-v02-provisional.sh' "$ci_workflow" | cut -d: -f1 | head -n 3 | paste -sd ' ' -)"
 read -r restore_line prune_line verify_line <<<"$provisional_order"
 (( restore_line < prune_line && prune_line < verify_line )) \
   || fail "the provisional guest builds must be pruned after the restore and before the verifier"
-for excluded in riscv-guest docker-guest-source; do
-  [[ "$(rg -Fxc -- "            !/tmp/lez-v02-provisional-artifact-target/${excluded}" "$ci_workflow")" == 2 ]] \
-    || fail "the provisional restore and save must both exclude ${excluded}"
-done
-require_fixed 'rm -rf -- "${target_dir}/riscv-guest" "${target_dir}/docker-guest-source" "${target_dir}/doc"' "$cargo_prune"
+# actions/cache would still store a `!`-excluded directory below a cached
+# one; what a cache must not hold is removed before the save instead.
+! rg -q '^ +!/|^ +!~' "$ci_workflow" \
+  || fail "$ci_workflow excludes a cache path with !, which actions/cache does not honour below a cached directory"
+require_fixed 'actions/cache does not exclude' "$cache_gate"
+require_fixed 'rm -rf -- "${LEZ_V02_TOOL_DIR}/cargo-home/registry" "${LEZ_V02_TOOL_DIR}/cargo-home/git"' "$ci_workflow"
+require_fixed 'rm -rf -- "${target_dir}/riscv-guest" "${target_dir}/docker-guest-source" "${target_dir}/doc" \' "$cargo_prune"
 require_fixed '-name riscv-guest' "$cargo_prune"
 require_fixed "cargo metadata --no-deps --format-version 1 --manifest-path \"\$manifest\"" "$cargo_prune"
-# The Nix archive never holds an output the Basecamp test builds.
+# The Nix archive never holds an output built from the repository, the
+# tested ones included, and a failed export never fails the job.
 require_fixed "bash /repo/scripts/ci-basecamp-nix-store-cache.sh import" "$ci_workflow"
 require_fixed "bash /repo/scripts/ci-basecamp-nix-store-cache.sh export" "$ci_workflow"
+require_fixed "BASECAMP_NIX_CACHE_SAVE: \${{ env.CI_CACHE_SAVE == 'true' && steps.basecamp-nix-cache.outputs.cache-hit != 'true' }}" "$ci_workflow"
 require_fixed 'nix-store --query --outputs "${root_drvs[@]}" | sort -u >"$tested"' "$nix_store_cache"
-require_fixed '| grep -v '"'"'\.drv$'"'"' | sort -u | comm -23 - "$tested" >"$candidates"' "$nix_store_cache"
+require_fixed 'xargs -r nix-store --query --outputs <"$own" | sort -u >"$own_outputs"' "$nix_store_cache"
+require_fixed 'if [[ -n "$(comm -12 "$closure" "$own_outputs")" ]]; then' "$nix_store_cache"
 require_fixed 'if [[ -n "$(comm -12 "$closure" "$tested")" ]]; then' "$nix_store_cache"
+require_fixed 'if ! bash "${BASH_SOURCE[0]}" export-now; then' "$nix_store_cache"
 
 # GitHub fetches are authenticated with the job's own token, so the shared
 # unauthenticated API budget cannot fail a run: rzup's release requests
@@ -279,7 +362,7 @@ require_fixed 'GITHUB_TOKEN="$rzup_github_token" "$rzup_bin" install "$@"' "$pro
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
 readonly cargo_deny_policy='advisories bans licenses sources'
-readonly expected_cargo_deny_steps=8
+readonly expected_cargo_deny_steps=10
 cargo_deny_steps="$(rg -Fc -- "$cargo_deny_action" "$ci_workflow")"
 cargo_deny_policy_steps="$(rg -Fc -- "$cargo_deny_policy" "$ci_workflow")"
 [[ "$cargo_deny_steps" == "$expected_cargo_deny_steps" ]] \
@@ -292,7 +375,9 @@ for manifest in \
   compat/lez-v0.2-provisional/Cargo.toml \
   compat/lez-v0.2-provisional/escrow/methods/Cargo.toml \
   compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml \
-  compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml; do
+  compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+  compat/lez-v0_2-xmr-release-service/Cargo.toml \
+  fuzz/Cargo.toml; do
   require_fixed "manifest-path: $manifest" "$ci_workflow"
 done
 
@@ -349,6 +434,28 @@ for forbidden in \
     || fail "out-of-scope release gate remains: $forbidden"
 done
 
+# The one fuzz job: each target for a bounded time on a schedule or on demand, through the
+# pinned-nightly container runner. A nightly toolchain never gates a pull request, so the
+# workflow has no pull_request or push trigger and ci.yml never runs the fuzzer; the stable
+# corpus replay tests are the per-change gate and the fuzz graph is audited with the others.
+readonly fuzz_workflow=".github/workflows/fuzz.yml"
+for required in \
+  'workflow_dispatch:' \
+  'schedule:' \
+  'permissions:' \
+  'contents: read' \
+  'timeout-minutes: 45' \
+  'target: [coordinator, offer_announcement, chat_frame, zec_agreement_wire, xmr_reserve_wire]' \
+  './scripts/run-fuzz.sh "${{ matrix.target }}" 120 ' \
+  'persist-credentials: false' \
+  'if: failure()'; do
+  require_fixed "$required" "$fuzz_workflow"
+done
+! rg -q -e '^  (pull_request|pull_request_target|push):' -e 'secrets\.' -e 'write' "$fuzz_workflow" \
+  || fail "$fuzz_workflow must stay scheduled, read-only and secret-free"
+! rg -Fq -e 'run-fuzz.sh' -e 'cargo fuzz' -e 'nightly' "$ci_workflow" "$quality_runner" \
+  || fail "the fuzzer must not run in the required CI workflow"
+
 trivy_fail_hard_steps="$(rg -c 'exit-code: "1"' "$ci_workflow")"
 (( trivy_fail_hard_steps >= 2 )) \
   || fail "runtime and Bitcoin image scans must fail hard"
@@ -373,9 +480,12 @@ assert_trivy_step \
 assert_trivy_step \
   'Report exact Zebra image high and critical vulnerabilities' \
   'lez-atomic-swaps-zebra:github-zec-${{ github.run_id }}-${{ github.run_attempt }}' 0
+assert_trivy_step \
+  'Report exact Monero Stagenet image high and critical vulnerabilities' \
+  'lez-atomic-swaps-monero-stagenet:github-xmr-stagenet-${{ github.run_id }}-${{ github.run_attempt }}' 0
 report_only_scans="$(rg -Fc -- 'exit-code: "0"' "$ci_workflow")"
-[[ "$report_only_scans" == 3 ]] \
-  || fail "exactly three classified upstream scans may report without failing"
+[[ "$report_only_scans" == 4 ]] \
+  || fail "exactly four classified upstream scans may report without failing"
 
 require_fixed 'isolated Bitcoin Core 31.1 Regtest MuSig2 adaptor P2TR spend' "$ci_workflow"
 require_fixed 'BITCOIN_CORE_E2E_KEEP_RUNNING: "1"' "$ci_workflow"
@@ -460,6 +570,8 @@ require_fixed 'nix-store --check-validity \$zkr 2>/dev/null || nix store prefetc
 require_fixed '--expected-hash sha256:$RISC0_RECURSION_ZKR_SHA256 $RISC0_RECURSION_ZKR_URL' deploy/scripts/from-scratch.sh
 require_fixed '--expected-hash "sha256:$zkr_sha256" "$(pin RISC0_RECURSION_ZKR_URL)"' deploy/scripts/build-darwin-packages.sh
 require_fixed 'zkr_sha256="$(pin RISC0_RECURSION_ZKR_SHA256)"' deploy/scripts/build-darwin-packages.sh
+[[ "$(rg -c '^FROM ' "$builder_dockerfile")" == 1 ]] && rg -q '^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$' "$builder_dockerfile" \
+  || fail "$builder_dockerfile must pin its one base image by digest (the layer cache is keyed on it)"
 require_fixed "ARG RISC0_RECURSION_ZKR_URL=${zkr_url}" "$builder_dockerfile"
 require_fixed "ARG RISC0_RECURSION_ZKR_SHA256=${zkr_sha256}" "$builder_dockerfile"
 require_fixed 'ENV RECURSION_SRC_PATH=/opt/lez-tools/risc0-recursion-zkr.zip' "$builder_dockerfile"
@@ -484,6 +596,20 @@ rg -qx 'ghcr\.io/gateway-fm/lez-atomic-swaps/lez-builder@sha256:[0-9a-f]{64}' de
   || fail "deploy/builder/image.lock must hold exactly one pinned lez-builder digest"
 ! rg -n 'docker build[^\n]*deploy/builder|-t lez-builder:local' .github/workflows --glob '!builder-image.yml' \
   || fail "a release workflow builds the builder image; pull the digest pinned in deploy/builder/image.lock"
+# Both architectures build against their registry layer cache; only a push
+# to main or a manual dispatch writes it, never a pull request.
+require_fixed 'BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe' "$builder_workflow"
+require_fixed 'docker buildx create --name lez-builder --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE" --use --bootstrap' "$builder_workflow"
+require_fixed 'cache="$IMAGE-cache:$ARCH"' "$builder_workflow"
+require_fixed 'args=(--cache-from "type=registry,ref=$cache")' "$builder_workflow"
+require_fixed 'args+=(--cache-to "type=registry,ref=$cache,mode=max,image-manifest=true,oci-mediatypes=true")' "$builder_workflow"
+require_fixed "CACHE_WRITE: \${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}" "$builder_workflow"
+require_fixed 'if [[ "$CACHE_WRITE" == true ]]; then' "$builder_workflow"
+require_fixed 'docker buildx build --builder lez-builder --platform "linux/$ARCH" "${args[@]}"' "$builder_workflow"
+[[ "$(rg -c 'cache-to' "$builder_workflow")" == 1 ]] \
+  || fail "$builder_workflow must write the layer cache from exactly one guarded place"
+! rg -n '^\s*(run: )?docker build ' "$builder_workflow" \
+  || fail "$builder_workflow builds without the registry layer cache"
 
 if rg -Uq $'readonly REPOSITORY_ROOT\nREPOSITORY_ROOT=|readonly repository_root\nrepository_root=' scripts; then
   fail "a shell wrapper assigns a variable only after marking it readonly"

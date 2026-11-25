@@ -75,7 +75,7 @@ QHash<QString, SampleSwap> sampleSwaps()
              {"swap-btc-0002", "Bitcoin", "TakerSellsLez", "settled", "refunded",
               "150000", "900000"}},
             {"swap-xmr-0003",
-             {"swap-xmr-0003", "Monero", "TakerSellsForeign", "both_legs_locked",
+             {"swap-xmr-0003", "Monero", "TakerSellsLez", "both_legs_locked",
               "in_flight", "4215000000000", "120000"}}};
 }
 

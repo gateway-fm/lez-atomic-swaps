@@ -1,0 +1,50 @@
+[02:02:40] === xmr-wallet-restart (stamp 179556856002)
+[02:02:40] preflight: indexer historical reads
+[02:02:40]   indexer serves historical reads at the tip (8568)
+[02:02:40] preflight: LEZ finality check waived by request
+[02:02:51]   the Maker's Monero wallet holds 3904.880 XMR unlocked
+[02:03:08]   Maker CLI published offer-e2e-xmr-179556856002m on its running Node
+[02:03:18]   Taker took offer-e2e-xmr-179556856002m: swap bee0b1622578 (not_activated)
+[02:03:18]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[02:03:18]   restarting lez-l2-maker-xmr-wallet (after the take): taker lez_locking, maker leased
+[02:03:19]   lez-l2-maker-xmr-wallet is back; asked for its open wallet's address it answers 'No wallet file'
+[02:03:19]   [0 s] waiting for the Taker's bee0b1622578 to complete (maker's wallet-rpc restarted): taker awaiting_first_lock (actor lez_locking) | maker leased | LEZ finalized 8584, tip 8588 (4 unfinalized) [heartbeat]
+[02:03:40]   [22 s] waiting for the Taker's bee0b1622578 to complete (maker's wallet-rpc restarted): taker awaiting_second_lock (actor taker_lock_confirmed) | maker offered | LEZ finalized 8601, tip 8605 (4 unfinalized) [heartbeat]
+[02:03:59]   Taker claimed Monero on bee0b1622578
+[02:03:59]   [41 s] waiting for the Taker's bee0b1622578 to complete (maker's wallet-rpc restarted): taker claim_available (actor both_legs_locked) | maker taker_lock_confirmed | LEZ finalized 8619, tip 8622 (3 unfinalized) [heartbeat]
+[02:04:00]   [41 s] waiting for the Taker's bee0b1622578 to complete (maker's wallet-rpc restarted): taker claim_in_progress (actor both_legs_locked) | maker taker_lock_confirmed | LEZ finalized 8619, tip 8622 (3 unfinalized) [heartbeat]
+[02:04:12]   [54 s] waiting for the Taker's bee0b1622578 to complete (maker's wallet-rpc restarted): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 8635, tip 8639 (4 unfinalized) [heartbeat]
+[02:04:32]   [74 s] waiting for the Taker's bee0b1622578 to complete (maker's wallet-rpc restarted): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 8652, tip 8656 (4 unfinalized) [heartbeat]
+[02:04:37]   [78 s] waiting for the Taker's bee0b1622578 to complete (maker's wallet-rpc restarted): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 8652, tip 8656 (4 unfinalized) [heartbeat]
+[02:05:18]   [0 s] waiting for the Taker's bee0b1622578 to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 8683, tip 8690 (7 unfinalized) [heartbeat]
+[02:05:18]   both Nodes report bee0b1622578 completed
+[02:05:18]   [0 s] waiting for LEZ finality to reach block 8700 (the swap's last LEZ transaction): LEZ finalized 8683, tip 8690 (7 unfinalized) [heartbeat] | LEZ finalized 8683, tip 8690 (7 unfinalized) [heartbeat]
+[02:05:28]   LEZ is final through block 8700 after 10s
+[02:05:28]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[02:05:31]   the Taker's Monero balance moved 352.592152 XMR with coinbase
+[02:05:36]   the Taker's Monero wallet received [('40e8747ac0fd7c51', 0.9981916)] during the swap (lot 1 XMR)
+[02:05:52]   the Maker's Monero wallet holds 4607.153 XMR unlocked
+[02:06:07]   Maker CLI published offer-e2e-xmr-179556856002t on its running Node
+[02:06:18]   Taker took offer-e2e-xmr-179556856002t: swap f7f8fbf6511a (not_activated)
+[02:06:18]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[02:06:18]   [0 s] waiting for the Taker's f7f8fbf6511a to complete (taker's wallet-rpc restarted): taker awaiting_first_lock (actor lez_locking) | maker leased | LEZ finalized 8735, tip 8741 (6 unfinalized) [heartbeat]
+[02:06:33]   restarting lez-l2-taker-xmr-wallet (watching for the Monero): taker taker_lock_confirmed, maker taker_lock_confirmed
+[02:06:34]   lez-l2-taker-xmr-wallet is back; asked for its open wallet's address it answers 'No wallet file'
+[02:06:34]   [15 s] waiting for the Taker's f7f8fbf6511a to complete (taker's wallet-rpc restarted): taker awaiting_second_lock (actor taker_lock_confirmed) | maker taker_lock_confirmed | LEZ finalized 8751, tip 8757 (6 unfinalized) [heartbeat]
+[02:06:49]   Taker claimed Monero on f7f8fbf6511a
+[02:06:49]   [31 s] waiting for the Taker's f7f8fbf6511a to complete (taker's wallet-rpc restarted): taker claim_available (actor both_legs_locked) | maker taker_lock_confirmed | LEZ finalized 8751, tip 8757 (6 unfinalized) [heartbeat]
+[02:06:50]   [31 s] waiting for the Taker's f7f8fbf6511a to complete (taker's wallet-rpc restarted): taker claim_in_progress (actor both_legs_locked) | maker taker_lock_confirmed | LEZ finalized 8751, tip 8757 (6 unfinalized) [heartbeat]
+[02:07:04]   [46 s] waiting for the Taker's f7f8fbf6511a to complete (taker's wallet-rpc restarted): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 8769, tip 8774 (5 unfinalized) [heartbeat]
+[02:07:20]   restarting lez-l2-taker-xmr-wallet (before the sweep): taker awaiting_maker_claim, maker claim_evidence_available
+[02:07:20]   lez-l2-taker-xmr-wallet is back; asked for its open wallet's address it answers 'No wallet file'
+[02:07:21]   [62 s] waiting for the Taker's f7f8fbf6511a to complete (taker's wallet-rpc restarted): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 8786, tip 8791 (5 unfinalized) [heartbeat]
+[02:07:24]   [66 s] waiting for the Taker's f7f8fbf6511a to complete (taker's wallet-rpc restarted): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 8786, tip 8791 (5 unfinalized) [heartbeat]
+[02:08:05]   [0 s] waiting for the Taker's f7f8fbf6511a to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 8820, tip 8824 (4 unfinalized) [heartbeat]
+[02:08:05]   both Nodes report f7f8fbf6511a completed
+[02:08:06]   [0 s] waiting for LEZ finality to reach block 8833 (the swap's last LEZ transaction): LEZ finalized 8820, tip 8824 (4 unfinalized) [heartbeat] | LEZ finalized 8820, tip 8824 (4 unfinalized) [heartbeat]
+[02:08:16]   [10 s] waiting for LEZ finality to reach block 8833 (the swap's last LEZ transaction): LEZ finalized 8828, tip 8841 (13 unfinalized) [heartbeat] | LEZ finalized 8828, tip 8841 (13 unfinalized) [heartbeat]
+[02:08:38]   LEZ is final through block 8833 after 32s
+[02:08:38]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[02:08:41]   the Taker's Monero balance moved 352.578740 XMR with coinbase
+[02:08:45]   the Taker's Monero wallet received [('15ecd52fc403d9b9', 0.9981916)] during the swap (lot 1 XMR)
+[02:08:45] === xmr-wallet-restart: passed in 365s

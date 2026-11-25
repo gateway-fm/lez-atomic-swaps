@@ -1,0 +1,33 @@
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795574290 (2026-11-25T02:38:10Z), root 2fdea5107e0707b6c517df754309e600d8742d3ccb0a29921a48a3399ec09a68
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmSFeUdASGiB6SB1BZpRfE3SERnPiB2hXmd): runtime/zebra/zebrad.toml
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+runtime generated at runtime
+  [time 02:38:35] runtime config: 1 s (1 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 02:38:35] images: 0 s (1 s since up.sh started)
+[3/6] starting chains…
+ Container lez-network Running 
+ Container lez-btc-miner Running 
+ Container lez-xmr-funding-wallet Running 
+ Container lez-maker-xmr-wallet Running 
+ Container lez-monerod Running 
+ Container lez-taker-xmr-wallet Running 
+ Container lez-bitcoin-core Running 
+ Container lez-sequencer Running 
+ Container lez-zebra Running 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-bitcoin-core Healthy 
+  [time 02:38:36] start the chains (compose up): 1 s (2 s since up.sh started)
+  [time 02:38:36] chains healthy: 0 s (2 s since up.sh started)
+  [time 02:38:38] indexer check (repair-indexer.sh): 2 s (4 s since up.sh started)
+Regtest wallets ready; Maker 3025.02115 BTC, Taker 5249.977046 BTC spendable.
+  [time 02:38:38] Bitcoin Core wallets (seed-btc-wallets.py): 0 s (4 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+escrow deployer missing under <scratch>/provision/data; run from-scratch.sh --only build
+  [time 02:38:38] market bootstrap: 0 s (4 s since up.sh started)

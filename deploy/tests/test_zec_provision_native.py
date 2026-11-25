@@ -1,4 +1,4 @@
-"""zec-provision.sh --native-home: the corridor for Nodes that run natively
+"""tests/fixtures/zec-catalog-fixture.sh --native-home: the corridor for Nodes that run natively
 on this host (the launcher's macOS layout) is a Regtest corridor built with
 the provisioners of this checkout. What it refuses before touching a chain;
 the full run is in the evidence of native ZEC swaps."""
@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
+FIXTURE = pathlib.Path(__file__).resolve().parent / 'fixtures' / 'zec-catalog-fixture.sh'
 
 
 class NativeProvision(unittest.TestCase):
@@ -19,8 +20,10 @@ class NativeProvision(unittest.TestCase):
         (deploy / 'scripts').mkdir(parents=True)
         (deploy / 'runtime').mkdir()
         (deploy / 'runtime' / 'runtime.env').write_text('LEZ_V02_CHANNEL_ID=' + 'e' * 64 + '\n')
-        for script in ('zec-provision.sh', 'lane.sh', 'host.sh'):
+        for script in ('lane.sh', 'host.sh'):
             shutil.copy(SCRIPTS / script, deploy / 'scripts')
+        (deploy / 'tests' / 'fixtures').mkdir(parents=True)
+        shutil.copy(FIXTURE, deploy / 'tests' / 'fixtures')
         self.deploy = deploy
         self.home = self.tmp / 'home'
         self.home.mkdir()
@@ -29,7 +32,7 @@ class NativeProvision(unittest.TestCase):
         # the scripts need bash >= 5.1 (host.sh): the one on PATH
         env = {'PATH': f"{pathlib.Path(shutil.which('bash')).parent}:/usr/bin:/bin:/usr/sbin:/sbin", 'HOME': str(self.tmp),
                'LEZ_ZEC_NATIVE_TOOLS': str(tools or self.tmp / 'no-tools')}
-        return subprocess.run([shutil.which('bash'), 'scripts/zec-provision.sh', '--skip-chain-check', *args],
+        return subprocess.run([shutil.which('bash'), 'tests/fixtures/zec-catalog-fixture.sh', '--skip-chain-check', *args],
                               cwd=self.deploy, env=env, capture_output=True, text=True, timeout=60)
 
     def test_a_native_corridor_is_regtest_only(self):
@@ -67,7 +70,7 @@ class ProfilePerDirection(unittest.TestCase):
         self.assertIn("TakerSellsForeign corridor's --profile must be deterministic-local-devnet-v5 or -v6", result.stderr)
 
     def test_the_help_names_the_default_profile_of_each_direction(self):
-        text = (SCRIPTS / 'zec-provision.sh').read_text()
+        text = FIXTURE.read_text()
         for line in ('Taker-reveals-first deterministic-local-devnet-v7', 'TakerSellsForeign: deterministic-local-devnet-v5',
                      'public-testnet-v3 (TakerSellsLez)', "Taker's half only"):
             self.assertIn(line, text)

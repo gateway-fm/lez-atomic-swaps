@@ -1,0 +1,104 @@
+
+[09:54:00] === logos-happy (TakerSellsForeign)
+
+[09:54:01] both Basecamps recreated on the logos transport
+
+[09:54:08] the Taker's Delivery node dials the Maker's at /ip4/172.29.0.5/tcp/60000/p2p/16Uiu2HAmBhfip5cErb8ZoTMsFP6goJHQWLBvpQcse1yCLyMNt4H5
+
+[09:54:15] the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket
+   4713
+   {"delivery_sources":[{"directory":"/var/lib/lez/taker/delivery","maker_public_key":"03a3bcaa380ee1f0ce7af54fa2f83bdbbad4a55a3102eeeda907aea2d85a0a07e6","source_id":"local-maker"}],"chat_socket":"/run/lez/taker/logos-chat-proxy.sock"}
+
+[09:54:15] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[09:54:17] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   3e133feb9676707d7ec109b4f8871af67570f23715fa1ae0e8db4113992d0399 awaiting_first_lock 0 -
+
+[09:54:22] taken over Logos Delivery and Chat in 6 s (discovery, conversation, reservation, ceremony)
+
+[09:54:22] Taker desk: lock_btc on 3e133feb9676
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[09:54:23] Maker desk shows 3e133feb9676 at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[09:54:57] Taker desk: claim_lez on 3e133feb9676
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[09:54:58] Maker desk shows 3e133feb9676 at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[09:55:10] Taker desk shows 3e133feb9676 at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 3e133feb9676: runtime/evidence/3e133feb9676707d7ec109b4f8871af67570f23715fa1ae0e8db4113992d0399.json (5 effects, completed 2026-11-22T09:55:05Z)
+
+[09:55:11] Chat gateways: Taker {"jsonrpc":"2.0","id":1,"result":{"schema_version":1,"role":"taker","session_bound":true,"session_count":1,"queued_frames":0,"pending_requests":0,"discovered_offers":5}}; Maker {"jsonrpc":"2.0","id":1,"result":{"schema_version":1,"role":"maker","session_bound":true,"session_count":1,"queued_frames":0,"pending_requests":0,"discovered_offers":0}}
+
+[09:55:11] Taker gateway offers from Delivery: 2 offer(s) of 1 Maker(s): ['03a3bcaa380e']
+
+[09:55:11] maker Chat module:
+   2026-11-22T09:54:08.053 INFO: chat_module::actions: delivery is online
+   2026-11-22T09:54:18.378 INFO: chat_module::actions: received 9935 bytes in e6ad9b5323ad496f65760413d3a6709c from 924eb681
+   2026-11-22T09:54:18.419 INFO: chat_module::actions: sent 2305 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:18.861 INFO: chat_module::actions: received 15777 bytes in e6ad9b5323ad496f65760413d3a6709c from 924eb681
+   2026-11-22T09:54:18.919 INFO: chat_module::actions: sent 6093 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:19.083 INFO: chat_module::actions: received 5526 bytes in e6ad9b5323ad496f65760413d3a6709c from 924eb681
+   2026-11-22T09:54:19.119 INFO: chat_module::actions: sent 476 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:19.280 INFO: chat_module::actions: received 5404 bytes in e6ad9b5323ad496f65760413d3a6709c from 924eb681
+   2026-11-22T09:54:19.469 INFO: chat_module::actions: sent 2478 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:19.626 INFO: chat_module::actions: received 2920 bytes in e6ad9b5323ad496f65760413d3a6709c from 924eb681
+   2026-11-22T09:54:19.669 INFO: chat_module::actions: sent 4964 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:19.909 INFO: chat_module::actions: received 2536 bytes in e6ad9b5323ad496f65760413d3a6709c from 924eb681
+   2026-11-22T09:54:20.019 INFO: chat_module::actions: sent 2884 bytes to e6ad9b5323ad496f65760413d3a6709c
+
+[09:55:11] taker Chat module:
+   2026-11-22T09:54:15.282 INFO: chat_module::actions: delivery is online
+   2026-11-22T09:54:18.205 INFO: chat_module::actions: created direct conversation e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:18.273 INFO: chat_module::actions: sent 9935 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:18.476 INFO: chat_module::actions: received 2305 bytes in e6ad9b5323ad496f65760413d3a6709c from 5d378867
+   2026-11-22T09:54:18.720 INFO: chat_module::actions: sent 15777 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:18.977 INFO: chat_module::actions: received 6093 bytes in e6ad9b5323ad496f65760413d3a6709c from 5d378867
+   2026-11-22T09:54:19.019 INFO: chat_module::actions: sent 5526 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:19.167 INFO: chat_module::actions: received 476 bytes in e6ad9b5323ad496f65760413d3a6709c from 5d378867
+   2026-11-22T09:54:19.220 INFO: chat_module::actions: sent 5404 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:19.522 INFO: chat_module::actions: received 2478 bytes in e6ad9b5323ad496f65760413d3a6709c from 5d378867
+   2026-11-22T09:54:19.569 INFO: chat_module::actions: sent 2920 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:19.733 INFO: chat_module::actions: received 4964 bytes in e6ad9b5323ad496f65760413d3a6709c from 5d378867
+   2026-11-22T09:54:19.771 INFO: chat_module::actions: sent 2536 bytes to e6ad9b5323ad496f65760413d3a6709c
+   2026-11-22T09:54:20.074 INFO: chat_module::actions: received 2884 bytes in e6ad9b5323ad496f65760413d3a6709c from 5d378867
+
+[09:55:11] the Taker Node's last lines:
+   {"event":"effect_reconcile","detail":"exact_claim_safe: sending"}
+   {"event":"effect_submission","detail":"accepted=true error=None"}
+   {"event":"effect_reconcile","detail":"exact_claim_safe: no send"}
+   {"event":"effect_reconcile","detail":"present_exact: no send"}
+
+[09:55:11] both Basecamps recreated on the local transport
+
+[09:55:19] === logos-happy (TakerSellsForeign): passed in 79s

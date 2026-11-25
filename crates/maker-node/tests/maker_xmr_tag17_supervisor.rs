@@ -40,7 +40,7 @@ use xmr_maker_effect_fixture::{provision_maker_refund, provision_maker_tag17};
     clippy::too_many_lines,
     reason = "one test keeps the two-cycle exact-effect assertions visible"
 )]
-fn real_maker_actor_executes_both_recovery_branches_once_then_reconciles() {
+fn maker_actor_runs_both_recovery_branches_on_stub_effects_once_then_reconciles() {
     let root = tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let actor_program = root.path().join("lez-xmr-maker-actor");
@@ -144,7 +144,7 @@ fn real_maker_actor_executes_both_recovery_branches_once_then_reconciles() {
             .unwrap()
             .unwrap()
             .observation(),
-        &MakerActorProgressObservationV1::active("refunded", 2, "complete").unwrap()
+        &MakerActorProgressObservationV1::active("punished", 4, "complete").unwrap()
     );
 
     let refund = provision_maker_refund(&fixture, root.path());
@@ -229,7 +229,7 @@ fn real_maker_actor_executes_both_recovery_branches_once_then_reconciles() {
             .unwrap()
             .unwrap()
             .observation(),
-        &MakerActorProgressObservationV1::active("refunded", 2, "complete").unwrap()
+        &MakerActorProgressObservationV1::active("refunded", 4, "complete").unwrap()
     );
 }
 
@@ -501,7 +501,7 @@ fn killed_tag15_actor_reconciles_durable_submission_without_resend() {
             .unwrap()
             .unwrap()
             .observation(),
-        &MakerActorProgressObservationV1::active("completed", 2, "complete").unwrap()
+        &MakerActorProgressObservationV1::active("completed", 4, "complete").unwrap()
     );
 }
 

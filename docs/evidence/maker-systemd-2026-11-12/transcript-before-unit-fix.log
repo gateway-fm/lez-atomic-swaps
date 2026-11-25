@@ -1,0 +1,94 @@
+
+## VM
+source commit: 6db32a0451087b823913c5da9de82e9c875690ee
+51f56e39d0362d1449a22204732902eee94753b41191e3a95c544f3f31a9be8f  lez-maker-node
+cb872102cea108af09d0a50c3fce5c514450a82a41efcc6a48fd4d42b10ed63e  lez-maker-cli
+c0a58260976958115bacf233ce95a170ec9a8a1d9623cf90fe5b002728a9c96d  lez-zec-maker-actor
+$ grep PRETTY_NAME /etc/os-release
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+[exit 0]
+$ uname -r
+6.8.0-147-generic
+[exit 0]
+$ systemctl --version
+systemd 255 (255.4-1ubuntu8.18)
++PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified
+[exit 0]
+
+## Install (docs/maker-systemd-install.md)
+$ useradd --system --no-create-home --shell /usr/sbin/nologin lez-swap
+[exit 0]
+$ env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-maker-node-service.sh
+installed canonical Maker Node artifacts below /
+[exit 0]
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=delivery-signing.key - /etc/lez/maker/credentials/delivery-signing.key.cred
+Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=maker-claim-recovery.key - /etc/lez/maker/credentials/maker-claim-recovery.key.cred
+Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=maker-claim-preimage.key - /etc/lez/maker/credentials/maker-claim-preimage.key.cred
+Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.
+$ ls -l /etc/lez/maker /etc/lez/maker/credentials
+/etc/lez/maker:
+total 12
+drwx------ 2 root root 4096 Nov 12 08:25 credentials
+-rw------- 1 root root  931 Nov 12 08:25 node.json.example
+-rw------- 1 root root 1054 Nov 12 08:25 route-health.json.example
+
+/etc/lez/maker/credentials:
+total 12
+-rw-r--r-- 1 root root 187 Nov 12 08:25 delivery-signing.key.cred
+-rw-r--r-- 1 root root 195 Nov 12 08:25 maker-claim-preimage.key.cred
+-rw-r--r-- 1 root root 195 Nov 12 08:25 maker-claim-recovery.key.cred
+[exit 0]
+$ chown lez-swap:lez-swap /etc/lez/maker/node.json
+[exit 0]
+$ chmod 0600 /etc/lez/maker/node.json
+[exit 0]
+$ cat /etc/lez/maker/node.json
+{
+  "schema_version": 1,
+  "arguments": [
+    "--socket", "/run/lez/maker/node.sock",
+    "--database", "/var/lib/lez/maker/maker.sqlite3",
+    "--ready-file", "/run/lez/maker/ready",
+    "--delivery-directory", "/var/lib/lez/maker/delivery",
+    "--delivery-signing-key-file", "/run/credentials/lez-maker-node.service/delivery-signing.key"
+  ]
+}
+[exit 0]
+$ systemctl daemon-reload
+[exit 0]
+$ systemctl enable --now lez-maker-node
+Created symlink /etc/systemd/system/multi-user.target.wants/lez-maker-node.service → /usr/lib/systemd/system/lez-maker-node.service.
+Job for lez-maker-node.service failed because the control process exited with error code.
+See "systemctl status lez-maker-node.service" and "journalctl -xeu lez-maker-node.service" for details.
+[exit 0]
+
+## Unit active and READY via sd_notify
+$ systemctl show -p Type,ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
+Type=notify
+MainPID=0
+StatusText=
+NRestarts=0
+ActiveState=activating
+SubState=auto-restart
+[exit 0]
+$ systemctl status --no-pager lez-maker-node
+● lez-maker-node.service - LEZ atomic-swap Maker Node
+     Loaded: loaded (/usr/lib/systemd/system/lez-maker-node.service; enabled; preset: enabled)
+     Active: activating (auto-restart) (Result: exit-code) since Thu 2026-11-12 08:25:16 UTC; 49ms ago
+       Docs: https://github.com/gateway-fm/lez-atomic-swaps
+    Process: 1133 ExecStart=/usr/bin/lez-maker-node --config /etc/lez/maker/node.json (code=exited, status=1/FAILURE)
+   Main PID: 1133 (code=exited, status=1/FAILURE)
+        CPU: 58ms
+[exit 3]
+$ journalctl -u lez-maker-node --no-pager -o cat
+Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+Error: open maker database lease
+Caused by:
+    Function not implemented (os error 38)
+lez-maker-node.service: Main process exited, code=exited, status=1/FAILURE
+lez-maker-node.service: Failed with result 'exit-code'.
+Failed to start lez-maker-node.service - LEZ atomic-swap Maker Node.
+[exit 0]
+

@@ -66,7 +66,7 @@ Item {
         clipboardHelper.copy()
     }
     function swapBucket(swap) {
-        if (swap.state === "completed" || swap.state === "refunded" || swap.state === "failed") return "done"
+        if (["completed", "refunded", "failed", "expired", "punished"].indexOf(swap.state) >= 0) return "done"  // the last two: Monero Maker
         if (swap.can_act === true) return "attention"
         return "running"
     }
@@ -90,16 +90,28 @@ Item {
     function btcAmount(sats) {
         return (Number(sats ?? 0) / 100000000).toFixed(8)
     }
+    // A foreign chain's atomic units per coin: 10^12 piconero per XMR,
+    // 10^8 satoshis or zatoshis per BTC or ZEC.
+    function foreignDecimals(pair) {
+        return pair === "Monero" ? 12 : 8
+    }
+    // A foreign amount with all its chain's decimals (Monero's in integers:
+    // a division by 10^12 would round them).
+    function foreignAmount(pair, units) {
+        if (pair !== "Monero") return root.btcAmount(units)
+        var value = Number(units ?? 0)
+        return String(Math.floor(value / 1e12)) + "." + String(value % 1e12).padStart(12, "0")
+    }
     function lezAmount(units) {
         return Number(units ?? 0).toLocaleString(Qt.locale("en_US"), "f", 0)
     }
     function formatBtcSats(value) {
         return root.btcAmount(value) + " BTC"
     }
-    // The foreign leg of an order-book row or swap: BTC, or ZEC for a
-    // prepared Zcash corridor (8 decimals either way).
+    // The foreign leg of an order-book row or swap: BTC, ZEC (8 decimals
+    // either way) or XMR (12).
     function formatForeign(pair, value) {
-        return root.btcAmount(value) + (pair === "Zcash" ? " ZEC" : " BTC")
+        return root.foreignAmount(pair, value) + (pair === "Monero" ? " XMR" : pair === "Zcash" ? " ZEC" : " BTC")
     }
     function formatLez(value) {
         return root.lezAmount(value) + " LEZ"
@@ -334,7 +346,11 @@ Item {
         if (health.ready !== true) return {tone: "down", text: "Node not ready"}
         if (health.degraded === true) {
             var chain = health.lez_chain ?? {}
-            var reason = chain.degraded !== true ? ""
+            // A foreign chain the Node's route health reads down, by pair.
+            var down = []
+            for (var entry of health.routes ?? [])
+                if (entry.state === "unavailable" && down.indexOf(entry.route.pair) < 0) down.push(entry.route.pair)
+            var reason = chain.degraded !== true ? (down.length > 0 ? " · " + down.join(", ") + " unavailable" : "")
                 : chain.reason === "lez_finality_stalled" ? " · LEZ finality stalled"
                 : chain.reason === "lez_indexer_unreachable" ? " · LEZ indexer unreachable"
                 : " · LEZ chain"
@@ -394,13 +410,13 @@ Item {
         var numerator = amount * lezLot
         return Number.isSafeInteger(numerator) && numerator % satsLot === 0 ? numerator / satsLot : NaN
     }
-    // "1 BTC = 100,000 LEZ" (or "1 ZEC = 50,000 LEZ") for an offer's exact lot price.
+    // "1 BTC = 100,000 LEZ" (or "1 ZEC = 50,000 LEZ", "1 XMR = 50,000 LEZ") for an offer's exact lot price.
     function offerRate(offer) {
-        return 100000000 * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
+        return Math.pow(10, root.foreignDecimals(offer.pair)) * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
     }
     function rateDisplay(offer) {
         var perCoin = root.offerRate(offer)
-        return "1 " + (offer.pair === "Zcash" ? "ZEC" : "BTC") + " = " + perCoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perCoin) ? 0 : 2) + " LEZ"
+        return "1 " + (offer.pair === "Monero" ? "XMR" : offer.pair === "Zcash" ? "ZEC" : "BTC") + " = " + perCoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perCoin) ? 0 : 2) + " LEZ"
     }
     // The best rate on the book for `direction`: most LEZ per BTC when you
     // pay BTC, fewest when you sell LEZ.
@@ -463,6 +479,13 @@ Item {
                 root.statusTitle = "Action submitted"
                 root.statusDetail = root.lezChainLine() !== "" ? root.lezChainLine()
                     : "Waiting for finalized chain evidence before the next actor turn"
+                // A claim the actor holds until its Zcash funding is deep
+                // enough was not sent yet: the status says queued (issue #130).
+                var row = (result.swaps ?? []).find(function(item) { return String(item.ui_swap_id) === String(swap.ui_swap_id) })
+                if (row !== undefined && String(row.state_label) === "Claim queued") {
+                    root.statusTitle = "Claim queued"
+                    root.statusDetail = String(row.progress_detail)
+                }
             })
     }
     function connectChat() {
@@ -913,7 +936,6 @@ Item {
 
                         Panel {
                             objectName: "takerReview"
-                            visible: pair.currentText !== "Bitcoin"
                             Layout.fillWidth: true
                             SectionTitle { text: "Review exact terms" }
                             FieldLabel { text: "OFFER ID" }

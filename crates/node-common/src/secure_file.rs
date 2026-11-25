@@ -1,11 +1,17 @@
 //! Owner-private file loading shared by Maker application binaries.
 
-use std::{fs::File, io::Read as _, os::unix::fs::MetadataExt as _, path::Path};
+use std::{
+    fs::File,
+    io::Read as _,
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
+    path::Path,
+};
 
 use anyhow::{Context as _, ensure};
 use lez_swap_store::open_no_symlinks;
 use rustix::fs::{Mode, OFlags};
 use secp256k1::SecretKey;
+use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 /// Stable identity captured for one owner-private file snapshot.
@@ -97,8 +103,9 @@ fn read_private_file_snapshot_inner(
     purpose: &str,
     after_read: impl FnOnce(),
 ) -> anyhow::Result<PrivateFileSnapshot> {
+    let credential = lez_systemd_credential::is_credential_path(path);
     let mut file = open_private_file(path, purpose)?;
-    let before = validate_private_file(&file, maximum_bytes, purpose)?;
+    let before = validate_private_file(&file, maximum_bytes, purpose, credential)?;
     let mut bytes = Zeroizing::new(Vec::new());
     std::io::Read::by_ref(&mut file)
         .take(maximum_bytes + 1)
@@ -109,7 +116,7 @@ fn read_private_file_snapshot_inner(
         bytes.len() as u64 <= maximum_bytes,
         "{purpose} is oversized"
     );
-    let after = validate_private_file(&file, maximum_bytes, purpose)?;
+    let after = validate_private_file(&file, maximum_bytes, purpose, credential)?;
     ensure!(
         before.dev() == after.dev()
             && before.ino() == after.ino()
@@ -119,7 +126,7 @@ fn read_private_file_snapshot_inner(
     );
     let identity = private_file_identity(&after);
     let reopened = open_private_file(path, purpose)?;
-    let rebound = validate_private_file(&reopened, maximum_bytes, purpose)?;
+    let rebound = validate_private_file(&reopened, maximum_bytes, purpose, credential)?;
     ensure!(
         private_file_identity(&rebound) == identity,
         "{purpose} path changed while it was read"
@@ -203,20 +210,90 @@ fn validate_private_file(
     file: &File,
     maximum_bytes: u64,
     purpose: &str,
+    systemd_credential: bool,
 ) -> anyhow::Result<std::fs::Metadata> {
     let metadata = file
         .metadata()
         .with_context(|| format!("inspect {purpose}"))?;
-    let mode = metadata.mode() & 0o7777;
     ensure!(
         metadata.file_type().is_file()
-            && metadata.uid() == rustix::process::geteuid().as_raw()
-            && matches!(mode, 0o400 | 0o600)
+            && private_file_ownership_ok(
+                metadata.uid(),
+                metadata.gid(),
+                metadata.mode() & 0o7777,
+                rustix::process::geteuid().as_raw(),
+                systemd_credential,
+            )
             && metadata.nlink() == 1
             && metadata.len() <= maximum_bytes,
         "{purpose} must be an owner-owned, single-link mode-0400-or-0600 regular file within its size bound"
     );
     Ok(metadata)
+}
+
+/// Owned by the effective user with mode 0400 or 0600; or, for a file systemd hands the
+/// service as a credential, root:root and unwritable (`lez_systemd_credential`).
+const fn private_file_ownership_ok(
+    owner: u32,
+    group: u32,
+    mode: u32,
+    effective_user: u32,
+    systemd_credential: bool,
+) -> bool {
+    (owner == effective_user && matches!(mode, 0o400 | 0o600))
+        || (systemd_credential
+            && lez_systemd_credential::credential_ownership_ok(owner, group, mode))
+}
+
+/// Upper bound for a non-executable artifact checked by [`is_secure_file`].
+const MAX_NON_EXECUTABLE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Whether `path` is a file only root or this process's user can replace: an
+/// absolute path to a regular file (no symlink) with one hard link, owned by
+/// root or the effective user, not group- or other-writable, executable when
+/// `executable`, in a directory with the same owner and write rules, and with
+/// the SHA-256 `expected_sha256` names.
+#[must_use]
+pub fn is_secure_file(path: &Path, executable: bool, expected_sha256: Option<[u8; 32]>) -> bool {
+    let check = || -> Option<()> {
+        if !path.is_absolute() {
+            return None;
+        }
+        let metadata = std::fs::symlink_metadata(path).ok()?;
+        let mode = metadata.permissions().mode();
+        let effective_uid = rustix::process::geteuid().as_raw();
+        let owner_uid = metadata.uid();
+        let trusted_owner = owner_uid == 0 || owner_uid == effective_uid;
+        let executable_mask = if owner_uid == effective_uid {
+            0o100
+        } else {
+            0o001
+        };
+        if !metadata.file_type().is_file()
+            || !trusted_owner
+            || metadata.nlink() != 1
+            || mode & 0o022 != 0
+            || (executable && mode & executable_mask == 0)
+            || (!executable && metadata.len() > MAX_NON_EXECUTABLE_BYTES)
+        {
+            return None;
+        }
+        let parent_metadata = std::fs::symlink_metadata(path.parent()?).ok()?;
+        if !parent_metadata.file_type().is_dir()
+            || (parent_metadata.uid() != 0 && parent_metadata.uid() != effective_uid)
+            || parent_metadata.permissions().mode() & 0o022 != 0
+        {
+            return None;
+        }
+        if let Some(expected) = expected_sha256 {
+            let actual: [u8; 32] = Sha256::digest(std::fs::read(path).ok()?).into();
+            if actual != expected {
+                return None;
+            }
+        }
+        Some(())
+    };
+    check().is_some()
 }
 
 #[cfg(test)]
@@ -227,7 +304,7 @@ mod tests {
         os::unix::fs::PermissionsExt as _,
     };
 
-    use super::read_private_file_snapshot_inner;
+    use super::{private_file_ownership_ok, read_private_file_snapshot_inner};
 
     #[test]
     fn snapshot_rejects_length_mutation_after_reading_same_descriptor() {
@@ -266,6 +343,37 @@ mod tests {
         assert!(error.contains("path changed while it was read"));
         assert!(!error.contains(path.to_str().unwrap()));
         assert!(!error.contains("same-length"));
+    }
+
+    #[test]
+    fn ownership_rule_is_unchanged_outside_the_credential_directory() {
+        let service = 990;
+        for credential in [false, true] {
+            assert!(private_file_ownership_ok(
+                service, service, 0o600, service, credential
+            ));
+            assert!(private_file_ownership_ok(
+                service, service, 0o400, service, credential
+            ));
+            assert!(!private_file_ownership_ok(
+                service, service, 0o640, service, credential
+            ));
+            assert!(!private_file_ownership_ok(
+                service, service, 0o440, service, credential
+            ));
+            assert!(!private_file_ownership_ok(
+                991, 991, 0o600, service, credential
+            ));
+        }
+        assert!(!private_file_ownership_ok(0, 0, 0o400, service, false));
+        assert!(!private_file_ownership_ok(0, 0, 0o440, service, false));
+    }
+
+    #[test]
+    fn credential_rule_applies_only_to_a_credential_path() {
+        let service = 990;
+        assert!(private_file_ownership_ok(0, 0, 0o440, service, true));
+        assert!(!private_file_ownership_ok(0, service, 0o440, service, true));
     }
 
     fn private_file(path: &std::path::Path, bytes: &[u8]) {

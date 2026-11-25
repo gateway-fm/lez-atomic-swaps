@@ -7,7 +7,7 @@ use std::{
 
 use lez_bridge_client::SidecarCapability;
 use lez_bridge_protocol::{DiscoveryWindow, Hex32, Participant, RunId, RuntimeDescriptor};
-use lez_swap_core::SwapId;
+use lez_swap_core::{SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     ClaimPreimage, MAX_ZEC_AGREEMENT_RECORD_BYTES, MAX_ZEC_FUNDING_INPUTS, ProtectedClaimKey,
 };
@@ -434,6 +434,7 @@ pub struct ActorConfig {
     zebra: ZebraConfig,
     lez_discovery_window: DiscoveryWindow,
     zcash_funding_outpoints: Vec<CandidateOutpoint>,
+    accepted_at_unix_seconds: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -453,6 +454,10 @@ struct RawActorConfig {
     zebra: ZebraConfig,
     lez_discovery_window: DiscoveryWindow,
     zcash_funding_outpoints: Vec<CandidateOutpoint>,
+    /// When this role accepted the agreement, written by its own provisioner
+    /// from its own clock. A template (an agreement not accepted yet) has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accepted_at_unix_seconds: Option<u64>,
 }
 
 /// Compares exact verified config bytes with a ZEC Maker scheduler manifest.
@@ -638,12 +643,16 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
         },
         lez_discovery_window: input.lez_discovery_window,
         zcash_funding_outpoints: input.zcash_funding_outpoints,
+        accepted_at_unix_seconds: None,
     };
     serde_json::to_vec_pretty(&raw).map_err(|_| ActorConfigError::InvalidConfiguration)
 }
 
 /// Re-encodes one validated local actor around an exact new agreement and
 /// fresh mutable state locations without loading or returning any secret.
+///
+/// `accepted_at` is the time at which this role accepted the agreement; the
+/// actor activates at it, not at the time the activation happens to run.
 pub(crate) fn encode_rebound_local_v0_2_actor_config(
     source: &ActorConfig,
     swap_id: SwapId,
@@ -651,7 +660,11 @@ pub(crate) fn encode_rebound_local_v0_2_actor_config(
     agreement_sha256: Hex32,
     role_state_db: PathBuf,
     bridge_journal_db: PathBuf,
+    accepted_at: UnixSeconds,
 ) -> Result<Vec<u8>, ActorConfigError> {
+    if accepted_at.value() == 0 {
+        return Err(ActorConfigError::InvalidConfiguration);
+    }
     // A provisioned corridor: the Regtest fixture, or a public Testnet route
     // (zec-local-poc-provision never writes a Main-network actor).
     if source.zebra.identity.network == ZcashNetworkConfig::Main {
@@ -674,6 +687,7 @@ pub(crate) fn encode_rebound_local_v0_2_actor_config(
         zebra: source.zebra.clone(),
         lez_discovery_window: source.lez_discovery_window,
         zcash_funding_outpoints: source.zcash_funding_outpoints.clone(),
+        accepted_at_unix_seconds: Some(accepted_at.value()),
     };
     serde_json::to_vec_pretty(&raw).map_err(|_| ActorConfigError::InvalidConfiguration)
 }
@@ -753,6 +767,7 @@ impl ActorConfig {
             zebra: raw.zebra,
             lez_discovery_window: raw.lez_discovery_window,
             zcash_funding_outpoints: raw.zcash_funding_outpoints,
+            accepted_at_unix_seconds: raw.accepted_at_unix_seconds,
         };
         config.validate()?;
         Ok(config)
@@ -825,6 +840,13 @@ impl ActorConfig {
     #[must_use]
     pub const fn swap_id(&self) -> &SwapId {
         &self.swap_id
+    }
+
+    /// When this role accepted the agreement, as its provisioner recorded it;
+    /// `None` for a template whose agreement is not accepted yet.
+    #[must_use]
+    pub fn accepted_at(&self) -> Option<UnixSeconds> {
+        self.accepted_at_unix_seconds.map(UnixSeconds::new)
     }
 
     /// Role-local durable lifecycle database path.
@@ -946,6 +968,7 @@ impl ActorConfig {
             || self.zebra.counterparty_scan_blocks == 0
             || self.zebra.counterparty_scan_blocks > MAX_COUNTERPARTY_SCAN_BLOCKS
             || !valid_key_id(&self.claim_recovery.key_id)
+            || self.accepted_at_unix_seconds == Some(0)
         {
             return Err(ActorConfigError::InvalidConfiguration);
         }
@@ -1022,10 +1045,16 @@ impl ActorConfig {
     }
 
     fn load_zcash_key(&self) -> Result<Zeroizing<[u8; ZCASH_KEY_BYTES]>, ActorConfigError> {
-        let material = self.read_exact_private::<ZCASH_KEY_BYTES>(
+        // The role's own key file, which a take-time template names in place:
+        // 32 raw bytes, or the same key as 64 hex digits and a line ending.
+        let mut bytes = self.read_command_file(
             &self.zcash_key_file,
+            ZCASH_KEY_BYTES * 2 + 2,
+            FilePrivacy::OwnerPrivate,
             &self.bindings.zcash_key,
         )?;
+        let material =
+            parse_zcash_key(&mut bytes).ok_or(ActorConfigError::InvalidCommandMaterial)?;
         let mut parsed = SecretKey::from_slice(material.as_ref())
             .map_err(|_| ActorConfigError::InvalidCommandMaterial)?;
         parsed.non_secure_erase();
@@ -1151,7 +1180,7 @@ impl ActorConfig {
         ];
         let unsafe_mutable_location =
             mutable_locations.iter().any(|(mutable, expected_mutable)| {
-                !expected_mutable.unchanged(mutable)
+                !expected_mutable.same_file(mutable)
                     || current.aliases(mutable)
                     || self
                         .bindings
@@ -1509,6 +1538,20 @@ fn contains_location(locations: &[&FileLocation], candidate: &FileLocation) -> b
     locations.iter().any(|location| location.aliases(candidate))
 }
 
+/// A Zcash key file's 32-byte secret: raw, or hexadecimal with an optional
+/// line ending.
+fn parse_zcash_key(bytes: &mut Vec<u8>) -> Option<Zeroizing<[u8; ZCASH_KEY_BYTES]>> {
+    let mut key = Zeroizing::new([0_u8; ZCASH_KEY_BYTES]);
+    if bytes.len() == ZCASH_KEY_BYTES {
+        key.copy_from_slice(bytes);
+        return Some(key);
+    }
+    trim_line_ending(bytes);
+    (bytes.len() == ZCASH_KEY_BYTES * 2
+        && hex::decode_to_slice(bytes.as_slice(), key.as_mut()).is_ok())
+    .then_some(key)
+}
+
 fn trim_line_ending(bytes: &mut Vec<u8>) {
     if bytes.ends_with(&[13, 10]) {
         bytes.truncate(bytes.len() - 2);
@@ -1533,6 +1576,18 @@ fn map_command_location_error(error: SecureFileError) -> ActorConfigError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_zcash_key_file_loads_the_same_secret_raw_or_hex() {
+        let secret = [0x5a_u8; 32];
+        let raw = super::parse_zcash_key(&mut secret.to_vec()).unwrap();
+        let hex_form =
+            super::parse_zcash_key(&mut format!("{}\n", hex::encode(secret)).into_bytes()).unwrap();
+        assert_eq!(*raw, secret);
+        assert_eq!(*hex_form, secret);
+        assert!(super::parse_zcash_key(&mut vec![0x5a; 31]).is_none());
+        assert!(super::parse_zcash_key(&mut b"zz".repeat(32)).is_none());
+    }
+
     use std::path::PathBuf;
 
     use lez_bridge_protocol::{

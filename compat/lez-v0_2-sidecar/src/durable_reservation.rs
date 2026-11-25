@@ -102,6 +102,16 @@ pub(crate) enum ReservationKind {
     XmrNativeRefundV3,
     XmrNativeRefundCompletionV3,
     XmrNativePunishV3,
+    /// A re-plan of the tag-17 punishment after the Maker owner's account
+    /// passed its nonce without it; the original stays in `XmrNativePunishV3`.
+    XmrNativePunishSupersession1,
+    XmrNativePunishSupersession2,
+    XmrNativePunishSupersession3,
+    XmrNativePunishSupersession4,
+    XmrNativePunishSupersession5,
+    /// A re-plan of the tag-17 punishment past the fifth: the lineage index,
+    /// at most `MAX_XMR_PUNISH_REPLANS`.
+    XmrNativePunishSupersessionN(u32),
     XmrCurrentProfileClockV1,
     WitnessedEscrow,
     NativeClaim,
@@ -145,10 +155,29 @@ impl ReservationKind {
         }
     }
 
+    /// The lineage slot for the `index`-th re-plan (one-based) of the
+    /// native-XMR tag-17 punishment; `None` past the bound.
+    pub(crate) const fn xmr_native_punish_supersession(index: u32) -> Option<Self> {
+        match index {
+            1 => Some(Self::XmrNativePunishSupersession1),
+            2 => Some(Self::XmrNativePunishSupersession2),
+            3 => Some(Self::XmrNativePunishSupersession3),
+            4 => Some(Self::XmrNativePunishSupersession4),
+            5 => Some(Self::XmrNativePunishSupersession5),
+            6..=crate::native_prepare::MAX_XMR_PUNISH_REPLANS => {
+                Some(Self::XmrNativePunishSupersessionN(index))
+            }
+            _ => None,
+        }
+    }
+
     fn filename(self) -> std::borrow::Cow<'static, str> {
         match self {
             Self::NativeClaimSupersessionN(index) => {
                 std::borrow::Cow::Owned(format!("native-claim-supersession.{index}.v1.json"))
+            }
+            Self::XmrNativePunishSupersessionN(index) => {
+                std::borrow::Cow::Owned(format!("xmr-native-punish-supersession.{index}.v3.json"))
             }
             other => std::borrow::Cow::Borrowed(other.fixed_filename()),
         }
@@ -157,6 +186,7 @@ impl ReservationKind {
     const fn fixed_filename(self) -> &'static str {
         match self {
             Self::NativeClaimSupersessionN(_) => "native-claim-supersession.n.v1.json",
+            Self::XmrNativePunishSupersessionN(_) => "xmr-native-punish-supersession.n.v3.json",
             Self::NativeEscrow => "native-escrow-reservation.v1.json",
             Self::NativeEscrowSupersession1 => "native-escrow-supersession.1.v1.json",
             Self::NativeEscrowSupersession2 => "native-escrow-supersession.2.v1.json",
@@ -177,6 +207,11 @@ impl ReservationKind {
             Self::XmrNativeRefundV3 => "xmr-native-refund-reservation.v3.json",
             Self::XmrNativeRefundCompletionV3 => "xmr-native-refund-completion.v3.json",
             Self::XmrNativePunishV3 => "xmr-native-punish-reservation.v3.json",
+            Self::XmrNativePunishSupersession1 => "xmr-native-punish-supersession.1.v3.json",
+            Self::XmrNativePunishSupersession2 => "xmr-native-punish-supersession.2.v3.json",
+            Self::XmrNativePunishSupersession3 => "xmr-native-punish-supersession.3.v3.json",
+            Self::XmrNativePunishSupersession4 => "xmr-native-punish-supersession.4.v3.json",
+            Self::XmrNativePunishSupersession5 => "xmr-native-punish-supersession.5.v3.json",
             Self::XmrCurrentProfileClockV1 => "xmr-current-profile-clock.v1.json",
             Self::WitnessedEscrow => "witnessed-escrow-reservation.v1.json",
             Self::NativeClaim => "native-claim-reservation.v1.json",

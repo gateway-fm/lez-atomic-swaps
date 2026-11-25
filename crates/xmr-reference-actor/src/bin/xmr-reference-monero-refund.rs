@@ -19,7 +19,10 @@ use lez_adaptor_role_runner::{
 use lez_bridge_adapter::XmrLezBridgeBindingV3;
 use lez_bridge_protocol::{MessageContext, Participant, RequestId, RunId, RuntimeDescriptor};
 use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal, XmrWorkflowStep};
-use lez_xmr_monero_adapter::{LoopbackRpcEndpoint, MoneroRegtestWalletEffects};
+use lez_xmr_monero_adapter::{
+    LoopbackRpcEndpoint, MoneroChainIdentityAttestor, MoneroRegtestMining,
+    MoneroRegtestWalletEffects, MoneroWalletRpcLock,
+};
 use lez_xmr_swap_sdk::{
     CrossCurveScalar, MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES,
     MoneroPrivateViewKey, ReconstructedMoneroSpendKey, XmrActivatedAgreementV1, XmrAgreementV1,
@@ -34,7 +37,8 @@ use xmr_reference_actor::{
     XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD,
     XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_SHARED_PASSWORD_FD, XMR_EFFECT_SHARED_USERNAME_FD,
     XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD, XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD,
-    XmrEffectChildModeV1, XmrEffectChildPlanV1, load_xmr_effect_child_plan_fd,
+    XmrEffectChildModeV1, XmrEffectChildPlanV1, agreement_monero_identity,
+    agreement_restore_height, load_xmr_effect_child_plan_fd,
 };
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -43,7 +47,6 @@ const REFUND_ABI: &str = "lez_xmr_monero_refund_sweep_v3";
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
 const MAX_SECRET_BYTES: usize = 256;
 const MAX_FINAL_SIGNATURE_PACKET_BYTES: usize = 4 * 1024;
-const RESTORE_HEIGHT: u64 = 0;
 
 struct ValidatedInputs {
     route: SettlementRoute,
@@ -174,14 +177,46 @@ async fn execute() -> Result<()> {
         "Monero settlement worker accepts no arguments"
     );
     let inputs = validate_inputs()?;
-    let destination_effects = MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.role_wallet)
-        .context("role destination-wallet boundary is invalid")?;
+    // With one wallet-rpc per role the whole sequence holds the role's
+    // wallet-rpc lock, reads the destination from the role wallet, and mines
+    // the sweep's confirmations itself once its evidence is durable.
+    let one_wallet_rpc = inputs.plan.monero_role_wallet_file();
+    let _lock = one_wallet_rpc
+        .map(|(_, lock_file)| MoneroWalletRpcLock::acquire(lock_file))
+        .transpose()
+        .context("lock the role's Monero wallet-rpc")?;
+    let mut destination_effects =
+        MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.role_wallet)
+            .context("role destination-wallet boundary is invalid")?;
+    if let Some((role_wallet, _)) = one_wallet_rpc {
+        destination_effects =
+            destination_effects.with_role_wallet(role_wallet.to_owned(), String::new())?;
+    }
     let destination = destination_effects
         .primary_standard_address()
         .await
         .context("role destination address is unavailable")?;
     let destination_address = destination.to_string();
     let mut evidence_file = reserve_evidence(&inputs.evidence_path)?;
+    let identity = agreement_monero_identity(&inputs.agreement)?;
+    // Regtest only: the sweep's tool mines its confirmations; on a public
+    // network there is no mining capability and the observer waits.
+    let mining = if one_wallet_rpc.is_some() {
+        MoneroRegtestMining::where_the_role_mines(identity, &inputs.daemon)
+            .await
+            .context("prove the Monero daemon's network")?
+    } else {
+        None
+    };
+    ensure!(
+        identity.network().admits_address(&destination),
+        "the role wallet's address is not on the swap's Monero network"
+    );
+    let restore_height = agreement_restore_height(
+        &inputs.agreement,
+        &MoneroChainIdentityAttestor::new(identity.network(), &inputs.daemon)?,
+    )
+    .await?;
     let wallet_filename = wallet_filename(inputs.plan.run_id());
     let sweeper = MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.shared_wallet)
         .context("shared-wallet effect boundary is invalid")?;
@@ -192,7 +227,7 @@ async fn execute() -> Result<()> {
             inputs.view_key,
             wallet_filename,
             inputs.wallet_password.to_string(),
-            RESTORE_HEIGHT,
+            restore_height,
             inputs.agreement.body().monero().amount_piconero(),
             destination,
         )
@@ -213,7 +248,7 @@ async fn execute() -> Result<()> {
         received_amount_piconero: sweep.received_amount_piconero(),
         fee_piconero: sweep.fee_piconero(),
         transaction_id: hex::encode(sweep.transaction_id().0),
-        restore_height: RESTORE_HEIGHT,
+        restore_height,
         sending_tool_plan_sha256: hex::encode(inputs.plan.sending_tool_plan_sha256()),
         submission_policy: SubmissionPolicy {
             finality_observer_required: true,
@@ -224,7 +259,17 @@ async fn execute() -> Result<()> {
             faucet_used: false,
         },
     };
-    write_evidence(&mut evidence_file, &evidence)
+    write_evidence(&mut evidence_file, &evidence)?;
+    if let Some(mining) = mining {
+        sweeper
+            .mine_confirmations(&mining, destination)
+            .await
+            .context("mine the settlement sweep's confirmations")?;
+    }
+    if one_wallet_rpc.is_some() {
+        destination_effects.open_role_wallet().await?;
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]

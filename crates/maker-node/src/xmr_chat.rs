@@ -1,89 +1,25 @@
-//! Monero Chat staging and daemon-owned Stage-B activation.
-
-use std::collections::BTreeMap;
+//! Monero Chat negotiation: the take-time reservation and ceremony rounds
+//! (`xmr_reserve.rs`), Stage-A staging and Stage-B activation.
 
 use super::*;
-use anyhow::{Context as _, ensure};
-
-const MAX_XMR_MAKER_AUTHORITIES: usize = 256;
-
-/// Daemon-owned XMR role material and immutable actor manifests.
-///
-/// The private view key validates Stage B but is never serialized or exposed
-/// through `Debug`. Actor paths remain behind this authority boundary.
-pub struct XmrMakerChatAuthority {
-    maker_agreement_identity: [u8; 33],
-    private_view_key: MoneroPrivateViewKey,
-    actors: BTreeMap<Box<str>, MakerActorManifestV1>,
-}
-
-impl std::fmt::Debug for XmrMakerChatAuthority {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("XmrMakerChatAuthority")
-            .field("maker_agreement_identity", &self.maker_agreement_identity)
-            .field("private_view_key", &"[REDACTED]")
-            .field("actor_count", &self.actors.len())
-            .finish()
-    }
-}
-
-impl XmrMakerChatAuthority {
-    /// Validates one bounded daemon-owned authority registry.
-    ///
-    /// # Errors
-    ///
-    /// Rejects an invalid Maker key, an empty or oversized registry, duplicate
-    /// swap identities, or a non-Monero actor manifest.
-    pub fn new(
-        maker_agreement_identity: [u8; 33],
-        private_view_key: MoneroPrivateViewKey,
-        actors: impl IntoIterator<Item = MakerActorManifestV1>,
-    ) -> anyhow::Result<Self> {
-        PublicKey::from_slice(&maker_agreement_identity)
-            .context("XMR Maker agreement identity is invalid")?;
-        let mut indexed = BTreeMap::new();
-        for actor in actors {
-            ensure!(
-                actor.kind() == MakerActorKindV1::Monero,
-                "XMR Chat authority contains a non-Monero actor"
-            );
-            ensure!(
-                indexed
-                    .insert(actor.swap_id().as_str().into(), actor)
-                    .is_none(),
-                "XMR Chat authority contains a duplicate swap identity"
-            );
-            ensure!(
-                indexed.len() <= MAX_XMR_MAKER_AUTHORITIES,
-                "XMR Chat authority registry is oversized"
-            );
-        }
-        ensure!(!indexed.is_empty(), "XMR Chat authority registry is empty");
-        Ok(Self {
-            maker_agreement_identity,
-            private_view_key,
-            actors: indexed,
-        })
-    }
-
-    fn actor_for(&self, swap_id: &SwapId) -> Option<&MakerActorManifestV1> {
-        self.actors.get(swap_id.as_str())
-    }
-
-    fn supports_agreement(&self, agreement: &XmrAgreementV1) -> bool {
-        let body = agreement.body();
-        let maker = body.participants().for_role(XmrRoleV1::Maker);
-        let Ok(swap_id) = SwapId::new(hex::encode(body.swap_id())) else {
-            return false;
-        };
-        maker.agreement_public_key() == self.maker_agreement_identity
-            && body.monero().public_view_key() == self.private_view_key.public_key()
-            && self.actor_for(&swap_id).is_some()
-    }
-}
 
 pub(super) fn register_xmr_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_async_method("xmr_reserve_v1", |params, context, _| async move {
+        let request: XmrReserveRequestV1 = params.one()?;
+        super::xmr_reserve::reserve(request, context).await
+    })?;
+    module.register_async_method("xmr_ceremony_reserve_v1", |params, context, _| async move {
+        let request: XmrCeremonyReserveRequestV1 = params.one()?;
+        super::xmr_reserve::ceremony_reserve(request, context).await
+    })?;
+    module.register_async_method("xmr_ceremony_nonce_v1", |params, context, _| async move {
+        let request: XmrCeremonyNonceRequestV1 = params.one()?;
+        super::xmr_reserve::ceremony_nonce(request, context).await
+    })?;
+    module.register_async_method("xmr_ceremony_partial_v1", |params, context, _| async move {
+        let request: XmrCeremonyPartialRequestV1 = params.one()?;
+        super::xmr_reserve::ceremony_partial(request, context).await
+    })?;
     module.register_blocking_method::<RpcResult<XmrChatStageAResponseV1>, _>(
         "xmr_chat_stage_a_v1",
         |params, context, _| {
@@ -126,10 +62,10 @@ fn stage_xmr_chat(
         .delivery
         .as_ref()
         .ok_or_else(|| invalid_request("maker Chat Delivery is unavailable"))?;
-    let authority = context
-        .xmr_chat_authority
+    let reservations = context
+        .xmr_reservations
         .as_ref()
-        .ok_or_else(|| invalid_request("maker XMR Chat authority is unavailable"))?;
+        .ok_or_else(|| invalid_request("maker XMR reservations are unavailable"))?;
     let existing = {
         let store = context
             .store
@@ -163,12 +99,16 @@ fn stage_xmr_chat(
             != maker_xmr_chat_swap_id(&offer_commitment, &request.reservation_id)
         || agreement.body().monero().amount_piconero() != request.foreign_units
         || agreement.body().lez().amount() != lez_units
-        || !authority.supports_agreement(&agreement)
     {
         return Err(invalid_request(
-            "XMR Stage A is not bound to the selected offer and daemon authority",
+            "XMR Stage A is not bound to the selected offer",
         ));
     }
+    reservations.check_stage_a(
+        &request.reservation_id,
+        &request.stage_a_wire,
+        now_unix_seconds,
+    )?;
 
     let mut store = context
         .store
@@ -235,16 +175,15 @@ fn activate_xmr_chat(
     {
         return Err(invalid_request("unsupported or empty XMR Chat Stage B"));
     }
-    let authority = context
-        .xmr_chat_authority
+    let reservations = context
+        .xmr_reservations
         .as_ref()
-        .ok_or_else(|| invalid_request("maker XMR Chat authority is unavailable"))?;
+        .ok_or_else(|| invalid_request("maker XMR reservations are unavailable"))?;
     let now_unix_seconds = trusted_now_unix_seconds()?;
-    let mut store = context
+    let staged = context
         .store
         .lock()
-        .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-    let staged = store
+        .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?
         .load_xmr_maker_negotiation(&request.offer_id)
         .map_err(application_store_error)?
         .ok_or_else(|| rpc_error(NOT_FOUND, "XMR Stage A is unavailable"))?;
@@ -254,24 +193,21 @@ fn activate_xmr_chat(
         ));
     }
     let agreement = XmrAgreementV1::from_wire(staged.stage_a_wire()).map_err(invalid_request)?;
-    if !authority.supports_agreement(&agreement) {
-        return Err(invalid_request(
-            "durable XMR Stage A does not match daemon authority",
-        ));
-    }
-    let activation = XmrActivatedAgreementV1::from_wire(
+    // The swap's own view key validates Stage B; its actor is provisioned
+    // before the store commit, outside the store lock.
+    let (activation, actor) = reservations.activate(
+        &request.reservation_id,
         &agreement,
         &request.activation_wire,
-        &authority.private_view_key,
-    )
-    .map_err(invalid_request)?;
+        now_unix_seconds,
+    )?;
     let initial = activation
         .initial_coordinator(&agreement)
         .map_err(invalid_request)?;
-    let actor = authority
-        .actor_for(initial.id())
-        .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker XMR actor authority is unavailable"))?
-        .clone();
+    let mut store = context
+        .store
+        .lock()
+        .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
     let accepted_at = match staged.status() {
         MakerXmrNegotiationStatus::StageAAccepted => now_unix_seconds,
         MakerXmrNegotiationStatus::Activated => staged
@@ -354,52 +290,6 @@ mod tests {
                 assert!(!encoded.contains(forbidden), "response leaked {forbidden}");
             }
         }
-    }
-
-    fn authority_manifest(kind: MakerActorKindV1) -> MakerActorManifestV1 {
-        MakerActorManifestV1::new(
-            SwapId::new("11".repeat(32)).unwrap(),
-            kind,
-            "/tmp/xmr-maker-config.json".into(),
-            [0x44; 32],
-            "/tmp/xmr-maker-program".into(),
-            [0x55; 32],
-            "/tmp/xmr-maker-state.sqlite3".into(),
-        )
-        .unwrap()
-    }
-
-    fn authority_view_key() -> MoneroPrivateViewKey {
-        let mut bytes = [0; 32];
-        bytes[0] = 17;
-        MoneroPrivateViewKey::from_monero_little_endian(bytes).unwrap()
-    }
-
-    fn maker_public_key() -> [u8; 33] {
-        let secret = SecretKey::from_slice(&[7; 32]).unwrap();
-        PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret).serialize()
-    }
-
-    #[test]
-    fn authority_is_monero_only_and_debug_redacts_private_deployment() {
-        assert!(
-            XmrMakerChatAuthority::new(
-                maker_public_key(),
-                authority_view_key(),
-                [authority_manifest(MakerActorKindV1::Bitcoin)],
-            )
-            .is_err()
-        );
-        let authority = XmrMakerChatAuthority::new(
-            maker_public_key(),
-            authority_view_key(),
-            [authority_manifest(MakerActorKindV1::Monero)],
-        )
-        .unwrap();
-        let debug = format!("{authority:?}");
-        assert!(debug.contains("[REDACTED]"));
-        assert!(!debug.contains("/tmp/"));
-        assert!(!debug.contains("sqlite"));
     }
 
     #[test]

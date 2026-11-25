@@ -541,8 +541,40 @@ pub(super) fn decide_with(
 }
 
 /// The failure class of an actor error, and whether a retry may clear it.
+/// The wait kind of a revealing claim the actor refused, nothing sent, until
+/// the Zcash funding it reveals against is deep enough (issue #130).
+pub(super) const ZCASH_FUNDING_CONFIRMATIONS: &str = "zcash_funding_confirmations";
+
+/// The last outcome of an attempt the actor refused: a revealing claim queued
+/// behind the reveal gate's Zcash depth is a wait with both counts (outcome
+/// `queued`), not a failure; any other refusal is the failure by its class.
+pub(super) fn refused_outcome(step: &str, error: ActorCommandError, at: u64) -> ActorLastOutcomeV1 {
+    match error {
+        ActorCommandError::ClaimAwaitingZcashConfirmations { required, actual } => {
+            ActorLastOutcomeV1 {
+                at_unix_seconds: at,
+                step: step.to_owned(),
+                outcome: "queued".to_owned(),
+                operation: None,
+                revision: None,
+                failure_class: None,
+                waiting_for: Some(
+                    ActorWaitV1::new(ZCASH_FUNDING_CONFIRMATIONS, "zcash")
+                        .confirming(actual, required),
+                ),
+            }
+        }
+        _ => ActorLastOutcomeV1::failed(step, failure_of(error).class(), at),
+    }
+}
+
 pub(super) fn failure_of(error: ActorCommandError) -> AttemptFailure {
     match error {
+        // The revealing claim waits for the Zcash depth its reveal gate
+        // needs; retried as every refused claim is, under its own name.
+        ActorCommandError::ClaimAwaitingZcashConfirmations { .. } => {
+            AttemptFailure::Retry("claim_awaiting_zcash_confirmations")
+        }
         ActorCommandError::LezDepositorBalanceInsufficient => {
             AttemptFailure::Retry("lez_depositor_balance_insufficient")
         }
@@ -618,7 +650,15 @@ async fn load_supervised_actor(
                 receipt_identity.device(),
                 receipt_identity.inode(),
             )
-            .map_err(|_| LoadFailure::Bundle)
+            .map_err(|error| {
+                // A permanent failure says which check refused it: the class
+                // alone does not, and the swap stays failed.
+                eprintln!(
+                    "{ROLE} {}: attempt fails (actor_deployment_invalid: {error:#})",
+                    swap_id.as_str()
+                );
+                LoadFailure::Bundle
+            })
         };
         let before = load()?;
         let held_lock =
@@ -748,8 +788,21 @@ async fn attempt(
     .await
     {
         Ok(ran) => ran,
-        Err((failure, snapshot)) => {
-            record_failed_outcome(outcomes, &swap_id, command_name(command), failure.class());
+        Err((failure, refusal, snapshot)) => {
+            match refusal {
+                Some(error) => outcomes.record(
+                    swap_id.as_str(),
+                    refused_outcome(command_name(command), error, now_unix()),
+                ),
+                None => {
+                    record_failed_outcome(
+                        outcomes,
+                        &swap_id,
+                        command_name(command),
+                        failure.class(),
+                    );
+                }
+            }
             return (ClaimedAttempt::Failure(failure), snapshot);
         }
     };
@@ -813,7 +866,11 @@ async fn run_effect(
     memory: &SharedLogMemory,
 ) -> Result<
     (serde_json::Value, Option<TakerActorProgressSnapshotV1>),
-    (AttemptFailure, Option<TakerActorProgressSnapshotV1>),
+    (
+        AttemptFailure,
+        Option<ActorCommandError>,
+        Option<TakerActorProgressSnapshotV1>,
+    ),
 > {
     let swap_id = prepared.swap_id().clone();
     // The config that answered the status has its file bindings from before
@@ -823,18 +880,22 @@ async fn run_effect(
     let Ok(effect_config) =
         reload_action_actor_custody(prepared, receipt_binding, config, held_lock).await
     else {
-        return Err((AttemptFailure::Retry("actor_custody_changed"), snapshot));
+        return Err((
+            AttemptFailure::Retry("actor_custody_changed"),
+            None,
+            snapshot,
+        ));
     };
     let effect =
         match tokio::time::timeout(ATTEMPT_TIMEOUT, effect_config.zec_effect(command)).await {
-            Err(_) => return Err((AttemptFailure::Retry("actor_timeout"), snapshot)),
+            Err(_) => return Err((AttemptFailure::Retry("actor_timeout"), None, snapshot)),
             Ok(Err(error)) => {
                 eprintln!(
                     "{ROLE} {}: {} refused: {error}",
                     swap_id.as_str(),
                     command_name(command)
                 );
-                return Err((failure_of(error), snapshot));
+                return Err((failure_of(error), Some(error), snapshot));
             }
             Ok(Ok(effect)) => effect,
         };
@@ -845,7 +906,11 @@ async fn run_effect(
         .validate_for_state(config.swap_id(), config.state_db())
         .is_err()
     {
-        return Err((AttemptFailure::Retry("actor_custody_changed"), snapshot));
+        return Err((
+            AttemptFailure::Retry("actor_custody_changed"),
+            None,
+            snapshot,
+        ));
     }
     // One line per distinct effect: a drive that returns the same observation
     // every 5 s is logged once, a change (outcome, phase, revision, next) again.
@@ -1071,10 +1136,7 @@ pub(super) fn overlay_schedule(
     };
     view.last_failure_class = record.last_failure_class().map(str::to_owned);
     if record.schedule_state() == lez_actor_supervision::ScheduleState::Failed
-        && !matches!(
-            view.state,
-            TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
-        )
+        && !view.state.is_terminal()
     {
         view.state = TakerSwapStateV1::AttentionRequired;
         view.available_action = None;
@@ -1120,6 +1182,7 @@ pub(super) fn view_from_snapshot(
         status_detail: None,
         actor_phase: None,
         claim_window_closed: None,
+        monero_network: None,
         last_failure_class: None,
         last_outcome: None,
         observed_at: Some(snapshot.observed_at),

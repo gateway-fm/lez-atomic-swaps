@@ -219,7 +219,9 @@ built with default settings is 685,524 bytes: 198 KB of it are symbol and
 string tables the zkVM never loads. The guest crate therefore strips symbols
 in its release profile (`escrow/methods/guest/Cargo.toml`), which brings the
 binary to 487,244 bytes. Stripping changes the ImageID, so the escrow program id
-is the stripped guest's (`c22d61fc…`).
+is the stripped guest's: `c22d61fc…` for the program deployed on testnet 0.2, before
+the custody-credit fix of TM-0032; the program with the fix is `ca66e0dc…` and is not
+deployed there ([compute units](lez-compute-units.md)).
 
 Deploy through the sequencer proxy's network namespace, where
 `http://127.0.0.1:3040/` is the official sequencer, which is the only kind of
@@ -258,7 +260,10 @@ scripts/ui-e2e.sh happy --direction TakerSellsLez --record       # the Maker pay
 
 Each party's desk is the one its own Basecamp has open: the Maker's on VNC at
 `127.0.0.1:5903`, the Taker's at `127.0.0.1:5904` (`compose.testnet.yaml`; a local
-stack keeps 5901 and 5902), and `ui-e2e.sh` drives those same desks.
+stack keeps 5901 and 5902), and `ui-e2e.sh` drives those same desks. A recorded
+run (`--record`) first withdraws every open offer of the Maker Node
+(`maker_offer_withdraw`, what the desk's Withdraw calls), so the recording
+starts from the journey's own offers only.
 
 Four things differ from a local run, and each of them will fail a run if missed.
 

@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod path_safety;
+
 /// A supported foreign-chain leg.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pair {

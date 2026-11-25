@@ -1,0 +1,26 @@
+# Docker Desktop backend log lines (host clock UTC), lez-network 127.0.0.1:8779 forward on the fresh-chain restart
+[2026-11-24T21:28:12.019240000Z][com.docker.backend.ports] exposer.Approve(5d88ebe678ba4a2ae40dbd0f94b78df4ab65ba8086913005afedc93c43cd05d7, /lez-network, [TCP 127.0.0.1:8779])
+[2026-11-24T21:28:12.019687000Z][com.docker.backend.ports] exposer.Add(5d88ebe678ba4a2ae40dbd0f94b78df4ab65ba8086913005afedc93c43cd05d7, /lez-network, [])
+[2026-11-24T21:28:12.019836000Z][com.docker.backend.ports] exposer.Remove(5d88ebe678ba4a2ae40dbd0f94b78df4ab65ba8086913005afedc93c43cd05d7)
+[2026-11-24T21:28:12.020937000Z][com.docker.backend.volumesharer] com.docker.backend: registering container 5d88ebe678ba4a2ae40dbd0f94b78df4ab65ba8086913005afedc93c43cd05d7 name /lez-network with volumes [host=<checkout>/deploy/runtime/indexer,VM=/host_mnt<checkout>/deploy/runtime/indexer,dst=/work/basecamp,option=rw host=<checkout>/deploy/assets/lez-source/bedrock,VM=/host_mnt<checkout>/deploy/assets/lez-source/bedrock,dst=/opt/lez-v0.2-source/bedrock,option=ro host=<checkout>/deploy/assets/lez-source/bedrock/kzgrs_test_params,VM=/host_mnt<checkout>/deploy/assets/lez-source/bedrock/kzgrs_test_params,dst=/kzgrs_test_params,option=ro host=<checkout>/deploy/runtime/config/deployment-settings.yaml,VM=/host_mnt<checkout>/deploy/runtime/config/deployment-settings.yaml,dst=/run-config/deployment-settings.yaml,option=ro host=<checkout>/deploy/runtime/config/indexer_config.json,VM=/host_mnt<checkout>/deploy/runtime/config/indexer_config.json,dst=/run-config/indexer_config.json,option=ro host=<checkout>/deploy/runtime/bedrock,VM=/host_mnt<checkout>/deploy/runtime/bedrock,dst=/work/state,option=rw]
+[2026-11-24T21:28:17.899095000Z][com.docker.backend.ports] exposer.Remove(5d88ebe678ba4a2ae40dbd0f94b78df4ab65ba8086913005afedc93c43cd05d7)
+[2026-11-24T21:28:17.899646000Z][com.docker.backend.vpnkitcontrol] removing docker-containers/5d88ebe678ba4a2ae40dbd0f94b78df4ab65ba8086913005afedc93c43cd05d7 tcp4 forward from 127.0.0.1:8779 to 192.168.176.5:8779
+[2026-11-24T21:28:23.528062000Z][com.docker.backend.ipc] (75214b94-14585) 6ff0df30-BackendCMD C->S BackendAPI POST /locks/unlock-directories: 5d88ebe678ba4a2ae40dbd0f94b78df4ab65ba8086913005afedc93c43cd05d7
+[2026-11-24T21:28:23.529718000Z][com.docker.backend.volumesharer] com.docker.backend: container 5d88ebe678ba4a2ae40dbd0f94b78df4ab65ba8086913005afedc93c43cd05d7 unregistered
+
+# around the 'Cannot connect to the Docker daemon' at 21:07:28Z (backend log rotated 21:07:29.872)
+[2026-11-24T21:07:26.648937000Z][com.docker.backend.ipc] (b22eaeb2-9755) ca2222a6-BackendAPI S<-C 012cce25-init PUT /forwards/expose-container
+[2026-11-24T21:07:26.649331000Z][com.docker.backend.ipc] (b22eaeb2-9755) ca2222a6-BackendAPI S<-C 012cce25-init bind: {"containerId":"..."}
+[2026-11-24T21:07:26.687900000Z][com.docker.backend.ports] exposer.Add(7820f50385e622d4ea0af53e70df116ff2504d6708d2c605c28f395a983bc4aa, /admiring_roentgen, [])
+[2026-11-24T21:07:26.691986000Z][com.docker.backend.ipc] (b22eaeb2-9755) ca2222a6-BackendAPI S->C 012cce25-init PUT /forwards/expose-container (43.047375ms): OK
+[2026-11-24T21:07:26.732128000Z][com.docker.backend.apiproxy] usage ContainerExecCliLinux + 1
+[2026-11-24T21:07:26.746324000Z][com.docker.backend.apiproxy] usage ContainerStartCliLinux + 1
+[2026-11-24T21:07:27.666122000Z][com.docker.backend.apiproxy] usage ContainerExecCliLinux + 1
+[2026-11-24T21:07:27.687921000Z][com.docker.backend.apiproxy] usage ContainerStartCliLinux + 1
+[2026-11-24T21:07:27.738017000Z][com.docker.backend.apiproxy] usage ContainerCreateComposeLinux + 1
+[2026-11-24T21:07:28.668660000Z][com.docker.backend.idle] event handler 5030272d-1df0-4be5-bf35-0c640959f456: request: GET /v1.56/events?filters=%7B%22type%22%3A%7B%22container%22%3Atrue%7D%7D
+[2026-11-24T21:07:28.704395000Z][com.docker.backend.idle] event handler 19626e76-b5c4-47b1-9dcf-68d855b60322: request: GET /v1.56/events?filters=%7B%22type%22%3A%7B%22container%22%3Atrue%7D%7D
+[2026-11-24T21:07:28.749420000Z][com.docker.backend.apiproxy] usage ContainerStartComposeLinux + 1
+[2026-11-24T21:07:28.775242000Z][com.docker.backend.apiproxy] usage HostMountCountComposeLinux + 1
+[2026-11-24T21:07:28.775406000Z][com.docker.backend.apiproxy] usage ExposePortCountComposeLinux + 1
+[2026-11-24T21:07:28.790201000Z][com.docker.backend.ports] exposer.Remove(28ecd41dfcdf8c0bf713798ed034f023afcbce137f68abc037d2673e702b9092)

@@ -1,0 +1,67 @@
+{
+  "scenario": "zec-concurrent-kill-maker",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "179557161502",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swaps": [
+    {
+      "swap_id": "zec-798656189ff173a8cbca8b298159f43f60306f22a0f0ec82e11e010cbe0d539e",
+      "offer_id": "offer-e2e-zectt-179557161502",
+      "entry": 0,
+      "zcash_funding": {
+        "transaction_id": "14faadb04221b3a7583752a354793e7a63a0f170bd8f12260e372bacbd08b69b",
+        "height": 1284
+      },
+      "zcash_claim": {
+        "transaction_id": "181597edfac991004da9492d688a6c6b1e03b1a1ea1a76feea244f135aa620a0",
+        "height": 1286
+      },
+      "taker_lez_replans": []
+    },
+    {
+      "swap_id": "zec-ce73832d697ba97f5089a607a7918fa669fa7b920c089972b593bbd5710e3601",
+      "offer_id": "offer-e2e-zectt-179557161502-1",
+      "entry": 1,
+      "zcash_funding": {
+        "transaction_id": "1e7fb86ae825ac3c424507ea326428ab3f9723893babfedb1d7b83debdc8b010",
+        "height": 1284
+      },
+      "zcash_claim": {
+        "transaction_id": "a3c80a7860079f5d3b2b499214f6fadd8bae1a2b293764618740f1dd259faa71",
+        "height": 1286
+      },
+      "taker_lez_replans": []
+    }
+  ],
+  "corridor": "take-time-1795571619",
+  "profile": "deterministic-local-devnet-v5",
+  "killed": {
+    "container": "lez-l2-maker-node",
+    "exit_code": 137,
+    "oom_killed": false,
+    "finished_at": "2026-11-25T01:54:15.755021758Z"
+  },
+  "result": "passed",
+  "seconds": 71
+}

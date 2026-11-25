@@ -4,12 +4,16 @@ This is the reviewer entry point for Gateway's LEZ ⇄ Bitcoin vertical slice.
 It packages the M1 protocol foundation, the M3 Bitcoin implementation evidence,
 and the M6 product surface without claiming unrelated milestone completion.
 
-Milestone 2 (ZEC/LEZ) is release v0.3.0. Its deliverables are mapped in
-[the M2 section of the milestone map](MILESTONES.md#m2--zeclez-leg), its
-release record is the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0),
-and the module topology it runs on is traced in
-[`docs/submission-115.md`](../docs/submission-115.md). The deck, walkthrough
-and manifest below predate it and show the BTC pair.
+Milestone 2 (ZEC/LEZ) is submitted as release
+[v0.3.4](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.4).
+Its deliverables are mapped in
+[the M2 section of the milestone map](MILESTONES.md#m2--zeclez-leg), and the
+module topology it runs on is traced in
+[`docs/submission-115.md`](../docs/submission-115.md). Milestone 4 (XMR/LEZ)
+is version 0.4.0; its deliverables are mapped in
+[the M4 section](MILESTONES.md#m4--xmrlez-leg) and, with the proof for each,
+in [`docs/m4-acceptance-checklist.md`](../docs/m4-acceptance-checklist.md).
+The deck, walkthrough and manifest below predate both and show the BTC pair.
 
 ## Start here
 
@@ -53,12 +57,12 @@ earlier run `m5arm-0820121736` and its separate record:
 
 ## Claim boundary
 
-This is evidence from Bitcoin Core 31.1 regtest, Zebra 7.0.0 regtest (M2) and a
-private LEZ v0.2 devnet.
+This is evidence from Bitcoin Core 31.1 regtest, Zebra 7.0.0 regtest (M2),
+Monero 0.18.5.1 regtest (M4) and a private LEZ v0.2 devnet.
 It is submitted for review; the public milestone issues remain open and their
-checkboxes remain unchecked. The pack does not claim public-network deployment,
-production custody, a formal cryptographic audit, M4 Monero, complete
-M5 operations, or M7 mainnet readiness.
+checkboxes remain unchecked. The pack does not claim public-network deployment
+(no Monero stagenet, testnet or mainnet swap has run), production custody, a
+formal cryptographic audit, complete M5 operations, or M7 mainnet readiness.
 
 The historical milestone checkpoints are recorded by commit identity. The
 default branch now includes the complete buildable source workspace directly;

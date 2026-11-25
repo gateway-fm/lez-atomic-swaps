@@ -1,0 +1,5 @@
+[09:53:53] regression run: 1 tests at 7b4e46da (tree dirty:        0), results in runtime/regress/rerun2-20261122T095352Z
+[09:53:53] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[09:54:00]     ui:btc:logos-happy:TakerSellsForeign (try 1) starts: LEZ finalized 243, tip 249
+[09:55:19] === ui:btc:logos-happy:TakerSellsForeign (try 1): PASSED in 79 s (+7 s before it); LEZ finalized 308, tip 312
+[09:55:19] regression run: 1 of 1 passed in 1 min, 0 new chains, 0 profile switches,        0 frozen tries

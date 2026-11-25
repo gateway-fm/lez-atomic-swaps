@@ -42,6 +42,12 @@ pub struct ConfiguredTakerInitiationContext {
     prepared_by_offer: BTreeMap<Box<str>, PreparedTakerInitiationV1>,
     /// Node-owned Bitcoin lifecycle: prepares any live Bitcoin offer at take time.
     dynamic_btc: Option<std::sync::Arc<DynamicBtcRole>>,
+    /// Take-time Zcash agreement (`zec_reserve_v1`) over the same LEZ role.
+    #[cfg(feature = "pair-zec")]
+    dynamic_zec: Option<std::sync::Arc<crate::taker_service::DynamicZecRole>>,
+    /// Take-time Monero agreement (`xmr_reserve_v1`) over the same LEZ role.
+    #[cfg(feature = "pair-xmr")]
+    dynamic_xmr: Option<std::sync::Arc<crate::taker_service::DynamicXmrRole>>,
 }
 
 impl ConfiguredTakerInitiationContext {
@@ -54,7 +60,17 @@ impl ConfiguredTakerInitiationContext {
     /// Reports whether at least one prepared entry runs the given pair.
     #[must_use]
     pub fn has_pair(&self, pair: Pair) -> bool {
+        #[cfg(feature = "pair-zec")]
+        let dynamic_zec = pair == Pair::Zcash && self.dynamic_zec.is_some();
+        #[cfg(not(feature = "pair-zec"))]
+        let dynamic_zec = false;
+        #[cfg(feature = "pair-xmr")]
+        let dynamic_xmr = pair == Pair::Monero && self.dynamic_xmr.is_some();
+        #[cfg(not(feature = "pair-xmr"))]
+        let dynamic_xmr = false;
         (pair == Pair::Bitcoin && self.dynamic_btc.is_some())
+            || dynamic_zec
+            || dynamic_xmr
             || self
                 .prepared_by_offer
                 .values()
@@ -65,6 +81,38 @@ impl ConfiguredTakerInitiationContext {
     #[must_use]
     pub fn dynamic_btc(&self) -> Option<std::sync::Arc<DynamicBtcRole>> {
         self.dynamic_btc.clone()
+    }
+
+    /// The take-time Zcash agreement, when configured.
+    #[cfg(feature = "pair-zec")]
+    #[must_use]
+    pub(crate) fn dynamic_zec(
+        &self,
+    ) -> Option<std::sync::Arc<crate::taker_service::DynamicZecRole>> {
+        self.dynamic_zec.clone()
+    }
+
+    /// The take-time Monero agreement, when configured.
+    #[cfg(feature = "pair-xmr")]
+    #[must_use]
+    pub(crate) fn dynamic_xmr(
+        &self,
+    ) -> Option<std::sync::Arc<crate::taker_service::DynamicXmrRole>> {
+        self.dynamic_xmr.clone()
+    }
+
+    /// Prepared Monero swaps whose actor is provisioned (receipt bound): the
+    /// swaps the Node's Monero supervisor drives.
+    #[cfg(feature = "pair-xmr")]
+    pub(crate) fn xmr_bound_swaps(&self) -> Vec<PreparedTakerInitiationV1> {
+        self.prepared_by_offer
+            .values()
+            .filter(|prepared| {
+                prepared.facts().route().pair() == Pair::Monero
+                    && prepared.execution().receipt_binding().is_some()
+            })
+            .cloned()
+            .collect()
     }
 
     /// Node-owned Bitcoin swaps whose actor is activated (receipt bound):
@@ -411,6 +459,28 @@ pub(super) struct InitiationConfigurationV1 {
     /// Node-owned Bitcoin lifecycle configuration (`BtcRoleConfigV1`).
     #[serde(default)]
     btc_role_config: Option<PathBuf>,
+    /// Zcash role configuration (`ZecRoleConfigV1`): take any live Zcash
+    /// offer at take time over the Bitcoin lifecycle's LEZ role.
+    #[cfg(feature = "pair-zec")]
+    #[serde(default)]
+    zec_role_config: Option<PathBuf>,
+    /// Monero role configuration (`XmrRoleConfigV1`): take any live Monero
+    /// offer at take time over the Bitcoin lifecycle's LEZ role.
+    #[cfg(feature = "pair-xmr")]
+    #[serde(default)]
+    xmr_role_config: Option<PathBuf>,
+    /// The Node refunds a Monero swap's LEZ (tag 16) by itself from `R`
+    /// (finalized LEZ time) while the Maker has not claimed. On unless set
+    /// to `false`, which leaves the refund to the owner's command; the
+    /// owner's refund works either way.
+    #[cfg(feature = "pair-xmr")]
+    #[serde(default = "automatic_refund_default")]
+    xmr_automatic_refund: bool,
+}
+
+#[cfg(feature = "pair-xmr")]
+const fn automatic_refund_default() -> bool {
+    true
 }
 
 impl InitiationConfigurationV1 {
@@ -461,6 +531,7 @@ pub(crate) struct SecretPrivateFileV1 {
     pub(crate) path: PathBuf,
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn build_initiation_context(
     configuration: &InitiationConfigurationV1,
     source_bindings: &BTreeMap<Box<str>, (usize, [u8; 33])>,
@@ -479,6 +550,14 @@ pub(super) fn build_initiation_context(
     )
     .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?;
     let mut prepared_by_offer = BTreeMap::new();
+    // The swaps the registry admitted: a persisted preparation of one of them
+    // wins over another preparation of the same offer (a take that lost).
+    let admitted: std::collections::BTreeSet<Box<str>> = registry
+        .list_initiations()
+        .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?
+        .into_iter()
+        .map(|facts| facts.swap_id().as_str().into())
+        .collect();
 
     for (expected_pair, configured) in configuration.entries() {
         let entry = load_prepared_entry(
@@ -521,17 +600,7 @@ pub(super) fn build_initiation_context(
                 chat_socket,
                 true,
             ) {
-                Ok(entry) => {
-                    if prepared_by_offer
-                        .insert(configured.offer_id.as_str().into(), entry)
-                        .is_some()
-                    {
-                        eprintln!(
-                            "taker: persisted swap {} duplicates an offer; keeping the newest",
-                            configured.swap_id.as_str()
-                        );
-                    }
-                }
+                Ok(entry) => restore_prepared(&mut prepared_by_offer, entry, &admitted),
                 Err(error) => eprintln!(
                     "taker: persisted swap {} no longer loads ({error}); skipped",
                     configured.swap_id.as_str()
@@ -540,6 +609,55 @@ pub(super) fn build_initiation_context(
         }
     }
 
+    #[cfg(feature = "pair-zec")]
+    let dynamic_zec = match (&configuration.zec_role_config, &dynamic_btc) {
+        (None, _) => None,
+        (Some(_), None) => return Err(TakerServiceStartupError::InvalidConfiguration),
+        (Some(path), Some(btc)) => {
+            let role = crate::taker_service::DynamicZecRole::load(path, std::sync::Arc::clone(btc))
+                .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
+            // As the Bitcoin swaps above: a swap prepared earlier stays
+            // visible while its files verify; one that no longer does is
+            // reported and skipped.
+            for configured in role.persisted_entries() {
+                match role.load_entry(&configured) {
+                    Ok(entry) => restore_prepared(&mut prepared_by_offer, entry, &admitted),
+                    Err(error) => eprintln!(
+                        "taker: persisted ZEC swap {} no longer loads ({error:#}); skipped",
+                        configured.swap_id.as_str()
+                    ),
+                }
+            }
+            let role = std::sync::Arc::new(role);
+            role.spawn_sidecar_keepalive();
+            Some(role)
+        }
+    };
+
+    #[cfg(feature = "pair-xmr")]
+    let dynamic_xmr = match (&configuration.xmr_role_config, &dynamic_btc) {
+        (None, _) => None,
+        (Some(_), None) => return Err(TakerServiceStartupError::InvalidConfiguration),
+        (Some(path), Some(btc)) => {
+            let role = crate::taker_service::DynamicXmrRole::load(path, std::sync::Arc::clone(btc))
+                .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?
+                .with_automatic_refund(configuration.xmr_automatic_refund);
+            // As the Zcash swaps above.
+            for configured in role.persisted_entries() {
+                match role.load_entry(&configured) {
+                    Ok(entry) => restore_prepared(&mut prepared_by_offer, entry, &admitted),
+                    Err(error) => eprintln!(
+                        "taker: persisted XMR swap {} no longer loads ({error:#}); skipped",
+                        configured.swap_id.as_str()
+                    ),
+                }
+            }
+            let role = std::sync::Arc::new(role);
+            role.spawn_sidecar_keepalive();
+            Some(role)
+        }
+    };
+
     Ok(ConfiguredTakerInitiationContext {
         execute_prepared: configuration.execute_prepared,
         registry,
@@ -547,7 +665,58 @@ pub(super) fn build_initiation_context(
         schedule,
         prepared_by_offer,
         dynamic_btc,
+        #[cfg(feature = "pair-zec")]
+        dynamic_zec,
+        #[cfg(feature = "pair-xmr")]
+        dynamic_xmr,
     })
+}
+
+/// Puts one persisted preparation back under its offer. Two preparations of
+/// one offer (concurrent takes of it, one of which lost) keep the one the
+/// registry admitted; between two unadmitted ones the first read stays. The
+/// other is reported and left out, so a restart never swaps an admitted swap
+/// for a losing preparation.
+fn restore_prepared(
+    prepared_by_offer: &mut BTreeMap<Box<str>, PreparedTakerInitiationV1>,
+    entry: PreparedTakerInitiationV1,
+    admitted: &std::collections::BTreeSet<Box<str>>,
+) {
+    let key: Box<str> = entry.offer_id().as_str().into();
+    let (kept, dropped) = match prepared_by_offer.remove(&key) {
+        None => (entry, None),
+        Some(existing)
+            if replaces_restored(
+                existing.swap_id().as_str(),
+                entry.swap_id().as_str(),
+                admitted,
+            ) =>
+        {
+            (entry, Some(existing))
+        }
+        Some(existing) => (existing, Some(entry)),
+    };
+    if let Some(dropped) = dropped {
+        eprintln!(
+            "taker: persisted swap {} duplicates offer {} of swap {}; keeping {}",
+            dropped.swap_id().as_str(),
+            key,
+            kept.swap_id().as_str(),
+            kept.swap_id().as_str()
+        );
+    }
+    prepared_by_offer.insert(key, kept);
+}
+
+/// Whether a restored preparation of `candidate` replaces the one of
+/// `existing` for the same offer: only an admitted one replaces an
+/// unadmitted one.
+fn replaces_restored(
+    existing: &str,
+    candidate: &str,
+    admitted: &std::collections::BTreeSet<Box<str>>,
+) -> bool {
+    !admitted.contains(existing) && admitted.contains(candidate)
 }
 
 /// Loads one prepared entry, revalidating every bound file against its
@@ -968,5 +1137,21 @@ mod legacy_start_tests {
             ),
             ["legacy-open", "legacy-unscheduled"]
         );
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::replaces_restored;
+
+    /// Two persisted preparations of one offer: the admitted swap is kept,
+    /// in whichever order the directories are read (it used to be the last
+    /// one read, which could be a take that lost).
+    #[test]
+    fn a_restart_keeps_the_admitted_preparation_of_an_offer() {
+        let admitted = ["admitted".into()].into_iter().collect();
+        assert!(replaces_restored("lost", "admitted", &admitted));
+        assert!(!replaces_restored("admitted", "lost", &admitted));
+        assert!(!replaces_restored("lost-a", "lost-b", &admitted));
     }
 }

@@ -7,7 +7,7 @@
 
 use lez_adaptor_signature::{
     AdaptorSessionContext, AdaptorSessionError, SigningRole, aggregate_adaptor_presignature,
-    verify_adaptor_partial_signature, verify_nonce_commitment,
+    extract_adaptor_secret, verify_adaptor_partial_signature, verify_nonce_commitment,
 };
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, LezUnixMilliseconds, Pair, RecoverySchedule,
@@ -21,8 +21,9 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 use crate::{
-    CrossCurveDleqError, CrossCurveDleqProofV1, MoneroAddressNetworkV1, MoneroPrivateViewKey,
-    MoneroSharedAddressV1, MoneroSharedSpendError,
+    CrossCurveDleqError, CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1,
+    MoneroPrivateViewKey, MoneroSharedAddressV1, MoneroSharedSpendError,
+    ReconstructedMoneroSpendKey,
 };
 
 /// Version accepted by the countersigned agreement wire boundary.
@@ -53,7 +54,17 @@ const XMR_CONFIRMATIONS: u32 = 10;
 const LEZ_FINALITY_UNITS: u32 = 2;
 const REGTEST_MINIMUM_FUNDING_TO_REFUND_MS: u64 = 10_000;
 const REGTEST_MINIMUM_REFUND_TO_PUNISH_MS: u64 = 10_000;
-const STAGENET_MINIMUM_FUNDING_TO_REFUND_MS: u64 = 12 * 60 * 60 * 1_000;
+// Stagenet's minimums (docs/monero-stagenet-guide.md, "The windows"): the
+// Maker claims only on a claim authorization it sees before R - (R - C)/2,
+// so each half of R - C must hold a funding sent just before C: 11 blocks at
+// 120 s (more than 45 minutes in 0.3 % of cases at the target rate) and the
+// Taker's and Maker's LEZ steps (5 minutes). A swap whose confirmations come
+// later falls back to the Taker's refund at R, with nothing lost. P - R is
+// the Taker's own safety window: its refund must land in it, through an
+// outage of its Node, its host or its LEZ sidecar, on a public network where
+// nobody else keeps those running. Two hours, the reviewed M1 profile's: a
+// longer wait for the punishment costs the Maker only time.
+const STAGENET_MINIMUM_FUNDING_TO_REFUND_MS: u64 = 2 * (45 + 5) * 60 * 1_000;
 const STAGENET_MINIMUM_REFUND_TO_PUNISH_MS: u64 = 2 * 60 * 60 * 1_000;
 const XMR_METADATA_VERSION_V3: u8 = 3;
 
@@ -82,21 +93,27 @@ impl XmrNamedProfileV1 {
         }
     }
 
-    const fn network(self) -> MoneroAddressNetworkV1 {
+    /// The Monero network this profile's swaps settle on.
+    #[must_use]
+    pub const fn network(self) -> MoneroAddressNetworkV1 {
         match self {
             Self::AcceleratedRegtest => MoneroAddressNetworkV1::Regtest,
             Self::PublicStagenet => MoneroAddressNetworkV1::Stagenet,
         }
     }
 
-    const fn minimum_funding_to_refund_ms(self) -> u64 {
+    /// The shortest `R - C` this profile admits, in ms.
+    #[must_use]
+    pub const fn minimum_funding_to_refund_ms(self) -> u64 {
         match self {
             Self::AcceleratedRegtest => REGTEST_MINIMUM_FUNDING_TO_REFUND_MS,
             Self::PublicStagenet => STAGENET_MINIMUM_FUNDING_TO_REFUND_MS,
         }
     }
 
-    const fn minimum_refund_to_punish_ms(self) -> u64 {
+    /// The shortest `P - R` this profile admits, in ms.
+    #[must_use]
+    pub const fn minimum_refund_to_punish_ms(self) -> u64 {
         match self {
             Self::AcceleratedRegtest => REGTEST_MINIMUM_REFUND_TO_PUNISH_MS,
             Self::PublicStagenet => STAGENET_MINIMUM_REFUND_TO_PUNISH_MS,
@@ -1856,6 +1873,81 @@ impl XmrActivatedAgreementV1 {
         Ok(())
     }
 
+    /// The Taker's Monero spend key after the Maker's claim, from public data
+    /// and the Taker's own retained share alone: no adaptor session journal.
+    ///
+    /// The claim presignature is aggregated again from Stage B (both public
+    /// nonces and the Maker's partial) and the Taker's partial as published
+    /// in tag 14, which must match Stage B's commitment; the Maker's share is
+    /// extracted from its tag-15 claim signature and checked against the
+    /// Maker's cross-curve proof before the key is reconstructed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a different Stage-A base, a published partial that does not
+    /// match Stage B, a signature that does not complete the presignature, or
+    /// an extracted share that fails the Maker's proof or the shared address.
+    pub fn recover_claim_spend_key(
+        &self,
+        agreement: &XmrAgreementV1,
+        taker_share: CrossCurveScalar,
+        published_taker_claim_partial: [u8; 32],
+        maker_claim_signature: [u8; 64],
+    ) -> Result<ReconstructedMoneroSpendKey, XmrAgreementV1Error> {
+        self.verify_published_taker_claim_partial(agreement, published_taker_claim_partial)?;
+        let body = &self.record.body;
+        let presignature = aggregate_adaptor_presignature(
+            &agreement.claim_context,
+            body.claim_transcript.maker_public_nonce,
+            body.claim_transcript.taker_public_nonce,
+            body.maker_claim_partial,
+            published_taker_claim_partial,
+        )?;
+        let maker_share = extract_adaptor_secret(
+            &agreement.claim_context,
+            presignature,
+            maker_claim_signature,
+        )?;
+        Ok(ReconstructedMoneroSpendKey::reconstruct(
+            agreement.shared_address(),
+            agreement.maker_proof(),
+            taker_share,
+            maker_share,
+        )?)
+    }
+
+    /// The Maker's Monero spend key after the Taker's refund, from public data
+    /// and the Maker's own retained share alone: no adaptor session journal.
+    ///
+    /// The Taker's share is extracted from its tag-16 refund signature against
+    /// Stage B's refund presignature and checked against the Taker's
+    /// cross-curve proof before the key is reconstructed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a different Stage-A base, a signature that does not complete
+    /// Stage B's refund presignature, or an extracted share that fails the
+    /// Taker's proof or the shared address.
+    pub fn recover_refund_spend_key(
+        &self,
+        agreement: &XmrAgreementV1,
+        maker_share: CrossCurveScalar,
+        taker_refund_signature: [u8; 64],
+    ) -> Result<ReconstructedMoneroSpendKey, XmrAgreementV1Error> {
+        self.require_base(agreement)?;
+        let taker_share = extract_adaptor_secret(
+            &agreement.refund_context,
+            self.record.body.refund_presignature,
+            taker_refund_signature,
+        )?;
+        Ok(ReconstructedMoneroSpendKey::reconstruct(
+            agreement.shared_address(),
+            agreement.taker_proof(),
+            maker_share,
+            taker_share,
+        )?)
+    }
+
     /// Exact version-3 native-XMR guest initialization derived only from Stage B.
     ///
     /// # Errors
@@ -3239,6 +3331,92 @@ mod tests {
         )
     }
 
+    /// A role that lost its adaptor session journal recovers the Monero spend
+    /// key from Stage A, Stage B, its own retained share and what LEZ
+    /// publishes: tag 14's partial and tag 15's signature for the Taker after
+    /// the claim, tag 16's signature for the Maker after the refund.
+    #[test]
+    fn a_role_without_its_journal_recovers_the_spend_key_from_public_data() {
+        let agreement = XmrAgreementV1::validate(signed_record(body())).expect("agreement");
+        let (record, taker_claim_partial) = activation_record(&agreement);
+        let activation = XmrActivatedAgreementV1::from_wire(
+            &agreement,
+            &record.encode_wire().expect("activation wire"),
+            &view_key(),
+        )
+        .expect("validated Stage B");
+        let spend_public = agreement.shared_address().public_spend_key();
+        let (maker_share, taker_share) = (|| scalar(11), || scalar(13));
+
+        // Tag 15: the Maker completes the claim presignature with its share.
+        let claim_presignature = aggregate_adaptor_presignature(
+            &agreement.claim_context,
+            activation.body().claim_transcript().maker_public_nonce(),
+            activation.body().claim_transcript().taker_public_nonce(),
+            activation.body().maker_claim_partial(),
+            taker_claim_partial,
+        )
+        .expect("claim presignature");
+        let claim_signature = lez_adaptor_signature::adapt_presignature(
+            &agreement.claim_context,
+            claim_presignature,
+            maker_share().adaptor_scalar_big_endian(),
+        )
+        .expect("tag 15 signature");
+        let claimed = activation
+            .recover_claim_spend_key(
+                &agreement,
+                taker_share(),
+                taker_claim_partial,
+                claim_signature,
+            )
+            .expect("the Taker recovers the spend key");
+        assert_eq!(claimed.public_key(), spend_public);
+
+        // Tag 16: the Taker completes Stage B's refund presignature.
+        let refund_signature = lez_adaptor_signature::adapt_presignature(
+            &agreement.refund_context,
+            activation.body().refund_presignature(),
+            taker_share().adaptor_scalar_big_endian(),
+        )
+        .expect("tag 16 signature");
+        let refunded = activation
+            .recover_refund_spend_key(&agreement, maker_share(), refund_signature)
+            .expect("the Maker recovers the spend key");
+        assert_eq!(refunded.public_key(), spend_public);
+
+        // A partial other than the one Stage B commits to, or the other
+        // session's signature, recovers nothing.
+        let mut forged = taker_claim_partial;
+        forged[31] ^= 1;
+        assert!(
+            activation
+                .recover_claim_spend_key(&agreement, taker_share(), forged, claim_signature)
+                .is_err()
+        );
+        assert!(
+            activation
+                .recover_claim_spend_key(
+                    &agreement,
+                    taker_share(),
+                    taker_claim_partial,
+                    refund_signature
+                )
+                .is_err()
+        );
+        assert!(
+            activation
+                .recover_refund_spend_key(&agreement, maker_share(), claim_signature)
+                .is_err()
+        );
+        // The wrong own share fails the shared address.
+        assert!(
+            activation
+                .recover_refund_spend_key(&agreement, scalar(17), refund_signature)
+                .is_err()
+        );
+    }
+
     fn resign_activation(record: &mut XmrActivationRecordV1) {
         let commitment = record.body.commitment();
         record.activation_commitment = commitment;
@@ -3885,6 +4063,20 @@ mod tests {
             validated_candidate.finalized_consensus_timestamp_ms(),
             agreement.body().windows().maker_xmr_funding_cutoff_ms()
         );
+    }
+
+    #[test]
+    fn stagenet_minimum_windows_are_the_documented_sizing() {
+        // docs/monero-stagenet-guide.md, "The windows": 2 x (45 + 5) minutes
+        // between C and R, two hours between R and P (the Taker's safety
+        // window is never shorter on a public network).
+        let stagenet = XmrNamedProfileV1::PublicStagenet;
+        assert_eq!(stagenet.minimum_funding_to_refund_ms(), 100 * 60 * 1_000);
+        assert_eq!(stagenet.minimum_refund_to_punish_ms(), 2 * 60 * 60 * 1_000);
+        assert_eq!(stagenet.network(), MoneroAddressNetworkV1::Stagenet);
+        let regtest = XmrNamedProfileV1::AcceleratedRegtest;
+        assert_eq!(regtest.network(), MoneroAddressNetworkV1::Regtest);
+        assert!(regtest.minimum_funding_to_refund_ms() < stagenet.minimum_funding_to_refund_ms());
     }
 
     #[test]

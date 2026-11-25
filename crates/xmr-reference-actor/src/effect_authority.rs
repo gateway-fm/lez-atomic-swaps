@@ -1,11 +1,22 @@
-use std::path::{Component, Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _},
+    path::{Component, Path, PathBuf},
+};
 
 use anyhow::{Context as _, Result, ensure};
+use lez_swap_core::path_safety::{check_normalized_absolute, join_component};
 use lez_swap_store::PinnedExecutable;
+use secp256k1::rand::{RngCore as _, rngs::OsRng};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use url::{Host, Url};
+use zeroize::Zeroizing;
 
-use crate::ActorRole;
+use crate::{
+    ActorRole,
+    reserve::{XmrRoleConfigV1, read_role_file, read_secret_line, write_role_file},
+};
 
 /// Maximum accepted canonical effect-authority byte length.
 pub const XMR_EFFECT_AUTHORITY_MAX_BYTES: u64 = 64 * 1024;
@@ -66,6 +77,17 @@ struct MoneroRpc {
     shared_wallet: AuthenticatedRpc,
     role_wallet: AuthenticatedRpc,
     shared_wallet_file_password_file: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    role_wallet_file: Option<RoleWalletFile>,
+}
+
+/// The role wallet a single per-role wallet-rpc reopens after an effect, and
+/// the lock every user of that wallet-rpc holds while it switches wallets.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RoleWalletFile {
+    filename: String,
+    lock_file: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -198,6 +220,7 @@ pub struct XmrEffectMoneroRpcV1 {
     shared_wallet: XmrEffectAuthenticatedRpcV1,
     role_wallet: XmrEffectAuthenticatedRpcV1,
     shared_wallet_file_password_file: PathBuf,
+    role_wallet_file: Option<(Box<str>, PathBuf)>,
 }
 
 impl XmrEffectMoneroRpcV1 {
@@ -221,6 +244,14 @@ impl XmrEffectMoneroRpcV1 {
     #[must_use]
     pub fn shared_wallet_file_password_file(&self) -> &Path {
         &self.shared_wallet_file_password_file
+    }
+    /// With one wallet-rpc per role: the role wallet's file name (its
+    /// password is empty) and the wallet-rpc lock file.
+    #[must_use]
+    pub fn role_wallet_file(&self) -> Option<(&str, &Path)> {
+        self.role_wallet_file
+            .as_ref()
+            .map(|(filename, lock_file)| (&**filename, lock_file.as_path()))
     }
 }
 
@@ -536,7 +567,14 @@ pub fn load_validated_xmr_effect_authority_bytes(
         &authority.monero.shared_wallet_file_password_file,
     ];
     ensure!(
-        paths.iter().all(|path| normalized_absolute(path)),
+        paths.iter().all(|path| normalized_absolute(path))
+            && authority
+                .monero
+                .role_wallet_file
+                .as_ref()
+                .is_none_or(|wallet| {
+                    normalized_absolute(&wallet.lock_file) && valid_label(&wallet.filename)
+                }),
         "XMR effect authority path is invalid"
     );
     ensure!(
@@ -631,6 +669,9 @@ fn validated_monero(monero: MoneroRpc) -> Result<XmrEffectMoneroRpcV1> {
         shared_wallet: validated_authenticated_rpc(monero.shared_wallet)?,
         role_wallet: validated_authenticated_rpc(monero.role_wallet)?,
         shared_wallet_file_password_file: monero.shared_wallet_file_password_file,
+        role_wallet_file: monero
+            .role_wallet_file
+            .map(|wallet| (wallet.filename.into_boxed_str(), wallet.lock_file)),
     })
 }
 
@@ -873,4 +914,317 @@ fn normalized_absolute(path: &Path) -> bool {
         && path
             .components()
             .all(|part| matches!(part, Component::RootDir | Component::Normal(_)))
+}
+
+/// The Maker's effect tool slots (role config `effect_tools` keys) and the
+/// ABI each must speak; schema 3 includes the punish slot.
+const MAKER_TOOL_SLOTS: [(&str, &str); 6] = [
+    ("monero_fund", "lez_xmr_monero_fund_v2"),
+    ("lez_claim", "lez_xmr_tag15_claim_v1"),
+    ("finalized_classifier", "lez_xmr_finalized_classifier_v1"),
+    ("monero_refund", "lez_xmr_monero_refund_sweep_v3"),
+    ("monero_verify", "lez_xmr_monero_verify_v2"),
+    ("lez_punish", "lez_xmr_tag17_punish_v1"),
+];
+const MAKER_EFFECT_AUTHORITY_FILE: &str = "effect-authority.json";
+const SHARED_WALLET_FILE_PASSWORD_FILE: &str = "shared-wallet-file.password";
+
+/// The Maker's effect tools, each pinned to the digest it had when the Node
+/// started.
+#[derive(Clone, Debug)]
+pub struct XmrMakerEffectToolPinsV1(BTreeMap<&'static str, (PathBuf, [u8; 32])>);
+
+impl XmrMakerEffectToolPinsV1 {
+    /// Pins every Maker slot of the role config's `effect_tools`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a Maker slot is missing or its program is unreadable.
+    pub fn pin(config: &XmrRoleConfigV1) -> Result<Self> {
+        let mut pins = BTreeMap::new();
+        for (slot, _) in MAKER_TOOL_SLOTS {
+            let program = config
+                .effect_tools()
+                .get(slot)
+                .with_context(|| format!("the Monero role config names no {slot} tool"))?;
+            check_normalized_absolute(program)
+                .with_context(|| format!("the Monero {slot} tool path is unsafe"))?;
+            let bytes = std::fs::read(program)
+                .with_context(|| format!("the Monero {slot} tool is unreadable"))?;
+            pins.insert(slot, (program.clone(), Sha256::digest(bytes).into()));
+        }
+        Ok(Self(pins))
+    }
+
+    fn tool(&self, slot: &str) -> Result<Tool> {
+        let (_, abi) = MAKER_TOOL_SLOTS
+            .iter()
+            .find(|(name, _)| *name == slot)
+            .context("unknown Monero tool slot")?;
+        let (program, sha256) = self.0.get(slot).context("unpinned Monero tool slot")?;
+        Ok(Tool {
+            program: program.clone(),
+            program_sha256: hex::encode(sha256),
+            abi: (*abi).to_owned(),
+        })
+    }
+}
+
+/// What a Maker Node holds of one activated swap when it provisions that
+/// swap's effect authority.
+#[derive(Clone, Copy, Debug)]
+pub struct XmrMakerEffectFactsV1<'a> {
+    pub swap_id: [u8; 32],
+    pub agreement_commitment: [u8; 32],
+    pub activation_commitment: [u8; 32],
+    pub run_id: &'a str,
+    pub workflow_journal: &'a Path,
+    pub adaptor_journal: &'a Path,
+    pub sidecar_url: &'a str,
+    pub runtime_file: &'a Path,
+    pub capability_file: &'a Path,
+    /// The lock every user of the role's one wallet-rpc holds.
+    pub wallet_lock_file: &'a Path,
+}
+
+/// Writes one Maker swap's canonical schema-3 effect authority into the
+/// existing private `directory`, beside what it names there: one credential
+/// file per RPC field (split from the role config's `user:password` logins;
+/// all three wallet slots are the role's one wallet-rpc, whose role wallet
+/// and lock the authority names), a per-swap shared-wallet file password and
+/// the evidence root `evidence/`. A replay keeps the identical files; returns
+/// the authority's path.
+///
+/// # Errors
+///
+/// Fails for an unreadable login or runtime file, a role wallet with a
+/// password (the effect tools reopen it with none), an authority the
+/// validator refuses, or a file on disk that differs from the one composed.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one authority composition keeps every credential and path visible"
+)]
+pub fn provision_xmr_maker_effect_authority(
+    config: &XmrRoleConfigV1,
+    tools: &XmrMakerEffectToolPinsV1,
+    facts: &XmrMakerEffectFactsV1<'_>,
+    directory: &Path,
+) -> Result<PathBuf> {
+    // Every path the authority names must pass its validator as absolute and
+    // normalised; the two the Node hands in are checked before any is used.
+    check_normalized_absolute(directory).context("the effect authority directory is unsafe")?;
+    check_normalized_absolute(facts.runtime_file).context("the LEZ runtime file path is unsafe")?;
+    let credentials = |name: &str, (url, login_file): (&str, &Path)| -> Result<AuthenticatedRpc> {
+        let login = read_secret_line(login_file, "Monero RPC login")?;
+        let (username, password) = login
+            .split_once(':')
+            .context("a Monero RPC login is not user:password")?;
+        let username_file = format!("{name}.username");
+        let password_file = format!("{name}.password");
+        write_role_file(
+            directory,
+            &username_file,
+            username.as_bytes(),
+            "RPC username",
+        )?;
+        write_role_file(
+            directory,
+            &password_file,
+            password.as_bytes(),
+            "RPC password",
+        )?;
+        Ok(AuthenticatedRpc {
+            url: url.to_owned(),
+            username_file: join_component(directory, &username_file)
+                .context("an RPC username file name is unsafe")?,
+            password_file: join_component(directory, &password_file)
+                .context("an RPC password file name is unsafe")?,
+        })
+    };
+    if read_role_file(directory, SHARED_WALLET_FILE_PASSWORD_FILE, 128, "password").is_err() {
+        let mut secret = Zeroizing::new([0_u8; 32]);
+        OsRng.fill_bytes(&mut *secret);
+        write_role_file(
+            directory,
+            SHARED_WALLET_FILE_PASSWORD_FILE,
+            hex::encode(*secret).as_bytes(),
+            "shared-wallet file password",
+        )?;
+    }
+    let evidence_root = directory.join("evidence");
+    if !evidence_root.is_dir() {
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&evidence_root)
+            .context("create the Monero effect evidence root")?;
+    }
+    ensure!(
+        config.wallet_password()?.is_empty(),
+        "the Maker's effect tools reopen the role wallet without a password"
+    );
+    let runtime =
+        std::fs::read(facts.runtime_file).context("the LEZ runtime file is unreadable")?;
+    let authority = EffectAuthorityV1 {
+        schema_version: 3,
+        pair: "monero".to_owned(),
+        role: ActorRole::Maker,
+        swap_id: hex::encode(facts.swap_id),
+        agreement_commitment: hex::encode(facts.agreement_commitment),
+        activation_commitment: hex::encode(facts.activation_commitment),
+        run_id: facts.run_id.to_owned(),
+        workflow_journal: facts.workflow_journal.to_path_buf(),
+        adaptor_journal: facts.adaptor_journal.to_path_buf(),
+        evidence_root,
+        lez: LezRpc {
+            sidecar_url: facts.sidecar_url.to_owned(),
+            runtime_file: facts.runtime_file.to_path_buf(),
+            runtime_sha256: hex::encode(Sha256::digest(runtime)),
+            capability_file: facts.capability_file.to_path_buf(),
+        },
+        monero: MoneroRpc {
+            daemon: credentials("daemon", config.monerod_route())?,
+            funding_wallet: credentials("funding-wallet", config.wallet_rpc_route())?,
+            shared_wallet: credentials("shared-wallet", config.wallet_rpc_route())?,
+            role_wallet: credentials("role-wallet", config.wallet_rpc_route())?,
+            shared_wallet_file_password_file: directory.join(SHARED_WALLET_FILE_PASSWORD_FILE),
+            role_wallet_file: Some(RoleWalletFile {
+                filename: config.wallet_name().to_owned(),
+                lock_file: facts.wallet_lock_file.to_path_buf(),
+            }),
+        },
+        maker_tools: Some(MakerTools {
+            monero_fund: tools.tool("monero_fund")?,
+            lez_claim: tools.tool("lez_claim")?,
+            finalized_classifier: tools.tool("finalized_classifier")?,
+            monero_refund: tools.tool("monero_refund")?,
+            monero_verify: tools.tool("monero_verify")?,
+            lez_punish: Some(tools.tool("lez_punish")?),
+        }),
+        taker_tools: None,
+        tag14_release: None,
+    };
+    let mut bytes = serde_json::to_vec(&authority)?;
+    bytes.push(b'\n');
+    let _ = load_validated_xmr_effect_authority_bytes(
+        &bytes,
+        ActorRole::Maker,
+        facts.swap_id,
+        facts.agreement_commitment,
+        facts.activation_commitment,
+        facts.run_id,
+    )?;
+    write_role_file(
+        directory,
+        MAKER_EFFECT_AUTHORITY_FILE,
+        &bytes,
+        "Monero effect authority",
+    )?;
+    Ok(directory.join(MAKER_EFFECT_AUTHORITY_FILE))
+}
+
+/// The Maker actor's advisory LEZ scan cursor in the evidence root: where
+/// the search for each finalized effect it watches resumes.
+pub const XMR_MAKER_LEZ_SCAN_FILE: &str = "maker-lez-scan.json";
+
+/// Starts the Maker actor's search for the Taker's LEZ lock (tag 13) at
+/// `finalized_height`, the finalized LEZ height when the swap is activated:
+/// the Taker locks only once activated, so its lock lands above it. Keeps a
+/// cursor already in the evidence root of the provisioned `directory` (one an
+/// earlier provisioning of the same swap seeded lower, or a drive moved on).
+///
+/// # Errors
+///
+/// Fails if the cursor cannot be written.
+pub fn seed_xmr_maker_lez_scan(directory: &Path, finalized_height: u64) -> Result<()> {
+    check_normalized_absolute(directory).context("the effect authority directory is unsafe")?;
+    let cursor = directory.join("evidence").join(XMR_MAKER_LEZ_SCAN_FILE);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&cursor)
+    {
+        Ok(mut file) => {
+            serde_json::to_writer(
+                &mut file,
+                &serde_json::json!({ "taker_lock": finalized_height }),
+            )?;
+            file.sync_all()?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error).context("seed the Maker's LEZ scan cursor"),
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use std::{collections::BTreeMap, fs, path::Path};
+
+    use tempfile::TempDir;
+
+    use super::{
+        XmrMakerEffectFactsV1, XmrMakerEffectToolPinsV1, provision_xmr_maker_effect_authority,
+        seed_xmr_maker_lez_scan,
+    };
+
+    /// The provisioned directory and the runtime file the Node hands in are
+    /// absolute and normalised, or nothing is read or written.
+    #[test]
+    fn provisioning_refuses_a_directory_or_runtime_file_that_walks_the_tree() {
+        let directory = TempDir::new().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let config = crate::reserve::tests::config(&root);
+        let tools = XmrMakerEffectToolPinsV1(BTreeMap::new());
+        let effect = root.join("effect");
+        fs::create_dir(&effect).unwrap();
+        let runtime = root.join("runtime.json");
+        fs::write(&runtime, b"{}").unwrap();
+        let walking = effect.join("..").join("effect");
+        let walking_runtime = effect.join("..").join("runtime.json");
+        for (directory, runtime_file) in [
+            (Path::new("effect"), runtime.as_path()),
+            (walking.as_path(), runtime.as_path()),
+            (effect.as_path(), Path::new("runtime.json")),
+            (effect.as_path(), walking_runtime.as_path()),
+        ] {
+            let facts = XmrMakerEffectFactsV1 {
+                swap_id: [1; 32],
+                agreement_commitment: [2; 32],
+                activation_commitment: [3; 32],
+                run_id: "run-0001",
+                workflow_journal: &effect.join("workflow.sqlite"),
+                adaptor_journal: &effect.join("adaptor.sqlite"),
+                sidecar_url: "http://127.0.0.1:1/",
+                runtime_file,
+                capability_file: &effect.join("capability"),
+                wallet_lock_file: &effect.join("wallet.lock"),
+            };
+            let error = provision_xmr_maker_effect_authority(&config, &tools, &facts, directory)
+                .unwrap_err();
+            assert!(format!("{error:#}").contains("unsafe"), "{error:#}");
+        }
+        assert!(fs::read_dir(&effect).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn the_scan_cursor_is_seeded_only_under_a_normalised_absolute_directory() {
+        let directory = TempDir::new().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        fs::create_dir(root.join("evidence")).unwrap();
+        assert!(seed_xmr_maker_lez_scan(Path::new("relative"), 1).is_err());
+        assert!(seed_xmr_maker_lez_scan(&root.join("x").join(".."), 1).is_err());
+        assert!(
+            !root
+                .join("evidence")
+                .join(super::XMR_MAKER_LEZ_SCAN_FILE)
+                .exists()
+        );
+        seed_xmr_maker_lez_scan(&root, 1).unwrap();
+        assert!(
+            root.join("evidence")
+                .join(super::XMR_MAKER_LEZ_SCAN_FILE)
+                .is_file()
+        );
+    }
 }

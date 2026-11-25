@@ -1,0 +1,39 @@
+{
+  "scenario": "concurrent-kill-maker",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsLez",
+  "stamp": "179557199902",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_ids": [
+    "f1d995a3e0797eb7ef415c5dfe01c6997033d274d0f300817545fcb7aea7c273",
+    "f468a264eeccd1266ca692498b4e05f89d5d24b131178ba6e1c87334e155302c"
+  ],
+  "killed": {
+    "container": "lez-l2-maker-node",
+    "exit_code": 137,
+    "oom_killed": false,
+    "finished_at": "2026-11-25T02:00:26.275943679Z"
+  },
+  "result": "passed",
+  "seconds": 59
+}

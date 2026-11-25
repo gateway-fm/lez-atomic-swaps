@@ -29,8 +29,8 @@ mod xmr_effect_workflow_journal;
 mod zec_recovery;
 
 pub use adaptor_session_journal::{
-    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
-    AdaptorSessionIdentity, AdaptorSessionJournalError, AdaptorSessionPhase,
+    AdaptorNonceCommitment, AdaptorNonceSealingKey, AdaptorPartialSignature, AdaptorPresignature,
+    AdaptorPublicNonce, AdaptorSessionIdentity, AdaptorSessionJournalError, AdaptorSessionPhase,
     AdaptorSessionReservation, AdaptorSessionRole, AdaptorSessionSnapshot, AdaptorTransitionCommit,
     PartialSignatureCommit, ReservationCommit, SecretNonceBytes, SigningMaterial,
     SqliteAdaptorSessionJournal,

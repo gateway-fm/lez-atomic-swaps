@@ -1,0 +1,123 @@
+{
+  "scenario": "zec-maker-early-claim",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "1795567856",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-devnet-swap-1795567856",
+  "corridor": "zec-devnet-1795567856",
+  "profile": "deterministic-local-devnet-v8",
+  "onchain_swap_id": "a5761b1a051156e66a1ff7c682ff05014759d4f98c19e3e053768b8551d340bc",
+  "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+  "secret_digest": "767dd59eb6d50416b4cd36eaf2d390b81c951a488ac16872a6d50e6a12290ee3",
+  "maker_search": {
+    "roots": [
+      "/var/lib/lez/maker",
+      "/var/lib/lez/zec",
+      "/run/lez/maker"
+    ],
+    "files": 84,
+    "bytes": 4333912,
+    "preimage_files": [],
+    "digest_files": [
+      "/var/lib/lez/maker/maker.sqlite3-wal",
+      "/var/lib/lez/zec/actors/cf7e43cc6bdc938862a096d609e3f48458225e863a7a1855be59e9a88ea55a8b/maker/state/actor.sqlite3",
+      "/var/lib/lez/zec/actors/cf7e43cc6bdc938862a096d609e3f48458225e863a7a1855be59e9a88ea55a8b/shared/agreement-v2.borsh",
+      "/var/lib/lez/zec/corridor/shared/agreement-v2.borsh"
+    ]
+  },
+  "taker_control_preimage_files": [
+    "/var/lib/lez/zec/corridor/taker/claim-preimage.key"
+  ],
+  "claim_probes": {
+    "a zero preimage": {
+      "transaction_id": "3a6ed098ea7fc6b5076d7732d3b685f4623b973224fd2296aaab492986b19cca",
+      "submission": {
+        "decision": "accepted",
+        "error_code": null,
+        "error_message": null
+      },
+      "included": false,
+      "included_in_block": null,
+      "before": {
+        "sequencer_tip": 8064,
+        "tip_timestamp_ms": 1795567905037,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2549994,
+        "claimant_nonce": 21
+      },
+      "after": {
+        "sequencer_tip": 8089,
+        "tip_timestamp_ms": 1795567935425,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2549994,
+        "claimant_nonce": 21
+      },
+      "escrow_kept_custody": true,
+      "submitted_before_refund_at": true
+    },
+    "the digest as the preimage": {
+      "transaction_id": "ce656209553e8e718617041e94c5945a547b7536aa2acbdaef02e625db527208",
+      "submission": {
+        "decision": "accepted",
+        "error_code": null,
+        "error_message": null
+      },
+      "included": false,
+      "included_in_block": null,
+      "before": {
+        "sequencer_tip": 8089,
+        "tip_timestamp_ms": 1795567935425,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2549994,
+        "claimant_nonce": 21
+      },
+      "after": {
+        "sequencer_tip": 8114,
+        "tip_timestamp_ms": 1795567966199,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2549994,
+        "claimant_nonce": 21
+      },
+      "escrow_kept_custody": true,
+      "submitted_before_refund_at": true
+    }
+  },
+  "taker_terminal_state": "refunded",
+  "maker_terminal_phase": "refunded",
+  "zcash_funding_outpoint_unspent": true,
+  "lez_balances_before": {
+    "maker": 2549994,
+    "taker": 1450006
+  },
+  "lez_balances_after": {
+    "maker": 2549994,
+    "taker": 1450006
+  },
+  "result": "passed",
+  "seconds": 531
+}

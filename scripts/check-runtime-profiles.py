@@ -11,7 +11,7 @@ import sys
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CLASSES = {"product", "demo", "reference", "compatibility", "guest", "fuzz"}
+CLASSES = {"product", "demo", "fixture", "reference", "compatibility", "guest", "fuzz"}
 STABILITIES = {"local_demo", "experimental", "reference"}
 
 
@@ -64,6 +64,10 @@ def validate_catalog(profile_ids: set[str]) -> tuple[list[dict], set[str]]:
         manifests.add(entry["manifest"])
         if entry["class"] not in CLASSES:
             fail(f"{entry['target']}: unknown executable class")
+        # a devnet test fixture (the Zcash dealer holds both parties' keys)
+        # belongs to no runtime profile
+        if entry["class"] == "fixture" and entry["profiles"]:
+            fail(f"{entry['target']}: a test fixture is in no runtime profile")
         if not all(isinstance(entry[field], str) and entry[field] for field in
                    ("manifest", "package", "target", "stability", "canonical_name", "role", "pair")):
             fail(f"{entry['target']}: empty catalog field")
@@ -181,7 +185,7 @@ def validate_repository_contract(
     ]:
         if name not in canonical_names:
             fail(f"canonical executable is absent from catalog: {name}")
-    if any(entry["class"] in {"demo", "reference", "fuzz", "guest"}
+    if any(entry["class"] in {"demo", "fixture", "reference", "fuzz", "guest"}
            and "local-btc-demo-v1" in entry["profiles"]
            for entry in entries):
         fail("reference/demo executable declared in local product image profile")
@@ -313,7 +317,8 @@ def validate_role_symmetry(compose: str) -> None:
             "Type=notify", "NotifyAccess=main", "RuntimeDirectory=lez/" + role,
             "StateDirectory=lez/" + role, "UMask=0077", "NoNewPrivileges=yes",
             "ProtectSystem=strict", "KillMode=control-group",
-            f"ExecStart=/usr/bin/lez-{role}-node --config /etc/lez/{role}/node.json",
+            f"EnvironmentFile=/etc/lez/{role}/env",
+            f"ExecStart=/usr/bin/lez-role-node-launcher {role}",
         ):
             if directive not in unit:
                 fail(f"role symmetry {role}: systemd unit omits {directive}")

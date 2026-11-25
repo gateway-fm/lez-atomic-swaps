@@ -9,8 +9,9 @@
 # The Linux sibling, package-role-node.sh, packages the executables the
 # images stage; this one builds them here with cargo from this checkout
 # (release, --locked; LEZ_CARGO_JOBS, default 6): the same executables, the
-# role Node with pair-zec, its CLI, actors, the health probe and the LEZ v0.2
-# sidecar (compat/lez-v0_2-sidecar, toolchain 1.96.0). Each is stripped with
+# role Node with pair-zec, its CLI, Chat gateway, actors, the Maker's Logos
+# price worker, the health probe and the LEZ v0.2 sidecar
+# (compat/lez-v0_2-sidecar, toolchain 1.96.0). Each is stripped with
 # the macOS strip and signed again ad hoc (stripping invalidates the linker's
 # signature, and Apple silicon runs no unsigned code). The launcher is
 # modules/lez-role-node/node-entrypoint.sh. bin/payload.json names every
@@ -29,8 +30,8 @@ out="${3:?the package to write}"
 # The executables of package-role-node.sh (test_role_node_package.py keeps
 # the two lists the same).
 case "$role" in
-  maker) bins=(lez-maker-node lez-maker-cli lez-btc-maker-actor lez-zec-maker-actor) ;;
-  taker) bins=(lez-taker-node lez-taker-cli lez-taker-registry-init lez-btc-taker-actor lez-zec-taker-actor) ;;
+  maker) bins=(lez-maker-node lez-maker-cli lez-maker-chat-gateway lez-logos-price-worker lez-btc-maker-actor lez-zec-maker-actor) ;;
+  taker) bins=(lez-taker-node lez-taker-cli lez-taker-chat-gateway lez-taker-registry-init lez-btc-taker-actor lez-zec-taker-actor) ;;
   *) echo "role must be maker or taker" >&2; exit 64 ;;
 esac
 bins+=(lez-v02-bridge-poc lez-runtime-healthcheck)
@@ -62,7 +63,7 @@ target="${CARGO_TARGET_DIR:-$repo/target}"
 jobs="${LEZ_CARGO_JOBS:-6}"
 (cd "$repo" && LEZ_RELEASE_BUILD=1 CARGO_TARGET_DIR="$target" nice -n 10 cargo build --release --locked -j "$jobs" --bins \
   --features lez-maker-node/pair-zec,lez-taker-node/pair-zec \
-  -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor)
+  -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor)
 (cd "$repo" && LEZ_RELEASE_BUILD=1 CARGO_TARGET_DIR="$target/sidecar" nice -n 10 cargo +1.96.0 build --release --locked -j "$jobs" \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --bin lez-v02-bridge-poc)
 

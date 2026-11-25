@@ -255,5 +255,20 @@ class ResetSwapsRefusesOpenSwaps(Workspace):
         self.assert_untouched()
 
 
+class FreshChainFinalityRead(unittest.TestCase):
+    """up.sh --fresh-lez polls the indexer for the new chain's first finalized
+    height; an indexer that does not answer yet must read as empty."""
+
+    def test_an_unreachable_indexer_reads_as_empty_under_errexit(self):
+        text = (SCRIPTS / 'up.sh').read_text()
+        start = text.index('  lez_finalized() {')
+        function = text[start:text.index('\n  }\n', start) + len('\n  }\n')]
+        script = ('set -euo pipefail\nLEZ_STACK_INDEXER_URL=http://127.0.0.1:1/\n'
+                  + function + 'first="$(lez_finalized)"\nprintf "read=[%s]\\n" "$first"\n')
+        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'read=[]\n')
+
+
 if __name__ == '__main__':
     unittest.main()

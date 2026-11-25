@@ -17,7 +17,12 @@ RuntimeDirectoryMode=0700
 StateDirectory=lez/taker
 StateDirectoryMode=0700
 WorkingDirectory=/var/lib/lez/taker
-ExecStart=/usr/bin/lez-taker-node --config /etc/lez/taker/node.json
+LoadCredentialEncrypted=lez-signer.key:/etc/lez/taker/credentials/lez-signer.key.cred
+LoadCredentialEncrypted=zcash.key:/etc/lez/taker/credentials/zcash.key.cred
+# The role launcher (modules/lez-role-node/node-entrypoint.sh) renders the Node's
+# configuration from this file's inputs and execs the Node, which stays the main process.
+EnvironmentFile=/etc/lez/taker/env
+ExecStart=/usr/bin/lez-role-node-launcher taker
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=30s
@@ -41,7 +46,10 @@ ProcSubset=pid
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=yes
 RestrictRealtime=yes
-RestrictSUIDSGID=yes
+# No RestrictSUIDSGID=: it makes openat2() fail with ENOSYS, and the Node opens every
+# state and key file with openat2(RESOLVE_NO_SYMLINKS), so it cannot start under it.
+# It can write only its mode-0700 state and runtime directories and a private /tmp, so a
+# set-ID file it made would be out of every other user's reach.
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 CapabilityBoundingSet=

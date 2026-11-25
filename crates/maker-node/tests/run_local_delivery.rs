@@ -3,7 +3,13 @@
 #[path = "support/cross_role_binary.rs"]
 mod cross_role;
 
-use std::{fs, os::unix::fs::PermissionsExt as _, process::Command};
+use std::{
+    fs,
+    os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
 
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
@@ -320,4 +326,79 @@ async fn separate_taker_process_discovers_only_key_pinned_live_route_offers() {
     assert!(expired.status.success());
     let expired: Value = serde_json::from_slice(&expired.stdout).unwrap();
     assert!(expired["offers"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn a_maker_starts_while_its_delivery_is_unreadable_and_reports_it_unavailable() {
+    // R2: a Maker restarted during a Delivery outage (the directory unreadable,
+    // as the devnet's outage cut leaves it) still serves its owner socket, so
+    // the swaps it holds go on; Delivery reads unavailable until it is back.
+    let run = tempdir().expect("isolated Maker root");
+    let runtime = run.path().join("runtime");
+    fs::DirBuilder::new().mode(0o700).create(&runtime).unwrap();
+    let socket = runtime.join("maker.sock");
+    let ready = runtime.join("ready");
+    let delivery = run.path().join("delivery");
+    fs::DirBuilder::new().mode(0o700).create(&delivery).unwrap();
+    fs::set_permissions(&delivery, fs::Permissions::from_mode(0o000)).unwrap();
+    let key = run.path().join("delivery-signing.key");
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&key)
+        .unwrap();
+    std::io::Write::write_all(
+        &mut file,
+        format!("{}\n", hex::encode([8_u8; 32])).as_bytes(),
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--database")
+        .arg(run.path().join("maker.sqlite3"))
+        .arg("--ready-file")
+        .arg(&ready)
+        .arg("--delivery-directory")
+        .arg(&delivery)
+        .arg("--delivery-signing-key-file")
+        .arg(&key)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start maker daemon");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while fs::read_to_string(&ready).is_err() {
+        if child.try_wait().unwrap().is_some() {
+            let output = child.wait_with_output().unwrap();
+            fs::set_permissions(&delivery, fs::Permissions::from_mode(0o700)).unwrap();
+            panic!(
+                "the Maker did not start while Delivery was unreadable: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "maker daemon readiness timed out"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let health = Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
+        .arg("--socket")
+        .arg(&socket)
+        .arg("health")
+        .output()
+        .unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+    fs::set_permissions(&delivery, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        health.status.success(),
+        "{}",
+        String::from_utf8_lossy(&health.stderr)
+    );
+    let health: Value = serde_json::from_slice(&health.stdout).unwrap();
+    assert_eq!(health["delivery"], "unavailable");
 }

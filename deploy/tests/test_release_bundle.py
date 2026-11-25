@@ -17,7 +17,7 @@ import unittest
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
 RELEASE_ENV = '''# written by scripts/package-dist.sh; read by scripts/start.sh
 LEZ_IMAGE_PREFIX=ghcr.io/gateway-fm/lez-atomic-swaps/lez
-LEZ_IMAGE_TAG=v0.3.6
+LEZ_IMAGE_TAG=v0.4.0
 LEZ_ESCROW_PROGRAM_ID={program}
 LEZ_RELEASE_COMMIT=0123456789abcdef0123456789abcdef01234567
 '''.format(program='ab' * 32)
@@ -39,7 +39,7 @@ class ReleaseBundle(unittest.TestCase):
     def deploy_dir(self, release_env):
         tmp = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp)
-        deploy = tmp / 'lez-swap-stack-v0.3.6-arm64'
+        deploy = tmp / 'lez-swap-stack-v0.4.0-arm64'
         (deploy / 'scripts').mkdir(parents=True)
         shutil.copy(SCRIPTS / 'lane.sh', deploy / 'scripts')
         shutil.copy(SCRIPTS / 'host.sh', deploy / 'scripts')
@@ -56,15 +56,15 @@ class ReleaseBundle(unittest.TestCase):
 
     def test_a_bundle_resolves_the_release_images_and_never_builds(self):
         seen = self.probe(self.deploy_dir(RELEASE_ENV))
-        self.assertEqual(seen['image'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.3.6')
-        self.assertEqual(seen['child'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.3.6')
+        self.assertEqual(seen['image'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.4.0')
+        self.assertEqual(seen['child'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.4.0')
         self.assertEqual(seen['LEZ_ESCROW_PROGRAM_ID'], 'ab' * 32)
         self.assertEqual(seen['LEZ_RELEASE_COMMIT'], '0123456789abcdef0123456789abcdef01234567')
         self.assertEqual(seen['images'], 'pull')
 
     def test_a_bundle_of_local_images_uses_them_as_they_are(self):
         local = RELEASE_ENV.replace('LEZ_IMAGE_PREFIX=ghcr.io/gateway-fm/lez-atomic-swaps/lez', 'LEZ_IMAGE_PREFIX=lez') \
-                           .replace('LEZ_IMAGE_TAG=v0.3.6', 'LEZ_IMAGE_TAG=local')
+                           .replace('LEZ_IMAGE_TAG=v0.4.0', 'LEZ_IMAGE_TAG=local')
         seen = self.probe(self.deploy_dir(local))
         self.assertEqual(seen['image'], 'lez-maker-node:local')
         self.assertEqual(seen['images'], 'present')
@@ -91,7 +91,8 @@ class ReleaseBundle(unittest.TestCase):
         for name in NAMES[:4]:
             self.assertIn(f'{name}=${{', script, name)
         # Every harness script that resolves images sources lane.sh first.
-        for name in ('up.sh', 'ui-e2e.sh', 'zec-provision.sh', 'bootstrap-market.sh', 'start.sh', 'reset-swaps.sh'):
+        for name in ('up.sh', 'ui-e2e.sh', '../tests/fixtures/zec-catalog-fixture.sh', 'bootstrap-market.sh', 'start.sh',
+                     'reset-swaps.sh'):
             code = [line for line in (SCRIPTS / name).read_text().splitlines()
                     if not line.lstrip().startswith('#')]
             sourced = code.index('source scripts/lane.sh')
@@ -160,6 +161,9 @@ class BundleStartBuildsNothing(unittest.TestCase):
             for line in pulls:
                 for profile in ('tools', 'explorers'):
                     self.assertIn(f'--profile {profile}', line, f'{name}: {line.strip()}')
+                # and Monero's image when the stack runs it (LEZ_MONERO=1)
+                self.assertIn('${monero_profile[@]+"${monero_profile[@]}"}', line, f'{name}: {line.strip()}')
+            self.assertIn('monero_profile=(--profile monero)', '\n'.join(code_lines(name)), name)
 
     def run_verify_all(self, release_env, checkout=False, **env):
         deploy = ReleaseBundle.deploy_dir(self, release_env)

@@ -16,49 +16,48 @@ use lez_swap_store::{
     SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowReconciliationSource,
     XmrWorkflowReconciliationV2, XmrWorkflowStep,
 };
-use lez_xmr_swap_sdk::{MoneroAddressNetworkV1, XmrActivatedAgreementV1, XmrAgreementV1};
+use lez_xmr_swap_sdk::{XmrActivatedAgreementV1, XmrAgreementV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    ActorRole, M4_MONERO_CONFIRMATIONS, M4_MONERO_DAEMON_VERSION, M4_MONERO_EVIDENCE_MAX_BYTES,
-    M4_MONERO_NETWORK_SCOPE, M4_MONERO_RECEIPT_SCHEMA, M4_MONERO_WALLET_VERSION,
-    MoneroReceiptEvidenceV2, SecureDestination, XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
-    XMR_EFFECT_AUTHORITY_MAX_BYTES, canonical_json_bytes, decode_exact,
-    discovered_finalized_xmr_facts,
+    ActorRole, M4_MONERO_CONFIRMATIONS, M4_MONERO_EVIDENCE_MAX_BYTES, M4_MONERO_RECEIPT_SCHEMA,
+    M4_MONERO_WALLET_VERSION, MoneroEvidenceScope, MoneroReceiptEvidenceV2, SecureDestination,
+    XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XMR_EFFECT_AUTHORITY_MAX_BYTES, canonical_json_bytes,
+    decode_exact, discovered_finalized_xmr_facts,
     effect_input_custody::{
         XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE, XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE,
         XMR_EFFECT_MAKER_CLAIM_SIGNATURE_FILE, parse_private_view_key_bytes,
     },
-    load_validated_xmr_effect_execution_v3_bytes, owner_exact_finalized_xmr_facts,
-    read_canonical_private_json, read_finalized_xmr_effect, read_private_input,
-    write_bounded_public_new,
+    load_validated_xmr_effect_execution_v3_bytes, maker_tag14_facts, read_canonical_private_json,
+    read_finalized_xmr_effect, read_private_input, write_bounded_public_new,
 };
 
-const FUNDING_SCHEMA: &str = "lez_v02_m4_actual_local_monero_funding_v2";
+pub(crate) const FUNDING_SCHEMA: &str = "lez_v02_m4_actual_local_monero_funding_v2";
 const ACTIVATION_SCHEMA: &str = "lez_v02_m7_maker_refund_activation_v1";
 const MAKER_CLAIM_ACTIVATION_SCHEMA: &str = "lez_v02_m7_maker_claim_activation_v1";
 const TAKER_CLAIM_ACTIVATION_SCHEMA: &str = "lez_v02_m7_taker_claim_activation_v1";
 const TAKER_CLAIM_SWEEP_ACTIVATION_SCHEMA: &str = "lez_v02_m7_taker_claim_sweep_activation_v1";
 const TAG13_SCHEMA: &str = "lez_v02_m4_xmr_stage_a_tag13_poc_v2";
+const MAKER_PUNISH_ACTIVATION_SCHEMA: &str = "lez_v02_m7_maker_punish_activation_v1";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct FundingEvidenceV2 {
-    schema: String,
-    attempt_state: String,
-    agreement_commitment: String,
-    shared_address: String,
-    amount_piconero: u64,
-    transaction_id: Option<String>,
-    confirmation_tip_height: Option<u64>,
-    required_confirmations: u64,
-    restore_height: u64,
-    wallet_role: String,
-    network_scope: String,
-    public_rpc_used: bool,
-    faucet_used: bool,
-    automatic_submission_retry: bool,
+pub(crate) struct FundingEvidenceV2 {
+    pub(crate) schema: String,
+    pub(crate) attempt_state: String,
+    pub(crate) agreement_commitment: String,
+    pub(crate) shared_address: String,
+    pub(crate) amount_piconero: u64,
+    pub(crate) transaction_id: Option<String>,
+    pub(crate) confirmation_tip_height: Option<u64>,
+    pub(crate) required_confirmations: u64,
+    pub(crate) restore_height: u64,
+    pub(crate) wallet_role: String,
+    pub(crate) network_scope: String,
+    pub(crate) public_rpc_used: bool,
+    pub(crate) faucet_used: bool,
+    pub(crate) automatic_submission_retry: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -278,10 +277,29 @@ struct MakerClaimActivationSummaryV1 {
     private_material_disclosed: bool,
 }
 
+#[derive(Serialize)]
+struct MakerPunishActivationSummaryV1 {
+    schema: &'static str,
+    role: &'static str,
+    run_id: String,
+    monero_run_id: String,
+    swap_id: String,
+    selected_branch: &'static str,
+    funding_effect_evidence_sha256: String,
+    funding_tool_plan_identity_sha256: String,
+    tag17_scan_start_height: u64,
+    prepared_step: &'static str,
+    private_material_disclosed: bool,
+}
+
 /// Validates the already-finalized common effects and prepares only the
 /// receipt-v2 Taker claim authorization. No operator branch selector exists.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(crate) fn activate_taker_claim_workflow(
+pub fn activate_taker_claim_workflow(
     effect_manifest: &Path,
     effect_authority: &Path,
     run_id: &str,
@@ -319,8 +337,9 @@ pub(crate) fn activate_taker_claim_workflow(
     let agreement = XmrAgreementV1::from_wire(&execution.application.stage_a_wire)
         .context("effect application Stage A is invalid")?;
     ensure!(
-        agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
-        "M7 local claim activation requires Monero Regtest"
+        MoneroEvidenceScope::of_genesis(agreement.body().monero().genesis_hash()).network()
+            == crate::agreement_monero_network(&agreement),
+        "claim activation: Stage A's Monero genesis is not its profile's network"
     );
     let view_key = parse_private_view_key_bytes(&execution.application.private_view_key)?;
     let activation = XmrActivatedAgreementV1::from_wire(
@@ -447,11 +466,15 @@ pub(crate) fn activate_taker_claim_workflow(
 
 /// Advances an already finalized Tag-14 workflow to the Taker Monero claim
 /// sweep only from exact finalized Tag-15 evidence and its validated signature.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
 #[allow(
     clippy::too_many_lines,
     reason = "the finalized-signature and durable-workflow checks remain linear for auditability"
 )]
-pub(crate) fn activate_taker_claim_sweep_workflow(
+pub fn activate_taker_claim_sweep_workflow(
     effect_manifest: &Path,
     effect_authority: &Path,
     run_id: &str,
@@ -635,8 +658,12 @@ fn validate_tag13_effect(effect: &Tag13EffectV1, expected: &str) -> Result<()> {
 
 /// Validates exact funding and finalized Tag14 evidence, then prepares only the
 /// Maker Tag15 Claim step. No operator-provided branch selector is accepted.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(crate) fn activate_maker_claim_workflow(
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
+#[allow(clippy::too_many_arguments)]
+pub fn activate_maker_claim_workflow(
     effect_manifest: &Path,
     effect_authority: &Path,
     run_id: &str,
@@ -646,77 +673,64 @@ pub(crate) fn activate_maker_claim_workflow(
     finalized_authorization: &Path,
     maker_final_signature: &Path,
 ) -> Result<()> {
-    let manifest_bytes = read_private_input(
-        effect_manifest,
-        XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
-        "schema-3 Maker effect manifest",
-    )?;
-    let authority_bytes = read_private_input(
-        effect_authority,
-        XMR_EFFECT_AUTHORITY_MAX_BYTES,
-        "Maker effect authority",
-    )?;
-    let execution = load_validated_xmr_effect_execution_v3_bytes(
+    let (manifest_bytes, authority_bytes) =
+        read_maker_effect_inputs(effect_manifest, effect_authority)?;
+    let summary = activate_maker_claim_workflow_bytes(
         &manifest_bytes,
         &authority_bytes,
-        ActorRole::Maker,
         run_id,
-    )
-    .context("validate Maker effect application before claim activation")?;
-    let authority = execution.effect_authority();
-    ensure!(
-        authority.schema_version() == 3
-            && authority.role() == ActorRole::Maker
-            && authority.run_id() == run_id,
-        "claim activation requires the exact schema-3 Maker authority"
-    );
-
-    let agreement = XmrAgreementV1::from_wire(&execution.application.stage_a_wire)
-        .context("effect application Stage A is invalid")?;
-    ensure!(
-        agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
-        "M7 local claim activation requires Monero Regtest"
-    );
-    let view_key = parse_private_view_key_bytes(&execution.application.private_view_key)?;
-    let activation = XmrActivatedAgreementV1::from_wire(
-        &agreement,
-        &execution.application.stage_b_wire,
-        &view_key,
-    )
-    .context("effect application Stage B is invalid")?;
-    ensure!(
-        agreement.body().swap_id() == authority.swap_id()
-            && agreement.agreement_commitment() == authority.agreement_commitment()
-            && activation.activation_commitment() == authority.activation_commitment(),
-        "claim activation application identity changed"
-    );
-
-    let (funding, funding_bytes) = read_canonical_private_json::<FundingEvidenceV2>(
+        monero_run_id,
         monero_funding_evidence,
-        "Monero funding evidence v2",
-    )?;
-    let (receipt, receipt_bytes) = read_canonical_private_json::<MoneroReceiptEvidenceV2>(
         monero_funding_receipt,
-        "Monero funding receipt v2",
+        finalized_authorization,
+        maker_final_signature,
     )?;
-    validate_funding_pair(&agreement, monero_run_id, &funding, &receipt)?;
+    std::io::stdout()
+        .write_all(&summary)
+        .context("write Maker claim activation summary")
+}
 
-    let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
+/// [`activate_maker_claim_workflow`] on already read manifest and authority
+/// bytes; returns the canonical activation summary instead of printing it.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub fn activate_maker_claim_workflow_bytes(
+    manifest_bytes: &[u8],
+    authority_bytes: &[u8],
+    run_id: &str,
+    monero_run_id: &str,
+    monero_funding_evidence: &Path,
+    monero_funding_receipt: &Path,
+    finalized_authorization: &Path,
+    maker_final_signature: &Path,
+) -> Result<Vec<u8>> {
+    let maker = MakerBranchActivation::load(
+        manifest_bytes,
+        authority_bytes,
+        run_id,
+        monero_run_id,
+        monero_funding_evidence,
+        monero_funding_receipt,
+        "claim",
+    )?;
+    let (agreement, activation, authority) = (
+        &maker.agreement,
+        &maker.activation,
+        maker.execution.effect_authority(),
+    );
+    let binding = XmrLezBridgeBindingV3::new(agreement, activation)
         .context("derive finalized authorization terms from Stage B")?;
     let finalized_result = read_finalized_xmr_effect(finalized_authorization)?;
-    let facts = owner_exact_finalized_xmr_facts(
-        &finalized_result,
-        run_id,
-        &binding.terms(),
-        XmrNativeEffectV3::AuthorizeClaim,
-        BridgeParticipant::Taker,
-    )?;
+    let facts = maker_tag14_facts(&finalized_result, run_id, &binding.terms())?;
     let partial = facts
         .instruction
         .published_claim_partial
         .ok_or_else(|| anyhow!("finalized Tag-14 facts omit the published partial"))?;
     activation
-        .verify_published_taker_claim_partial(&agreement, *partial.as_bytes())
+        .verify_published_taker_claim_partial(agreement, *partial.as_bytes())
         .context("finalized Tag-14 partial differs from Stage B")?;
 
     let signature_before = read_private_input(
@@ -743,39 +757,6 @@ pub(crate) fn activate_maker_claim_workflow(
         signature_before == signature_after,
         "Maker claim final-signature packet changed while read"
     );
-
-    let funding_evidence_sha256: [u8; 32] = Sha256::digest(&funding_bytes).into();
-    let funding_receipt_sha256: [u8; 32] = Sha256::digest(&receipt_bytes).into();
-    let effect_evidence_sha256 = domain_digest(
-        b"lez-xmr-m7-imported-funding-evidence-v1",
-        &[&funding_bytes, &receipt_bytes],
-    );
-    let maker_tools = authority
-        .maker_tools()
-        .ok_or_else(|| anyhow!("Maker effect tool profile is unavailable"))?;
-    let imported_plan = ImportedFundingPlanV1 {
-        schema_version: 1,
-        step: XmrWorkflowStep::FundMonero.name(),
-        role: "maker",
-        run_id: run_id.to_owned(),
-        swap_id: hex::encode(authority.swap_id()),
-        agreement_commitment: hex::encode(authority.agreement_commitment()),
-        activation_commitment: hex::encode(authority.activation_commitment()),
-        effect_authority_sha256: hex::encode(execution.effect_authority_sha256()),
-        funding_tool_program_sha256: hex::encode(maker_tools.monero_fund().program_sha256()),
-        funding_tool_abi: maker_tools.monero_fund().abi().to_owned(),
-        funding_evidence_sha256: hex::encode(funding_evidence_sha256),
-        funding_receipt_sha256: hex::encode(funding_receipt_sha256),
-    };
-    let imported_plan_bytes = canonical_json_bytes(&imported_plan, "encode imported funding plan")?;
-    let tool_plan_identity_sha256: [u8; 32] = Sha256::digest(&imported_plan_bytes).into();
-    let reconciliation = XmrWorkflowReconciliationV2::new(
-        effect_evidence_sha256,
-        tool_plan_identity_sha256,
-        XmrWorkflowReconciliationSource::MoneroWalletTransaction,
-    )
-    .context("construct exact imported funding reconciliation")?;
-
     persist_or_validate_private(
         &authority
             .evidence_root()
@@ -783,32 +764,7 @@ pub(crate) fn activate_maker_claim_workflow(
         &signature_after,
     )?;
 
-    let mut workflow = SqliteXmrWorkflowJournal::open_existing(authority.workflow_journal())
-        .context("open Maker effect workflow for claim activation")?;
-    let identity = execution.workflow_identity();
-    workflow
-        .prepare_step(identity, XmrWorkflowStep::FundMonero)
-        .context("prepare imported Maker Monero funding")?;
-    let _ = workflow
-        .authorize_once(identity, XmrWorkflowStep::FundMonero)
-        .context("consume imported Maker funding authority")?;
-    workflow
-        .reconcile_succeeded(identity, XmrWorkflowStep::FundMonero, &reconciliation)
-        .context("reconcile exact imported Maker funding evidence")?;
-    workflow
-        .select_branch(identity, XmrWorkflowBranch::Claim)
-        .context("select claim branch from finalized Tag-14 evidence")?;
-    workflow
-        .prepare_step(identity, XmrWorkflowStep::ClaimLezTag15)
-        .context("prepare Maker Tag15 claim")?;
-    ensure!(
-        workflow.selected_branch(identity)? == Some(XmrWorkflowBranch::Claim)
-            && workflow.load_reconciliation(identity, XmrWorkflowStep::FundMonero)?
-                == Some(reconciliation)
-            && workflow.step_revision(identity, XmrWorkflowStep::ClaimLezTag15)? == 0,
-        "durable Maker claim activation did not replay exactly"
-    );
-
+    maker.select_branch(XmrWorkflowBranch::Claim, XmrWorkflowStep::ClaimLezTag15)?;
     let finalized_bytes =
         canonical_json_bytes(&finalized_result, "encode finalized authorization")?;
     let summary = MakerClaimActivationSummaryV1 {
@@ -818,8 +774,8 @@ pub(crate) fn activate_maker_claim_workflow(
         monero_run_id: monero_run_id.to_owned(),
         swap_id: hex::encode(authority.swap_id()),
         selected_branch: "claim",
-        funding_effect_evidence_sha256: hex::encode(effect_evidence_sha256),
-        funding_tool_plan_identity_sha256: hex::encode(tool_plan_identity_sha256),
+        funding_effect_evidence_sha256: hex::encode(maker.funding.effect_evidence_sha256),
+        funding_tool_plan_identity_sha256: hex::encode(maker.funding.tool_plan_identity_sha256),
         finalized_authorization_sha256: hex::encode(Sha256::digest(&finalized_bytes)),
         maker_claim_signature_sha256: hex::encode(Sha256::digest(&signature_after)),
         tag15_scan_start_height: facts
@@ -830,18 +786,17 @@ pub(crate) fn activate_maker_claim_workflow(
         prepared_step: XmrWorkflowStep::ClaimLezTag15.name(),
         private_material_disclosed: false,
     };
-    std::io::stdout()
-        .write_all(&canonical_json_bytes(
-            &summary,
-            "encode Maker claim activation summary",
-        )?)
-        .context("write Maker claim activation summary")
+    canonical_json_bytes(&summary, "encode Maker claim activation summary")
 }
 
 /// Validates external evidence and advances one Maker workflow to the prepared
 /// Monero-refund sweep without accepting an operator-selected branch.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(crate) fn activate_maker_refund_workflow(
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
+#[allow(clippy::too_many_arguments)]
+pub fn activate_maker_refund_workflow(
     effect_manifest: &Path,
     effect_authority: &Path,
     run_id: &str,
@@ -851,62 +806,55 @@ pub(crate) fn activate_maker_refund_workflow(
     finalized_refund: &Path,
     observed_final_signature: &Path,
 ) -> Result<()> {
-    let manifest_bytes = read_private_input(
-        effect_manifest,
-        XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
-        "schema-3 Maker effect manifest",
-    )?;
-    let authority_bytes = read_private_input(
-        effect_authority,
-        XMR_EFFECT_AUTHORITY_MAX_BYTES,
-        "Maker effect authority",
-    )?;
-    let execution = load_validated_xmr_effect_execution_v3_bytes(
+    let (manifest_bytes, authority_bytes) =
+        read_maker_effect_inputs(effect_manifest, effect_authority)?;
+    let summary = activate_maker_refund_workflow_bytes(
         &manifest_bytes,
         &authority_bytes,
-        ActorRole::Maker,
         run_id,
-    )
-    .context("validate Maker effect application before refund activation")?;
-    let authority = execution.effect_authority();
-    ensure!(
-        authority.schema_version() == 3
-            && authority.role() == ActorRole::Maker
-            && authority.run_id() == run_id,
-        "refund activation requires the exact schema-3 Maker authority"
-    );
-
-    let agreement = XmrAgreementV1::from_wire(&execution.application.stage_a_wire)
-        .context("effect application Stage A is invalid")?;
-    ensure!(
-        agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
-        "M7 local refund activation requires Monero Regtest"
-    );
-    let view_key = parse_private_view_key_bytes(&execution.application.private_view_key)?;
-    let activation = XmrActivatedAgreementV1::from_wire(
-        &agreement,
-        &execution.application.stage_b_wire,
-        &view_key,
-    )
-    .context("effect application Stage B is invalid")?;
-    ensure!(
-        agreement.body().swap_id() == authority.swap_id()
-            && agreement.agreement_commitment() == authority.agreement_commitment()
-            && activation.activation_commitment() == authority.activation_commitment(),
-        "refund activation application identity changed"
-    );
-
-    let (funding, funding_bytes) = read_canonical_private_json::<FundingEvidenceV2>(
+        monero_run_id,
         monero_funding_evidence,
-        "Monero funding evidence v2",
-    )?;
-    let (receipt, receipt_bytes) = read_canonical_private_json::<MoneroReceiptEvidenceV2>(
         monero_funding_receipt,
-        "Monero funding receipt v2",
+        finalized_refund,
+        observed_final_signature,
     )?;
-    validate_funding_pair(&agreement, monero_run_id, &funding, &receipt)?;
+    std::io::stdout()
+        .write_all(&summary)
+        .context("write Maker refund activation summary")
+}
 
-    let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
+/// [`activate_maker_refund_workflow`] on already read manifest and authority
+/// bytes; returns the canonical activation summary instead of printing it.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
+#[allow(clippy::too_many_arguments)]
+pub fn activate_maker_refund_workflow_bytes(
+    manifest_bytes: &[u8],
+    authority_bytes: &[u8],
+    run_id: &str,
+    monero_run_id: &str,
+    monero_funding_evidence: &Path,
+    monero_funding_receipt: &Path,
+    finalized_refund: &Path,
+    observed_final_signature: &Path,
+) -> Result<Vec<u8>> {
+    let maker = MakerBranchActivation::load(
+        manifest_bytes,
+        authority_bytes,
+        run_id,
+        monero_run_id,
+        monero_funding_evidence,
+        monero_funding_receipt,
+        "refund",
+    )?;
+    let (agreement, activation, authority) = (
+        &maker.agreement,
+        &maker.activation,
+        maker.execution.effect_authority(),
+    );
+    let binding = XmrLezBridgeBindingV3::new(agreement, activation)
         .context("derive finalized refund terms from Stage B")?;
     let finalized_result = read_finalized_xmr_effect(finalized_refund)?;
     let facts = discovered_finalized_xmr_facts(
@@ -946,12 +894,268 @@ pub(crate) fn activate_maker_refund_workflow(
     );
 
     let finalized_bytes = canonical_json_bytes(&finalized_result, "encode finalized refund")?;
-    let funding_evidence_sha256: [u8; 32] = Sha256::digest(&funding_bytes).into();
-    let funding_receipt_sha256: [u8; 32] = Sha256::digest(&receipt_bytes).into();
-    let effect_evidence_sha256 = domain_digest(
+    let published_signature = authority
+        .evidence_root()
+        .join(XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE);
+    persist_or_validate_private(&published_signature, &observed_bytes_after)?;
+
+    maker.select_branch(
+        XmrWorkflowBranch::Refund,
+        XmrWorkflowStep::SweepMoneroRefund,
+    )?;
+    let summary = ActivationSummaryV1 {
+        schema: ACTIVATION_SCHEMA,
+        role: "maker",
+        run_id: run_id.to_owned(),
+        monero_run_id: monero_run_id.to_owned(),
+        swap_id: hex::encode(authority.swap_id()),
+        selected_branch: "refund",
+        funding_effect_evidence_sha256: hex::encode(maker.funding.effect_evidence_sha256),
+        funding_tool_plan_identity_sha256: hex::encode(maker.funding.tool_plan_identity_sha256),
+        finalized_refund_sha256: hex::encode(Sha256::digest(&finalized_bytes)),
+        finalized_refund_signature_sha256: hex::encode(Sha256::digest(&observed_bytes_after)),
+        prepared_step: XmrWorkflowStep::SweepMoneroRefund.name(),
+        private_material_disclosed: false,
+    };
+    canonical_json_bytes(&summary, "encode Maker refund activation summary")
+}
+
+/// Advances one Maker workflow whose Monero funding is reconciled to the
+/// prepared Tag-17 punishment. The caller observed, on the finalized LEZ
+/// clock, that the punish time has passed with neither a finalized Tag-15
+/// claim nor a finalized Tag-16 refund; the guest enforces the punish time
+/// and the escrow state again. `tag17_scan_start_height` is the finalized
+/// height the punishment's observer scans from.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch, or on a
+/// workflow whose branch is already selected otherwise.
+#[allow(clippy::too_many_arguments)]
+pub fn activate_maker_punish_workflow_bytes(
+    manifest_bytes: &[u8],
+    authority_bytes: &[u8],
+    run_id: &str,
+    monero_run_id: &str,
+    monero_funding_evidence: &Path,
+    monero_funding_receipt: &Path,
+    tag17_scan_start_height: u64,
+) -> Result<Vec<u8>> {
+    let maker = MakerBranchActivation::load(
+        manifest_bytes,
+        authority_bytes,
+        run_id,
+        monero_run_id,
+        monero_funding_evidence,
+        monero_funding_receipt,
+        "punish",
+    )?;
+    maker.select_branch(XmrWorkflowBranch::Punish, XmrWorkflowStep::PunishLezTag17)?;
+    let summary = MakerPunishActivationSummaryV1 {
+        schema: MAKER_PUNISH_ACTIVATION_SCHEMA,
+        role: "maker",
+        run_id: run_id.to_owned(),
+        monero_run_id: monero_run_id.to_owned(),
+        swap_id: hex::encode(maker.execution.effect_authority().swap_id()),
+        selected_branch: "punish",
+        funding_effect_evidence_sha256: hex::encode(maker.funding.effect_evidence_sha256),
+        funding_tool_plan_identity_sha256: hex::encode(maker.funding.tool_plan_identity_sha256),
+        tag17_scan_start_height,
+        prepared_step: XmrWorkflowStep::PunishLezTag17.name(),
+        private_material_disclosed: false,
+    };
+    canonical_json_bytes(&summary, "encode Maker punish activation summary")
+}
+
+/// Reconciles the Maker's own Monero funding from its exact evidence and
+/// independent receipt, with the same imported reconciliation every branch
+/// activation records, so a later activation replays it unchanged. The
+/// funding step must already have consumed its one invocation.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
+pub fn reconcile_maker_monero_funding_bytes(
+    manifest_bytes: &[u8],
+    authority_bytes: &[u8],
+    run_id: &str,
+    monero_run_id: &str,
+    monero_funding_evidence: &Path,
+    monero_funding_receipt: &Path,
+) -> Result<[u8; 32]> {
+    let maker = MakerBranchActivation::load(
+        manifest_bytes,
+        authority_bytes,
+        run_id,
+        monero_run_id,
+        monero_funding_evidence,
+        monero_funding_receipt,
+        "funding",
+    )?;
+    maker.reconcile_funding()?;
+    Ok(maker.funding.effect_evidence_sha256)
+}
+
+/// The digest a Maker funding observer reports for one exact funding
+/// evidence and receipt pair: the evidence digest the imported funding
+/// reconciliation records.
+#[must_use]
+pub fn maker_monero_funding_evidence_sha256(
+    funding_bytes: &[u8],
+    receipt_bytes: &[u8],
+) -> [u8; 32] {
+    domain_digest(
         b"lez-xmr-m7-imported-funding-evidence-v1",
-        &[&funding_bytes, &receipt_bytes],
-    );
+        &[funding_bytes, receipt_bytes],
+    )
+}
+
+fn read_maker_effect_inputs(
+    effect_manifest: &Path,
+    effect_authority: &Path,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    Ok((
+        read_private_input(
+            effect_manifest,
+            XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+            "schema-3 Maker effect manifest",
+        )?,
+        read_private_input(
+            effect_authority,
+            XMR_EFFECT_AUTHORITY_MAX_BYTES,
+            "Maker effect authority",
+        )?,
+    ))
+}
+
+struct ImportedFunding {
+    effect_evidence_sha256: [u8; 32],
+    tool_plan_identity_sha256: [u8; 32],
+    reconciliation: XmrWorkflowReconciliationV2,
+}
+
+/// One Maker branch activation's validated application and funding.
+struct MakerBranchActivation {
+    execution: crate::ValidatedXmrEffectExecutionV3,
+    agreement: XmrAgreementV1,
+    activation: XmrActivatedAgreementV1,
+    funding: ImportedFunding,
+}
+
+impl MakerBranchActivation {
+    fn load(
+        manifest_bytes: &[u8],
+        authority_bytes: &[u8],
+        run_id: &str,
+        monero_run_id: &str,
+        monero_funding_evidence: &Path,
+        monero_funding_receipt: &Path,
+        label: &'static str,
+    ) -> Result<Self> {
+        let execution = load_validated_xmr_effect_execution_v3_bytes(
+            manifest_bytes,
+            authority_bytes,
+            ActorRole::Maker,
+            run_id,
+        )
+        .with_context(|| format!("validate Maker effect application before {label} activation"))?;
+        let authority = execution.effect_authority();
+        ensure!(
+            authority.schema_version() == 3
+                && authority.role() == ActorRole::Maker
+                && authority.run_id() == run_id,
+            "{label} activation requires the exact schema-3 Maker authority"
+        );
+        let agreement = XmrAgreementV1::from_wire(&execution.application.stage_a_wire)
+            .context("effect application Stage A is invalid")?;
+        ensure!(
+            MoneroEvidenceScope::of_genesis(agreement.body().monero().genesis_hash()).network()
+                == crate::agreement_monero_network(&agreement),
+            "{label} activation: Stage A's Monero genesis is not its profile's network"
+        );
+        let view_key = parse_private_view_key_bytes(&execution.application.private_view_key)?;
+        let activation = XmrActivatedAgreementV1::from_wire(
+            &agreement,
+            &execution.application.stage_b_wire,
+            &view_key,
+        )
+        .context("effect application Stage B is invalid")?;
+        ensure!(
+            agreement.body().swap_id() == authority.swap_id()
+                && agreement.agreement_commitment() == authority.agreement_commitment()
+                && activation.activation_commitment() == authority.activation_commitment(),
+            "{label} activation application identity changed"
+        );
+        let (funding, funding_bytes) = read_canonical_private_json::<FundingEvidenceV2>(
+            monero_funding_evidence,
+            "Monero funding evidence v2",
+        )?;
+        let (receipt, receipt_bytes) = read_canonical_private_json::<MoneroReceiptEvidenceV2>(
+            monero_funding_receipt,
+            "Monero funding receipt v2",
+        )?;
+        validate_funding_pair(&agreement, monero_run_id, &funding, &receipt)?;
+        let funding = imported_funding(&execution, run_id, &funding_bytes, &receipt_bytes)?;
+        Ok(Self {
+            execution,
+            agreement,
+            activation,
+            funding,
+        })
+    }
+
+    /// Records the imported funding reconciliation; replays are exact.
+    fn reconcile_funding(&self) -> Result<SqliteXmrWorkflowJournal> {
+        let mut workflow = SqliteXmrWorkflowJournal::open_existing(
+            self.execution.effect_authority().workflow_journal(),
+        )
+        .context("open Maker effect workflow for evidence-driven activation")?;
+        let identity = self.execution.workflow_identity();
+        workflow
+            .prepare_step(identity, XmrWorkflowStep::FundMonero)
+            .context("prepare imported Maker Monero funding")?;
+        let _ = workflow
+            .authorize_once(identity, XmrWorkflowStep::FundMonero)
+            .context("consume imported Maker funding authority")?;
+        workflow
+            .reconcile_succeeded(
+                identity,
+                XmrWorkflowStep::FundMonero,
+                &self.funding.reconciliation,
+            )
+            .context("reconcile exact imported Maker funding evidence")?;
+        Ok(workflow)
+    }
+
+    /// Reconciles the funding, selects `branch` and prepares its first step.
+    fn select_branch(&self, branch: XmrWorkflowBranch, step: XmrWorkflowStep) -> Result<()> {
+        let mut workflow = self.reconcile_funding()?;
+        let identity = self.execution.workflow_identity();
+        workflow
+            .select_branch(identity, branch)
+            .context("select the evidence-proved Maker branch")?;
+        workflow
+            .prepare_step(identity, step)
+            .context("prepare the Maker branch step")?;
+        ensure!(
+            workflow.selected_branch(identity)? == Some(branch)
+                && workflow.load_reconciliation(identity, XmrWorkflowStep::FundMonero)?
+                    == Some(self.funding.reconciliation.clone())
+                && workflow.step_revision(identity, step)? == 0,
+            "durable Maker branch activation did not replay exactly"
+        );
+        Ok(())
+    }
+}
+
+fn imported_funding(
+    execution: &crate::ValidatedXmrEffectExecutionV3,
+    run_id: &str,
+    funding_bytes: &[u8],
+    receipt_bytes: &[u8],
+) -> Result<ImportedFunding> {
+    let authority = execution.effect_authority();
+    let effect_evidence_sha256 = maker_monero_funding_evidence_sha256(funding_bytes, receipt_bytes);
     let maker_tools = authority
         .maker_tools()
         .ok_or_else(|| anyhow!("Maker effect tool profile is unavailable"))?;
@@ -966,8 +1170,8 @@ pub(crate) fn activate_maker_refund_workflow(
         effect_authority_sha256: hex::encode(execution.effect_authority_sha256()),
         funding_tool_program_sha256: hex::encode(maker_tools.monero_fund().program_sha256()),
         funding_tool_abi: maker_tools.monero_fund().abi().to_owned(),
-        funding_evidence_sha256: hex::encode(funding_evidence_sha256),
-        funding_receipt_sha256: hex::encode(funding_receipt_sha256),
+        funding_evidence_sha256: hex::encode(Sha256::digest(funding_bytes)),
+        funding_receipt_sha256: hex::encode(Sha256::digest(receipt_bytes)),
     };
     let imported_plan_bytes = canonical_json_bytes(&imported_plan, "encode imported funding plan")?;
     let tool_plan_identity_sha256: [u8; 32] = Sha256::digest(&imported_plan_bytes).into();
@@ -977,58 +1181,11 @@ pub(crate) fn activate_maker_refund_workflow(
         XmrWorkflowReconciliationSource::MoneroWalletTransaction,
     )
     .context("construct exact imported funding reconciliation")?;
-
-    let published_signature = authority
-        .evidence_root()
-        .join(XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE);
-    persist_or_validate_private(&published_signature, &observed_bytes_after)?;
-
-    let mut workflow = SqliteXmrWorkflowJournal::open_existing(authority.workflow_journal())
-        .context("open Maker effect workflow for evidence-driven activation")?;
-    let identity = execution.workflow_identity();
-    workflow
-        .prepare_step(identity, XmrWorkflowStep::FundMonero)
-        .context("prepare imported Maker Monero funding")?;
-    let _ = workflow
-        .authorize_once(identity, XmrWorkflowStep::FundMonero)
-        .context("consume imported Maker funding authority")?;
-    workflow
-        .reconcile_succeeded(identity, XmrWorkflowStep::FundMonero, &reconciliation)
-        .context("reconcile exact imported Maker funding evidence")?;
-    workflow
-        .select_branch(identity, XmrWorkflowBranch::Refund)
-        .context("select refund branch from finalized Tag-16 evidence")?;
-    workflow
-        .prepare_step(identity, XmrWorkflowStep::SweepMoneroRefund)
-        .context("prepare Maker Monero refund sweep")?;
-    ensure!(
-        workflow.selected_branch(identity)? == Some(XmrWorkflowBranch::Refund)
-            && workflow.load_reconciliation(identity, XmrWorkflowStep::FundMonero)?
-                == Some(reconciliation)
-            && workflow.step_revision(identity, XmrWorkflowStep::SweepMoneroRefund)? == 0,
-        "durable Maker refund activation did not replay exactly"
-    );
-
-    let summary = ActivationSummaryV1 {
-        schema: ACTIVATION_SCHEMA,
-        role: "maker",
-        run_id: run_id.to_owned(),
-        monero_run_id: monero_run_id.to_owned(),
-        swap_id: hex::encode(authority.swap_id()),
-        selected_branch: "refund",
-        funding_effect_evidence_sha256: hex::encode(effect_evidence_sha256),
-        funding_tool_plan_identity_sha256: hex::encode(tool_plan_identity_sha256),
-        finalized_refund_sha256: hex::encode(Sha256::digest(&finalized_bytes)),
-        finalized_refund_signature_sha256: hex::encode(Sha256::digest(&observed_bytes_after)),
-        prepared_step: XmrWorkflowStep::SweepMoneroRefund.name(),
-        private_material_disclosed: false,
-    };
-    let summary_bytes = canonical_json_bytes(&summary, "encode Maker refund activation summary")?;
-    std::io::stdout()
-        .write_all(&summary_bytes)
-        .context("write Maker refund activation summary")?;
-
-    Ok(())
+    Ok(ImportedFunding {
+        effect_evidence_sha256,
+        tool_plan_identity_sha256,
+        reconciliation,
+    })
 }
 
 fn validate_funding_pair(
@@ -1048,6 +1205,11 @@ fn validate_funding_pair(
     let genesis_hash = hex::encode(agreement.body().monero().genesis_hash());
     let shared_address = agreement.shared_address().address_string();
     let amount = agreement.body().monero().amount_piconero();
+    let scope = MoneroEvidenceScope::of_genesis(agreement.body().monero().genesis_hash());
+    ensure!(
+        scope.network() == crate::agreement_monero_network(agreement),
+        "the Stage-A Monero genesis is not its profile's network"
+    );
     ensure!(
         funding.schema == FUNDING_SCHEMA
             && funding.attempt_state == "confirmed"
@@ -1056,7 +1218,7 @@ fn validate_funding_pair(
             && funding.amount_piconero == amount
             && funding.required_confirmations == M4_MONERO_CONFIRMATIONS
             && funding.wallet_role == "stage_a_shared_view_only"
-            && funding.network_scope == M4_MONERO_NETWORK_SCOPE
+            && funding.network_scope == scope.name()
             && !funding.public_rpc_used
             && !funding.faucet_used
             && !funding.automatic_submission_retry,
@@ -1073,11 +1235,11 @@ fn validate_funding_pair(
             && receipt.confirmations >= funding.required_confirmations
             && receipt.stable_tip_height == confirmation_tip_height
             && receipt.stable_tip_height >= receipt.containing_block_height
-            && receipt.peer_count == 0
-            && receipt.daemon_version == M4_MONERO_DAEMON_VERSION
+            && scope.admits_peer_count(receipt.peer_count)
+            && scope.admits_daemon_version(&receipt.daemon_version)
             && receipt.target_wallet_version == M4_MONERO_WALLET_VERSION
             && receipt.foreign_wallet_version == M4_MONERO_WALLET_VERSION
-            && receipt.network_scope == M4_MONERO_NETWORK_SCOPE
+            && receipt.network_scope == scope.name()
             && !receipt.public_rpc_used
             && !receipt.faucet_used,
         "independent Monero funding receipt differs from Stage A or funding evidence"
@@ -1089,7 +1251,8 @@ fn validate_funding_pair(
         .ok_or_else(|| anyhow!("Monero funding confirmation heights overflow"))?;
     ensure!(
         receipt.confirmations == exact_confirmations
-            && funding.restore_height <= receipt.containing_block_height,
+            && funding.restore_height <= receipt.containing_block_height
+            && scope.admits_restore_height(funding.restore_height, receipt.containing_block_height),
         "Monero funding receipt has inconsistent chain positions"
     );
     let transaction = decode_exact::<32>(transaction_id)?;
@@ -1118,7 +1281,7 @@ fn domain_digest(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     digest.finalize().into()
 }
 
-fn persist_or_validate_private(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn persist_or_validate_private(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Ok(existing) = read_private_input(
         path,
         M4_MONERO_EVIDENCE_MAX_BYTES,

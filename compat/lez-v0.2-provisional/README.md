@@ -177,3 +177,13 @@ releases need a newer libp2p. No source in this fixture, the deployer, the
 sidecar or the sequencer reproducers starts a libp2p swarm, gossipsub behaviour
 or QUIC endpoint. The exceptions go when LEZ moves off libp2p 0.55 with the
 port to LEZ 0.4 (issue #107).
+
+LEZ v0.2.4 also pins RISC Zero 3.0: `risc0-zkvm 3.0.5`, `risc0-groth16 3.0.4`
+or `3.0.5` and `risc0-circuit-recursion 4.0.4` or `4.0.5`. RISC Zero yanked
+them on 2026-11-19 after `risc0-zkvm 3.1.0` fixed
+[GHSA-g6qg-9j8p-7j87](https://github.com/risc0/risc0/security/advisories/GHSA-g6qg-9j8p-7j87).
+3.1.0 receipts do not verify on older versions, so no graph here can move
+ahead of LEZ. The advisory applies: each graph's `cargo-deny` policy ignores
+exactly the yanked versions its lock holds, as an accepted risk on
+devnet-only software. The exceptions go with the port to LEZ 0.4 (issue #107);
+issue #184 tracks them.

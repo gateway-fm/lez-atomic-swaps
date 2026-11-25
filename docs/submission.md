@@ -7,8 +7,8 @@
 > pending gates and the open-issue ledger. The rest of this page describes
 > the earlier M1 + M3 + M6 package.
 
-This branch is a focused proposal package for the LEZ/BTC vertical slice. It
-combines the accepted design foundation, the Bitcoin implementation evidence,
+This page describes the focused proposal package for the LEZ/BTC vertical
+slice, as submitted for M1, M3 and M6. It combines the accepted design foundation, the Bitcoin implementation evidence,
 and the Basecamp product surface without presenting unrelated milestone work as
 part of this submission.
 
@@ -57,10 +57,14 @@ Markdown link resolves. It is supporting provenance, not an M2 delivery claim.
 | M1 | The protocol, threat model, primitives, parameters, and SDK boundaries are the documented foundation used by the implementation. |
 | M3 | Direct implementation and evidence for the LEZ/BTC pair, including both directions, happy settlement, ordered refunds, restart survival, and overlapping swaps. |
 | M6 | M6 review, evidence, and prototypes plus the branch's current Basecamp packages; the video demonstrates the branch's BTC journey, not the complete M6 acceptance surface. |
-| M5 | Daemon, service, storage, and runner components are integrated transitively in the live stack; complete M5 delivery is not claimed by this package. |
+| M4 | Version 0.4.0, the XMR/LEZ pair: one direction (the Taker sells LEZ), through both Nodes and both desks, on the Docker devnet against Monero regtest, and against public Monero Stagenet with Nodes built from `f059d3fa`, the code of `7b4e46da` ([Stagenet guide](monero-stagenet-guide.md#the-node-driven-run-of-2026-11-22), [evidence](evidence/stagenet-0.4.0-2026-11-22/)); the changes made after `7b4e46da` (the Logos Chat resend, the ZEC second-lock lookup, the sidecar's re-decision of interrupted submissions and `url` 2.5.9) were not run on Stagenet; no Monero testnet or mainnet. Full regression at `27526e2f`: 176 of 176, each on its first try ([regression-0.4.0-2026-11-23-macos-arm64](evidence/regression-0.4.0-2026-11-23-macos-arm64/)). Each deliverable, and the proof for it, is in [m4-acceptance-checklist.md](m4-acceptance-checklist.md). |
+| M5 | Not claimed complete. In the tree: the Taker's CLI drives swaps on the Docker stack (`taker-cli` scenarios in `deploy/scripts/regress.sh`), both Nodes ran under systemd in a VM ([evidence](evidence/maker-systemd-2026-11-12/)), the coordinator fuzz target ran for an hour ([evidence](evidence/coordinator-fuzz-2026-11-12/)), and the `kill-maker`/`kill-taker` resilience scenarios SIGKILL a role mid-swap. Zcash agreements are made at take time (the Maker publishes, the Taker takes); `deploy/tests/fixtures/zec-catalog-fixture.sh` is a devnet test fixture for the two catalog tests. |
 
-M2 Zcash, M4 Monero, and M7 audit/mainnet readiness are outside the package's
-claim. Some M6 milestone records necessarily mention Zcash because the
+M2 Zcash (tracked in [m2-acceptance-checklist.md](m2-acceptance-checklist.md)) and
+M4 Monero (tracked in [m4-acceptance-checklist.md](m4-acceptance-checklist.md)) are
+submitted on their own milestone issues; M7 audit/mainnet readiness is outside
+the package's claim. Some M6
+milestone records necessarily mention Zcash because the
 historical M6 review covered that journey; those records are provenance, not a
 claim that the current BTC video demonstrates M2.
 

@@ -188,7 +188,10 @@ impl TakerInitiationFactsV1 {
 
     fn validate(&self) -> Result<(), TakerFacadeStoreError> {
         if self.schema_version != 1
-            || !matches!(self.route.pair(), Pair::Zcash | Pair::Bitcoin)
+            || !matches!(
+                self.route.pair(),
+                Pair::Zcash | Pair::Bitcoin | Pair::Monero
+            )
             || PublicKey::from_slice(&self.maker_identity).is_err()
             || self.foreign_units == 0
             || self.lez_units == 0

@@ -25,8 +25,10 @@ def executable(path, text):
 
 # A scenario (node-e2e.py and ui-e2e.sh alike): logs start and end with its lane
 # and container prefix, then behaves as FAKE_PLAN says for its scenario name:
-# {"sleep": s, "rc": n, "freeze_once": true}. freeze_once freezes the chain on
-# its first run and then waits to be stopped.
+# {"sleep": s, "rc": n, "freeze_once": true, "meet": true}. freeze_once freezes
+# the chain on its first run and then waits to be stopped. meet is a barrier:
+# a lane's k-th meeting test waits until another lane has reached its own k-th
+# and fails after 30 s alone, so only lanes running at once pass it.
 FAKE_SCENARIO = '''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -39,8 +41,19 @@ lane = os.environ.get("LEZ_LANE", "-")
 def note(what):
     with open(os.environ["CALLS"], "a") as f:
         f.write(f"{what} {scenario}:{direction} lane={lane} prefix={os.environ.get('LEZ_CONTAINER_PREFIX', '-')} "
-                f"runtime={os.environ.get('LEZ_LANE_RUNTIME', '-')} at={time.time():.2f}\\n")
+                f"runtime={os.environ.get('LEZ_LANE_RUNTIME', '-')} defer={os.environ.get('LEZ_BOOTSTRAP_DEFER_CLAIM', '-')} "
+                f"at={time.time():.2f}\\n")
 note("start")
+if plan.get("meet"):
+    mine = state / f"meet-{lane}"
+    with open(mine, "a") as f:
+        f.write("x\\n")
+    k = len(mine.read_text().splitlines())
+    deadline = time.time() + 30
+    while not any(len(p.read_text().splitlines()) >= k for p in state.glob("meet-*") if p != mine):
+        if time.time() > deadline:
+            note("alone"); sys.exit(1)
+        time.sleep(0.05)
 marker = state / f"froze-{scenario}-{direction}"
 if plan.get("freeze_once") and not marker.exists():
     marker.touch(); (state / "frozen").touch()
@@ -130,11 +143,13 @@ class Lanes(Runner):
         self.assertTrue(all(len(row) == 5 for row in self.results()))
 
     def test_two_lanes_run_side_by_side_each_on_its_own_pair(self):
-        plan = {s: {'sleep': 2} for s in ('happy', 'replay', 'survivor', 'concurrent')}
+        # each test meets a test on the other lane: run one after the other they
+        # fail; regress()'s subprocess timeout is the guard against a hang
+        plan = {s: {'meet': True} for s in ('happy', 'replay', 'survivor', 'concurrent')}
         tests = [f'node:btc:{s}:TakerSellsLez' for s in plan]
-        run, elapsed = self.regress(*tests, plan=plan, LEZ_LANES='2')
+        run, _ = self.regress(*tests, plan=plan, LEZ_LANES='2')
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-        self.assertLess(elapsed, 4 * 2, 'four 2 s tests on two lanes take about 4 s, not 8')
+        self.assertEqual(self.calls_of('alone'), [])
         self.assertEqual(len(self.calls_of('lanes')), 1)
         self.assertIn('lanes LEZ_LANE= LEZ_LANES=2', self.calls_of('lanes')[0])
         self.assertTrue(self.calls_of('lanes')[0].endswith('up 2'))
@@ -211,7 +226,31 @@ class Lanes(Runner):
         self.assertTrue(self.calls_of('lanes')[-1].endswith('stop 2'))
         ups = self.calls_of('up')
         self.assertEqual(len(ups), 1)
-        self.assertIn('LEZ_LANES=1 DEFER=taker-zurich-01', ups[0])
+        self.assertIn('LEZ_LANES=1 DEFER=taker-zurich-01 ', ups[0])
+
+    def test_the_two_balance_refusals_run_last_at_once_on_one_chain(self):
+        # the two refusals meet each other: run one after the other they fail
+        plan = {'happy': {'sleep': 1}, 'zec-balance-refusal': {'meet': True}}
+        run, _ = self.regress('node:zec:zec-balance-refusal:TakerSellsLez', 'node:zec:zec-balance-refusal:TakerSellsForeign',
+                              'node:btc:happy:TakerSellsLez', plan=plan, LEZ_LANES='3')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        starts = self.calls_of('start')
+        refusals = [line for line in starts if 'refusal' in line]
+        self.assertEqual(len(refusals), 2, starts)
+        self.assertEqual(starts[-2:], refusals)
+        # one chain defers lane 1's Taker wallet and lane 2's Maker wallet; lanes 2..3 stop first
+        self.assertTrue(self.calls_of('lanes')[-1].endswith('stop 3'))
+        ups = self.calls_of('up')
+        self.assertEqual(len(ups), 1, ups)
+        self.assertIn('LEZ_LANES=2 DEFER=taker-zurich-01 maker-basel-02 ', ups[0])
+        self.assertIn('--fresh-lez', ups[0])
+        # each on its own lane, with the other's wallet still deferred for its own bootstrap run, at once
+        lsl = next(line for line in refusals if 'TakerSellsLez' in line)
+        lsf = next(line for line in refusals if 'TakerSellsForeign' in line)
+        self.assertIn('lane=1 ', lsl); self.assertIn('defer=maker-basel-02 ', lsl)
+        self.assertIn('lane=2 ', lsf); self.assertIn('defer=taker-zurich-01 ', lsf)
+        self.assertEqual(self.calls_of('alone'), [])
+        self.assertTrue(all(row[2] == 'PASSED' for row in self.results()))
 
 
 class LaneGroups(Runner):
@@ -284,7 +323,7 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 106)
+        self.assertEqual(len(full), 180)
 
     def test_full_has_the_maker_claim_kill_selling_lez_only(self):
         full = self.tier('full')
@@ -292,6 +331,20 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-kill-maker-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-kill-maker-claim:' in test], tier)
+
+    def test_full_has_the_activation_after_expiry_selling_lez_only(self):
+        full = self.tier('full')
+        self.assertIn('node:zec:zec-activate-after-expiry:TakerSellsLez', full)
+        self.assertNotIn('node:zec:zec-activate-after-expiry:TakerSellsForeign', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-activate-after-expiry:' in test], tier)
+
+    def test_full_has_the_claim_at_one_confirmation_selling_zec_only(self):
+        full = self.tier('full')
+        self.assertIn('node:zec:zec-claim-at-one-confirmation:TakerSellsForeign', full)
+        self.assertNotIn('node:zec:zec-claim-at-one-confirmation:TakerSellsLez', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-claim-at-one-confirmation:' in test], tier)
 
     def test_full_has_the_slow_zcash_funding_selling_lez_only(self):
         full = self.tier('full')
@@ -307,9 +360,25 @@ class Tiers(unittest.TestCase):
             'node:btc:btc-custody-credit:TakerSellsLez', 'node:btc:btc-custody-credit:TakerSellsForeign',
             'node:btc:btc-custody-credit-refund:TakerSellsLez',
             'node:zec:zec-custody-credit:TakerSellsLez', 'node:zec:zec-custody-credit:TakerSellsForeign',
-            'node:zec:zec-custody-credit-refund:TakerSellsLez']))
+            'node:zec:zec-custody-credit-refund:TakerSellsLez',
+            'node:xmr:xmr-custody-credit:TakerSellsLez', 'node:xmr:xmr-custody-credit-refund:TakerSellsLez']))
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if '-custody-credit' in test], tier)
+
+    def test_full_has_the_xmr_refund_and_adversarial_scenarios(self):
+        full = self.tier('full')
+        for scenario in ('xmr-taker-clock-ahead', 'xmr-punish-replans', 'xmr-maker-claim-without-authorization',
+                         'xmr-maker-early-punish', 'xmr-unfunded-punish', 'xmr-taker-cheats',
+                         'xmr-shared-address-dust'):
+            self.assertIn(f'node:xmr:{scenario}:TakerSellsLez', full)
+
+    def test_full_has_the_four_monero_desk_journeys_selling_lez_only(self):
+        full = self.tier('full')
+        self.assertEqual([test for test in full if test.startswith('ui:xmr:')],
+                         [f'ui:xmr:{scenario}:TakerSellsLez'
+                          for scenario in ('xmr-happy', 'xmr-taker-refund', 'xmr-concurrent', 'xmr-punish')])
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if test.startswith('ui:xmr:')], tier)
 
     def test_smoke_is_unchanged(self):
         self.assertEqual(self.tier('smoke'), [

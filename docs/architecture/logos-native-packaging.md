@@ -263,9 +263,10 @@ Option A1 with lez_swap_node kept as the one lifecycle owner, and the parts of
   whose executables lost their execute bit (lgx 0.1.0 keeps file modes;
   observation 9). One variant per build host; Linux only (swap-store). The
   Maker package names no Taker executable and vice versa
-  (`scripts/check-runtime-profiles.py`). The ZEC proof-of-concept provisioners
-  are not in the package; they stay in the Taker image for
-  `scripts/zec-provision.sh`.
+  (`scripts/check-runtime-profiles.py`). The ZEC dealer tools
+  (`executables.json` class `fixture`) are not in the package; they stay in the
+  Taker image for the catalog tests' devnet fixture
+  `tests/fixtures/zec-catalog-fixture.sh`.
 - **Graph.** desk → `chat_module`, `delivery_module`, `lez_core`,
   `lez_swap_node`, `lez_<role>_node`; `lez_<role>_node` → `lez_swap_node`;
   `lez_swap_node` → `lez_core`. Still bare names (observation 3).
@@ -634,7 +635,8 @@ since the native Nodes take the same identities):
   Nodes' owner sockets with the host's curl, runs what it would run in a
   Node's container beside the Node, stops a Node with its supervisor's hold
   file and restarts one by ending it; ZEC corridors come from
-  `zec-provision.sh --native-home $LEZ_NODE_HOME`. The scenarios that cut a
+  `tests/fixtures/zec-catalog-fixture.sh --native-home $LEZ_NODE_HOME` (the
+  dealer test fixture: LEZ_ZEC_AGREEMENT=dealer and the catalog tests). The scenarios that cut a
   loopback forward or the Chat socket in a container are refused: a native
   Node has none. `LEZ_UI_NATIVE_RUN_ROOT=$LEZ_NODE_HOME/run
   deploy/scripts/ui-e2e.sh happy` drives the two desks of one native
@@ -696,7 +698,9 @@ default umask is 002, so `logosctl package install` there leaves
 too. The launcher removes group and other write from its own package's
 directories and programs, and refuses to start, naming the directory and the
 fix, when a directory above the swaps' or the ZEC sidecars' state breaks the
-rule (exit 78; the line is in `LEZ_<ROLE>_NODE_LOG`). Keep the Node's files
+rule (exit 78; the line is in `LEZ_<ROLE>_NODE_LOG`, in `lez_swap_node`'s
+`node_status` as `last_exit`, and on the desk under "Node unavailable").
+Keep the Node's files
 under directories only you can write (`chmod go-w`), or run `logosctl` and
 Basecamp under `umask 022`.
 
@@ -721,8 +725,8 @@ Basecamp under `umask 022`.
 **Harness.** With `LEZ_CHAINS_RPC_ONLY=1`, `node-e2e.py` sends its
 `bitcoin-cli` calls to Bitcoin Core as JSON-RPC (`LEZ_E2E_BTC_RPC_URL`, the
 cookie in `LEZ_BTC_RPC_COOKIE_FILE`), a scenario that stops or starts a
-chain's container fails saying so, and
-`zec-provision.sh` checks Zebra by its RPC. The harness finds a native
+chain's container fails saying so, and the dealer test fixture
+`tests/fixtures/zec-catalog-fixture.sh` checks Zebra by its RPC. The harness finds a native
 Node's package through `/proc/<pid>/exe` on Linux.
 
 ### Catalog packages with darwin-arm64

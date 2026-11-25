@@ -1,0 +1,6 @@
+balances before:
+maker wallet=lez-maker btc_sat=367469172594 lez_account=3JeNv5XFhiXFeoLrbPvEjrBgerpMEkkAVjuwZajqsBnj lez_units=2000000
+taker wallet=lez-taker btc_sat=524963638210 lez_account=9CdhkoKL63tRAP9Nx5VQgBi3eeGHvPBdXnXHpJNymUzo lez_units=2000000
+balances after:
+maker wallet=lez-maker btc_sat=367470171594 lez_account=3JeNv5XFhiXFeoLrbPvEjrBgerpMEkkAVjuwZajqsBnj lez_units=1999000
+taker wallet=lez-taker btc_sat=524962635110 lez_account=9CdhkoKL63tRAP9Nx5VQgBi3eeGHvPBdXnXHpJNymUzo lez_units=2001000

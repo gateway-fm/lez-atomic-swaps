@@ -1,0 +1,84 @@
+{
+  "scenario": "zec-concurrent-kill-maker",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "1795571590",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swaps": [
+    {
+      "swap_id": "zec-5ab123955a85066a98a963a94b1b6874c2a1eae474183c7589f343a7033a0ccd",
+      "offer_id": "offer-e2e-zectt-1795571590",
+      "entry": 0,
+      "zcash_funding": {
+        "transaction_id": "71de25a97e19738ff596d69380660267ad638cd7d34b8ea6a20d3e601268900e",
+        "height": 875
+      },
+      "zcash_claim": {
+        "transaction_id": "95d3b73b4224e76cbfc9763b3dbc1c2b238aaf9a25669340cc87b914b7b073e1",
+        "height": 877
+      },
+      "taker_lez_replans": []
+    },
+    {
+      "swap_id": "zec-62cbff4ecbd460edef723a1180bdccb92584e5d56bc34651e5edbbe8e2485fd4",
+      "offer_id": "offer-e2e-zectt-1795571590-1",
+      "entry": 1,
+      "zcash_funding": {
+        "transaction_id": "99054baf548d5146c87c9ce00c2e8b239369c68587dc6ee04e6eef6d5319598c",
+        "height": 876
+      },
+      "zcash_claim": {
+        "transaction_id": "a92656468f9da360ff2bf0c011e86c8cfe1a2c9fd7ee93bcb0fd96adc4790611",
+        "height": 878
+      },
+      "taker_lez_replans": [
+        {
+          "replan_index": 1,
+          "step": "lez_initialize",
+          "superseded_nonce": 107,
+          "replanned_nonce": 108,
+          "superseded_transaction_id": "e95a84c2ab87a00a6ee7508389c55d13d2a839c738d76aa593f584bef147c41b",
+          "replanned_transaction_id": "4cd2addc94b5fbc012d0b09dba6d91fc8b0dba11af3aae45de6e66a384245316"
+        },
+        {
+          "replan_index": 2,
+          "step": "lez_initialize",
+          "superseded_nonce": 108,
+          "replanned_nonce": 109,
+          "superseded_transaction_id": "4cd2addc94b5fbc012d0b09dba6d91fc8b0dba11af3aae45de6e66a384245316",
+          "replanned_transaction_id": "2c32df300a53aab26da17d8203fb8254b98cc995aa7eda0586f5af0d1e897a20"
+        }
+      ]
+    }
+  ],
+  "corridor": "take-time-1795571591",
+  "profile": "deterministic-local-devnet-v7",
+  "killed": {
+    "container": "lez-maker-node",
+    "exit_code": 137,
+    "oom_killed": false,
+    "finished_at": "2026-11-25T01:54:05.517801295Z"
+  },
+  "result": "passed",
+  "seconds": 88
+}

@@ -16,8 +16,19 @@ workspace = true
 # the shipped Maker Node carries no actor code CI has not exercised.
 default = []
 pair-zec = ["dep:zec-reference-actor", "dep:lez-zec-swap-sdk"]
-pair-xmr = ["dep:xmr-reference-actor", "dep:lez-xmr-swap-sdk"]
+pair-xmr = [
+    "dep:xmr-reference-actor",
+    "dep:lez-xmr-swap-sdk",
+    "dep:lez-xmr-monero-adapter",
+    # The two-Node take test drives the real Taker service (a dev-dependency).
+    "lez-taker-node/pair-xmr",
+]
 test-crash-hooks = ["pair-zec", "zec-reference-actor/test-crash-hooks"]
+# The devnet's test hooks (actor_supervisor::runtime::test_hooks): a hold of
+# Zcash actor activations, read from LEZ_TEST_HOOKS_DIR. The devnet build
+# enables it only with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh); no
+# release build does.
+test-hooks = []
 
 [[bin]]
 name = "lez-maker-node"
@@ -75,6 +86,7 @@ lez-logos-price-c-api = { version = "0.1.0", path = "../logos-price-c-api", defa
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-swap-sdk-core = { version = "0.1.0", path = "../swap-sdk-core" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
+lez-xmr-monero-adapter = { version = "0.1.0", path = "../xmr-monero-adapter", optional = true }
 lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk", optional = true }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk", optional = true }
 xmr-reference-actor = { version = "0.1.0", path = "../xmr-reference-actor", features = ["sessions"], optional = true }
@@ -98,7 +110,7 @@ lez-taker-node = { version = "0.1.0", path = "../taker-node", features = ["pair-
 bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
 hex = "0.4.3"
 jsonrpsee-http-client = { version = "0.26.0", default-features = false }
-rusqlite = { version = "0.41.0", features = ["bundled"] }
+rusqlite = { version = "0.43.0", default-features = false, features = ["bundled", "cache"] }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
 zcash_encoding = "=0.5.0"
 zcash_protocol = { version = "=0.11.0", default-features = false }

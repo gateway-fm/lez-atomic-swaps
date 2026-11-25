@@ -28,17 +28,47 @@ class ReleaseWorkflow(unittest.TestCase):
     def test_every_compose_image_is_pushed(self):
         named = set(re.findall(r'image: \$\{LEZ_IMAGE_PREFIX:-lez\}-([a-z0-9-]+):', COMPOSE))
         self.assertTrue(named)
+        # Monero's monerod too (profile `monero`): a bundle pulls it with LEZ_MONERO=1.
+        self.assertIn('monerod', named)
         self.assertEqual(named - pushed_images(), set())
+
+    def test_the_images_job_stages_and_builds_monero(self):
+        images = WORKFLOW.split('\n  images:\n', 1)[1].split('\n  smoke:\n', 1)[0]
+        stage = images.split('- name: Stage image contexts', 1)[1].split('- name:', 1)[0]
+        self.assertIn('LEZ_MONERO: "1"', stage)
+        build = re.search(r'docker compose (.*) build (.*)\n', images)
+        self.assertIn('--profile monero', build.group(1))
+        self.assertIn('monerod', build.group(2).split())
 
     def test_rust_job_uploads_what_the_contexts_copy(self):
         collect = WORKFLOW.split('name: node-payloads')[0].rsplit('- name: Collect payloads', 1)[1]
         roles = set(re.search(r'for role in ([a-z -]+); do', collect).group(1).split())
         for context in ('maker-node', 'taker-node', 'lez-services', 'zebra'):
             self.assertIn(context, roles, context)
-        taker = (ROOT / 'deploy/images/taker-node/Dockerfile').read_text()
-        for tool in re.findall(r'\bzec-local-poc-[a-z-]+', taker):
-            self.assertIn('zec-local-poc-*', collect, tool)
+        # the published Taker image carries zec-local-poc-identity and none of
+        # the dealer test fixture's tools
+        self.assertIn('zec-local-poc-identity', collect)
+        self.assertNotIn('zec-local-poc-*', WORKFLOW)
+        for tool in ('provision', 'chat-draft', 'chat-finalize', 'transfer'):
+            self.assertNotIn(f'zec-local-poc-{tool}', WORKFLOW, tool)
         self.assertIn('source-tree.txt', collect)
+        # the Maker's Monero effect tools and both roles' Stage-A planner, which
+        # package-role-node.sh puts into the Node packages
+        self.assertIn('cp deploy/images/maker-node/xmr-reference-* _out/images/maker-node/', collect)
+        self.assertIn('lez-v02-xmr-stage-a-plan', collect)
+        # every file a Node package carries is one of those, of lez-*, or a
+        # sidecar tool the collection names
+        package = (ROOT / 'deploy/scripts/package-role-node.sh').read_text()
+        packaged = set(re.findall(r'\b((?:lez|xmr)-[a-z0-9-]+)\b', package.split('case "$role" in', 1)[1].split('context=', 1)[0]))
+        self.assertIn('xmr-reference-monero-fund', packaged)
+        sidecar = set(re.search(r'sidecar/\{([^}]*)\}', collect).group(1).split(','))
+        for tool in packaged:
+            if tool.startswith('lez-v02-'):
+                self.assertIn(tool, sidecar, tool)
+            else:
+                self.assertTrue(tool.startswith(('lez-', 'xmr-reference-')), tool)
+        self.assertIn('install -m 0755 _in/node/images/maker-node/xmr-reference-* deploy/images/maker-node/', WORKFLOW)
+        self.assertIn('chmod 0755 deploy/images/maker-node/xmr-reference-*', WORKFLOW)
 
 
 class PackagesWorkflow(unittest.TestCase):
@@ -78,6 +108,15 @@ class PackagesWorkflow(unittest.TestCase):
         self.assertIn('submodules: true', darwin)
         self.assertIn('needs: [variant, darwin]', self.PACKAGES)
         self.assertIn('"$name"-darwin-*.lgx', self.PACKAGES)
+
+    def test_darwin_packages_land_where_the_upload_looks(self):
+        # the job uploads _out from the checkout root; the script changes into
+        # deploy/ first, so a relative --out is taken from where it was called
+        script = (ROOT / 'deploy/scripts/build-darwin-packages.sh').read_text()
+        caller = script.index('caller="$(pwd)"')
+        self.assertLess(caller, script.index('cd "$(dirname "${BASH_SOURCE[0]}")/.."'))
+        self.assertLess(script.index('[[ "$out" == /* ]] || out="$caller/$out"'), script.index('mkdir -p "$out"'))
+        self.assertIn('path: _out', self.job('darwin'))
 
     def test_every_package_a_desk_installs_is_required_for_darwin(self):
         script = (ROOT / 'deploy/scripts/build-darwin-packages.sh').read_text()
@@ -193,3 +232,107 @@ class NoTestHooksInARelease(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NoTestHooksInARelease(unittest.TestCase):
+    """The devnet's test hooks (feature test-hooks of the Taker Node, the Maker
+    Node and the LEZ sidecar: a skewed clock, a cheating Taker, a held Zcash
+    activation, a punish nonce thief) never
+    reach a release: the devnet build enables them only on LEZ_TEST_HOOKS=1,
+    nothing on the release path names them or sets that variable, the release
+    path marks itself LEZ_RELEASE_BUILD, and under that mark from-scratch.sh
+    refuses LEZ_TEST_HOOKS=1 and the hooks do not compile."""
+
+    RELEASE_WORKFLOWS = ('.github/workflows/release-images.yml', '.github/workflows/release-packages.yml')
+    PACKAGERS = ('deploy/scripts/package-role-node.sh', 'deploy/scripts/package-role-node-darwin.sh',
+                 'deploy/scripts/build-darwin-packages.sh', 'deploy/scripts/package-dist.sh',
+                 'deploy/scripts/stage-basecamp-package.sh', 'deploy/scripts/pin-package-dependencies.sh')
+    FROM_SCRATCH = ROOT / 'deploy/scripts/from-scratch.sh'
+
+    def test_the_release_path_never_names_the_hooks(self):
+        for path in self.RELEASE_WORKFLOWS + self.PACKAGERS:
+            text = (ROOT / path).read_text()
+            for word in ('test-hooks', 'test_hooks', 'LEZ_TEST_HOOKS', '--all-features'):
+                self.assertNotIn(word, text, f'{path} names {word}')
+
+    def test_the_release_workflows_mark_their_builds(self):
+        for path in self.RELEASE_WORKFLOWS:
+            text = (ROOT / path).read_text()
+            top = text.split('\njobs:\n', 1)[0]
+            self.assertRegex(top, r'\nenv:\n(  .*\n)*  LEZ_RELEASE_BUILD: "1"\n', path)
+            # The builds they run are from-scratch.sh's phases, under that mark.
+            self.assertIn('deploy/scripts/from-scratch.sh', text)
+
+    def test_the_darwin_packager_marks_each_cargo_build(self):
+        text = (ROOT / 'deploy/scripts/package-role-node-darwin.sh').read_text()
+        builds = re.findall(r'.*cargo (?:\+\S+ )?build.*', text)
+        self.assertEqual(len(builds), 2)
+        for line in builds:
+            self.assertIn('LEZ_RELEASE_BUILD=1 ', line)
+
+    def test_from_scratch_builds_the_hooks_only_on_request(self):
+        text = self.FROM_SCRATCH.read_text()
+        for line in text.splitlines():
+            if 'test-hooks' in line and not line.lstrip().startswith('#'):
+                self.assertRegex(line, r'\[\[ "\$\{LEZ_TEST_HOOKS:-0\}" != 1 \]\] \|\| ', line)
+        self.assertIn('hooks=",lez-taker-node/test-hooks,lez-maker-node/test-hooks"', text)
+        self.assertIn('hooks="--features test-hooks"', text)
+        self.assertIn('pair-xmr$LEZ_NODE_HOOKS_FEATURE"', text)
+        # The release mark reaches both build containers.
+        self.assertEqual(text.count('${release_build_env[@]+"${release_build_env[@]}"}'), 2)
+
+    def test_the_crash_hooks_and_the_dealer_fixture_never_reach_a_release(self):
+        # The release path builds neither feature, and under the release
+        # mark neither compiles (the same const assert as test-hooks').
+        for path in self.RELEASE_WORKFLOWS + self.PACKAGERS:
+            text = (ROOT / path).read_text()
+            for word in ('test-crash-hooks', '--features dealer-fixture'):
+                self.assertNotIn(word, text, f'{path} names {word}')
+        lib = (ROOT / 'crates/zec-reference-actor/src/lib.rs').read_text()
+        for feature in ('test-crash-hooks', 'dealer-fixture'):
+            self.assertRegex(
+                lib,
+                r'#\[cfg\(feature = "' + feature + r'"\)\]\nconst _: \(\) = assert!\(\n'
+                r'    option_env!\("LEZ_RELEASE_BUILD"\)\.is_none\(\),',
+                feature)
+        # from-scratch.sh builds the dealer's tools only outside a release.
+        text = self.FROM_SCRATCH.read_text()
+        build = text.index('--features dealer-fixture')
+        guard = text.rindex('if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then', 0, build)
+        self.assertNotIn('\n      fi\n', text[guard:build])
+
+    def test_from_scratch_refuses_the_hooks_in_a_release_build(self):
+        import os
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as workspace:
+            for env, message in ((dict(LEZ_TEST_HOOKS='1', LEZ_RELEASE_BUILD='1'), 'no release build'),
+                                 (dict(LEZ_TEST_HOOKS='yes'), 'LEZ_TEST_HOOKS is 0 or 1')):
+                result = subprocess.run([str(self.FROM_SCRATCH), '--workspace', workspace, '--only', 'none'],
+                                        env={**os.environ, **env}, capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(message, result.stderr)
+
+    def test_the_hooks_do_not_compile_in_a_release_build(self):
+        guard = 'option_env!("LEZ_RELEASE_BUILD").is_none()'
+        taker = (ROOT / 'crates/taker-node/src/taker_service/xmr_supervisor.rs').read_text()
+        module = taker.split('#[cfg(feature = "test-hooks")]\npub(super) mod test_hooks {', 1)[1]
+        self.assertIn(guard, module.split('\n}\n', 1)[0])
+        maker = (ROOT / 'crates/maker-node/src/actor_supervisor/runtime.rs').read_text()
+        module = maker.split('#[cfg(feature = "test-hooks")]\npub(super) mod test_hooks {', 1)[1]
+        self.assertIn(guard, module.split('\n}\n', 1)[0])
+        self.assertIn('#[cfg(feature = "test-hooks")]\nmod test_hooks;',
+                      (ROOT / 'compat/lez-v0_2-sidecar/src/lib.rs').read_text())
+        self.assertIn(guard, (ROOT / 'compat/lez-v0_2-sidecar/src/test_hooks.rs').read_text())
+
+    def test_no_default_or_dependent_feature_turns_the_hooks_on(self):
+        for manifest in sorted(ROOT.glob('**/Cargo.toml')):
+            if 'target' in manifest.relative_to(ROOT).parts:
+                continue
+            text = manifest.read_text()
+            default = re.search(r'^default = \[(.*?)\]', text, re.M | re.S)
+            self.assertFalse(default and 'test-hooks' in default.group(1), manifest)
+            for line in text.splitlines():
+                if 'test-hooks' in line and not line.lstrip().startswith('#'):
+                    # Only the three crates' own definitions of the feature.
+                    self.assertRegex(line, r'^test-hooks = \[("pair-xmr")?\]$', manifest)

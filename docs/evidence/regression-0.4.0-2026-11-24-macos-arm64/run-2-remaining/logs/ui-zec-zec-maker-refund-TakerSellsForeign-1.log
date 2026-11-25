@@ -1,0 +1,89 @@
+
+[03:12:53] === zec-maker-refund (TakerSellsForeign)
+
+[03:12:53] publishing Zcash offer(s) on the running Maker Node (take-time agreement: no corridor, no Node recreated)
+   [04:12:54]   the Maker's key paid the Taker's: 1cc6ca8c57c08d98…
+   [04:12:54]   zebra: mined 1 block(s) → height 995 (the payment to the Taker's key)
+   [04:12:54]   zebra: mined 100 block(s) → height 1095 (the Taker's payment matures into a funder output)
+   [04:12:55]   Maker CLI published offer-e2e-zectt-179557637302 on its running Node (no corridor)
+
+[03:12:55] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   zec-9202e0a1718456df9267e6fbf133a22ab8ce86fe016456770f612e5e21a3f67f not_activated 0 -
+
+[03:12:59] driving the Taker's ZEC actor on the Node until zec-9202e0a1 shows claim_available
+
+[03:12:59] Maker desk shows zec-9202e0a1 at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+   [04:12:59]   take-time agreement: Taker funds 036299b805ecda82…:0, Zcash anchor 1096, refund height 1104
+   [04:12:59]   receipt: swap zec-9202e0a1718456df9267e6fbf133a22ab8ce86fe016456770f612e5e21a3f67f, actor config /var/lib/lez/taker/btc/swaps/6e7968b46bde78e3750dcd260a65042028c0ad6f9f73b12ccc3d8ba9b6193b40/zec-actor/taker/actor-config.json
+   [04:12:59]   [0 s] waiting for the Taker's zec-9202e0a1 to reach claim_available (zec-drive to claim_available): taker not_activated (gen 0) | actor at - | maker offered | zebra 1095 | LEZ finalized 1415, tip 1421 (6 unfinalized) [heartbeat]
+   [04:13:02]   [3 s] waiting for the Taker's zec-9202e0a1 to reach claim_available (zec-drive to claim_available): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 1095 | LEZ finalized 1415, tip 1421 (6 unfinalized) [heartbeat]
+   [04:13:09]   zebra: mined 1 block(s) → height 1096 (mempool had ['eafc63270983'])
+   [04:13:12]   [12 s] waiting for the Taker's zec-9202e0a1 to reach claim_available (zec-drive to claim_available): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 1096 | LEZ finalized 1415, tip 1421 (6 unfinalized) [heartbeat]
+   [04:13:12]   zebra: mined 1 block(s) → height 1097 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+   [04:13:25]   [25 s] waiting for the Taker's zec-9202e0a1 to reach claim_available (zec-drive to claim_available): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1097 | LEZ finalized 1430, tip 1438 (8 unfinalized) [heartbeat]
+   [04:13:25]   taker zec-9202e0a1 is claim_available
+
+[03:13:25] The Taker never claims; at the LEZ refund time the Maker Node refunds its LEZ escrow
+   [04:13:25]   take-time agreement: Taker funds 036299b805ecda82…:0, Zcash anchor 1096, refund height 1104
+   [04:13:25]   waiting 226s for the agreement's LEZ refund time (the profile's delay after provisioning)
+   [04:13:25]   [0 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1430, tip 1438 (8 unfinalized) [heartbeat]
+   [04:14:25]   [60 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1481, tip 1489 (8 unfinalized) [heartbeat]
+   [04:15:25]   [120 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1537, tip 1540 (3 unfinalized) [heartbeat]
+   [04:16:25]   [180 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1585, tip 1591 (6 unfinalized) [heartbeat]
+   [04:17:12]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-9202e0a1718456df9267e6fbf133a22ab8ce86fe016456770f612e5e21a3f67f", "action": "refund", "requested_after_generation": 128, 
+   [04:17:12]   [0 s] waiting for the Maker's zec-9202e0a1 to reach maker_leg_refunded/refunded (the Maker refunding its LEZ escrow): maker both_legs_locked (schedule leased) | LEZ finalized 1621, tip 1625 (4 unfinalized) [heartbeat]
+   [04:17:25]   [12 s] waiting for the Maker's zec-9202e0a1 to reach maker_leg_refunded/refunded (the Maker refunding its LEZ escrow): maker maker_leg_refunded (schedule leased) | LEZ finalized 1621, tip 1625 (4 unfinalized) [heartbeat]
+   [04:17:25]   the Maker's LEZ leg is back (maker_leg_refunded); mining zebra to the Zcash refund height
+   [04:17:25]   zebra: mined 7 block(s) → height 1104 (Zcash refund height)
+
+[03:17:25] driving the Taker's ZEC actor on the Node until zec-9202e0a1 shows refund_available
+   [04:17:25]   take-time agreement: Taker funds 036299b805ecda82…:0, Zcash anchor 1096, refund height 1104
+   [04:17:25]   receipt: swap zec-9202e0a1718456df9267e6fbf133a22ab8ce86fe016456770f612e5e21a3f67f, actor config /var/lib/lez/taker/btc/swaps/6e7968b46bde78e3750dcd260a65042028c0ad6f9f73b12ccc3d8ba9b6193b40/zec-actor/taker/actor-config.json
+   [04:17:25]   [0 s] waiting for the Taker's zec-9202e0a1 to reach refund_available (zec-drive to refund_available): taker refund_available (gen 2) | actor at both_legs_locked | maker maker_leg_refunded | zebra 1104 | LEZ finalized 1621, tip 1625 (4 unfinalized) [heartbeat]
+   [04:17:25]   taker zec-9202e0a1 is refund_available
+
+[03:17:25] The Maker's LEZ is back; the Taker desk presses Refund and its Zcash comes back at the refund height
+
+[03:17:25] Taker desk: refund_zec on zec-9202e0a1
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  » The desk offers Refund for the Zcash HTLC; pressing it admits the refund, which the Node drives on the transparent pool once the HTLC's refund height is reached
+  [32m✓[0m taker: perform refund_zec
+2 passed, 0 failed
+
+[03:17:27] driving the Taker's ZEC actor on the Node until zec-9202e0a1 shows refunded
+   [04:17:27]   take-time agreement: Taker funds 036299b805ecda82…:0, Zcash anchor 1096, refund height 1104
+   [04:17:27]   receipt: swap zec-9202e0a1718456df9267e6fbf133a22ab8ce86fe016456770f612e5e21a3f67f, actor config /var/lib/lez/taker/btc/swaps/6e7968b46bde78e3750dcd260a65042028c0ad6f9f73b12ccc3d8ba9b6193b40/zec-actor/taker/actor-config.json
+   [04:17:27]   [0 s] waiting for the Taker's zec-9202e0a1 to reach refunded (zec-drive to refunded): taker refund_in_progress (gen 3) | actor at maker_leg_refunded | maker maker_leg_refunded | zebra 1104 | LEZ finalized 1621, tip 1625 (4 unfinalized) [heartbeat]
+   [04:17:30]   zebra: mined 1 block(s) → height 1105 (mempool had ['d4213eaf3a79'])
+   [04:17:37]   [9 s] waiting for the Taker's zec-9202e0a1 to reach refunded (zec-drive to refunded): taker refunded (gen 4) | actor at refunded | maker refunded | zebra 1105 | LEZ finalized 1637, tip 1641 (4 unfinalized) [heartbeat]
+   [04:17:37]   taker zec-9202e0a1 is refunded
+
+[03:17:37] Maker desk shows zec-9202e0a1 at refunded
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunded (refunded)
+  [32m✓[0m maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[03:17:38] Taker desk shows zec-9202e0a1 at refunded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches refunded
+2 passed, 0 failed
+[04:17:39]   take-time agreement: Taker funds 036299b805ecda82…:0, Zcash anchor 1096, refund height 1104
+[04:17:39]   receipt: swap zec-9202e0a1718456df9267e6fbf133a22ab8ce86fe016456770f612e5e21a3f67f, actor config /var/lib/lez/taker/btc/swaps/6e7968b46bde78e3750dcd260a65042028c0ad6f9f73b12ccc3d8ba9b6193b40/zec-actor/taker/actor-config.json
+[04:17:39]   ZEC evidence written to <checkout>/deploy/runtime/lanes/2/evidence/zec/zec-9202e0a1718456df9267e6fbf133a22ab8ce86fe016456770f612e5e21a3f67f.json (taker refunded, maker refunded, funding 1096, spend 1105)
+
+[03:17:39] === zec-maker-refund (TakerSellsForeign): passed in 286s

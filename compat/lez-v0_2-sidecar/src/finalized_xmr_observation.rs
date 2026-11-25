@@ -417,7 +417,8 @@ impl FinalizedNativeXmrEffectObserver {
                 XmrNativeEffectV3::AuthorizeClaim,
                 ZecEscrowInstruction::AuthorizeNativeXmrClaim { swap_id, .. },
             ) => swap_id == *input.swap_id.as_bytes(),
-            (XmrNativeEffectV3::Claim, ZecEscrowInstruction::ClaimNativeXmr { swap_id })
+            (XmrNativeEffectV3::Fund, ZecEscrowInstruction::FundNative { swap_id })
+            | (XmrNativeEffectV3::Claim, ZecEscrowInstruction::ClaimNativeXmr { swap_id })
             | (XmrNativeEffectV3::Refund, ZecEscrowInstruction::RefundNativeXmr { swap_id })
             | (XmrNativeEffectV3::Punish, ZecEscrowInstruction::PunishNativeXmr { swap_id }) => {
                 swap_id == *input.swap_id.as_bytes()
@@ -892,9 +893,20 @@ fn validate_metadata(
     terms: &XmrNativeEscrowTermsV3,
     account: &indexer_service_protocol::Account,
 ) -> Classified<XmrNativeEscrowStateV3> {
+    xmr_metadata_state(terms, account.program_owner.0, account.data.0.as_ref())
+        .map_err(ClassifiedFailure::Runtime)
+}
+
+/// The state of one XMR-native escrow's metadata account, from its owner
+/// program and data, after every bound field is checked against `terms`.
+pub(crate) fn xmr_metadata_state(
+    terms: &XmrNativeEscrowTermsV3,
+    program_owner: [u32; 8],
+    data: &[u8],
+) -> Result<XmrNativeEscrowStateV3, BridgeRuntimeError> {
     let input = terms.to_input();
-    let metadata = EscrowMetadata::try_from_slice(account.data.0.as_ref())
-        .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
+    let metadata =
+        EscrowMetadata::try_from_slice(data).map_err(|_| BridgeRuntimeError::InvalidObservation)?;
     let ClaimAuthority::XmrDualAdaptor {
         claim_aggregate_x_only_public_key,
         claim_aggregate_account_id,
@@ -907,11 +919,9 @@ fn validate_metadata(
         punish_at,
     } = metadata.claim_authority
     else {
-        return Err(ClassifiedFailure::Runtime(
-            BridgeRuntimeError::InvalidObservation,
-        ));
+        return Err(BridgeRuntimeError::InvalidObservation);
     };
-    if account.program_owner.0 != program_id_from_hex(input.escrow_program_id)
+    if program_owner != program_id_from_hex(input.escrow_program_id)
         || metadata.version != 3
         || metadata.swap_id != *input.swap_id.as_bytes()
         || metadata.terms_hash != *input.activation_commitment.as_bytes()
@@ -936,9 +946,7 @@ fn validate_metadata(
         || metadata.amount != input.amount
         || metadata.refund_at != input.refund_at_ms
     {
-        return Err(ClassifiedFailure::Runtime(
-            BridgeRuntimeError::InvalidObservation,
-        ));
+        return Err(BridgeRuntimeError::InvalidObservation);
     }
     Ok(match metadata.status {
         EscrowStatus::Empty => XmrNativeEscrowStateV3::Empty,

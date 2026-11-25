@@ -29,7 +29,7 @@ that `regress.sh` uses); `scripts/host.sh` refuses an older bash at the start
 of every script and names that command.
 
 ```sh
-tar -xzf lez-swap-stack-v0.3.6-arm64.tar.gz && cd lez-swap-stack-v0.3.6-arm64
+tar -xzf lez-swap-stack-v0.4.0-arm64.tar.gz && cd lez-swap-stack-v0.4.0-arm64
 ./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → desk suites
 ./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two desks
 ```
@@ -384,6 +384,29 @@ which `from-scratch.sh` refuses `LEZ_TEST_HOOKS=1`, and the sidecar's hook
 module holds a compile-time assertion that `LEZ_RELEASE_BUILD` is unset
 (`deploy/tests/test_release_workflow.py`, `NoTestHooksInARelease`).
 
+**The Maker's actor activated after the offer expired.**
+`zec-activate-after-expiry` (TakerSellsLez) publishes a Zcash offer with a
+60 s TTL and takes it while the Maker Node's `hold-zec-activations` hook
+holds back its actor's activation. Once the Maker's monitor shows the
+activation held, the Maker Node is stopped, started again after the offer
+has expired (the hold still set) and the hold is cleared. A ZEC agreement's
+transcript expires with its offer, and each actor activates at the time its
+role accepted the agreement, recorded in the actor's config at provisioning,
+so the Maker activates after the expiry and the swap must complete on both
+Nodes as `zec-dynamic-happy`'s does. A Maker Node built without the hooks
+fails the scenario before any swap, naming `LEZ_TEST_HOOKS=1`.
+
+**A Claim pressed at one Zcash confirmation (issue #130).**
+`zec-claim-at-one-confirmation` (TakerSellsForeign in `regress.sh full`, the
+direction the issue was found in) runs `zec-happy`, but until the Taker Node
+offers the claim the harness mines only what waits in Zebra's mempool, so the
+Claim is pressed while the Zcash funding is one deep, below the actor's
+pre-reveal gate of two. The Taker Node must then report the swap
+`claim_in_progress` with the last outcome `queued`, waiting for
+`zcash_funding_confirmations` (1 of 2 required); the harness mines the second
+confirmation and the swap must complete as `zec-happy`'s does.
+`LEZ_ZEC_CLAIM_AT_ONE_CONFIRMATION=1` does the same to `zec-happy` itself.
+
 Each long wait logs its state, LEZ's finalized height and the sequencer's tip when
 the state changes and at least once a minute, and a timeout names what it waited
 for and what it saw last; `regress.sh` writes both heights on each try's start and
@@ -554,8 +577,339 @@ wallets of their own: `scripts/lanes.sh mint N` mints them into the market
 root, and the next LEZ chain (`up.sh --fresh-lez`) funds them. One watcher follows LEZ finality
 for all lanes: a frozen chain voids every lane's test, and one new chain
 (`up.sh --fresh-lez` with `LEZ_LANES`, which stops and restarts the lanes) serves
-them all. The scenarios, `reset-swaps.sh` and `zec-provision.sh` act on one lane
+them all. The scenarios, `reset-swaps.sh` and `tests/fixtures/zec-catalog-fixture.sh` act on one lane
 when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
+
+### Monero (LEZ_MONERO=1)
+
+Monero swaps run against one of two networks, `LEZ_MONERO_NETWORK` (kept in
+`runtime.env`): `regtest` (the default), an offline Monero regtest chain on
+each lane, on x86_64 and arm64 hosts alike (the pinned release has an archive
+for each, `linux-x64` and `linux-armv8`; `stage-assets.sh` takes the host's),
+or `stagenet`, public Monero Stagenet through the operator's own monerod and
+two wallet-rpcs, on lane 1 only ([below](#monero-stagenet-lez_monero_networkstagenet)).
+Mainnet and testnet are refused by `gen-config.sh`, the launcher and the
+Nodes' role configuration. The network is the Monero role's profile
+(`accelerated-regtest` or `public-stagenet`), which goes into Stage A: a Maker
+and a Taker of different networks never agree. Monero Stagenet itself (the
+release, monerod, wallet-rpc, coins, a Node-driven swap) is in the
+[Stagenet guide](../docs/monero-stagenet-guide.md). The protocol, its windows and the punish branch
+are in [protocol-design.md](../docs/milestone-1/protocol-design.md#xmrlez).
+
+Monero is off by default: a Bitcoin/Zcash run starts and waits for nothing of
+it, and a release bundle pulls its image (`lez-monerod`, which the release
+publishes for linux/arm64 beside the others) only when started with
+`LEZ_MONERO=1 ./scripts/start.sh`. `LEZ_MONERO=1` turns it on for the stack and every lane (Compose profile
+`monero`; `gen-config.sh` keeps the choice in `runtime.env`, so a later
+`up.sh --fresh-lez` keeps it, and `LEZ_MONERO=0` turns it off again):
+
+```sh
+LEZ_MONERO=1 bash scripts/stage-assets.sh    # once: fetch and verify the pinned release
+LEZ_MONERO=1 bash scripts/up.sh              # builds lez-monerod:local, starts it on every lane
+python3 scripts/monero-lane.py fund --role maker   # mine, pay the Maker 10 XMR, read its balance
+python3 scripts/monero-lane.py balance --role taker
+```
+
+**The pinned release.** Monero 0.18.5.1 (`tests/e2e/monero/provenance.env`:
+tag `v0.18.5.1`, source commit `4f92268d…`, one archive per architecture,
+`monero-linux-x64-v0.18.5.1.tar.bz2` (sha256 `22a7dda7…`, 84 575 716 bytes) for
+x86_64 and `monero-linux-armv8-v0.18.5.1.tar.bz2` (sha256 `c0caf042…`,
+74 269 877 bytes) for arm64, both bound by the signed `hashes.txt`, which is
+checked against the pinned signer key, fingerprint `81AC591F…2A0BDF92`).
+`stage-assets.sh` runs `scripts/verify-monero-release.sh` for the host's
+architecture in a throwaway container of that architecture: the manifest's
+signature and signer, the archive's sha256 and size, its members; it keeps only
+`monerod` and `monero-wallet-rpc` and runs their `--version` there; the
+downloaded binaries never run on the host. `images/monerod/provenance.json`
+records the archive and its architecture, and a binary staged for another
+architecture is staged again. The image `lez-monerod:local` (115 MB on x86_64)
+runs them on a distroless base (a multi-architecture index); its build checks
+that both binaries are executables of the image's architecture, and its labels
+name both pinned archives. Its Dockerfile is the isolated lane's
+(`tests/e2e/monero/Dockerfile`), which `stage-assets.sh` and `up.sh` copy into
+`images/monerod/`: Compose's bake builder refuses a Dockerfile outside
+`deploy/`. Monero's binaries are under the BSD 3-clause licence
+(the archive's `LICENSE`); the image carries the licence label, as the Bitcoin
+Core and Zebra images do.
+
+**What runs per lane.** `monerod` (`--regtest --offline`, fixed difficulty: no
+peers, no miner; blocks are generated on demand) and three `monero-wallet-rpc`:
+`xmr-funding-wallet`, which the harness mines to and funds the roles from, and
+one per role, `maker-xmr-wallet` and `taker-xmr-wallet`. Each role's wallet is
+named after the role (`maker`, `taker`), has no password, and is created by
+`monero-lane.py` when its wallet-rpc has none open. Every RPC takes a Digest
+login that `gen-config.sh` mints once under `runtime[/lanes/<k>]/monero`; each
+role's Node gets monerod's and its own wallet-rpc's login and forwards
+`127.0.0.1:18081` and `:18083` to them (the Monero adapter accepts only
+literal-loopback endpoints). monerod and the funding wallet-rpc publish
+`127.0.0.1:18081+10(k-1)` and `18083+10(k-1)`. Like Zebra, Monero outlives
+`up.sh --fresh-lez` and `reset-swaps.sh`; `down.sh --wipe` (and
+`lanes.sh down N --wipe`) remove its volumes.
+
+**The Nodes.** Where a role has those logins, `node-entrypoint.sh` writes its
+Monero role configuration `xmr-role.json` (owner-private: the endpoints, the
+logins, the wallet name, the three windows, the Stage-A planner and, on the
+Maker, the six effect tools) and passes it to the Node: the Maker gets
+`--xmr-role-config`, `--xmr-maker-actor-root` and its pinned
+`lez-xmr-maker-actor`, the Taker `initiation.xmr_role_config`. The Node
+binaries are built with `pair-xmr` (`from-scratch.sh --only rust`). The route
+health carries a Monero probe for the one route, Monero `TakerSellsLez`
+(`probe-monero`: monerod's `get_info`; not the role's wallet-rpc, which the
+Node's own tools keep busy for seconds at a time), so `maker_health` /
+`taker_health` read the Monero route unavailable, and the Node degraded, while
+monerod does not answer. Every Monero transfer the Nodes
+send (the Maker's funding, either role's sweep) is followed by the sender
+mining its own 10 confirmations; a Maker whose funding or refund-sweep tool
+stopped in between (killed, or its mining call failed) mines them when it
+next observes that transfer in the pool or short of its depth (a regtest
+duty only: on a real network miners confirm). The harness mines only to
+fund the Maker and, in `xmr-kill-maker`, for a funding whose tool it killed
+before it mined.
+
+**The windows.** `runtime.env` carries the agreement's three offsets from the
+take, which both Nodes read and must have alike:
+`LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS` (C), `LEZ_XMR_REFUND_SECONDS` (R) and
+`LEZ_XMR_PUNISH_SECONDS` (P). C is the Bitcoin Maker cutoff plus 20 s for the
+ten confirmations, and at least 320 s: the windows start with the take, and
+the second of two swaps taken one after the other has its funding drive start
+only after the take (at most 44 s with three lanes busy on 2026-11-17, counted
+at 60 s) and three of its drives' spacing (counted at 80 s each), plus the
+20 s depth. The Maker claims only on a claim authorization it sees final
+before R − (R − C)/2, and a Maker that does not act in that window forfeits
+the claim to the Taker's refund, so each half of R − C holds the 20 s depth, a
+LEZ step and two of the Maker's actor drives counted at 80 s each
+(`xmr_drive`: the Maker Node's one actor worker drives all its swaps in turn,
+and one Monero swap's drives started at most 50 s apart with the three
+heaviest Monero tests on three lanes, five times on 2026-11-17; a swap's
+funding stood at depth at most 143 s after its take started, and C is 2.2
+times that). P is R plus a step, a stall, the margin and two such drives.
+In seconds, with the LEZ step S, the stall T and the profile's Bitcoin Maker
+cutoff B and margin M: C = max(B + 20, 60 + 3 × 80 + 20 = 320),
+R = C + 2 × (20 + S + 2 × 80), P = R + S + T + M + 2 × 80. With the default
+S = 20 and T = 40, R − C is 400 s on every profile. On `fast` (B = 240,
+M = 60), the profile every Monero scenario runs on, that is +320, +720 and
++1000 s: the Taker may refund only in the 280 s between R and P, and from P a
+Maker can take the LEZ while the Monero stays locked. `refund` (B = 2S + 20 + T
+= 100, M = 15) gives +320, +720, +955 s (235 s to refund) and `local`
+(B = 1800, M = 300) +1820, +2220, +2740 s (520 s). The drive count holds only
+while the Maker Node is no busier than three devnet lanes: a Maker driving more
+swaps at once spaces each swap's drives further apart and needs wider windows.
+
+**Scenarios.** `node-e2e.py --pair Monero <scenario>` drives both Nodes over
+their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over
+its owner RPC); `regress.sh` runs them as `node:xmr:<scenario>:TakerSellsLez`,
+on `fast`, and leaves them out with a line on a stack without `LEZ_MONERO=1`.
+All twenty-two are in the `full` tier, none in `smoke`. The six added with
+the Node's own refund (`xmr-taker-clock-ahead` to `xmr-taker-cheats` below),
+`xmr-shared-address-dust` and the two `xmr-custody-credit` scenarios joined
+the tier after the full regression at `d4475300`
+(`docs/evidence/regression-m4-2026-11-21/`); all twenty-two passed on their
+first try in the full regressions at `7b4e46da`
+(`docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/`) and `27526e2f`
+(`docs/evidence/regression-0.4.0-2026-11-23-macos-arm64/`). A lot is 1 XMR
+for 50 000 LEZ units.
+
+```sh
+bash scripts/regress.sh run node:xmr:xmr-happy:TakerSellsLez
+bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-maker:TakerSellsLez
+```
+
+| Scenario | What it asserts |
+|---|---|
+| `xmr-happy` | take over Chat, the Taker's LEZ lock, the Maker's Monero funding at depth, the Taker's claim, the Maker's LEZ claim, the Taker's sweep; LEZ to the unit, the Taker's one received transfer the lot less at most 0.01 XMR of fee, both Nodes completed |
+| `xmr-taker-refund` | the Maker funds, the Taker does not claim and its owner refunds from R (the Node's own refund switched off for the scenario: `xmr-automatic-refund`, below); the Maker sweeps its Monero back; the Taker's owner signs nothing for the refund |
+| `xmr-taker-refund-kill` | as `xmr-taker-refund`, the Taker's container killed with SIGKILL right after the refund's admission; started again it submits the refund |
+| `xmr-maker-never-funds` | the Maker Node is stopped right after the take and kept down until the Taker Node refunded from R by itself, with no refund commanded; back up, the Maker ends `expired`; no Monero moved |
+| `xmr-punish` | the Maker funds, the Taker Node is stopped once it has verified the Monero; from P the Maker sends tag 17 at a live owner nonce other than 0 and ends `punished`; the LEZ moves to the Maker, the Monero stays at the shared address, the Taker back up reads `attention_required` (`xmr_refund_window_closed`) |
+| `xmr-concurrent` | two swaps of the same Nodes at once, one offer each; both complete; two fundings, two sweeps |
+| `xmr-kill-taker` | the Taker killed with SIGKILL at each of 7 steps (after the take, lock in flight, locked, Monero verified, claim authorised, waiting for the Maker's claim, sweeping), one fresh swap each; each completes with the owner accounts' LEZ transaction counts and the Monero moved once |
+| `xmr-kill-maker` | the Maker killed at each of 7 steps (after the take, the Taker's lock observed, its Monero funding in flight, funded, its LEZ claim in flight, its LEZ claim tool held in the claim's preparation, its LEZ claim tool held with the claim's submission journaled in flight); each completes or, killed with the Taker's lock observed or its funding in flight, may end refunded with nothing lost. The two held points use the Maker sidecar's test hooks `hold-claim-preparations` and `hold-claim-submissions` (a count of one), so the kill lands at the same step on every run |
+| `xmr-monerod-down` | the lane's monerod stopped before a take: both Nodes read the Monero route unavailable (the Maker withdraws and refuses Monero offers, the Taker refuses a take), Bitcoin's and Zcash's available; started again, a swap completes; then stopped right after a take until the Maker has seen the Taker's lock final and 60 s more, within the funding cutoff: the swap completes, or ends refunded with nothing lost. The Maker's drive asks monerod before it spends the swap's one funding and keeps it for a later drive while monerod does not answer, so an outage that ends before the cutoff leaves the funding to go out after it; one that begins while the funding tool runs (its three attempts five seconds apart) still spends it, and the swap is refunded |
+| `xmr-wallet-restart` | a role's `monero-wallet-rpc` restarted mid-swap: the Maker's after the take, the Taker's while it watches for the Monero and before its sweep; both swaps complete |
+| `xmr-outage-before-take` | Logos Chat and Delivery cut before a take: both Nodes degraded, the take refused, no swap on either Node; restored, the same request takes the offer and the swap completes |
+| `xmr-cut-after-lock` | Chat and Delivery cut once the Taker's LEZ lock is out, until the swap completes under the cut |
+| `mixed-three-pair` | a Monero, a Bitcoin and a Zcash swap of the same Nodes at once, all TakerSellsLez; all three complete |
+| `xmr-taker-clock-ahead` | the Taker Node's clock 60 s ahead of LEZ time (test hook `clock-offset-ms`), its own refund off: the owner refunds as soon as the swap offers it, 60 s before LEZ time reaches R; no refund is recorded as sent before the finalized LEZ time reaches R, then it lands and the Maker sweeps back |
+| `xmr-punish-replans` | as `xmr-punish`, with the punishment's nonce taken six times (the Maker sidecar's test hook `punish-nonce-thefts` sends one LEZ unit from the Maker's owner to the Taker at that nonce instead of the punishment); the Maker re-plans past five and ends `punished`; the lot moves to the Maker less the six units |
+| `xmr-maker-claim-without-authorization` | a cheating Maker (the test-only probe, `--effect xmr-claim`) sends tag 15 with no tag 14 and no Monero (its wallet-rpc stopped): refused, the escrow stays `Funded`; the Taker Node refunds by itself; the Maker ends `expired`. The Maker can witness tag 15 only with its own key, since the claim authority is the two parties' MuSig2 key |
+| `xmr-maker-early-punish` | a cheating Maker sends tag 17 before P: refused, the escrow stays `Funded`; the Taker Node refunds from R; past P tag 17 again: refused, the escrow is `Refunded`; the Maker sweeps back |
+| `xmr-unfunded-punish` | TM-0031: an unfunded swap (the Maker's wallet-rpc stopped), the Taker Node stopped through [R, P): tag 17 from P pays the Maker the LEZ; then the same with the Taker Node running: it refunds by itself from R and tag 17 from P is refused |
+| `xmr-taker-cheats` | a cheating Taker (test hooks `cheat-refund-before-r`, `cheat-refund-after-claim`): tag 16 before R is dropped and the escrow keeps the LEZ, then the same refund lands from R; on a completed swap tag 16 from R is refused and no LEZ moves |
+| `xmr-shared-address-dust` | `xmr-happy` with two more outputs paid to the swap's shared address by a third party (the lane's funding wallet) once the Maker's funding is at depth, 0.02 XMR mined to depth and 0.03 XMR left in the pool: the Taker's sweep spends the swap's own output by its key image and leaves both; the Taker's one received transfer is the lot less at most the fee |
+
+**The Taker's own refund and the test hooks.** The Taker Node refunds a
+Monero swap's LEZ by itself from R (finalized LEZ time). Its entrypoint turns
+that off with `LEZ_XMR_AUTOMATIC_REFUND=false` or the word `false` in
+`<state>/xmr-automatic-refund` (read at each start); `node-e2e.py` writes the
+file and restarts the Node. With `LEZ_TEST_HOOKS=1`, the devnet's build
+(`from-scratch.sh`) compiles the Taker Node and the Maker Node with their
+feature `test-hooks` and the LEZ sidecar with its own `test-hooks`; all read
+files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, set by the entrypoint):
+`clock-offset-ms` (the Taker supervisor's clock offset),
+`cheat-refund-before-r` and `cheat-refund-after-claim` (a cheating Taker),
+`hold-zec-activations` (a flag: the Maker Node's supervisor holds back its
+Zcash actors' activations while it exists),
+`punish-nonce-thefts`, `hold-claim-preparations` and `hold-claim-submissions`
+(counts, in the Maker's sidecar). Without it none
+is built in, and `xmr-taker-clock-ahead`, `xmr-punish-replans`,
+`xmr-taker-cheats`, `xmr-kill-maker`, `zec-kill-maker-claim` and
+`zec-activate-after-expiry` fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`
+(they look for the hook's name in the Taker Node's, the Maker Node's or the
+Maker sidecar's executable). So a devnet for `regress.sh full` is built with
+`LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh`.
+
+No release has the hooks. The release workflows and the role packagers never
+name the feature or `LEZ_TEST_HOOKS`, and they mark their builds with
+`LEZ_RELEASE_BUILD`: under it `from-scratch.sh` refuses `LEZ_TEST_HOOKS=1`,
+and both crates' hook modules hold a compile-time assertion that
+`LEZ_RELEASE_BUILD` is unset, so a release build with the feature does not
+compile (`deploy/tests/test_release_workflow.py`, `NoTestHooksInARelease`).
+
+**A stranger's credit to the custody (TM-0032).** LEZ lets anyone pay into
+any initialised account, so a third party can send LEZ to a funded escrow's
+custody at a moment it chooses. Each of these runs its pair's own scenario
+unchanged while `lez-v02-custody-credit-probe`, a test-only tool the devnet
+Maker image carries beside the claim probe, waits in the Maker's container
+for the swap's escrow to be funded and then sends one unit to its custody
+from `heartbeat-echo-02` (funded at genesis, held by neither party). The swap
+must end as its scenario says, and `assert_lez_settled` allows exactly that
+unit more to the ending's recipient: the claimant on a claim, the depositor
+on a refund. `regress.sh full` runs all six.
+
+| Scenario | What it proves |
+|---|---|
+| `btc-custody-credit` (both directions) | `happy` with the credit: the swap completes, the LEZ claimant gets the lot and the unit |
+| `btc-custody-credit-refund` (TakerSellsLez) | `taker-refund` with the credit: the Taker refunds its LEZ and gets the unit too |
+| `zec-custody-credit` (both directions) | `zec-happy` with the credit, as `btc-custody-credit` |
+| `zec-custody-credit-refund` (TakerSellsLez) | `zec-taker-refund` with the credit, as `btc-custody-credit-refund` |
+| `xmr-custody-credit` | `xmr-happy` with the credit: the Maker's LEZ claim (tag 15) takes the lot and the unit, the Taker sweeps its Monero |
+| `xmr-custody-credit-refund` | `xmr-taker-refund` with the credit: the Taker's refund (tag 16) returns the lot and the unit, the Maker sweeps its Monero back |
+
+In the full regression of 2026-11-15 they ran across lanes 1 to 3
+(`docs/evidence/regression-m4-2026-11-15/`), on x86_64 (linux/amd64), as did
+the later `regression-m4-*` sets under `docs/evidence/`. The full regressions
+at `7b4e46da` (`docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/`) and
+`27526e2f` (`docs/evidence/regression-0.4.0-2026-11-23-macos-arm64/`) ran
+all twenty-two and the three `ui:xmr` journeys on arm64, an Apple-silicon Mac
+on three lanes, each passing on its first try. Before them, on arm64 they ran on
+2026-11-21 on an Apple-silicon Mac with Docker Desktop 29.9 (linux/arm64
+images, the `linux-armv8` release), at `0b0ee495`: all thirteen and the three
+`ui:xmr` journeys on two lanes, 16 of 16 passed on the first try in 77 min,
+with `node:zec:zec-happy:TakerSellsLez` before them; `xmr-happy`,
+`xmr-taker-refund`, `xmr-punish` and `node:btc:happy:TakerSellsLez` had passed
+on one lane at `7eaa942c` (the same Node binaries). The isolated lane
+(`scripts/run-monero-e2e.sh`) has not run on arm64. Footprint, measured on 2026-11-13: after 190 blocks a lane's
+monerod volume holds 0.5 MB and each wallet's 0.4 MB; monerod uses about
+270 MB of memory, each wallet-rpc about 13 MB.
+
+**Owner nonces.** Each role signs its LEZ transactions of every pair with one
+owner account, at the account's live nonce, so two transactions prepared
+before the first is in a block carry the same nonce and the sequencer keeps
+one. What the Monero side does about it, and what is left:
+- The Taker's Monero LEZ lock (tag 13, a pair: initialisation and funding) is
+  planned under the Taker Node's LEZ lock gate, as a Bitcoin lock is, and only
+  at a nonce the gate saw stand still since the last look (a Zcash lock, which
+  is planned at the live nonce without the gate, moves it). Left open: a Zcash
+  lock sent within the same LEZ block as the Monero lock is planned. If the
+  Monero pair loses, nothing is locked and the swap ends
+  `expired` at C (it is not planned again); if the Zcash
+  lock loses, the Zcash actor plans it again. A Monero pair that dies gives the
+  gate back at C, so later locks of either pair do not wait for it.
+- The Taker's tag 14 (the claim authorization) is signed by its owner account
+  without the gate. If it loses its nonce the claim never starts: the Maker
+  does not claim, and from R the swap reads `xmr_maker_did_not_claim` and the
+  Taker refunds; nothing is lost. If the other transaction loses: a Bitcoin LEZ
+  lock is not planned again and that swap expires with nothing locked; a Zcash
+  lock or revealing LEZ claim is planned again; whether a Bitcoin swap's LEZ
+  claim is planned again was not checked (a claim that is not included reveals
+  nothing on chain, and the swap can still refund).
+- The Taker's tag 16 (the refund) is signed by the swap's own refund authority
+  account, not the owner: it cannot collide with another swap's transaction.
+- The Maker's tag 17 (the punishment) is signed by the Maker's owner account
+  without coordination. The Maker Node's actor attempts run one at a time, so
+  two owner transactions collide only if the second is prepared before the
+  first is in a block. Until it is final the Node drives tag 17 again on every
+  attempt, and the sidecar sends the current bytes again unless the node
+  already includes them; it answers with the same bytes unless the node has
+  not included them while the owner's nonce is above theirs (they can then
+  never land), and then plans the same punishment at that nonce, kept beside
+  the first in a re-plan slot of its own. Tag 17 has no upper window and
+  nothing else moves the escrow after P, so it is re-planned for as long as
+  its nonce is taken (the bound, 16,384, only keeps the lineage finite;
+  `MAX_XMR_PUNISH_REPLANS`), never given up after a count. The escrow is
+  punished once: a second tag 17 cannot execute, and the Maker finds the one
+  that landed by its terms. Not run on the devnet: no scenario makes another
+  owner transaction take tag 17's nonce.
+
+**Scan distances.** Every finalized-LEZ scan on the Monero paths keeps a
+durable cursor, so a scan of any distance ends however short its attempts
+are (a LEZ block a second: on `local` up to about 2700 blocks from the
+Taker's lock to P, more on a real network's longer windows):
+- Maker actor (tags 13, 14, 16, in process): 8 pages of 16 blocks per drive
+  (a page takes the swap's sidecar 0.4 to 5 s on the devnet, and the Node's
+  one actor worker drives every swap in turn), cursor `maker-lez-scan.json`
+  written at the end of each drive; a drive that stops short of the
+  finalized tip concludes nothing absent. Tag 13
+  starts at the finalized height the Maker Node read when it activated the
+  swap (the Taker locks only once activated); without that seed (the sidecar
+  did not answer then) 256 blocks before the first drive's finalized tip (a
+  Maker Node that first drives such a swap more than 256 blocks after the
+  Taker's lock misses it, never funds, and the swap ends refunded with
+  nothing lost). Tags 14 and 16 start after the Taker's lock.
+- Maker observer (tags 15, 17, `xmr-reference-tag15-finalized`): 16-block
+  pages within the actor's 30 s observer timeout (about 800 blocks on the
+  devnet), from the block after tag 14 (tag 15) or the refund scan's cursor
+  (tag 17), resuming at `tag15-scan-cursor.json` / `tag17-scan-cursor.json`.
+- Taker supervisor (tags 13, 14, 15, 16, in process): 8 windows of
+  `discovery_max_blocks` (2048) per step, cursors in `xmr-taker-progress.json`.
+  Tag 16 starts after the funding, about R − lock blocks before the refund can
+  land (two windows on `local`).
+
+Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`), refund
+one the Maker funded and the Taker never claimed (`ui:xmr:xmr-taker-refund`: the
+refund window open, then closing, the Refund button, the Maker's refund sweep) and
+run two at once (`ui:xmr:xmr-concurrent`), and show a punishment
+(`ui:xmr:xmr-punish`: the Taker's Basecamp, its Node with it, down from the
+Maker's funding through the refund window, as in `node:xmr:xmr-punish`; the
+Maker desk opened shortly before the punish time watches its row reach
+"Punished", and the Taker desk, back up, shows the swap punished). All four
+are recorded in `docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/` (the videos outside git). Not on the devnet yet: there is no macOS
+package for it. The Maker's systemd unit takes a Monero role from an optional
+drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with
+stub programs, not run in the VM; the Taker unit has none.
+
+### Monero Stagenet (LEZ_MONERO_NETWORK=stagenet)
+
+With `LEZ_MONERO=1 LEZ_MONERO_NETWORK=stagenet`, `up.sh` starts no lane
+monerod or wallet-rpc. The operator runs a Stagenet `monerod` and one
+`monero-wallet-rpc` per role on a Docker network of their own (the
+[Stagenet guide](../docs/monero-stagenet-guide.md) sets them up), and names
+them:
+
+| Variable | What |
+|---|---|
+| `LEZ_XMR_STAGENET_LOGINS` | directory of `monerod.login`, `maker-wallet-rpc.login`, `taker-wallet-rpc.login` (`user:password` each); `gen-config.sh` copies them beside the roles' identities, so no login is on a command line or in `runtime.env` |
+| `LEZ_XMR_STAGENET_NETWORK` | the Docker network of the daemon and the wallet-rpcs |
+| `LEZ_XMR_STAGENET_MONEROD` | the daemon's `host:port` on it, or one per role: `LEZ_XMR_STAGENET_MAKER_MONEROD`, `LEZ_XMR_STAGENET_TAKER_MONEROD` (two parties run two daemons; a public node also limits one address's connections, [Stagenet guide](../docs/monero-stagenet-guide.md#each-roles-daemon)) |
+| `LEZ_XMR_STAGENET_MAKER_WALLET`, `LEZ_XMR_STAGENET_TAKER_WALLET` | each role's wallet-rpc `host:port` |
+
+`gen-config.sh` then records `COMPOSE_FILE=compose.yaml:compose.stagenet.yaml`
+in `runtime.env`: `compose.stagenet.yaml` joins both Nodes to that network
+and sets their `LEZ_MONEROD_HOST` and `LEZ_XMR_WALLET_HOST`, and each Node
+forwards its loopback 18081 and 18083 there (the launcher's forwards take
+`host:port`). The role wallets are named after the roles (`maker`, `taker`)
+and have no password, as on regtest; the Maker's must hold unlocked Stagenet
+coins, one output per swap in flight. The windows are those of the Stagenet
+guide's sizing whatever `LEZ_TIMING_PROFILE` says: C, R, P = +600, +7200,
++14400 s (P − R is the Taker's two-hour safety window, `PublicStagenet`'s
+minimum). A Node on Stagenet mines nothing: no mining capability exists for a
+public network (`MoneroRegtestMining`), and it waits for Stagenet's miners.
+Its Maker actor attempts get 5 minutes and its Monero tools 4 (2 and 2 on
+regtest). A Maker Node pins each swap's actor program when the swap is
+taken: a swap taken under one build does not run under another, so the
+Nodes are not rebuilt while a swap is in flight.
+The regtest scenarios (`node-e2e.py --pair Monero`) mine and need the lane's
+monerod; they do not run on such a stack.
 
 ### A second stack on the same host
 
@@ -603,6 +957,52 @@ images. Use an offset of 100 or more (lanes take +10 each) and check that the
 shifted ports are free. `compose.testnet.yaml` keeps its own project
 (`lez-testnet`) and container names.
 
+### Two transports
+
+The role launcher's `LEZ_TRANSPORT` (`modules/lez-role-node/node-entrypoint.sh`)
+says how the Taker reaches the Maker. `local`, the default: offers and the
+Maker's Delivery identity from the shared `delivery_dir` volume, Chat rounds
+straight to the Maker's socket in the shared `maker_socket` volume, so both
+Basecamps must be on one host. `logos` (`compose.logos.yaml`, test
+`ui:btc:logos-happy:TakerSellsForeign`): nothing is shared but the chains. Each
+role starts its Chat gateway (`lez-<role>-chat-gateway`, in its package) on
+`LEZ_LOGOS_CHAT_GATEWAY_SOCKET` (under `/run/lez/<role>`), the socket its desk's
+Logos Chat bridge uses; offers travel over Logos Delivery into the Taker desk's
+order book and the take's Chat rounds over Logos Chat. The Taker is given the
+Maker's public Delivery identity in `LEZ_MAKER_DELIVERY_IDENTITY`. The two
+Delivery nodes form a network of their own, `LEZ_LOGOS_DELIVERY_CONFIG`
+(delivery_module's createNode JSON, through the patched chat_module,
+`builder/patches/logos-chat-module`): a private cluster id, the Maker's node
+listening on TCP 60000 on every interface, the Taker's dialling
+`LEZ_MAKER_DELIVERY_PEER` (`/ip4/<address>/tcp/60000/p2p/<peer id>`; the Delivery
+node's resolver does not use Docker's DNS, so an address, not a name). Two
+hosts set the same variables with the Maker's reachable address; NAT traversal
+is not covered. On the devnet (2026-11-12) offers reached the Taker in about
+3 s, every Chat round took 0.3–0.9 s and the six rounds of a take 3–4 s, in
+six passing runs. A Zcash offer published from the Maker desk's form takes the
+same path (`ui:zec:logos-happy:TakerSellsLez`): its take-time agreement is three
+Chat rounds (`zec_reserve_v1`, propose, complete; 7.7, 10.5 and 4.0 KB to the
+Maker, 4.0, 4.2 and 0.4 KB back), 0.3–0.8 s each, three of three runs. On the public `logos.test` fleet instead, of 13 Chat
+messages 5 arrived in 1–4 s, 2 after 109 s and 258 s and 6 not within the 20 s
+to 6 min watched, against the gateways' 25 s per round: no take completed.
+
+### A Logos price module
+
+A Maker route can take its price from a Logos price module, a shared library with the C API of
+`crates/logos-price-c-api/include/lez_logos_price_api.h`, instead of the price saved with it. Set
+`LEZ_LOGOS_PRICE_MODULE` to the module file and `LEZ_LOGOS_PRICE_MODULE_SHA256` to its sha256 (both
+or neither; `compose.yaml` hands them to the Maker's Basecamp): the launcher starts the Node with the
+package's `lez-logos-price-worker`, which loads the module in a child process on every quote and
+publish. `lez-maker-cli configure-pair … --price-source logos-c-api` then selects it for a route.
+Before every call the Node checks the module: an absolute path to a regular file (no symlink, one
+hard link) owned by root or the Node's user, not group- or other-writable, at most 64 MiB, with the
+pinned sha256, in a directory owned by root or the Node's user that is not group- or other-writable.
+A module that fails a check, answers unavailable or reports a price older than 30 s fails the quote
+or publish closed; offers already out keep their price. The systemd package installs the worker as
+`/usr/bin/lez-logos-price-worker`; there the unit runs the same launcher, so the two
+`LEZ_LOGOS_PRICE_MODULE*` values go in `/etc/lez/maker/env` and the launcher passes the flags. No Logos price module exists yet: `node:btc:maker-price-module:TakerSellsForeign` runs
+the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ units per 2 sat). How to write and run a module: [docs/price-module-guide.md](../docs/price-module-guide.md).
+
 ## Services
 
 | Service | Image | Notes |
@@ -615,7 +1015,7 @@ shifted ports are free. `compose.testnet.yaml` keeps its own project
 | `zebra` | `images/zebra` | Zebra 7.0.0 on Regtest, NU7 from height 1 (digest-pinned upstream build in a distroless runtime), the ZEC pair's chain |
 | `lez-explorer` (profile `explorers`) | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
 | `maker-node` | `images/maker-node` | the Maker's own Basecamp (the `basecamp-ui` image) on VNC `127.0.0.1:5901` with the Maker's Node package `lez_maker_node` installed in its user modules directory (`/var/lez/basecamp-maker-user/modules/lez_maker_node`; built by `scripts/package-role-node.sh`): the canonical Node, CLI, `lez-btc-maker-actor`, `lez-zec-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap), the health probe and the launcher `node-entrypoint.sh`, stripped; `/usr/local/bin/<tool>` link into the package. Nothing of the Node is copied into the image on its own. Its LEZ Maker desk opens at start, hosts the Maker's LEZ signer (`lez_core`), asks the package for its launcher (`LEZ_MAKER_NODE_LAUNCHER=package`) and has `lez_swap_node` launch and supervise the Node from it; the UI tests drive the same desk (`ui-tests/`, mounted). The launcher forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints. The image owns its state directories (a new named volume takes the image directory's owner and mode), so no init container runs |
-| `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, with the Taker's package `lez_taker_node`: canonical Node, CLI, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar, the health probe and the launcher; same loopback forwarders as the Maker. The ZEC corridor provisioners (`zec-local-poc-*`, run by `scripts/zec-provision.sh`) are image tools, not part of the package |
+| `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, with the Taker's package `lez_taker_node`: canonical Node, CLI, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar, the health probe and the launcher; same loopback forwarders as the Maker. Beside the package: `zec-local-poc-identity` (gen-config.sh derives zebra's miner address with it) and, in the devnet's image only, the dealer test fixture's tools (`zec-local-poc-provision`, `-chat-draft`, `-chat-finalize`, `-transfer`: `executables.json` class `fixture`, cargo feature `dealer-fixture`), run by the catalog tests' `tests/fixtures/zec-catalog-fixture.sh` and to fund the devnet Taker's Zcash key; the published image does not carry them |
 | `heartbeat` (profile `heartbeat`) | `images/lez-wallet-module` | the LEZ finality heartbeat (above); `up.sh` starts it when `LEZ_HEARTBEAT_SECONDS` is not `0` |
 | `tools` (profile `tools`) | `images/lez-wallet-module` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault claims through the LEZ wallet module (`lez-wallet-vault-claim`) and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
 | `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `network`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + the release packages installed (desks, runtime modules) + qt-mcp; Xvfb/fluxbox/x11vnc |
@@ -636,6 +1036,16 @@ container chowns either.
 All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 `cap_drop: ALL` + `no-new-privileges`; ports published on loopback only. No
 service holds the host Docker socket.
+
+That log rotation covers each container's own output (three files of 200 MB). It does
+not cover the log files Basecamp writes inside a Node container, under
+`/var/lez/basecamp-<role>-user/logs/`: Basecamp starts a new file every 10,000 lines and
+never removes one, and has no setting for it. The Delivery module prints every message it
+receives there (one offer announcement is one line of about 23 KB, and every Maker
+announces each offer every 10 seconds), so a Node's log directory grew by about 11 MB an
+hour idle and 70 to 96 MB an hour during tests. The files are in the container's writable
+layer and go when the container is recreated (`up.sh`, a profile switch). A Node kept
+running for weeks needs its old `basecamp_*.log` files removed from outside.
 
 ## Native-arm64 notes
 
@@ -675,6 +1085,7 @@ scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent
 scripts/btc-miner.sh       regtest mining loop
 scripts/regress.sh         the devnet regression (smoke, refunds, full) that survives finality freezes
+scripts/logos-evidence.py  what a kept Logos phase of ui-e2e.sh logos-happy shows (publishes, relay, the Maker's subscription)
 scripts/lane.sh, lanes.sh  regression lanes 2..N beside the stack (compose.lane.yaml)
 scripts/repair-indexer.sh  rebuild the indexer's database while the LEZ node keeps running
 scripts/logos-native-acceptance.sh  the packages through logosctl, outside Compose (docs/evidence/logos-native-2026-11-10)

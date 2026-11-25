@@ -12,6 +12,22 @@ Pins (`deploy/scripts/from-scratch.sh`): logos-execution-zone v0.2.4 at
 logos-execution-zone-module `acf0cd501b26` (lez_core 0.4.1). blockchain_module
 0.2.4 is the released lgx, unpatched.
 
+## lez-v0.2.4 (the sequencer, github.com/logos-blockchain/logos-execution-zone)
+
+`from-scratch.sh` applies these to its own LEZ checkout (`lez-source`, at
+`47eba256`) before `build:lez-services` builds `sequencer_service`; the
+build reruns when the set changes (`source-patches.stamp`).
+
+- `0001-lez-v0.2.4-sequencer-bound-wal.patch` — `lez/storage`, the
+  sequencer's store: `max_total_wal_size` = 256 MiB. Every block writes the
+  whole LEE state (~7 MB) to `cf_lee_state`, which flushes every ~10 s, but
+  the few small writes to `cf_block` and `cf_meta` stay in their memtables
+  and keep every write-ahead log file since alive. RocksDB's default bound
+  (0: four times all memtable budgets, 12.5 GiB with 16 buffers per family)
+  let a devnet chain's directory reach 13 GB of `.log` files against ~30 MB
+  of tables. Past the bound RocksDB flushes the families holding the oldest
+  log and drops it. Nothing else changes.
+
 ## lez-indexer-module (github.com/logos-blockchain/lez-indexer-module)
 
 Why: the module answers queries only as Logos calls, and it has no historical
@@ -30,6 +46,13 @@ as `indexer_service` JSON-RPC (`getAccountAtBlock` among it).
   `indexer_core` test `accept_block_snapshots_state_at_breakpoint_interval`
   is written for 100 and fails with this value; the storage tests follow
   the constant.
+- `0001-lez-v0.2.4-indexer-bound-wal.patch` — upstream
+  logos-execution-zone, `lez/storage`, the indexer's store: the sequencer
+  store's 256 MiB `max_total_wal_size` (`lez-v0.2.4/0001`, above; the two
+  builds patch separate copies of the source). Only `cf_breakpoint` fills
+  memtables, so the other families kept every write-ahead log file alive up
+  to RocksDB's default bound (~28 GiB for its eight families): the indexer's
+  directory grew ~0.4 GB per 10 minutes.
 - `0001-lez-v0.2.4-indexer-ffi-rpc-serve.patch` — upstream
   logos-execution-zone, `lez/indexer/ffi` and `lez/indexer/service`:
   `indexer_rpc_serve(indexer, port)` serves `indexer_service`'s own JSON-RPC
@@ -72,14 +95,37 @@ wrap the wallet FFI's own key import.
   `open`/`create_new`, and the signer socket the Node's sidecars talk to is
   served by our own module, which asks lez_core for each signature.
 
+## logos-chat-module (github.com/logos-co/logos-chat-module)
+
+Why: chat_module creates the Delivery node itself, from a preset name only
+(`start_delivery_bootstrap`: `{mode: Core, preset, messagingOverrides:
+{logLevel}}`), so its user can join only a public fleet (`logos.test`,
+`logos.dev`). On that fleet a take's Chat rounds were lost or arrived minutes
+late (deploy/README.md, "Two transports"); two parties' Basecamps need a
+Delivery network of their own: a private cluster id, a listen address, the
+other party's node as entry node.
+
+- `0001-chat-module-delivery-config.patch` — `ChatConfig.delivery_config`:
+  delivery_module's whole `createNode` JSON, used as it is in place of the
+  preset's; absent or empty, nothing changes. The desks' Logos Chat bridge
+  passes `LEZ_LOGOS_DELIVERY_CONFIG` (compose.logos.yaml). `from-scratch.sh
+  --only nix` fetches the pinned commit (apps/basecamp/flake.lock) into a
+  scratch copy, applies this and builds the module's own `lgx-portable`.
+  Upstream should instead let the host own Delivery's lifecycle, as their own
+  TODO in `start_delivery_bootstrap` says: chat_module would use a node the
+  host configured and started.
+
 Our own module (`modules/lez-swap-node`: launches and supervises a role's Node
 inside Basecamp and serves that role's signer socket) is not an upstream patch.
 
 | patch | lines | applies to | upstream state |
 |---|---|---|---|
+| lez-v0.2.4/0001 sequencer-bound-wal | 40 | logos-execution-zone `47eba256` | not yet offered |
+| lez-indexer-module/0001 indexer-bound-wal | 28 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | lez-indexer-module/0001 breakpoint-interval | 13 | logos-execution-zone `9edf4a622fe9` | not offered (upstream: make the interval configurable) |
 | lez-indexer-module/0001 ffi-rpc-serve | 177 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | lez-indexer-module/0002 | 52 | lez-indexer-module `5033da442a7f` | not yet offered |
 | logos-execution-zone-module/0001 wallet-ffi-sign | 120 | logos-execution-zone `9edf4a622fe9` | not yet offered (related: logos-execution-zone-module#73, message signing) |
 | logos-execution-zone-module/0001 darwin-metal-toolchain | 35 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | logos-execution-zone-module/0002 | 111 | logos-execution-zone-module `acf0cd501b26` | not yet offered |
+| logos-chat-module/0001 delivery-config | 66 | logos-chat-module `dfe8ccf3eff3` | not yet offered (upstream: the host owns Delivery's lifecycle); draft issue with the `logos.test` measurements: [logos-chat-delivery-report.md](../../../docs/upstream/logos-chat-delivery-report.md) |

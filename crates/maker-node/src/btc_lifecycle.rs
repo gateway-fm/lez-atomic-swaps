@@ -119,7 +119,9 @@ impl BtcMakerLifecycle {
                         let Ok(reservation_id) = RequestId::new(name.to_owned()) else {
                             continue;
                         };
-                        let layout = lifecycle_for_pass.layout(&reservation_id);
+                        let Ok(layout) = lifecycle_for_pass.layout(&reservation_id) else {
+                            continue;
+                        };
                         if let Err(error) = SwapSidecar::ensure(
                             &lifecycle_for_pass.runtime,
                             &layout,
@@ -183,7 +185,10 @@ impl BtcMakerLifecycle {
             else {
                 continue;
             };
-            let Ok(record) = ReservationRecordV1::load(&self.layout(&reservation_id)) else {
+            let Ok(record) = self
+                .layout(&reservation_id)
+                .and_then(|layout| ReservationRecordV1::load(&layout))
+            else {
                 continue;
             };
             if !reservation_may_hold_escrow_slot(
@@ -232,7 +237,9 @@ impl BtcMakerLifecycle {
             let Ok(reservation_id) = RequestId::new(name.to_owned()) else {
                 continue;
             };
-            let layout = self.layout(&reservation_id);
+            let Ok(layout) = self.layout(&reservation_id) else {
+                continue;
+            };
             let Ok((agreement, _)) = load_bound_agreement(&layout) else {
                 continue;
             };
@@ -285,7 +292,9 @@ impl BtcMakerLifecycle {
         Ok(())
     }
 
-    pub(super) fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
+    /// The reservation's swap directory, one checked name under the swaps
+    /// root (defence in depth: the id is already validated by its type).
+    pub(super) fn layout(&self, reservation_id: &RequestId) -> anyhow::Result<SwapLayout> {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
     }
 
@@ -304,7 +313,7 @@ impl BtcMakerLifecycle {
             .ok()?
             .flatten()
             .filter_map(|entry| RequestId::new(entry.file_name().to_str()?).ok())
-            .map(|reservation_id| SwapLayout::new(swaps_root, &reservation_id))
+            .filter_map(|reservation_id| SwapLayout::new(swaps_root, &reservation_id).ok())
             .filter(|layout| {
                 ReservationRecordV1::load(layout)
                     .is_ok_and(|record| hex::encode(record.swap_id) == swap_id.as_str())
@@ -315,7 +324,7 @@ impl BtcMakerLifecycle {
 
     /// The reservation's Maker contribution, if the reservation exists.
     pub(super) fn contribution_wire(&self, reservation_id: &RequestId) -> Option<Vec<u8>> {
-        let layout = self.layout(reservation_id);
+        let layout = self.layout(reservation_id).ok()?;
         layout.exists().then(|| {
             read_private(
                 &layout.role_root().contribution_file(),
@@ -333,7 +342,7 @@ impl BtcMakerLifecycle {
         final_agreement_wire: &[u8],
         accepted_at_unix_seconds: u64,
     ) -> anyhow::Result<u64> {
-        let layout = self.layout(reservation_id);
+        let layout = self.layout(reservation_id)?;
         ensure!(layout.exists(), "unknown BTC reservation");
         let binding = persist_and_bind_countersigned_agreement(
             layout.role_root().root(),
@@ -356,7 +365,7 @@ impl BtcMakerLifecycle {
         reservation_id: &RequestId,
         draft: &BtcAgreementDraftV1,
     ) -> anyhow::Result<()> {
-        let layout = self.layout(reservation_id);
+        let layout = self.layout(reservation_id)?;
         let record = ReservationRecordV1::load(&layout)?;
         let body = draft.body();
         ensure!(
@@ -667,12 +676,18 @@ pub(super) async fn reserve(
     {
         return Err(invalid_request("unsupported or empty BTC reservation"));
     }
+    // The id names the swap directory; decoding already refused any other.
+    if !request.reservation_id.is_reservation_id() {
+        return Err(invalid_request("the BTC reservation id is not path-safe"));
+    }
     let lifecycle = context
         .btc_lifecycle
         .as_ref()
         .ok_or_else(|| invalid_request("maker BTC lifecycle is unavailable"))?;
     let _serial = lifecycle.rounds.lock().await;
-    let layout = lifecycle.layout(&request.reservation_id);
+    let layout = lifecycle
+        .layout(&request.reservation_id)
+        .map_err(invalid_request)?;
     let digest = request_digest(&request)?;
     if layout.exists() {
         if let Some(response) = replay::<BtcReserveResponseV1>(&layout, "reserve", digest)? {
@@ -912,7 +927,9 @@ pub(super) async fn ceremony_reserve(
         .as_ref()
         .ok_or_else(|| invalid_request("maker BTC lifecycle is unavailable"))?;
     let _serial = lifecycle.rounds.lock().await;
-    let layout = lifecycle.layout(&request.reservation_id);
+    let layout = lifecycle
+        .layout(&request.reservation_id)
+        .map_err(invalid_request)?;
     if !layout.exists() {
         return Err(invalid_request("unknown BTC reservation"));
     }
@@ -1028,7 +1045,9 @@ pub(super) async fn ceremony_nonce(
         .as_ref()
         .ok_or_else(|| invalid_request("maker BTC lifecycle is unavailable"))?;
     let _serial = lifecycle.rounds.lock().await;
-    let layout = lifecycle.layout(&request.reservation_id);
+    let layout = lifecycle
+        .layout(&request.reservation_id)
+        .map_err(invalid_request)?;
     if !layout.exists() {
         return Err(invalid_request("unknown BTC reservation"));
     }
@@ -1074,7 +1093,9 @@ pub(super) async fn ceremony_partial(
         .as_ref()
         .ok_or_else(|| invalid_request("maker BTC lifecycle is unavailable"))?;
     let _serial = lifecycle.rounds.lock().await;
-    let layout = lifecycle.layout(&request.reservation_id);
+    let layout = lifecycle
+        .layout(&request.reservation_id)
+        .map_err(invalid_request)?;
     if !layout.exists() {
         return Err(invalid_request("unknown BTC reservation"));
     }

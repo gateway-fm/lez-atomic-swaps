@@ -31,9 +31,9 @@ use lez_btc_swap_sdk::{
 };
 use lez_swap_core::{Participant, SwapDirection};
 use lez_swap_store::{
-    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
-    AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, SecretNonceBytes,
-    SqliteAdaptorSessionJournal,
+    AdaptorNonceCommitment, AdaptorNonceSealingKey, AdaptorPartialSignature, AdaptorPresignature,
+    AdaptorPublicNonce, AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole,
+    SecretNonceBytes, SqliteAdaptorSessionJournal,
 };
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -525,12 +525,15 @@ fn seed_signing_journal(
     );
     let mut journal = SqliteAdaptorSessionJournal::open(journal_path).unwrap();
     let _ = journal
-        .reserve(AdaptorSessionReservation::new(
-            identity.clone(),
-            SecretNonceBytes::new(*actors.local_nonce.secret_nonce()),
-            AdaptorPublicNonce::new(actors.local_nonce.public_nonce()),
-            AdaptorNonceCommitment::new(actors.local_nonce.commitment()),
-        ))
+        .reserve(
+            AdaptorSessionReservation::new(
+                identity.clone(),
+                SecretNonceBytes::new(*actors.local_nonce.secret_nonce()),
+                AdaptorPublicNonce::new(actors.local_nonce.public_nonce()),
+                AdaptorNonceCommitment::new(actors.local_nonce.commitment()),
+            ),
+            &AdaptorNonceSealingKey::derive(&actors.local_secret),
+        )
         .unwrap();
     let _ = journal
         .record_peer_commitment(
@@ -601,23 +604,27 @@ fn complete_signing_journal(
     actors: &SigningActors<'_>,
 ) {
     let own_partial = journal
-        .sign_and_persist_partial(identity, |material| {
-            sign_persisted_adaptor_partial(
-                context,
-                actors.local_role,
-                actors.local_secret,
-                PersistedAdaptorSigningMaterial::new(
-                    *material.identity().signing_domain(),
-                    material.secret_nonce(),
-                    *material.own_public_nonce().bytes(),
-                    actors.local_nonce.commitment(),
-                    actors.peer_nonce.commitment(),
-                    *material.peer_public_nonce().bytes(),
-                ),
-            )
-            .map(AdaptorPartialSignature::new)
-            .map_err(|_| ())
-        })
+        .sign_and_persist_partial(
+            identity,
+            &AdaptorNonceSealingKey::derive(&actors.local_secret),
+            |material| {
+                sign_persisted_adaptor_partial(
+                    context,
+                    actors.local_role,
+                    actors.local_secret,
+                    PersistedAdaptorSigningMaterial::new(
+                        *material.identity().signing_domain(),
+                        material.secret_nonce(),
+                        *material.own_public_nonce().bytes(),
+                        actors.local_nonce.commitment(),
+                        actors.peer_nonce.commitment(),
+                        *material.peer_public_nonce().bytes(),
+                    ),
+                )
+                .map(AdaptorPartialSignature::new)
+                .map_err(|_| ())
+            },
+        )
         .unwrap()
         .partial();
     let peer_partial = sign_persisted_adaptor_partial(

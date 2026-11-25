@@ -1,0 +1,37 @@
+[04:04:01] === zec-maker-refund (stamp 1795575841)
+[04:04:01] preflight: indexer historical reads
+[04:04:01]   indexer serves historical reads at the tip (993)
+[04:04:01] preflight: LEZ finality check waived by request
+[04:04:02]   Maker CLI published offer-e2e-zectt-1795575841 on its running Node (no corridor)
+[04:04:03]   Taker took offer-e2e-zectt-1795575841: swap zec-82db652d (not_activated)
+[04:04:03]   take-time agreement: Maker funds 5f809d9835505f0c…:0, Zcash anchor 848, refund height 864
+[04:04:03]   receipt: swap zec-82db652d25066a8e3ef1503f718399e04dceefa06150bc72d8bcb1f19826fa9a, actor config /var/lib/lez/taker/btc/swaps/a9e4492387f3b01c91ae4b9341098097c7a159a8f5245f5cc35d1dbc0333dc50/zec-actor/taker/actor-config.json
+[04:04:03]   [0 s] waiting for the Taker actor of zec-82db652d to reach phase awaiting_maker_confirmations/both_legs_locked (Taker LEZ lock → Maker Zcash funding): taker not_activated | actor at - | maker leased | zebra 847 | LEZ finalized 976, tip 982 (6 unfinalized) [heartbeat]
+[04:04:06]   [3 s] waiting for the Taker actor of zec-82db652d to reach phase awaiting_maker_confirmations/both_legs_locked (Taker LEZ lock → Maker Zcash funding): taker awaiting_first_lock | actor at offered | maker offered | zebra 847 | LEZ finalized 996, tip 999 (3 unfinalized) [heartbeat]
+[04:04:22]   [19 s] waiting for the Taker actor of zec-82db652d to reach phase awaiting_maker_confirmations/both_legs_locked (Taker LEZ lock → Maker Zcash funding): taker refund_available | actor at taker_lock_confirmed | maker offered | zebra 847 | LEZ finalized 996, tip 999 (3 unfinalized) [heartbeat]
+[04:04:29]   zebra: mined 1 block(s) → height 848 (mempool had ['fac1d05fff28'])
+[04:04:32]   [28 s] waiting for the Taker actor of zec-82db652d to reach phase awaiting_maker_confirmations/both_legs_locked (Taker LEZ lock → Maker Zcash funding): taker claim_available | actor at both_legs_locked | maker both_legs_locked | zebra 848 | LEZ finalized 1012, tip 1015 (3 unfinalized) [heartbeat]
+[04:04:32]   Maker's Zcash funding fac1d05fff283ed6d8b714e4a9d747a299a8efd9c7c61b31009bea3500a357aa is in zebra block 848; the Taker never claims
+[04:04:32]   mining zebra to the agreement's refund height now: the Maker's Zcash refund is the earlier one
+[04:04:32]   zebra: mined 16 block(s) → height 864 (Zcash refund height)
+[04:04:32]   [0 s] waiting for the Maker's Zcash refund of zec-82db652d in a block: maker both_legs_locked, refund not in a block | zebra 864 | LEZ finalized 1012, tip 1015 (3 unfinalized) [heartbeat]
+[04:04:37]   zebra: mined 1 block(s) → height 865 (mempool had ['cb83b18ca89e'])
+[04:04:37]   [5 s] waiting for the Maker's Zcash refund of zec-82db652d in a block: maker both_legs_locked, refund in a block | zebra 865 | LEZ finalized 1012, tip 1015 (3 unfinalized) [heartbeat]
+[04:04:53]   Maker's Zcash refund cb83b18ca89ec44ed2075f9d2db35fe7682cbdf4da59787c4614ee19e7b5118a is in zebra block 865 (maker_leg_refunded), 308 s before the claim window closes
+[04:04:53]   the Maker's Zcash refund landed before the LEZ refund time
+[04:04:53]   waiting 443s for the agreement's LEZ refund time (the profile's delay after provisioning)
+[04:04:53]   [0 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1026, tip 1032 (6 unfinalized) [heartbeat]
+[04:05:53]   [60 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1077, tip 1083 (6 unfinalized) [heartbeat]
+[04:06:53]   [120 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1111, tip 1117 (6 unfinalized) [heartbeat]
+[04:07:53]   [180 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1161, tip 1168 (7 unfinalized) [heartbeat]
+[04:08:53]   [240 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1213, tip 1218 (5 unfinalized) [heartbeat]
+[04:09:53]   [300 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1264, tip 1269 (5 unfinalized) [heartbeat]
+[04:10:53]   [360 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1312, tip 1320 (8 unfinalized) [heartbeat]
+[04:11:53]   [420 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1363, tip 1371 (8 unfinalized) [heartbeat]
+[04:12:17]   [0 s] waiting for the Taker's refund of zec-82db652d to reach refunded: taker refund_available (generation 2) | maker maker_leg_refunded | LEZ finalized 1385, tip 1388 (3 unfinalized) [heartbeat]
+[04:12:19]   refund request admitted (attempt 1, taker refund_available | maker: maker_leg_refunded)
+[04:12:24]   [7 s] waiting for the Taker's refund of zec-82db652d to reach refunded: taker refund_in_progress (generation 2) | maker maker_leg_refunded | LEZ finalized 1385, tip 1388 (3 unfinalized) [heartbeat]
+[04:12:36]   [19 s] waiting for the Taker's refund of zec-82db652d to reach refunded: taker refunded (generation 4) | maker refunded | LEZ finalized 1399, tip 1404 (5 unfinalized) [heartbeat]
+[04:12:36]   the Taker refunded its LEZ escrow; Taker ended refunded
+[04:12:36]   [0 s] waiting for the Maker's zec-82db652d to reach a terminal state (observing the Taker's LEZ refund): maker refunded (schedule terminal) | LEZ finalized 1399, tip 1404 (5 unfinalized) [heartbeat]
+[04:12:36] === zec-maker-refund: passed in 515s

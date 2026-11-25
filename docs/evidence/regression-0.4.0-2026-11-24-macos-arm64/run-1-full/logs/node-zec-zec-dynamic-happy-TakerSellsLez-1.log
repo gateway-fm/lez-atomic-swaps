@@ -1,0 +1,31 @@
+[03:25:18] === zec-dynamic-happy (stamp 179557351802)
+[03:25:18] preflight: indexer historical reads
+[03:25:19]   indexer serves historical reads at the tip (12359)
+[03:25:19] preflight: LEZ finality check waived by request
+[03:25:19]   Maker CLI published offer-e2e-zecdyn-179557351802 on its running Node (no corridor)
+[03:25:20]   lez-taker-cli swap take: exit 0 after 1 s
+[03:25:20]   Taker took offer-e2e-zecdyn-179557351802: swap zec-9fa6024e (not_activated)
+[03:25:20]   take-time agreement: Maker funds c64ae52d12ed12b1…:0, Zcash anchor 653, refund height 669
+[03:25:20]   receipt: swap zec-9fa6024e123060b5b76a5be7db757471275ae4ae9ecebbe19244132b06aa3011, actor config /var/lib/lez/taker/btc/swaps/876611e77aa65e64fdbdc97ec827aa9db2a2fcc6bc84dcf1ededea5e91d019ad/zec-actor/taker/actor-config.json
+[03:25:21]   [0 s] waiting for the Taker's zec-9fa6024e to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 652 | LEZ finalized 12348, tip 12354 (6 unfinalized) [heartbeat]
+[03:25:24]   [3 s] waiting for the Taker's zec-9fa6024e to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 652 | LEZ finalized 12348, tip 12354 (6 unfinalized) [heartbeat]
+[03:25:40]   [19 s] waiting for the Taker's zec-9fa6024e to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 652 | LEZ finalized 12367, tip 12370 (3 unfinalized) [heartbeat]
+[03:25:46]   zebra: mined 1 block(s) → height 653 (mempool had ['1c6f32edbcb5'])
+[03:25:49]   [28 s] waiting for the Taker's zec-9fa6024e to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 653 | LEZ finalized 12382, tip 12386 (4 unfinalized) [heartbeat]
+[03:25:49]   zebra: mined 1 block(s) → height 654 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[03:25:49]   Maker's Zcash funding 1c6f32edbcb538bedd36bedb482dc2053d2d9fe89670cc837cb2f09368e6292c is in zebra block 653
+[03:25:50]   lez-taker-cli swap claim: exit 0 after 0 s
+[03:25:50]   Taker claimed Zcash (replay=False)
+[03:25:50]   [0 s] waiting for the Taker's zec-9fa6024e to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 654 | LEZ finalized 12382, tip 12386 (4 unfinalized) [heartbeat]
+[03:25:50]   zebra: mined 1 block(s) → height 655 (mempool had ['dbb0a9fb99d0'])
+[03:25:53]   [3 s] waiting for the Taker's zec-9fa6024e to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 655 | LEZ finalized 12382, tip 12386 (4 unfinalized) [heartbeat]
+[03:25:59]   [9 s] waiting for the Taker's zec-9fa6024e to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 655 | LEZ finalized 12382, tip 12386 (4 unfinalized) [heartbeat]
+[03:26:00]   Taker's Zcash claim dbb0a9fb99d0a163ad49990138d97f6d134ee37c69d51a89343571e9f275f534 is in zebra block 655
+[03:26:00]   the Maker's actor submitted ['lez_followup_claim']
+[03:26:00]   [0 s] waiting for the Taker's zec-9fa6024e to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 12382, tip 12386 (4 unfinalized) [heartbeat]
+[03:26:00]   both Nodes report zec-9fa6024e completed
+[03:26:00]   restarting the Maker Node after the completed swap (claim-journal revalidation)
+[03:26:07]   Maker restarted and still reports the swap completed
+[03:26:07]   zec-9fa6024e: the Taker re-planned its LEZ lock 0 times
+[03:26:07]   Maker lock attempt count 2 (projected the Taker's lock 1 time(s); 18 supervisor attempts over the swap); Taker LEZ re-plan count 0
+[03:26:07] === zec-dynamic-happy: passed in 49s

@@ -1,0 +1,60 @@
+{
+  "scenario": "zec-activate-after-expiry",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179556797802",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-c0e8c117108f346438bc34279d635c042422154fbb0bb04d9b4dc77570f10dd6",
+  "offer_id": "offer-e2e-zecexp-179556797802",
+  "offer_ttl_seconds": 60,
+  "published_at": 1795567979,
+  "taken_at": 1795567979,
+  "maker_stopped_at": 1795567983,
+  "offer_expired_at": 1795568039,
+  "maker_restarted_at": 1795568057,
+  "maker_activated_at": 1795568067,
+  "lez_balances_before": {
+    "maker": 2551000,
+    "taker": 1449001
+  },
+  "corridor": "take-time-1795567979",
+  "profile": "deterministic-local-devnet-v7",
+  "maker_restart_after_completion": "completed",
+  "maker_funding_attempt_count": 2,
+  "maker_taker_lock_projections": 1,
+  "taker_lez_replans": [],
+  "zcash_funding": {
+    "transaction_id": "ce4d528406bf1c339e25656b285833224eb24ee86c55229b4d1744c7b39f3994",
+    "height": 117
+  },
+  "zcash_claim": {
+    "transaction_id": "70d55b5422f7418bf5b0686f837970785001e385c436cf28f55201c50f3c6e1a",
+    "height": 119
+  },
+  "maker_claim_operations": [
+    "lez_followup_claim"
+  ],
+  "zcash_refund_height": 133,
+  "result": "passed",
+  "seconds": 111
+}

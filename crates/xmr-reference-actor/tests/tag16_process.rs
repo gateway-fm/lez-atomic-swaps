@@ -33,8 +33,8 @@ use lez_bridge_protocol::{
     SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
 use lez_swap_store::{
-    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
-    AdaptorSessionReservation, SecretNonceBytes, SqliteAdaptorSessionJournal,
+    AdaptorNonceCommitment, AdaptorNonceSealingKey, AdaptorPartialSignature, AdaptorPresignature,
+    AdaptorPublicNonce, AdaptorSessionReservation, SecretNonceBytes, SqliteAdaptorSessionJournal,
 };
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
@@ -298,39 +298,40 @@ async fn spawn_wallet_with_pool(
         })
         .expect("register refresh");
     module
-        .register_method("get_balance", |_params, fixture, _| {
+        .register_method("incoming_transfers", |_params, fixture, _| {
             fixture
                 .calls
                 .lock()
                 .expect("wallet calls")
-                .push("get_balance".to_owned());
+                .push("incoming_transfers".to_owned());
             json_value(serde_json::json!({
-                "balance": fixture.amount_piconero,
-                "unlocked_balance": fixture.amount_piconero,
-                "multisig_import_needed": false,
-                "per_subaddress": []
+                "transfers": [{
+                    "amount": fixture.amount_piconero,
+                    "block_height": 100,
+                    "global_index": 1,
+                    "key_image": "66".repeat(32),
+                    "spent": false,
+                    "subaddr_index": {"major": 0, "minor": 0},
+                    "tx_hash": "55".repeat(32),
+                    "tx_size": 1_500
+                }]
             }))
         })
-        .expect("register get_balance");
+        .expect("register incoming_transfers");
     module
-        .register_method("sweep_all", |_params, fixture, _| {
+        .register_method("sweep_single", |_params, fixture, _| {
             fixture
                 .calls
                 .lock()
                 .expect("wallet calls")
-                .push("sweep_all".to_owned());
+                .push("sweep_single".to_owned());
             json_value(serde_json::json!({
-                "tx_hash_list": ["77".repeat(32)],
-                "tx_key_list": null,
-                "amount_list": [fixture.amount_piconero - 2_000_000_000],
-                "fee_list": [2_000_000_000_u64],
-                "tx_blob_list": null,
-                "tx_metadata_list": null,
-                "multisig_txset": "",
-                "unsigned_txset": ""
+                "tx_hash": "77".repeat(32),
+                "amount": fixture.amount_piconero - 2_000_000_000,
+                "fee": 2_000_000_000_u64
             }))
         })
-        .expect("register sweep_all");
+        .expect("register sweep_single");
     let handle = server.start(module);
     MockWallet {
         endpoint: format!("http://{address}"),
@@ -689,12 +690,15 @@ fn taker_refund_journal(stage: &StageFixture, path: &Path, presignature: [u8; 65
     let transcript = stage.activation.body().refund_transcript();
     let mut journal = SqliteAdaptorSessionJournal::open(path).expect("create Taker journal");
     let _ = journal
-        .reserve(AdaptorSessionReservation::new(
-            identity.clone(),
-            SecretNonceBytes::new([0x91; 97]),
-            AdaptorPublicNonce::new(transcript.taker_public_nonce()),
-            AdaptorNonceCommitment::new(transcript.taker_nonce_commitment()),
-        ))
+        .reserve(
+            AdaptorSessionReservation::new(
+                identity.clone(),
+                SecretNonceBytes::new([0x91; 97]),
+                AdaptorPublicNonce::new(transcript.taker_public_nonce()),
+                AdaptorNonceCommitment::new(transcript.taker_nonce_commitment()),
+            ),
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+        )
         .expect("reserve exact Taker refund transcript");
     let _ = journal
         .record_peer_commitment(
@@ -709,11 +713,15 @@ fn taker_refund_journal(stage: &StageFixture, path: &Path, presignature: [u8; 65
         )
         .expect("record Maker nonce");
     let _ = journal
-        .sign_and_persist_partial(&identity, |_| {
-            Ok(AdaptorPartialSignature::new(
-                stage.activation.body().taker_refund_partial(),
-            ))
-        })
+        .sign_and_persist_partial(
+            &identity,
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+            |_| {
+                Ok(AdaptorPartialSignature::new(
+                    stage.activation.body().taker_refund_partial(),
+                ))
+            },
+        )
         .expect("persist exact Taker partial");
     let _ = journal
         .record_verified_peer_partial(
@@ -739,12 +747,15 @@ fn maker_refund_journal(stage: &StageFixture, path: &Path) {
     let transcript = stage.activation.body().refund_transcript();
     let mut journal = SqliteAdaptorSessionJournal::open(path).expect("create Maker journal");
     let _ = journal
-        .reserve(AdaptorSessionReservation::new(
-            identity.clone(),
-            SecretNonceBytes::new([0x92; 97]),
-            AdaptorPublicNonce::new(transcript.maker_public_nonce()),
-            AdaptorNonceCommitment::new(transcript.maker_nonce_commitment()),
-        ))
+        .reserve(
+            AdaptorSessionReservation::new(
+                identity.clone(),
+                SecretNonceBytes::new([0x92; 97]),
+                AdaptorPublicNonce::new(transcript.maker_public_nonce()),
+                AdaptorNonceCommitment::new(transcript.maker_nonce_commitment()),
+            ),
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+        )
         .expect("reserve exact Maker refund transcript");
     let _ = journal
         .record_peer_commitment(
@@ -759,11 +770,15 @@ fn maker_refund_journal(stage: &StageFixture, path: &Path) {
         )
         .expect("record Taker nonce");
     let _ = journal
-        .sign_and_persist_partial(&identity, |_| {
-            Ok(AdaptorPartialSignature::new(
-                stage.activation.body().maker_refund_partial(),
-            ))
-        })
+        .sign_and_persist_partial(
+            &identity,
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+            |_| {
+                Ok(AdaptorPartialSignature::new(
+                    stage.activation.body().maker_refund_partial(),
+                ))
+            },
+        )
         .expect("persist exact Maker partial");
     let _ = journal
         .record_verified_peer_partial(
@@ -1395,8 +1410,8 @@ async fn sealed_maker_refund_reconstructs_and_submits_once_without_mining_or_fin
             "close_wallet",
             "generate_from_keys",
             "refresh",
-            "get_balance",
-            "sweep_all"
+            "incoming_transfers",
+            "sweep_single"
         ]
     );
     let report: Value = serde_json::from_slice(&fs::read(evidence).expect("refund evidence"))

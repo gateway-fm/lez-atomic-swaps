@@ -1,0 +1,186 @@
+[22:57:01] === xmr-kill-maker (stamp 179555742102)
+[22:57:01] preflight: indexer historical reads
+[22:57:03]   indexer serves historical reads at the tip (158)
+[22:57:03] preflight: LEZ finality check waived by request
+[22:57:03]   maker test hook hold-claim-preparations: cleared
+[22:57:04]   maker test hook hold-claim-submissions: cleared
+[22:57:52]   [monero 21:57:48] taker: created its wallet
+[22:58:39]   [monero 21:58:37] maker: created its wallet
+[22:59:35]   [monero 21:59:03] funding: created its wallet
+[22:59:35]   [monero 21:59:16] mined 100 block(s) in 13.1 s → height 100 (coinbase unlocks after 60 blocks; a transfer's ring takes 15 unlocked decoys)
+[22:59:35]   [monero 21:59:25] funding → maker 10 XMR in 81742e11b91c015f2e0e728df604a510778462355cbdd3d96c44dbaef77b8a36 (fee 2599200000 piconero)
+[22:59:35]   [monero 21:59:27] mined 10 block(s) in 1.5 s → height 110 (the agreement's ten confirmations)
+[22:59:35]   [monero 21:59:35] maker sees it 9.9 s after the transfer: 10 confirmation(s), locked False
+[22:59:35]   funded the Maker's Monero wallet: 81742e11b91c015f…, 10.000 XMR unlocked
+[22:59:58]   Maker CLI published offer-e2e-xmr-179555742102k00 on its running Node
+[23:00:13]   Taker took offer-e2e-xmr-179555742102k00: swap 9b804f069fbe (not_activated)
+[23:00:13]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:00:13]   kill point 'after the take': taker awaiting_first_lock (actor lez_locking), maker leased
+[23:00:13]   killing lez-l2-maker-node with SIGKILL
+[23:00:14]   lez-l2-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:00:25]   [0 s] waiting for the Taker's 9b804f069fbe to complete (kill point after the take): taker awaiting_first_lock (actor lez_locking) | maker offered | LEZ finalized 221, tip 223 (2 unfinalized) [heartbeat]
+[23:00:35]   [10 s] waiting for the Taker's 9b804f069fbe to complete (kill point after the take): taker awaiting_second_lock (actor taker_lock_confirmed) | maker taker_lock_confirmed | LEZ finalized 233, tip 235 (2 unfinalized) [heartbeat]
+[23:00:48]   Taker claimed Monero on 9b804f069fbe
+[23:00:48]   [22 s] waiting for the Taker's 9b804f069fbe to complete (kill point after the take): taker claim_available (actor both_legs_locked) | maker taker_lock_confirmed | LEZ finalized 233, tip 235 (2 unfinalized) [heartbeat]
+[23:01:06]   [41 s] waiting for the Taker's 9b804f069fbe to complete (kill point after the take): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 245, tip 247 (2 unfinalized) [heartbeat]
+[23:01:20]   [55 s] waiting for the Taker's 9b804f069fbe to complete (kill point after the take): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 258, tip 261 (3 unfinalized) [heartbeat]
+[23:01:29]   [64 s] waiting for the Taker's 9b804f069fbe to complete (kill point after the take): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 258, tip 261 (3 unfinalized) [heartbeat]
+[23:02:12]   [0 s] waiting for the Taker's 9b804f069fbe to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 288, tip 291 (3 unfinalized) [heartbeat]
+[23:02:13]   both Nodes report 9b804f069fbe completed
+[23:02:13]   [0 s] waiting for LEZ finality to reach block 304 (the swap's last LEZ transaction): LEZ finalized 288, tip 291 (3 unfinalized) [heartbeat] | LEZ finalized 288, tip 291 (3 unfinalized) [heartbeat]
+[23:02:17]   LEZ is final through block 304 after 4s
+[23:02:17]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[23:02:21]   the Taker's Monero wallet received [('816606bb923cbc1d', 0.9981916)] during the swap (lot 1 XMR)
+[23:02:21]   LEZ transactions signed by the owner accounts: {'maker': 0, 'taker': 3}; Monero: [('maker_funding', 1), ('taker_sweep', 1)]
+[23:02:29]   the Maker's Monero wallet holds 8.998 XMR unlocked
+[23:02:47]   Maker CLI published offer-e2e-xmr-179555742102k10 on its running Node
+[23:02:58]   Taker took offer-e2e-xmr-179555742102k10: swap 317d0ad212f9 (not_activated)
+[23:02:58]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:02:59]   [0 s] waiting for the Taker's 317d0ad212f9 to complete (kill point lock observed): taker awaiting_first_lock (actor lez_locking) | maker leased | LEZ finalized 321, tip 323 (2 unfinalized) [heartbeat]
+[23:03:02]   [3 s] waiting for the Taker's 317d0ad212f9 to complete (kill point lock observed): taker awaiting_first_lock (actor lez_locking) | maker offered | LEZ finalized 336, tip 339 (3 unfinalized) [heartbeat]
+[23:03:12]   kill point 'lock observed': taker awaiting_second_lock (actor taker_lock_confirmed), maker taker_lock_confirmed
+[23:03:12]   killing lez-l2-maker-node with SIGKILL
+[23:03:12]   lez-l2-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:03:33]   [34 s] waiting for the Taker's 317d0ad212f9 to complete (kill point lock observed): taker awaiting_second_lock (actor taker_lock_confirmed) | maker taker_lock_confirmed | LEZ finalized 352, tip 354 (2 unfinalized) [heartbeat]
+[23:03:48]   Taker claimed Monero on 317d0ad212f9
+[23:03:48]   [49 s] waiting for the Taker's 317d0ad212f9 to complete (kill point lock observed): taker claim_available (actor both_legs_locked) | maker both_legs_locked | LEZ finalized 367, tip 370 (3 unfinalized) [heartbeat]
+[23:04:00]   [61 s] waiting for the Taker's 317d0ad212f9 to complete (kill point lock observed): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 367, tip 370 (3 unfinalized) [heartbeat]
+[23:04:15]   [76 s] waiting for the Taker's 317d0ad212f9 to complete (kill point lock observed): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 382, tip 386 (4 unfinalized) [heartbeat]
+[23:04:19]   [80 s] waiting for the Taker's 317d0ad212f9 to complete (kill point lock observed): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 382, tip 386 (4 unfinalized) [heartbeat]
+[23:05:06]   [0 s] waiting for the Taker's 317d0ad212f9 to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 414, tip 418 (4 unfinalized) [heartbeat]
+[23:05:06]   both Nodes report 317d0ad212f9 completed
+[23:05:06]   [0 s] waiting for LEZ finality to reach block 431 (the swap's last LEZ transaction): LEZ finalized 414, tip 418 (4 unfinalized) [heartbeat] | LEZ finalized 414, tip 418 (4 unfinalized) [heartbeat]
+[23:05:08]   [2 s] waiting for LEZ finality to reach block 431 (the swap's last LEZ transaction): LEZ finalized 428, tip 432 (4 unfinalized) [heartbeat] | LEZ finalized 428, tip 432 (4 unfinalized) [heartbeat]
+[23:05:30]   LEZ is final through block 431 after 24s
+[23:05:30]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[23:05:35]   the Taker's Monero wallet received [('2fc61e95ea15701a', 0.9981916)] during the swap (lot 1 XMR)
+[23:05:35]   LEZ transactions signed by the owner accounts: {'maker': 0, 'taker': 3}; Monero: [('maker_funding', 1), ('taker_sweep', 1)]
+[23:05:43]   the Maker's Monero wallet holds 7.996 XMR unlocked
+[23:06:00]   Maker CLI published offer-e2e-xmr-179555742102k20 on its running Node
+[23:06:12]   Taker took offer-e2e-xmr-179555742102k20: swap 1ba7a3f1307b (not_activated)
+[23:06:12]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:06:12]   [0 s] waiting for the Taker's 1ba7a3f1307b to complete (kill point funding in flight): taker awaiting_first_lock (actor lez_locking) | maker leased | LEZ finalized 476, tip 482 (6 unfinalized) [heartbeat]
+[23:06:15]   [2 s] waiting for the Taker's 1ba7a3f1307b to complete (kill point funding in flight): taker awaiting_first_lock (actor lez_locking) | maker offered | LEZ finalized 476, tip 482 (6 unfinalized) [heartbeat]
+[23:06:33]   [21 s] waiting for the Taker's 1ba7a3f1307b to complete (kill point funding in flight): taker awaiting_second_lock (actor taker_lock_confirmed) | maker offered | LEZ finalized 495, tip 498 (3 unfinalized) [heartbeat]
+[23:06:34]   [21 s] waiting for the Taker's 1ba7a3f1307b to complete (kill point funding in flight): taker awaiting_second_lock (actor taker_lock_confirmed) | maker taker_lock_confirmed | LEZ finalized 495, tip 498 (3 unfinalized) [heartbeat]
+[23:06:54]   kill point 'funding in flight': taker claim_available (actor both_legs_locked), maker taker_lock_confirmed
+[23:06:54]   killing lez-l2-maker-node with SIGKILL
+[23:06:54]   lez-l2-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:07:04]   Taker claimed Monero on 1ba7a3f1307b
+[23:07:04]   [51 s] waiting for the Taker's 1ba7a3f1307b to complete (kill point funding in flight): taker claim_available (actor both_legs_locked) | maker taker_lock_confirmed | LEZ finalized 509, tip 514 (5 unfinalized) [heartbeat]
+[23:07:17]   [65 s] waiting for the Taker's 1ba7a3f1307b to complete (kill point funding in flight): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 524, tip 530 (6 unfinalized) [heartbeat]
+[23:07:30]   [78 s] waiting for the Taker's 1ba7a3f1307b to complete (kill point funding in flight): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 524, tip 530 (6 unfinalized) [heartbeat]
+[23:07:40]   [88 s] waiting for the Taker's 1ba7a3f1307b to complete (kill point funding in flight): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 540, tip 546 (6 unfinalized) [heartbeat]
+[23:08:29]   [0 s] waiting for the Taker's 1ba7a3f1307b to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 574, tip 580 (6 unfinalized) [heartbeat]
+[23:08:29]   both Nodes report 1ba7a3f1307b completed
+[23:08:29]   [0 s] waiting for LEZ finality to reach block 589 (the swap's last LEZ transaction): LEZ finalized 574, tip 580 (6 unfinalized) [heartbeat] | LEZ finalized 574, tip 580 (6 unfinalized) [heartbeat]
+[23:08:41]   LEZ is final through block 589 after 12s
+[23:08:42]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[23:08:47]   the Taker's Monero wallet received [('f2436579577b3c56', 0.9981916)] during the swap (lot 1 XMR)
+[23:08:47]   LEZ transactions signed by the owner accounts: {'maker': 0, 'taker': 3}; Monero: [('maker_funding', 1), ('taker_sweep', 1)]
+[23:08:55]   the Maker's Monero wallet holds 42.173 XMR unlocked
+[23:09:13]   Maker CLI published offer-e2e-xmr-179555742102k30 on its running Node
+[23:09:24]   Taker took offer-e2e-xmr-179555742102k30: swap b180ebdd2f1d (not_activated)
+[23:09:24]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:09:24]   [0 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker awaiting_first_lock (actor lez_locking) | maker leased | LEZ finalized 628, tip 631 (3 unfinalized) [heartbeat]
+[23:09:28]   [3 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker awaiting_first_lock (actor lez_locking) | maker offered | LEZ finalized 628, tip 631 (3 unfinalized) [heartbeat]
+[23:09:39]   [14 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker awaiting_first_lock (actor lez_locking) | maker taker_lock_confirmed | LEZ finalized 628, tip 631 (3 unfinalized) [heartbeat]
+[23:09:39]   [15 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker awaiting_second_lock (actor taker_lock_confirmed) | maker taker_lock_confirmed | LEZ finalized 628, tip 631 (3 unfinalized) [heartbeat]
+[23:09:54]   [30 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker claim_available (actor both_legs_locked) | maker taker_lock_confirmed | LEZ finalized 645, tip 648 (3 unfinalized) [heartbeat]
+[23:10:25]   kill point 'funded': taker claim_available (actor both_legs_locked), maker both_legs_locked
+[23:10:25]   killing lez-l2-maker-node with SIGKILL
+[23:10:25]   lez-l2-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:10:32]   Taker claimed Monero on b180ebdd2f1d
+[23:10:32]   [67 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker claim_available (actor both_legs_locked) | maker both_legs_locked | LEZ finalized 674, tip 679 (5 unfinalized) [heartbeat]
+[23:10:50]   [85 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 691, tip 694 (3 unfinalized) [heartbeat]
+[23:11:05]   [100 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 691, tip 694 (3 unfinalized) [heartbeat]
+[23:11:25]   [120 s] waiting for the Taker's b180ebdd2f1d to complete (kill point funded): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 702, tip 709 (7 unfinalized) [heartbeat]
+[23:12:13]   [0 s] waiting for the Taker's b180ebdd2f1d to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 736, tip 741 (5 unfinalized) [heartbeat]
+[23:12:13]   both Nodes report b180ebdd2f1d completed
+[23:12:13]   [0 s] waiting for LEZ finality to reach block 755 (the swap's last LEZ transaction): LEZ finalized 736, tip 741 (5 unfinalized) [heartbeat] | LEZ finalized 736, tip 741 (5 unfinalized) [heartbeat]
+[23:12:15]   [2 s] waiting for LEZ finality to reach block 755 (the swap's last LEZ transaction): LEZ finalized 752, tip 756 (4 unfinalized) [heartbeat] | LEZ finalized 752, tip 756 (4 unfinalized) [heartbeat]
+[23:12:37]   LEZ is final through block 755 after 24s
+[23:12:37]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[23:12:40]   the Taker's Monero wallet received [('217956a493c1b247', 0.9981916)] during the swap (lot 1 XMR)
+[23:12:40]   LEZ transactions signed by the owner accounts: {'maker': 0, 'taker': 3}; Monero: [('maker_funding', 1), ('taker_sweep', 1)]
+[23:12:50]   the Maker's Monero wallet holds 392.939 XMR unlocked
+[23:13:02]   Maker CLI published offer-e2e-xmr-179555742102k40 on its running Node
+[23:13:12]   Taker took offer-e2e-xmr-179555742102k40: swap 9b8b3856cd6b (not_activated)
+[23:13:12]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:13:13]   [0 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker awaiting_first_lock (actor lez_locking) | maker leased | LEZ finalized 778, tip 790 (12 unfinalized) [heartbeat]
+[23:13:15]   [2 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker awaiting_first_lock (actor lez_locking) | maker offered | LEZ finalized 778, tip 790 (12 unfinalized) [heartbeat]
+[23:13:31]   [18 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker awaiting_first_lock (actor lez_locking) | maker taker_lock_confirmed | LEZ finalized 804, tip 807 (3 unfinalized) [heartbeat]
+[23:13:33]   [20 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker awaiting_second_lock (actor taker_lock_confirmed) | maker taker_lock_confirmed | LEZ finalized 804, tip 807 (3 unfinalized) [heartbeat]
+[23:14:01]   Taker claimed Monero on 9b8b3856cd6b
+[23:14:01]   [48 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker claim_available (actor both_legs_locked) | maker both_legs_locked | LEZ finalized 815, tip 823 (8 unfinalized) [heartbeat]
+[23:14:02]   [49 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker claim_in_progress (actor both_legs_locked) | maker both_legs_locked | LEZ finalized 833, tip 840 (7 unfinalized) [heartbeat]
+[23:14:21]   [68 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 833, tip 840 (7 unfinalized) [heartbeat]
+[23:14:36]   kill point 'claim in flight': taker claim_in_progress (actor awaiting_maker_claim), maker claim_evidence_available
+[23:14:36]   killing lez-l2-maker-node with SIGKILL
+[23:14:36]   lez-l2-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:14:46]   [93 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 870, tip 872 (2 unfinalized) [heartbeat]
+[23:15:01]   [108 s] waiting for the Taker's 9b8b3856cd6b to complete (kill point claim in flight): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 870, tip 872 (2 unfinalized) [heartbeat]
+[23:15:51]   [0 s] waiting for the Taker's 9b8b3856cd6b to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 913, tip 920 (7 unfinalized) [heartbeat]
+[23:15:51]   both Nodes report 9b8b3856cd6b completed
+[23:15:51]   [0 s] waiting for LEZ finality to reach block 924 (the swap's last LEZ transaction): LEZ finalized 913, tip 920 (7 unfinalized) [heartbeat] | LEZ finalized 913, tip 920 (7 unfinalized) [heartbeat]
+[23:16:09]   LEZ is final through block 924 after 18s
+[23:16:10]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[23:16:14]   the Taker's Monero wallet received [('f2c384fa0f159288', 0.9981916)] during the swap (lot 1 XMR)
+[23:16:14]   LEZ transactions signed by the owner accounts: {'maker': 0, 'taker': 3}; Monero: [('maker_funding', 1), ('taker_sweep', 1)]
+[23:16:14]   maker test hook hold-claim-preparations: 1
+[23:16:29]   the Maker's Monero wallet holds 743.690 XMR unlocked
+[23:16:52]   Maker CLI published offer-e2e-xmr-179555742102k50 on its running Node
+[23:17:06]   Taker took offer-e2e-xmr-179555742102k50: swap 5e22df599985 (not_activated)
+[23:17:06]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:17:08]   [0 s] waiting for the Taker's 5e22df599985 to complete (kill point claim preparation held): taker awaiting_first_lock (actor lez_locking) | maker leased | LEZ finalized 963, tip 967 (4 unfinalized) [heartbeat]
+[23:17:11]   [3 s] waiting for the Taker's 5e22df599985 to complete (kill point claim preparation held): taker awaiting_first_lock (actor lez_locking) | maker offered | LEZ finalized 963, tip 967 (4 unfinalized) [heartbeat]
+[23:17:23]   [15 s] waiting for the Taker's 5e22df599985 to complete (kill point claim preparation held): taker awaiting_first_lock (actor lez_locking) | maker taker_lock_confirmed | LEZ finalized 978, tip 982 (4 unfinalized) [heartbeat]
+[23:17:23]   [16 s] waiting for the Taker's 5e22df599985 to complete (kill point claim preparation held): taker awaiting_second_lock (actor taker_lock_confirmed) | maker taker_lock_confirmed | LEZ finalized 978, tip 982 (4 unfinalized) [heartbeat]
+[23:17:53]   Taker claimed Monero on 5e22df599985
+[23:17:53]   [45 s] waiting for the Taker's 5e22df599985 to complete (kill point claim preparation held): taker claim_available (actor both_legs_locked) | maker both_legs_locked | LEZ finalized 991, tip 995 (4 unfinalized) [heartbeat]
+[23:18:13]   [65 s] waiting for the Taker's 5e22df599985 to complete (kill point claim preparation held): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 1003, tip 1007 (4 unfinalized) [heartbeat]
+[23:18:27]   [80 s] waiting for the Taker's 5e22df599985 to complete (kill point claim preparation held): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 1015, tip 1019 (4 unfinalized) [heartbeat]
+[23:18:28]   the Maker's claim tool waits in its sidecar's hold-claim-preparations
+[23:18:28]   kill point 'claim preparation held': taker claim_in_progress (actor awaiting_maker_claim), maker claim_evidence_available
+[23:18:28]   killing lez-l2-maker-node with SIGKILL
+[23:18:28]   lez-l2-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:19:00]   [112 s] waiting for the Taker's 5e22df599985 to complete (kill point claim preparation held): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 1047, tip 1051 (4 unfinalized) [heartbeat]
+[23:19:45]   [0 s] waiting for the Taker's 5e22df599985 to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 1075, tip 1085 (10 unfinalized) [heartbeat]
+[23:19:45]   both Nodes report 5e22df599985 completed
+[23:19:45]   [0 s] waiting for LEZ finality to reach block 1088 (the swap's last LEZ transaction): LEZ finalized 1075, tip 1085 (10 unfinalized) [heartbeat] | LEZ finalized 1075, tip 1085 (10 unfinalized) [heartbeat]
+[23:20:03]   LEZ is final through block 1088 after 18s
+[23:20:04]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[23:20:08]   the Taker's Monero wallet received [('7dd333fc10c868c0', 0.9981916)] during the swap (lot 1 XMR)
+[23:20:08]   the Maker drove its held claim again and recorded its one tag 15
+[23:20:08]   LEZ transactions signed by the owner accounts: {'maker': 0, 'taker': 3}; Monero: [('maker_funding', 1), ('taker_sweep', 1)]
+[23:20:08]   maker test hook hold-claim-preparations: cleared
+[23:20:08]   maker test hook hold-claim-submissions: 1
+[23:20:16]   the Maker's Monero wallet holds 1094.427 XMR unlocked
+[23:20:29]   Maker CLI published offer-e2e-xmr-179555742102k60 on its running Node
+[23:20:39]   Taker took offer-e2e-xmr-179555742102k60: swap 713ed79098b5 (not_activated)
+[23:20:39]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:20:40]   [0 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker awaiting_first_lock (actor lez_locking) | maker leased | LEZ finalized 1115, tip 1119 (4 unfinalized) [heartbeat]
+[23:20:42]   [2 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker awaiting_first_lock (actor lez_locking) | maker offered | LEZ finalized 1115, tip 1119 (4 unfinalized) [heartbeat]
+[23:20:59]   [19 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker awaiting_first_lock (actor lez_locking) | maker taker_lock_confirmed | LEZ finalized 1131, tip 1135 (4 unfinalized) [heartbeat]
+[23:21:01]   [21 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker awaiting_second_lock (actor taker_lock_confirmed) | maker taker_lock_confirmed | LEZ finalized 1131, tip 1135 (4 unfinalized) [heartbeat]
+[23:21:19]   Taker claimed Monero on 713ed79098b5
+[23:21:19]   [39 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker claim_available (actor both_legs_locked) | maker both_legs_locked | LEZ finalized 1147, tip 1151 (4 unfinalized) [heartbeat]
+[23:21:20]   [40 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker claim_in_progress (actor both_legs_locked) | maker both_legs_locked | LEZ finalized 1147, tip 1151 (4 unfinalized) [heartbeat]
+[23:21:30]   [50 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker claim_in_progress (actor claim_authorizing) | maker both_legs_locked | LEZ finalized 1164, tip 1168 (4 unfinalized) [heartbeat]
+[23:21:51]   the Maker's claim tool waits in its sidecar's hold-claim-submissions
+[23:21:51]   kill point 'claim tool running': taker claim_in_progress (actor awaiting_maker_claim), maker claim_evidence_available
+[23:21:51]   killing lez-l2-maker-node with SIGKILL
+[23:21:51]   lez-l2-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:21:59]   [78 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker claim_in_progress (actor awaiting_maker_claim) | maker claim_evidence_available | LEZ finalized 1180, tip 1185 (5 unfinalized) [heartbeat]
+[23:22:17]   [96 s] waiting for the Taker's 713ed79098b5 to complete (kill point claim tool running): taker claim_in_progress (actor sweeping) | maker completed | LEZ finalized 1197, tip 1201 (4 unfinalized) [heartbeat]
+[23:23:16]   [0 s] waiting for the Taker's 713ed79098b5 to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 1244, tip 1251 (7 unfinalized) [heartbeat]
+[23:23:16]   both Nodes report 713ed79098b5 completed
+[23:23:16]   [0 s] waiting for LEZ finality to reach block 1253 (the swap's last LEZ transaction): LEZ finalized 1244, tip 1251 (7 unfinalized) [heartbeat] | LEZ finalized 1244, tip 1251 (7 unfinalized) [heartbeat]
+[23:23:36]   LEZ is final through block 1253 after 20s
+[23:23:36]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[23:23:40]   the Taker's Monero wallet received [('d34442019672f943', 0.9981916)] during the swap (lot 1 XMR)
+[23:23:41]   the Maker drove its held claim again and recorded its one tag 15
+[23:23:41]   LEZ transactions signed by the owner accounts: {'maker': 0, 'taker': 3}; Monero: [('maker_funding', 1), ('taker_sweep', 1)]
+[23:23:41]   maker test hook hold-claim-submissions: cleared
+[23:23:41]   maker killed at 7 points: after the take → completed; lock observed → completed; funding in flight → completed; funded → completed; claim in flight → completed; claim preparation held → completed; claim tool running → completed
+[23:23:41] === xmr-kill-maker: passed in 1600s

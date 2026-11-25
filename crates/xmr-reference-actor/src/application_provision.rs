@@ -234,6 +234,32 @@ impl ValidatedXmrEffectExecutionV3 {
     pub const fn effect_authority_sha256(&self) -> [u8; 32] {
         self.effect_authority_sha256
     }
+
+    /// The validated Stage A and the LEZ escrow terms its Stage B binds.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the retained application no longer validates.
+    #[cfg(feature = "sessions")]
+    pub fn agreement_and_terms(
+        &self,
+    ) -> Result<(XmrAgreementV1, lez_bridge_protocol::XmrNativeEscrowTermsV3)> {
+        let agreement = XmrAgreementV1::from_wire(&self.application.stage_a_wire)
+            .context("effect application Stage A is invalid")?;
+        let view_key = crate::effect_input_custody::parse_private_view_key_bytes(
+            &self.application.private_view_key,
+        )?;
+        let activation = XmrActivatedAgreementV1::from_wire(
+            &agreement,
+            &self.application.stage_b_wire,
+            &view_key,
+        )
+        .context("effect application Stage B is invalid")?;
+        let terms = lez_bridge_adapter::XmrLezBridgeBindingV3::new(&agreement, &activation)
+            .context("derive the LEZ escrow terms from Stage B")?
+            .terms();
+        Ok((agreement, terms))
+    }
 }
 
 impl XmrEffectProvisionV3 {
@@ -1302,6 +1328,89 @@ pub fn load_validated_xmr_maker_effect_execution_fd(
         ActorRole::Maker,
         &manifest.run_id,
     )
+}
+
+/// The sources a Maker actor's schema-3 manifest names, for the branch
+/// activations that run in the actor beside its effect tools.
+pub struct XmrMakerEffectSourcesV1 {
+    config: Zeroizing<Vec<u8>>,
+    authority: Vec<u8>,
+    manifest: XmrActorProvisionManifestV3,
+}
+
+impl fmt::Debug for XmrMakerEffectSourcesV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("XmrMakerEffectSourcesV1")
+            .field("run_id", &self.manifest.run_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl XmrMakerEffectSourcesV1 {
+    /// Reads the sealed manifest from `fd` and the authority it names.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsafe descriptor, a malformed manifest or an unreadable
+    /// authority; the caller validates both with
+    /// [`load_validated_xmr_maker_effect_execution_fd`].
+    pub fn load_fd(fd: i32) -> Result<Self> {
+        let config = read_sealed_config_fd(fd)?;
+        let manifest = parse_effect_manifest_config_bytes(config.as_slice(), ActorRole::Maker)?;
+        let authority = read_private_source(
+            &manifest.effect_authority_file,
+            u64::try_from(MAX_AUTHORITY_BYTES).unwrap_or(u64::MAX),
+            "XMR Maker effect authority",
+        )?;
+        Ok(Self {
+            config,
+            authority,
+            manifest,
+        })
+    }
+
+    /// Canonical schema-3 manifest bytes.
+    #[must_use]
+    pub fn manifest_bytes(&self) -> &[u8] {
+        self.config.as_slice()
+    }
+
+    /// Canonical effect authority bytes.
+    #[must_use]
+    pub fn authority_bytes(&self) -> &[u8] {
+        &self.authority
+    }
+
+    /// The application's run identity.
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        &self.manifest.run_id
+    }
+
+    pub(crate) fn private_root(&self) -> &Path {
+        &self.manifest.source_private_root
+    }
+
+    pub(crate) fn own_public_packet(&self) -> &Path {
+        &self.manifest.own_public_packet
+    }
+
+    pub(crate) fn peer_public_packet(&self) -> &Path {
+        &self.manifest.peer_public_packet
+    }
+
+    pub(crate) fn stage_a(&self) -> &Path {
+        &self.manifest.published_stage_a
+    }
+
+    pub(crate) fn stage_b(&self) -> &Path {
+        &self.manifest.published_stage_b
+    }
+
+    pub(crate) fn role_journal(&self) -> &Path {
+        &self.manifest.role_journal
+    }
 }
 
 /// Loads and fully validates Taker authority from canonical manifest bytes.

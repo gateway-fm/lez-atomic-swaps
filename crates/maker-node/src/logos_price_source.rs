@@ -1,9 +1,7 @@
 //! Bounded parent process for the crash-isolated Logos price worker.
 
 use std::{
-    fs,
     io::Read as _,
-    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
@@ -13,16 +11,15 @@ use lez_logos_price_c_api::{
     AbiDirectionV1, AbiPairV1, MAX_QUOTE_AGE_SECONDS, WORKER_SCHEMA_VERSION_V1,
     WorkerPriceStatusV1, WorkerQuoteV1,
 };
+use lez_node_common::secure_file::is_secure_file;
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_store::{LocalPriceV1, MakerRouteV1};
-use sha2::{Digest as _, Sha256};
 use wait_timeout::ChildExt as _;
 
 use crate::{PriceQuoteV1, PriceSource, PriceSourceError};
 
 const MAX_WORKER_OUTPUT_BYTES: usize = 4_096;
 const MAX_WORKER_OUTPUT_BYTES_U64: u64 = 4_096;
-const MAX_MODULE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_WORKER_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Crash-isolated parent adapter for one exact Logos price module artifact.
@@ -181,45 +178,11 @@ pub(crate) fn validate_secure_file(
     executable: bool,
     expected_sha256: Option<[u8; 32]>,
 ) -> Result<(), PriceSourceError> {
-    if !path.is_absolute() {
-        return Err(PriceSourceError::InvalidSource);
-    }
-    let metadata = fs::symlink_metadata(path).map_err(|_| PriceSourceError::InvalidSource)?;
-    let mode = metadata.permissions().mode();
-    let effective_uid = rustix::process::geteuid().as_raw();
-    let owner_uid = metadata.uid();
-    let trusted_owner = owner_uid == 0 || owner_uid == effective_uid;
-    let executable_mask = if owner_uid == effective_uid {
-        0o100
+    if is_secure_file(path, executable, expected_sha256) {
+        Ok(())
     } else {
-        0o001
-    };
-    if !metadata.file_type().is_file()
-        || !trusted_owner
-        || metadata.nlink() != 1
-        || mode & 0o022 != 0
-        || (executable && mode & executable_mask == 0)
-        || (!executable && metadata.len() > MAX_MODULE_BYTES)
-    {
-        return Err(PriceSourceError::InvalidSource);
+        Err(PriceSourceError::InvalidSource)
     }
-    let parent = path.parent().ok_or(PriceSourceError::InvalidSource)?;
-    let parent_metadata =
-        fs::symlink_metadata(parent).map_err(|_| PriceSourceError::InvalidSource)?;
-    if !parent_metadata.file_type().is_dir()
-        || (parent_metadata.uid() != 0 && parent_metadata.uid() != effective_uid)
-        || parent_metadata.permissions().mode() & 0o022 != 0
-    {
-        return Err(PriceSourceError::InvalidSource);
-    }
-    if let Some(expected) = expected_sha256 {
-        let actual: [u8; 32] =
-            Sha256::digest(fs::read(path).map_err(|_| PriceSourceError::InvalidSource)?).into();
-        if actual != expected {
-            return Err(PriceSourceError::InvalidSource);
-        }
-    }
-    Ok(())
 }
 
 const fn abi_pair(pair: Pair) -> AbiPairV1 {

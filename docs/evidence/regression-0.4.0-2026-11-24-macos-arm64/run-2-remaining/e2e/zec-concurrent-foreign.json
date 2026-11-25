@@ -1,0 +1,62 @@
+{
+  "scenario": "zec-concurrent",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "179557236402",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swaps": [
+    {
+      "swap_id": "zec-9c542e2e4d3231f17c89a9bc08381056f3a4b72af47f8f07a8f457914e261a33",
+      "offer_id": "offer-e2e-zectt-179557236402",
+      "entry": 0,
+      "zcash_funding": {
+        "transaction_id": "54cfc9c4a146ac4175600c549ba3a13013409fa93111785f535ef03b1cda55d0",
+        "height": 322
+      },
+      "zcash_claim": {
+        "transaction_id": "cd66aba8ae17470e8b66c73bc6c8853f477a8909fd8013725afa8bd9646d48f0",
+        "height": 324
+      },
+      "taker_lez_replans": []
+    },
+    {
+      "swap_id": "zec-9d92e370a653812da6cac8a5e815ce4dc6f80a4a020c7a83b932a68d48ed66c5",
+      "offer_id": "offer-e2e-zectt-179557236402-1",
+      "entry": 1,
+      "zcash_funding": {
+        "transaction_id": "3069fc091651353ab879a90a7d15776f57e30c7e4ef78217a1e3a57b29f08053",
+        "height": 322
+      },
+      "zcash_claim": {
+        "transaction_id": "3d96f69f6a4294688a255591afa508bd0390aafcc5dcc1861fa3de5b57486f84",
+        "height": 324
+      },
+      "taker_lez_replans": []
+    }
+  ],
+  "corridor": "take-time-1795572366",
+  "profile": "deterministic-local-devnet-v5",
+  "killed": null,
+  "result": "passed",
+  "seconds": 59
+}

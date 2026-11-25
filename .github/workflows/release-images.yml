@@ -1,7 +1,8 @@
 name: release-images
 
 # Publishes the prebuilt local LEZ ↔ BTC swap stack: every image of
-# deploy/compose.yaml built for linux/arm64 and pushed to GHCR, plus the
+# deploy/compose.yaml built for linux/arm64 and pushed to GHCR (Monero's
+# monerod too, which a bundle starts only with LEZ_MONERO=1), plus the
 # bundle (compose file, scripts/start.sh and friends, pinned config
 # templates, release.env) attached to the GitHub release that was published.
 #
@@ -54,7 +55,7 @@ concurrency:
 
 env:
   # A release build: from-scratch.sh refuses to build the devnet's test hooks
-  # under it, and the sidecar does not compile them with it
+  # under it, and the crates that have them do not compile them with it
   # (deploy/tests/test_release_workflow.py, NoTestHooksInARelease).
   LEZ_RELEASE_BUILD: "1"
   LEZ_IMAGE_PREFIX: ghcr.io/${{ github.repository }}/lez
@@ -136,18 +137,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _out/images _out/sidecar
-          # zebra: the health check its image carries; taker-node: the ZEC
-          # corridor provisioners (zec-local-poc-*) its image keeps beside the
-          # Node package (scripts/zec-provision.sh, gen-config.sh run them).
+          # zebra: the health check its image carries; taker-node: beside the
+          # Node package, zec-local-poc-identity (gen-config.sh: zebra's miner
+          # address), never the dealer test fixture's tools (feature dealer-fixture).
           for role in maker-node taker-node lez-services zebra; do
             mkdir -p "_out/images/$role"
             cp deploy/images/$role/lez-* "_out/images/$role/"
             [[ ! -f deploy/images/$role/build-source.txt ]] || cp deploy/images/$role/build-source.txt "_out/images/$role/"
           done
-          cp deploy/images/taker-node/zec-local-poc-* _out/images/taker-node/
+          cp deploy/images/taker-node/zec-local-poc-identity _out/images/taker-node/
+          # the Maker's Monero effect tools, which its Node package carries
+          # beside lez-xmr-maker-actor (package-role-node.sh)
+          cp deploy/images/maker-node/xmr-reference-* _out/images/maker-node/
           # source-tree.txt: the sidecar tree it was built from, which the stage
           # phase compares with the checkout's before it stages the sidecar.
-          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-escrow-claim-probe,lez-v02-custody-credit-probe,lez-v02-local-actor-identity,source-commit.txt,source-tree.txt} _out/sidecar/
+          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-xmr-stage-a-plan,lez-v02-escrow-claim-probe,lez-v02-custody-credit-probe,lez-v02-local-actor-identity,source-commit.txt,source-tree.txt} _out/sidecar/
           du -sh _out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -390,6 +394,7 @@ jobs:
           # deploy/: every path handed to them is absolute)
           for role in maker taker; do
             chmod 0755 deploy/images/$role-node/lez-* || true
+            [[ "$role" != maker ]] || chmod 0755 deploy/images/maker-node/xmr-reference-*
             deploy/scripts/package-role-node.sh "$role" "$GITHUB_WORKSPACE/_in/lez-modules/lez_${role}_node-plugin.lgx" \
               "$GITHUB_WORKSPACE/deploy/images/$role-node/lez_${role}_node.lgx"
           done
@@ -496,10 +501,14 @@ jobs:
             install -m 0755 _in/node/images/$role/lez-* "deploy/images/$role/"
             [[ ! -f _in/node/images/$role/build-source.txt ]] || cp _in/node/images/$role/build-source.txt "deploy/images/$role/"
           done
-          install -m 0755 _in/node/images/taker-node/zec-local-poc-* deploy/images/taker-node/
-      - name: Stage image contexts (Bitcoin Core, LEZ sequencer, LEZ modules, sidecars, tools)
+          install -m 0755 _in/node/images/taker-node/zec-local-poc-identity deploy/images/taker-node/
+          install -m 0755 _in/node/images/maker-node/xmr-reference-* deploy/images/maker-node/
+      # LEZ_MONERO=1: also the Monero release of this runner's architecture
+      # (stage-assets.sh verifies it); a bundle starts it only with LEZ_MONERO=1.
+      - name: Stage image contexts (Bitcoin Core, Monero, LEZ sequencer, LEZ modules, sidecars, tools)
         env:
           LEZ_STAGE_SKIP_BASECAMP_UI: "1"
+          LEZ_MONERO: "1"
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only stage
       - name: Build and push
         working-directory: deploy
@@ -511,8 +520,8 @@ jobs:
         run: |
           set -euo pipefail
           docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
-          docker compose --profile tools --profile explorers build bitcoin-core zebra btc-miner btc-explorer sequencer lez-explorer tools
-          for image in bitcoin-core zebra btc-miner btc-explorer services explorer wallet-module; do
+          docker compose --profile tools --profile explorers --profile monero build bitcoin-core zebra monerod btc-miner btc-explorer sequencer lez-explorer tools
+          for image in bitcoin-core zebra monerod btc-miner btc-explorer services explorer wallet-module; do
             docker push "${LEZ_IMAGE_PREFIX}-${image}:${LEZ_IMAGE_TAG}"
           done
       # Each role's image is that party's Basecamp (the basecamp-ui image with

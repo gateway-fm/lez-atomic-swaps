@@ -13,20 +13,22 @@ use lez_xmr_monero_adapter::{
     LoopbackRpcEndpoint, MoneroChainIdentity, MoneroChainIdentityAttestor, MoneroNetwork,
 };
 use lez_xmr_swap_sdk::{
-    MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES, MoneroAddressNetworkV1, MoneroSharedAddressV1,
-    ValidatedXmrAgreementBodyV1, XmrAgreementBodyV1, XmrLezTermsV1, XmrMessagesV1,
-    XmrMoneroTermsV1, XmrNamedProfileV1, XmrParticipantsV1, XmrSwapDirectionV1, XmrWindowsV1,
+    MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES, MoneroSharedAddressV1, ValidatedXmrAgreementBodyV1,
+    XmrAgreementBodyV1, XmrLezTermsV1, XmrMessagesV1, XmrMoneroTermsV1, XmrNamedProfileV1,
+    XmrParticipantsV1, XmrSwapDirectionV1, XmrWindowsV1,
 };
 use nssa::{Account, AccountId};
 use rustix::fs::{Mode, OFlags, open};
+use serde::Deserialize;
 use tempfile::NamedTempFile;
 use xmr_reference_actor::{ActorRole, ValidatedRolePacket};
 
 use crate::{
-    CHECKED_M4_ESCROW_PROGRAM_ID, M4FinalizedAccountIds, M4StageAFutureMessageInput, NonceSource,
-    OfficialIndexerRpc, OfficialNativeEscrowFacts, OfficialNodeRpc, compute_custody_pda,
-    compute_metadata_pda, plan_m4_stage_a_future_messages, read_stable_m4_finalized_nonce_snapshot,
-    validate_checked_m4_escrow_program_id, validate_loopback_http_endpoint,
+    CHECKED_M4_ESCROW_PROGRAM_ID, M4FinalizedAccountIds, M4StageAFinalizedNonces,
+    M4StageAFutureMessageInput, NonceSource, OfficialIndexerRpc, OfficialNativeEscrowFacts,
+    OfficialNodeRpc, compute_custody_pda, compute_metadata_pda, plan_m4_stage_a_future_messages,
+    read_stable_m4_finalized_nonce_snapshot, validate_checked_m4_escrow_program_id,
+    validate_loopback_http_endpoint,
 };
 
 const MAX_CREDENTIAL_FILE_BYTES: u64 = 129;
@@ -260,7 +262,7 @@ pub async fn compose_m4_stage_a_actual_local(
         AccountId::new(taker.identity().lez_owner_account()),
         claim_key,
         refund_key,
-        crate::M4StageAFinalizedNonces::new(0, 0, 0, 0),
+        M4StageAFinalizedNonces::new(0, 0, 0, 0),
     ))
     .context("M4 authority derivation failed")?;
 
@@ -373,6 +375,122 @@ pub async fn compose_m4_stage_a_actual_local(
         &second,
         live_after,
     )?;
+    let wire = encode_checked_unsigned_wire(&validated)?;
+    publish_new(&config.output_unsigned_stage_a, &wire)?;
+
+    Ok(M4StageAComposeReceipt {
+        agreement_commitment: validated.commitment(),
+        monero_genesis_hash: monero_identity.genesis_hash(),
+        lez_genesis_hash: first.genesis_hash,
+        lez_channel_id: first.channel_id,
+        lez_finalized_block_hash: finalized.block_hash,
+        lez_finalized_height: finalized.height,
+        wire_bytes: wire.len(),
+    })
+}
+
+/// Chain-free Stage-A planning request: the stdin of `lez-v02-xmr-stage-a-plan`.
+///
+/// Byte fields are exact lowercase hex. The role packets are their canonical
+/// public JSON bytes. The claim- and refund-authority accounts derive from the
+/// per-swap aggregate keys, so their finalized nonce is 0; the Taker owner
+/// nonce reaches no committed hash.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct XmrStageAPlanInputV1 {
+    schema_version: u16,
+    maker_packet: String,
+    taker_packet: String,
+    swap_id: Hex32,
+    monero_amount_piconero: u64,
+    lez_amount: u128,
+    monero_genesis_hash: Hex32,
+    lez_channel_id: Hex32,
+    lez_genesis_hash: Hex32,
+    maker_xmr_funding_cutoff_ms: u64,
+    refund_at_ms: u64,
+    punish_at_ms: u64,
+    maker_owner_nonce: u128,
+    /// The agreement's profile; absent means `accelerated-regtest` (the
+    /// devnet's Regtest input bytes carry no such field).
+    #[serde(default)]
+    monero_profile: Option<String>,
+}
+
+const XMR_STAGE_A_PLAN_INPUT_SCHEMA_V1: u16 = 1;
+
+/// The Monero network a plan input names: Regtest when it names no
+/// profile, Stagenet for `public-stagenet`. Mainnet and testnet have no
+/// profile, so no input names them.
+fn plan_input_network(profile: Option<&str>) -> Result<MoneroNetwork> {
+    match profile {
+        None | Some("accelerated-regtest") => Ok(MoneroNetwork::Regtest),
+        Some("public-stagenet") => Ok(MoneroNetwork::Stagenet),
+        Some(other) => {
+            anyhow::bail!("Stage-A plan input names an unknown Monero profile `{other}`")
+        }
+    }
+}
+
+/// Plans one canonical unsigned Stage-A wire from a JSON
+/// `XmrStageAPlanInputV1`, without any chain read.
+///
+/// Both Nodes run it on identical facts and so obtain identical bytes.
+///
+/// # Errors
+///
+/// Fails closed on malformed or unknown input fields, invalid packets or
+/// roles, or an invalid body/wire.
+pub fn plan_m4_stage_a_unsigned_wire(input: &[u8]) -> Result<Vec<u8>> {
+    let input: XmrStageAPlanInputV1 =
+        serde_json::from_slice(input).context("Stage-A plan input is malformed")?;
+    ensure!(
+        input.schema_version == XMR_STAGE_A_PLAN_INPUT_SCHEMA_V1,
+        "Stage-A plan input schema is unsupported"
+    );
+    validate_checked_m4_escrow_program_id(CHECKED_M4_ESCROW_PROGRAM_ID)
+        .context("checked M4 escrow program ID is invalid")?;
+    let maker =
+        packet_from_hex(&input.maker_packet).context("Maker public role packet is invalid")?;
+    let taker =
+        packet_from_hex(&input.taker_packet).context("Taker public role packet is invalid")?;
+    let swap_id = *input.swap_id.as_bytes();
+    ensure!(swap_id != [0; 32], "swap ID must not be zero");
+    let monero_identity = MoneroChainIdentity::new(
+        plan_input_network(input.monero_profile.as_deref())?,
+        *input.monero_genesis_hash.as_bytes(),
+    )
+    .context("Monero genesis identity is invalid")?;
+    let validated = compose_m4_stage_a_from_facts(
+        M4StageAParameters::new(
+            swap_id,
+            input.monero_amount_piconero,
+            input.lez_amount,
+            input.maker_xmr_funding_cutoff_ms,
+            input.refund_at_ms,
+            input.punish_at_ms,
+        ),
+        &maker,
+        &taker,
+        monero_identity,
+        *input.lez_channel_id.as_bytes(),
+        *input.lez_genesis_hash.as_bytes(),
+        M4StageAFinalizedNonces::new(input.maker_owner_nonce, 0, 0, 0),
+    )?;
+    encode_checked_unsigned_wire(&validated)
+}
+
+/// Validates a public role packet from its lowercase hex.
+fn packet_from_hex(value: &str) -> Result<ValidatedRolePacket> {
+    let bytes = hex::decode(value).context("decode lowercase hexadecimal packet")?;
+    ensure!(
+        hex::encode(&bytes) == value,
+        "packet is not lowercase hexadecimal"
+    );
+    ValidatedRolePacket::from_bytes(&bytes)
+}
+
+fn encode_checked_unsigned_wire(validated: &ValidatedXmrAgreementBodyV1) -> Result<Vec<u8>> {
     let wire = validated
         .encode_unsigned_wire()
         .context("canonical unsigned Stage-A encoding failed")?;
@@ -386,17 +504,7 @@ pub async fn compose_m4_stage_a_actual_local(
         reparsed.encode_unsigned_wire()? == wire,
         "canonical unsigned Stage-A round trip changed bytes"
     );
-    publish_new(&config.output_unsigned_stage_a, &wire)?;
-
-    Ok(M4StageAComposeReceipt {
-        agreement_commitment: validated.commitment(),
-        monero_genesis_hash: monero_identity.genesis_hash(),
-        lez_genesis_hash: first.genesis_hash,
-        lez_channel_id: first.channel_id,
-        lez_finalized_block_hash: finalized.block_hash,
-        lez_finalized_height: finalized.height,
-        wire_bytes: wire.len(),
-    })
+    Ok(wire)
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -411,7 +519,6 @@ fn build_unsigned_stage_a(
     second: &LiveSnapshot,
     live_after: LiveNonces,
 ) -> Result<ValidatedXmrAgreementBodyV1> {
-    validate_packet_roles(maker, taker)?;
     validate_live_progression(first, second)?;
     ensure!(
         first.genesis_hash == finalized.genesis_hash,
@@ -450,6 +557,44 @@ fn build_unsigned_stage_a(
         "Maker XMR funding cutoff is not later than stable LEZ consensus time"
     );
 
+    compose_m4_stage_a_from_facts(
+        parameters,
+        maker,
+        taker,
+        monero_identity,
+        first.channel_id,
+        first.genesis_hash,
+        M4StageAFinalizedNonces::new(
+            finalized.maker_nonce,
+            finalized.taker_nonce,
+            finalized.claim_nonce,
+            finalized.refund_nonce,
+        ),
+    )
+}
+
+/// Composes one canonical unsigned Stage A from already-known public facts.
+///
+/// This is the body assembly of [`compose_m4_stage_a_actual_local`] without
+/// its chain reads, so a party that holds the same facts recomputes the same
+/// body. The nonces are the finalized owner and authority nonces that the
+/// actual-local composer reads; only the Maker owner, claim-authority and
+/// refund-authority nonces reach the committed message hashes.
+///
+/// # Errors
+///
+/// Fails closed on wrong actor roles or public view key, invalid keys, or an
+/// invalid policy/body.
+fn compose_m4_stage_a_from_facts(
+    parameters: M4StageAParameters,
+    maker: &ValidatedRolePacket,
+    taker: &ValidatedRolePacket,
+    monero_identity: MoneroChainIdentity,
+    lez_channel_id: [u8; 32],
+    lez_genesis_hash: [u8; 32],
+    nonces: M4StageAFinalizedNonces,
+) -> Result<ValidatedXmrAgreementBodyV1> {
+    validate_packet_roles(maker, taker)?;
     let participants = XmrParticipantsV1::new(maker.identity().clone(), taker.identity().clone());
     let claim_key = participants.claim_aggregate_x_only_key()?;
     let refund_key = participants.refund_aggregate_x_only_key()?;
@@ -462,30 +607,30 @@ fn build_unsigned_stage_a(
         taker_id,
         claim_key,
         refund_key,
-        crate::M4StageAFinalizedNonces::new(
-            finalized.maker_nonce,
-            finalized.taker_nonce,
-            finalized.claim_nonce,
-            finalized.refund_nonce,
-        ),
+        nonces,
     ))?;
     let public_view_key = maker.public_view_key();
     ensure!(
         taker.public_view_key() == public_view_key,
         "Maker and Taker packets do not bind one shared public view key"
     );
+    // The chain's network picks the profile: its address bytes, its
+    // confirmation and finality rules and its window minimums.
+    let profile = match monero_identity.network() {
+        MoneroNetwork::Regtest => XmrNamedProfileV1::AcceleratedRegtest,
+        MoneroNetwork::Stagenet => XmrNamedProfileV1::PublicStagenet,
+    };
     let shared_address = MoneroSharedAddressV1::derive_from_public_view_key(
-        MoneroAddressNetworkV1::Regtest,
+        profile.network(),
         maker.proof(),
         taker.proof(),
         public_view_key,
     )?;
-    let profile = XmrNamedProfileV1::AcceleratedRegtest;
     let metadata = compute_metadata_pda(&CHECKED_M4_ESCROW_PROGRAM_ID, &parameters.swap_id);
     let custody = compute_custody_pda(&CHECKED_M4_ESCROW_PROGRAM_ID, &parameters.swap_id);
     let transfer_program = programs::authenticated_transfer().id();
     let monero = XmrMoneroTermsV1::new(
-        MoneroAddressNetworkV1::Regtest,
+        profile.network(),
         monero_identity.genesis_hash(),
         parameters.monero_amount_piconero,
         profile.required_monero_confirmations(),
@@ -496,8 +641,8 @@ fn build_unsigned_stage_a(
         shared_address.address_string(),
     );
     let lez = XmrLezTermsV1::new(
-        first.channel_id,
-        first.genesis_hash,
+        lez_channel_id,
+        lez_genesis_hash,
         CHECKED_M4_ESCROW_PROGRAM_ID,
         transfer_program,
         profile.required_lez_finality_units(),
@@ -727,7 +872,7 @@ mod tests {
     use xmr_reference_actor::{Action, Cli, execute};
 
     struct Packets {
-        _directory: TempDir,
+        directory: TempDir,
         maker: ValidatedRolePacket,
         taker: ValidatedRolePacket,
     }
@@ -764,7 +909,7 @@ mod tests {
         Packets {
             maker: ValidatedRolePacket::read(&maker_packet).expect("Maker packet"),
             taker: ValidatedRolePacket::read(&taker_packet).expect("Taker packet"),
-            _directory: directory,
+            directory,
         }
     }
 
@@ -839,6 +984,107 @@ mod tests {
         assert_eq!(decoded.body().monero().genesis_hash(), [50; 32]);
         assert_eq!(decoded.body().lez().channel_id(), [40; 32]);
         assert_eq!(decoded.body().lez().genesis_hash(), [41; 32]);
+    }
+
+    #[test]
+    fn chain_free_plan_equals_actual_local_composition_and_is_deterministic() {
+        let packets = packets();
+        let first = live();
+        let expected = build_unsigned_stage_a(
+            parameters(),
+            &packets.maker,
+            &packets.taker,
+            MoneroChainIdentity::new(MoneroNetwork::Regtest, [50; 32]).unwrap(),
+            &first,
+            finalized(),
+            nonces(),
+            &first,
+            nonces(),
+        )
+        .expect("actual-local composition")
+        .encode_unsigned_wire()
+        .expect("canonical wire");
+        let packet =
+            |name: &str| hex::encode(fs::read(packets.directory.path().join(name)).unwrap());
+        let input = serde_json::json!({
+            "schema_version": 1,
+            "maker_packet": packet("maker.json"),
+            "taker_packet": packet("taker.json"),
+            "swap_id": hex::encode([9; 32]),
+            "monero_amount_piconero": 5_000_000_000_u64,
+            "lez_amount": 75,
+            "monero_genesis_hash": hex::encode([50; 32]),
+            "lez_channel_id": hex::encode([40; 32]),
+            "lez_genesis_hash": hex::encode([41; 32]),
+            "maker_xmr_funding_cutoff_ms": 5_000,
+            "refund_at_ms": 15_000,
+            "punish_at_ms": 25_000,
+            "maker_owner_nonce": 11,
+        })
+        .to_string();
+        let planned = plan_m4_stage_a_unsigned_wire(input.as_bytes()).expect("chain-free plan");
+        assert_eq!(planned, expected);
+        assert_eq!(
+            plan_m4_stage_a_unsigned_wire(input.as_bytes()).expect("second plan"),
+            planned
+        );
+    }
+
+    #[test]
+    fn a_stagenet_plan_input_composes_a_stagenet_agreement() {
+        let packets = packets();
+        let packet =
+            |name: &str| hex::encode(fs::read(packets.directory.path().join(name)).unwrap());
+        let input = |profile: serde_json::Value, refund_ms: u64, punish_ms: u64| {
+            let mut value = serde_json::json!({
+                "schema_version": 1,
+                "maker_packet": packet("maker.json"),
+                "taker_packet": packet("taker.json"),
+                "swap_id": hex::encode([9; 32]),
+                "monero_amount_piconero": 10_000_000_000_u64,
+                "lez_amount": 75,
+                "monero_genesis_hash": "76ee3cc98646292206cd3e86f74d88b4dcc1d937088645e9b0cbca84b7ce74eb",
+                "lez_channel_id": hex::encode([40; 32]),
+                "lez_genesis_hash": hex::encode([41; 32]),
+                "maker_xmr_funding_cutoff_ms": 600_000,
+                "refund_at_ms": refund_ms,
+                "punish_at_ms": punish_ms,
+                "maker_owner_nonce": 11,
+            });
+            if !profile.is_null() {
+                value["monero_profile"] = profile;
+            }
+            value.to_string()
+        };
+        let stagenet = input(serde_json::json!("public-stagenet"), 7_200_000, 14_400_000);
+        let wire = plan_m4_stage_a_unsigned_wire(stagenet.as_bytes()).expect("Stagenet plan");
+        let body = ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wire).expect("canonical");
+        assert_eq!(body.body().profile(), XmrNamedProfileV1::PublicStagenet);
+        assert_eq!(
+            body.body().monero().network(),
+            lez_xmr_swap_sdk::MoneroAddressNetworkV1::Stagenet
+        );
+        assert!(body.body().monero().address().starts_with('5'));
+        // The same facts without a profile are the devnet's Regtest, whose
+        // shared address has mainnet bytes.
+        let regtest = input(serde_json::Value::Null, 7_200_000, 9_000_000);
+        let wire = plan_m4_stage_a_unsigned_wire(regtest.as_bytes()).expect("Regtest plan");
+        let body = ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wire).expect("canonical");
+        assert_eq!(body.body().profile(), XmrNamedProfileV1::AcceleratedRegtest);
+        // Stagenet windows below the profile's minimums, an unknown profile,
+        // and mainnet are refused.
+        for refused in [
+            input(
+                serde_json::json!("public-stagenet"),
+                600_000 + 5_999_000,
+                14_400_000,
+            ),
+            input(serde_json::json!("public-stagenet"), 7_200_000, 9_000_000),
+            input(serde_json::json!("public-mainnet"), 7_200_000, 9_000_000),
+            input(serde_json::json!("mainnet"), 7_200_000, 9_000_000),
+        ] {
+            assert!(plan_m4_stage_a_unsigned_wire(refused.as_bytes()).is_err());
+        }
     }
 
     #[test]

@@ -5,7 +5,7 @@ operator tools. The nodes own negotiation, signing, settlement, persistence,
 and recovery. Your application supplies decisions and observes their results.
 Start with the [scope proposal and answers for ecosystem #176](proposal.md).
 
-This reference describes the API implemented by this PR. Pin an integrating
+This reference describes the API as implemented on `main`. Pin an integrating
 application to a release containing `maker_offer_publish_v1`; v0.2.0 has the
 other methods described here but not that new method. The current product
 target is BTC↔LEZ on private local chains. For executable setup, see the
@@ -77,8 +77,11 @@ outlive a client timeout. Closing a connection does not cancel durable work.
   reject extra fields; send only the fields in this contract.
 - A BTC route is `{"pair":"Bitcoin","direction":"TakerSellsForeign"}`
   (taker pays BTC, receives LEZ) or direction `"TakerSellsLez"` (taker pays
-  LEZ, receives BTC). Route enum strings are case-sensitive.
-- All amounts are **atomic-unit integers**. BTC uses satoshis. LEZ amounts use
+  LEZ, receives BTC). Route enum strings are case-sensitive. A Monero route
+  exists in one direction only, `{"pair":"Monero","direction":"TakerSellsLez"}`
+  (taker pays LEZ, receives XMR; [A Monero swap](#a-monero-swap)).
+- All amounts are **atomic-unit integers**. BTC uses satoshis, ZEC zatoshis,
+  XMR piconero (10^-12 XMR, so 1 XMR is `1000000000000`). LEZ amounts use
   the configured asset's atomic units, not a presumed display denomination.
   `foreign_units` is u64; `expected_lez_units`/`lez_units` are u128 JSON numbers.
   Use an integer-capable JSON encoder/decoder. JavaScript `Number` is not safe
@@ -104,7 +107,7 @@ required unless marked optional. `null` revisions on insertion are intentional.
 | Method | Request | Result / behavior |
 |---|---|---|
 | `maker_health` | `{}` | `{schema_version, ready, degraded, delivery, chat, routes}`, plus `lez_chain` on a Node with the Node-owned lifecycle ([LEZ chain progress](#lez-chain-progress-in-health)); dependency states are `disabled`, `available`, `unavailable`. `ready` alone does not prove a route or wallet is usable; `degraded` is true while a configured dependency is unavailable or `lez_chain.degraded` is. |
-| `maker_wallet_balances_v1` | `{}` | What this Maker's own wallets hold, read-only: `bitcoin` (`state`, `wallet`, `network`, `trusted_sat`, `untrusted_pending_sat`, `immature_sat` from its Core wallet's `getbalances`) and `lez` (`state`, `owner_account_hex`, `owner_account_base58`, `balance_atomic_units`, `nonce` from the indexer). `state` is `available`, `unavailable` or `disabled`; amounts are exact integers and zero when not available. Coins locked by a planned, not yet broadcast funding are not trusted. |
+| `maker_wallet_balances_v1` | `{}`; optional `zcash:true` | What this Maker's own wallets hold, read-only: `bitcoin` (`state`, `wallet`, `network`, `trusted_sat`, `untrusted_pending_sat`, `immature_sat` from its Core wallet's `getbalances`) and `lez` (`state`, `owner_account_hex`, `owner_account_base58`, `balance_atomic_units`, `nonce` from the indexer). `state` is `available`, `unavailable` or `disabled`; amounts are exact integers and zero when not available. Coins locked by a planned, not yet broadcast funding are not trusted. With `zcash:true` on a Node whose Zcash role is configured, also `zcash` ([what a Zcash funder holds](#what-a-zcash-funder-holds)). It has no Monero field: the Maker's Monero role wallet is read with `monero-wallet-rpc` itself (on the devnet `scripts/monero-lane.py balance --role maker`). |
 | `maker_pair_list` | `{}` | Array of `{revision, value}`; `value` is the route configuration below. |
 | `maker_local_price_list` | `{}` | Array of `{revision, value}`; `value` is the local ratio below. |
 | `maker_price_quote` | `{route}` | `{price, source_revision, observed_at_unix_seconds}` from the selected source; this is a price observation, not a strategy decision or funds reservation. |
@@ -202,7 +205,8 @@ consumed offers cannot be withdrawn to undo a swap. Keep recovery running when
 your strategy stops quoting.
 
 The legacy `maker_offer_publish` accepts `{request_id, offer_id, route}` and
-reads the currently selected local or Logos C API price source. It has no
+reads the currently selected local or Logos C API price source
+([writing a Logos price module](../price-module-guide.md)). It has no
 reviewed-revision guarantee. `maker_pair_configure` and `maker_local_price_set`
 remain available for separate configuration changes; external strategies
 should prefer the atomic route-save operation and guarded publication above.
@@ -256,6 +260,21 @@ every 5 s and otherwise answers from the last sample, so "when it advanced" is
 as precise as health is asked (the desks ask every 10 s), and a Node started on
 a chain that is already frozen reports the stall one threshold after its first
 sample.
+
+### What a Zcash funder holds
+
+The role that funds Zcash (the Maker when the Taker sells LEZ, the Taker when it
+sells ZEC) needs a mature transparent output paying its own key, or its take is
+refused with a message naming the address. `zcash` (`lez-maker-cli balances
+--zcash`, `lez-taker-cli balances --zcash`; an additive field of schema 1,
+present only when asked for and the Zcash role is configured; it costs one pass
+over the blocks the funder search reads) is `{state, address, tip_height,
+scan_from_height, min_confirmations, outputs}`: `state` `available` or
+`unavailable`, `address` the role's P2PKH address to pay, and `outputs` at most
+eight outputs paying it from `scan_from_height` up, each `{transaction_id,
+output_index, value_zatoshis, confirmations, mature, committed}` (`mature`: deep
+enough to fund a reservation; `committed`: a reservation or swap of this Node
+holds it already).
 
 ### The actor's last outcome
 
@@ -332,11 +351,11 @@ not reached, offer no Resubmit.
 
 | Method | Request object | Result / behavior |
 |---|---|---|
-| `taker_health` | `{schema_version:1}` | Health, registered methods and per-route capability rows, plus `lez_chain` with the Node-owned lifecycle ([LEZ chain progress](#lez-chain-progress-in-health)), which also sets `degraded`. Check them before depending on initiation/monitoring/actions. |
-| `taker_wallet_balances_v1` | `{schema_version:1}` | What this Taker's own wallets hold, the same shape as `maker_wallet_balances_v1`: its Core wallet (`bitcoin`) and its LEZ owner account (`lez`). Registered with the BTC lifecycle. |
+| `taker_health` | `{schema_version:1}` | Health, registered methods and per-route capability rows, plus `lez_chain` with the Node-owned lifecycle ([LEZ chain progress](#lez-chain-progress-in-health)), which also sets `degraded`, and with `--route-health-config` (the Maker's format) `routes`: `[{route, state}]`, `available` or `unavailable` per probed route; an unavailable one sets `degraded` and a new take on it answers -32010 `chain_unavailable` with its `pair`. Check them before depending on initiation/monitoring/actions. |
+| `taker_wallet_balances_v1` | `{schema_version:1}`; optional `zcash:true`, `monero:true` | What this Taker's own wallets hold, the same shape as `maker_wallet_balances_v1`: its Core wallet (`bitcoin`) and its LEZ owner account (`lez`), and with `zcash:true` its Zcash role's `zcash`; with `monero:true`, on a Node whose Monero role is configured, its Monero role wallet's `monero`: `{state:"available", address, balance_piconero, unlocked_piconero, daemon_height}` or `{state:"unavailable"}` while its wallet-rpc or monerod does not answer (absent without a Monero role). Registered with the BTC lifecycle. |
 | `taker_offer_list_v1` | `{schema_version:1, route:null}` or an exact route | `{schema_version:1, offers:[{offer, maker_identity, signed_envelope_sha256}]}` from the node's authenticated discovery source. |
 | `taker_swap_initiate_v1` | `{schema_version:1, request_id, offer_id, route, maker_identity, signed_envelope_sha256, foreign_units, expected_lez_units}`; optional `logos_offer_announcement_base64`, `funding_transaction_hex` | `{schema_version:1, swap, was_replay}`. Revalidates selected offer and exact amounts; BTC dynamic configuration drives reservation, preparation, ceremony and actor activation. It can reserve capital/prepare signing state; it is not a dry-run quote. |
-| `taker_swap_list_v1` | `{schema_version:1}` | `{schema_version:1, swaps:[...]}`; includes recoverable persisted swaps. |
+| `taker_swap_list_v1` | `{schema_version:1}` | `{schema_version:1, swaps:[...]}`; includes recoverable persisted swaps. A swap whose own state cannot be read while others' can (its monitor answers `taker_monitor_unavailable`) is listed as `attention_required` with that `attention_reason` instead of failing the list. |
 | `taker_swap_monitor_v1` | `{schema_version:1, swap_id}` | One `swap` projection as defined below. |
 | `taker_swap_lock_v1` | `{schema_version:1, swap_id}` | `{schema_version:1, swap_id, chain, transaction_id, was_replay}`. Executes the role's first lock: selling Bitcoin (`TakerSellsForeign`) it broadcasts the funding transaction planned at reservation (`chain: "bitcoin"`); selling LEZ (`TakerSellsLez`) it has the swap's sidecar prepare the escrow and submits its initialization and funding at once (`chain: "lez"`, the funding transaction id). Both Bitcoin directions are capability rows of `taker_health`. This method uses the per-swap durable lock state; it takes **no request ID or generation**. |
 | `taker_swap_claim_v1`, `taker_swap_refund_v1` | `{schema_version:1, request_id, swap_id, expected_generation}` | `{schema_version:1, swap_id, action, requested_after_generation, was_replay}`. Requests only the currently admissible action; `expected_generation` fences a *new* request against a stale view. A replay of an admitted `request_id` (same swap, same action) is served with the admitted generation whatever `expected_generation` it is re-sent with: a desk's "Retry" is that replay. For a Zcash swap the reply is the admission even when the Node's first attempt at the action was refused (the funding observation reads unstable while a block lands): the Node's supervisor retries it and `swap.attention_reason` names the class meanwhile; a Bitcoin action's first attempt is the reply. Poll for terminal settlement after admission: a Zcash swap's admitted action is run by the Node's actor supervisor on its next attempt (within 5 s; after a failure the row backs off 30 s and names the class in `last_failure_class`), so one press is enough and a Retry is the same replay. |
@@ -374,7 +393,10 @@ acted. It turns into an ordinary entry once final.
 States include `initiating`, `not_activated`, `awaiting_first_lock`,
 `awaiting_second_lock`, `both_legs_locked`, `claim_available`,
 `refund_available`, `claim_in_progress`, `refund_in_progress`, `completed`,
-`refunded`, `attention_required`. `awaiting_second_lock` carries
+`refunded`, `expired`, `punished`, `attention_required`. `completed`,
+`refunded`, `expired` (a Monero take whose LEZ lock window closed with nothing
+locked) and `punished` (a Monero swap whose refund window closed with the LEZ
+still locked) are terminal. `awaiting_second_lock` carries
 `available_action: "refund"` only once the Maker's second-lock cutoff
 (`terms.maker_second_lock_cutoff_unix_seconds`) has passed; before it the
 Maker's lock is still awaited and no action is offered. `both_legs_locked` with no
@@ -395,6 +417,26 @@ Complete DTOs: [taker facade](../../crates/taker-node/src/taker_facade.rs).
 Registration and errors:
 [service](../../crates/taker-node/src/taker_service.rs),
 [lifecycle](../../crates/taker-node/src/taker_service/lifecycle.rs).
+
+Taker CLI: `lez-taker-cli [--socket /run/lez/taker/node.sock]` calls one method
+per command, prints its JSON result, and on an error prints its code, message and
+`data`. `swap take` fills the offer's route, identity, digest and exact quote from
+the Node's listing; when offers of two Makers share the id it refuses until
+`--maker-public-key` names the one reviewed. A timed-out step is safe to repeat
+with the same arguments.
+
+```sh
+lez-taker-cli swap offers --pair bitcoin --direction taker-sells-foreign   # or --pair zcash
+lez-taker-cli swap take --request-id take-1 --offer-id OFFER --foreign-units 100000
+lez-taker-cli swap lock --swap-id SWAP     # Bitcoin only; a Zcash or Monero Node locks by itself
+until lez-taker-cli swap monitor --swap-id SWAP | grep -q '"state":"claim_available"'; do sleep 10; done
+lez-taker-cli swap claim --swap-id SWAP --request-id claim-1 --expected-generation GEN
+```
+
+SWAP is the take reply's `swap.swap_id`, GEN the last monitor reply's
+`progress_generation`; `swap refund` takes the claim's flags. A Node without a Bitcoin wallet answers the take with -32018 and the
+address and amount: repeat the take with `--funding-transaction-hex` set to your
+signed, unsent payment. `swap list` and `balances` read the Node.
 
 ### Accept an authenticated offer
 
@@ -489,6 +531,133 @@ refund, which opens earlier and only the Maker can sign. A refund request
 before the LEZ refund time waits (`awaiting_deadline`) and broadcasts
 nothing.
 Bitcoin swaps admit only the reported action.
+
+### A Monero swap
+
+Monero runs on the Docker devnet only, against Monero regtest (the role
+configuration accepts no other profile; [deployment guide](../../deploy/README.md#monero-lez_monero1)).
+The Taker sells LEZ and locks first; the protocol, its windows C, R and P and
+the punish branch are in [protocol-design.md](../milestone-1/protocol-design.md#xmrlez).
+`taker_health` lists the Monero row with `supported_direction:
+"TakerSellsLez"`; once the Node has its Monero role, `initiation`
+`prepared_private_material`, `monitoring` `receipt_bound` and `claim`/`refund`
+`full_lifecycle`.
+
+- **Take.** `taker_swap_initiate_v1` with the Monero offer and `foreign_units`
+  in piconero agrees the swap with the Maker over Chat (the six take-time
+  rounds); nothing is on either chain before the sixth.
+- **Lock.** The Node locks the LEZ by itself right after the take (the escrow's
+  tag 13 and its funding). `taker_swap_lock_v1` is not how a Monero swap
+  locks: a call for one is refused.
+- **Claim.** `available_action: "claim"` (state `claim_available`) appears
+  once the Maker's Monero output is seen at 10 confirmations and unlocked,
+  before R. `taker_swap_claim_v1` admits it; the Node's supervisor then sends
+  the claim authorisation (tag 14), waits for the Maker's LEZ claim (tag 15),
+  rebuilds the Monero spend key from it and sweeps the output into the role
+  wallet.
+- **Refund.** The Node refunds by itself: from R by the finalized LEZ time,
+  while the Maker's LEZ claim (tag 15) has not landed, its supervisor sends
+  the LEZ refund (tag 16) with no owner's command, and sends it again until
+  it is final; it is valid only before P, and from P the Maker can take the
+  LEZ (tag 17) and the Monero stays locked for good. `available_action:
+  "refund"` is offered from R as well, and `taker_swap_refund_v1` admits it
+  for the supervisor's next pass. Setting `initiation.xmr_automatic_refund`
+  to `false` in the Node's configuration leaves the refund to that command.
+
+An admitted Monero claim or refund is run by the Node's supervisor on its next
+pass (`--observer-sweep-seconds`, 3 s on the devnet). The `swap` view of a
+Monero swap carries `actor_phase`, and `attention_reason` and `status_detail`
+when the owner is needed (`crates/taker-node/src/taker_service/xmr_supervisor.rs`):
+
+| `actor_phase` | `state` | `available_action` | Meaning |
+|---|---|---|---|
+| `lez_locking` | `awaiting_first_lock` | — | the Node is locking the LEZ |
+| `progress_unreadable` | `attention_required` (`xmr_progress_unreadable`) | — | the swap's progress record (`xmr-taker-progress.json`, named in `status_detail`) cannot be read; the Node does not drive the swap until it is repaired. The Node writes it whole (a temporary file, synced and renamed), so its own crash cannot cut it short |
+| `lez_lock_unconfirmed` | `attention_required` (`xmr_lez_lock_unconfirmed`) | — | C passed with a lock prepared and not seen final: the Node sends nothing more and keeps looking for it on chain; a lock found (final before or after C) turns the row locked, and is refunded from R |
+| `lez_lock_window_closed` | `expired` | — | no lock was prepared by C, or the finalized LEZ time reached R with nothing in the escrow: nothing is locked, the take is over |
+| `taker_lock_confirmed` | `awaiting_second_lock` | — | LEZ locked; waiting for the Maker's Monero at 10 confirmations |
+| `both_legs_locked` | `claim_available` | `claim` | both legs locked, before R |
+| `claim_authorizing` | `claim_in_progress` | — | tag 14 sent, not yet final |
+| `awaiting_maker_claim` | `claim_in_progress` | — | tag 14 final; waiting for the Maker's tag 15 |
+| `sweeping` | `claim_in_progress`, or `attention_required` (`xmr_claim_sweep_in_doubt`) | — | the Maker claimed; the Monero is being swept: the swap's output by its key image, so other outputs at the shared address are left alone. A sweep that sent nothing (no unspent output of the swap's amount yet) is retried after 15 s, doubling per attempt up to 15 min |
+| `completed` | `completed` | — | the swept output is in the role wallet |
+| `refund_available` | `refund_available`, or `attention_required` (`xmr_maker_did_not_claim` from R after a tag 14 the Maker did not answer; `refund_window_closing` from R + (P − R)/2) | `refund` | the refund window [R, P) is open |
+| `refund_in_flight` | `refund_in_progress` | — | tag 16 sent, not yet final; sent again, the same bytes, while the finalized LEZ time is before P |
+| `refund_not_final` | `attention_required` (`xmr_refund_not_final_by_punish_time`) | — | P passed with tag 16 sent and not seen final: one that landed before P still turns the row `refunded`; otherwise the Maker can take the LEZ |
+| `refunded` | `refunded` | — | the LEZ is back |
+| `punish_open` | `punished`, or `attention_required` (`xmr_watching_for_maker_claim`, or `xmr_maker_claim_scan_failing` while that look fails) | — | P passed without a refund: the Maker can take the LEZ; the Monero stays locked. After an authorised claim (tag 14) the row stays `attention_required` until the Maker's punishment (tag 17) is final: a Maker that claimed before R (tag 15 not yet seen) leaves the Monero to sweep, and the row turns `sweeping` once its claim is found |
+
+`xmr_claim_sweep_in_doubt` means a sweep was started and its outcome not
+recorded; it is **never resent**. Its `status_detail` names the wallet file
+(`xmr-<swap id>-claim-<attempt>` on the role's `monero-wallet-rpc`) that holds
+the shared spend key; recovering the Monero from it is by hand (its password is
+derived from the Taker's own share, `claim_wallet_password` in the same file),
+no tool in the tree does it, and it has not been exercised.
+`xmr_maker_did_not_claim` carries the `status_detail` "the claim was
+authorised on LEZ (tag 14) and the Maker did not claim before the refund time,
+so it no longer can: refund (tag 16) before the punish time, or the Maker takes
+the LEZ and the Monero stays locked".
+
+On the Maker, `maker_actor_monitor_v1`'s `progress.observation.phase` is the
+Monero actor's phase: `offered`, `taker_lock_confirmed` (funding Monero),
+`maker_funding_in_doubt` (a funding past C the observer has not found; the
+tool's failure is in the Node log; on regtest the observer mines a funding it
+finds in the pool or short of its confirmations, so this means none was
+seen), `both_legs_locked`,
+`claim_evidence_available` (claiming LEZ), `maker_recovery_available`
+(sweeping its Monero back after a refund, or punishing after P), and the
+terminal `completed`, `refunded`, `punished` and `expired` (nothing funded,
+nothing at stake) (`crates/maker-node/src/bin/xmr-maker-actor.rs`). The Maker
+runs every step itself; it has no Monero claim or refund to press.
+
+The CLIs (`pair-xmr` builds). The Maker publishes a Monero offer in its one
+direction; `--direction taker-sells-lez` must be given to `configure-pair`,
+`set-local-price`, `quote` and `publish-offer`, whose default
+`taker-sells-foreign` is refused for Monero. A price needs its route saved and an enabled route needs
+its price, so a Maker that never had Monero saves the route disabled first:
+
+```sh
+lez-maker-cli configure-pair --request-id xmr-pair-1 --pair monero --direction taker-sells-lez \
+  --enabled false --price-source local --minimum-foreign-units 1000000000000 \
+  --maximum-foreign-units 1000000000000 --offer-ttl-seconds 3600
+lez-maker-cli set-local-price --request-id xmr-price-1 --pair monero --direction taker-sells-lez \
+  --lez-units-per-lot 1 --foreign-units-per-lot 20000000
+lez-maker-cli configure-pair --request-id xmr-pair-2 --expected-revision REV --pair monero \
+  --direction taker-sells-lez --enabled true --price-source local \
+  --minimum-foreign-units 1000000000000 --maximum-foreign-units 1000000000000 --offer-ttl-seconds 3600
+lez-maker-cli publish-offer --request-id xmr-publish-1 --offer-id OFFER --pair monero --direction taker-sells-lez
+```
+
+REV is the route's revision from `lez-maker-cli pairs`. The Taker:
+
+```sh
+lez-taker-cli balances --monero
+lez-taker-cli swap offers --pair monero --direction taker-sells-lez
+lez-taker-cli swap take --request-id take-1 --offer-id OFFER --foreign-units 1000000000000
+lez-taker-cli swap monitor --swap-id SWAP
+lez-taker-cli swap claim --swap-id SWAP --request-id claim-1 --expected-generation GEN
+lez-taker-cli swap refund --swap-id SWAP --request-id refund-1 --expected-generation GEN
+```
+
+Each prints the Node's JSON answer on **stdout**, unchanged, and for a Monero
+row also plain words on **stderr**, so a script reads stdout and a person
+reads both. The rows look like this (the format of `lez-taker-cli.rs`; the
+values are examples):
+
+```text
+offer OFFER: Monero, you sell LEZ for 1.000000000000 XMR to 1.000000000000 XMR (1000000000000 to 1000000000000 piconero), 1 LEZ units per 0.000020000000 XMR (20000000 piconero); take with `swap take --offer-id OFFER --foreign-units <piconero> --request-id <new id>`
+swap SWAP: Monero, 1.000000000000 XMR for 50000 LEZ units: both legs are locked: you can claim the Monero
+  next: swap claim --swap-id SWAP --request-id <new id> --expected-generation 3
+monero: 2.000000000001 XMR (2000000000001 piconero), unlocked 2.000000000001 XMR (2000000000001 piconero), address 4…, monerod height 412
+```
+
+A swap past half its refund window prints `needs you: the refund window is
+half over: refund now, or from the punish time the Maker takes your LEZ and the
+Monero stays locked`, and `detail: …` when the Node gives one. `swap lock` on a
+Monero swap fails and says that the Taker Node locks the LEZ by itself right
+after the take. The CLIs' Monero rows are covered by unit tests in
+`lez-taker-cli.rs`; the devnet scenarios publish through `lez-maker-cli` and
+drive the Taker over its owner RPC, not through `lez-taker-cli`.
 
 ## Retries, errors, and observation limits
 

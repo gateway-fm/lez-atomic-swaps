@@ -1,0 +1,39 @@
+[01:52:58] === zec-activate-after-expiry (stamp 179556797802)
+[01:52:58] preflight: indexer historical reads
+[01:52:58]   indexer serves historical reads at the tip (8114)
+[01:52:58] preflight: LEZ finality check waived by request
+[01:52:58]   maker test hook hold-zec-activations: 1
+[01:52:59]   Maker CLI published offer-e2e-zecexp-179556797802 on its running Node (no corridor)
+[01:52:59]   Taker took offer-e2e-zecexp-179556797802: swap zec-c0e8c117 (not_activated)
+[01:52:59]   took offer-e2e-zecexp-179556797802 0 s after it was published (offer TTL 60 s)
+[01:52:59]   take-time agreement: Maker funds 7d09189c9013db42…:0, Zcash anchor 117, refund height 133
+[01:52:59]   [0 s] waiting for the Maker's hook to hold the activation of zec-c0e8c117: maker leased, last {} | LEZ finalized 8113, tip 8116 (3 unfinalized) [heartbeat]
+[01:53:03]   the Maker's activation of zec-c0e8c117 is held (test_hook_activation_held); taker awaiting_first_lock; stopping the Maker Node
+[01:53:03]   [0 s] waiting for the offer offer-e2e-zecexp-179556797802 to expire while the Maker is down: 66 s to the expiry and a margin | LEZ finalized 8113, tip 8116 (3 unfinalized) [heartbeat]
+[01:54:03]   [60 s] waiting for the offer offer-e2e-zecexp-179556797802 to expire while the Maker is down: 6 s to the expiry and a margin | LEZ finalized 8160, tip 8167 (7 unfinalized) [heartbeat]
+[01:54:13]   the offer expired at 1795568039; starting the Maker Node again (the hold still set)
+[01:54:17]   the restarted Maker still holds the activation, 18 s after the expiry; clearing the hold
+[01:54:17]   maker test hook hold-zec-activations: cleared
+[01:54:17]   [0 s] waiting for the Maker to activate zec-c0e8c117 after the offer expired: maker backoff, last {'at_unix_seconds': 1795568056, 'step': 'activate', 'outcome': 'failed', 'failure_class': 'test_hook_activation_held'} | LEZ finalized 8181, tip 8184 (3 unfinalized) [heartbeat]
+[01:54:27]   the Maker activated zec-c0e8c117 28 s after the offer expired
+[01:54:27]   receipt: swap zec-c0e8c117108f346438bc34279d635c042422154fbb0bb04d9b4dc77570f10dd6, actor config /var/lib/lez/taker/btc/swaps/246e4a27005d2c404278b00083e6758112dc2a594cd4d939c6392b4d9e36e18c/zec-actor/taker/actor-config.json
+[01:54:27]   [0 s] waiting for the Taker's zec-c0e8c117 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 116 | LEZ finalized 8181, tip 8184 (3 unfinalized) [heartbeat]
+[01:54:27]   zebra at 116: not mining, the Maker's Zcash funding is not out yet
+[01:54:31]   zebra: mined 1 block(s) → height 117 (mempool had ['ce4d528406bf'])
+[01:54:34]   [6 s] waiting for the Taker's zec-c0e8c117 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 117 | LEZ finalized 8191, tip 8201 (10 unfinalized) [heartbeat]
+[01:54:34]   zebra: mined 1 block(s) → height 118 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[01:54:34]   Maker's Zcash funding ce4d528406bf1c339e25656b285833224eb24ee86c55229b4d1744c7b39f3994 is in zebra block 117
+[01:54:34]   Taker claimed Zcash (replay=False)
+[01:54:34]   [0 s] waiting for the Taker's zec-c0e8c117 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 118 | LEZ finalized 8191, tip 8201 (10 unfinalized) [heartbeat]
+[01:54:34]   zebra: mined 1 block(s) → height 119 (mempool had ['70d55b5422f7'])
+[01:54:41]   [6 s] waiting for the Taker's zec-c0e8c117 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 119 | LEZ finalized 8191, tip 8201 (10 unfinalized) [heartbeat]
+[01:54:44]   [9 s] waiting for the Taker's zec-c0e8c117 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 119 | LEZ finalized 8191, tip 8201 (10 unfinalized) [heartbeat]
+[01:54:44]   Taker's Zcash claim 70d55b5422f7418bf5b0686f837970785001e385c436cf28f55201c50f3c6e1a is in zebra block 119
+[01:54:44]   the Maker's actor submitted ['lez_followup_claim']
+[01:54:44]   [0 s] waiting for the Taker's zec-c0e8c117 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 8191, tip 8201 (10 unfinalized) [heartbeat]
+[01:54:44]   both Nodes report zec-c0e8c117 completed
+[01:54:44]   restarting the Maker Node after the completed swap (claim-journal revalidation)
+[01:54:48]   Maker restarted and still reports the swap completed
+[01:54:48]   zec-c0e8c117: the Taker re-planned its LEZ lock 0 times
+[01:54:48]   Maker lock attempt count 2 (projected the Taker's lock 1 time(s); 10 supervisor attempts over the swap); Taker LEZ re-plan count 0
+[01:54:48] === zec-activate-after-expiry: passed in 111s

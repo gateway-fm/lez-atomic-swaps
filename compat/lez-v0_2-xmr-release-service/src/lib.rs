@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_os = "linux"))]
+compile_error!("the M4 XMR release service requires Linux file-safety semantics");
+
 mod preparer;
 
 pub use preparer::{

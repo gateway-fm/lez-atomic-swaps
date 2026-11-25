@@ -1,0 +1,133 @@
+{
+  "scenario": "xmr-unfunded-punish",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "1795545409",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "punished_swap": "aa73dfd153694d0d9228d3d5c6789aa7964b4f5444e0d0e709e4219d36901a87",
+  "refunded_swap": "f71ad96e2f1f5719b3328c4c2021c340a5bc3d8b16477ddfa42914e02d91febd",
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "lez_punished": {
+    "maker": 50000,
+    "taker": -50000
+  },
+  "unfunded_punish": {
+    "schema": "lez_v02_escrow_claim_probe_v1",
+    "test_only": true,
+    "effect": "xmr-punish",
+    "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+    "swap_id": "aa73dfd153694d0d9228d3d5c6789aa7964b4f5444e0d0e709e4219d36901a87",
+    "metadata_account": "1d010ed0dc30673510ce2cda064779e2f59ec613ef4dbc15757de8acfa75c1a3",
+    "custody_account": "18b22403eb89802719fd3fced490683be4a0fc9588d902fb27631d89dad976b8",
+    "claimant_account": "3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5",
+    "signer_is_claimant": true,
+    "stored_secret_digest": null,
+    "presented_preimage": null,
+    "presented_preimage_sha256": null,
+    "presented_preimage_matches_digest": false,
+    "amount": 50000,
+    "refund_at_ms": 1795546306000,
+    "submitted_before_refund_at": false,
+    "punish_at_ms": 1795546586000,
+    "submitted_before_punish_at": false,
+    "transaction_id": "305326805c7d8a22d803c9ef067b1e5a20e485038eada821f6131752b1441b6e",
+    "submission": {
+      "decision": "accepted",
+      "error_code": null,
+      "error_message": null
+    },
+    "included": true,
+    "included_in_block": 770,
+    "observed_seconds": 1,
+    "before": {
+      "sequencer_tip": 769,
+      "tip_timestamp_ms": 1795546590011,
+      "status": "Funded",
+      "custody_balance": 50000,
+      "claimant_balance": 2000000,
+      "claimant_nonce": 1
+    },
+    "after": {
+      "sequencer_tip": 770,
+      "tip_timestamp_ms": 1795546591832,
+      "status": "Claimed",
+      "custody_balance": 0,
+      "claimant_balance": 2050000,
+      "claimant_nonce": 2
+    },
+    "escrow_kept_custody": false
+  },
+  "punish_after_refund": {
+    "schema": "lez_v02_escrow_claim_probe_v1",
+    "test_only": true,
+    "effect": "xmr-punish",
+    "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+    "swap_id": "f71ad96e2f1f5719b3328c4c2021c340a5bc3d8b16477ddfa42914e02d91febd",
+    "metadata_account": "4d83c48bdb51c81fa970131e93c2d517ea75df79e3194c44456b6f840fc979f9",
+    "custody_account": "73b31d454a8be387be9f77a127170f903d74b8cf7940e43f2b5bab114dd27d13",
+    "claimant_account": "3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5",
+    "signer_is_claimant": true,
+    "stored_secret_digest": null,
+    "presented_preimage": null,
+    "presented_preimage_sha256": null,
+    "presented_preimage_matches_digest": false,
+    "amount": 50000,
+    "refund_at_ms": 1795547327000,
+    "submitted_before_refund_at": false,
+    "punish_at_ms": 1795547607000,
+    "submitted_before_punish_at": false,
+    "transaction_id": "5dcd3cc84f514ced1436b4e6b524d6420cd6b3b3bf4f80920862e96f5eeef89b",
+    "submission": {
+      "decision": "accepted",
+      "error_code": null,
+      "error_message": null
+    },
+    "included": false,
+    "included_in_block": null,
+    "observed_seconds": 30,
+    "before": {
+      "sequencer_tip": 1171,
+      "tip_timestamp_ms": 1795547623698,
+      "status": "Refunded",
+      "custody_balance": 0,
+      "claimant_balance": 2050000,
+      "claimant_nonce": 2
+    },
+    "after": {
+      "sequencer_tip": 1178,
+      "tip_timestamp_ms": 1795547653774,
+      "status": "Refunded",
+      "custody_balance": 0,
+      "claimant_balance": 2050000,
+      "claimant_nonce": 2
+    },
+    "escrow_kept_custody": true
+  },
+  "taker_after_punish": "punished",
+  "result": "passed",
+  "seconds": 2250
+}

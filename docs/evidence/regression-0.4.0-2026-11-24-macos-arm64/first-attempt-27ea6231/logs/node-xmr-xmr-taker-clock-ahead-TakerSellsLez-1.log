@@ -1,0 +1,39 @@
+[22:09:04] === xmr-taker-clock-ahead (stamp 1795554544)
+[22:09:04] preflight: indexer historical reads
+[22:09:08]   indexer serves historical reads at the tip (2780)
+[22:09:08] preflight: LEZ finality check waived by request
+[22:09:46]   the Maker's Monero wallet holds 7.992 XMR unlocked
+[22:11:44]   the Taker Node refunds by itself: false
+[22:11:46]   taker test hook clock-offset-ms: 60000
+[22:11:53]   Maker CLI published offer-e2e-xmr-1795554544 on its running Node
+[22:12:41]   Taker took offer-e2e-xmr-1795554544: swap 202094073e2a (not_activated)
+[22:12:41]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[22:12:42]   [0 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 2807, tip 2810 (3 unfinalized) [heartbeat]
+[22:12:57]   [15 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 2807, tip 2810 (3 unfinalized) [heartbeat]
+[22:13:58]   [77 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 2815, tip 2816 (1 unfinalized) [heartbeat]
+[22:14:10]   [88 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 2818, tip 2821 (3 unfinalized) [heartbeat]
+[22:15:12]   [150 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 2825, tip 2827 (2 unfinalized) [heartbeat]
+[22:16:14]   [212 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker both_legs_locked | LEZ finalized 2833, tip 2837 (4 unfinalized) [heartbeat]
+[22:17:18]   [276 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker both_legs_locked | LEZ finalized 2840, tip ? [heartbeat]
+[22:18:22]   [340 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker both_legs_locked | LEZ finalized 2849, tip 2851 (2 unfinalized) [heartbeat]
+[22:19:24]   [402 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker both_legs_locked | LEZ finalized 2858, tip 2862 (4 unfinalized) [heartbeat]
+[22:20:02]   [441 s] waiting for the Taker's 202094073e2a to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 2862, tip 2866 (4 unfinalized) [heartbeat]
+[22:20:04]   [0 s] waiting for the Taker's 202094073e2a to reach refund_available (R by the Taker's clock, 60 s ahead): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 2862, tip 2866 (4 unfinalized) [heartbeat]
+[22:21:06]   [63 s] waiting for the Taker's 202094073e2a to reach refund_available (R by the Taker's clock, 60 s ahead): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 2880, tip 2882 (2 unfinalized) [heartbeat]
+[22:22:07]   [123 s] waiting for the Taker's 202094073e2a to reach refund_available (R by the Taker's clock, 60 s ahead): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 2886, tip 2890 (4 unfinalized) [heartbeat]
+[22:23:00]   [177 s] waiting for the Taker's 202094073e2a to reach refund_available (R by the Taker's clock, 60 s ahead): taker refund_available (actor refund_available, gen 6) | maker both_legs_locked | LEZ finalized 2898, tip 2900 (2 unfinalized) [heartbeat]
+[22:23:01]   the Taker offers the refund 80 s before the finalized LEZ time reaches R
+[22:23:02]   [0 s] waiting for the finalized LEZ time to reach R with no refund sent: LEZ 80 s before R, refund sent: False | LEZ finalized 2898, tip 2900 (2 unfinalized) [heartbeat]
+[22:24:04]   [62 s] waiting for the finalized LEZ time to reach R with no refund sent: LEZ 17 s before R, refund sent: False | LEZ finalized 2909, tip 2911 (2 unfinalized) [heartbeat]
+[22:24:21]   [79 s] waiting for the finalized LEZ time to reach R with no refund sent: LEZ -4 s before R, refund sent: False | LEZ finalized 2909, tip 2911 (2 unfinalized) [heartbeat]
+[22:24:21]   no refund went out before the finalized LEZ time reached R
+[22:24:36]   [14 s] waiting for the Taker's 202094073e2a to reach refunded (tag 16 final): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 2913, tip 2915 (2 unfinalized) [heartbeat]
+[22:25:08]   [46 s] waiting for the Taker's 202094073e2a to reach refunded (tag 16 final): taker refunded (actor refunded, gen 9) | maker both_legs_locked | LEZ finalized 2918, tip 2921 (3 unfinalized) [heartbeat]
+[22:25:09]   taker test hook clock-offset-ms: cleared
+[22:25:40]   the Taker Node refunds by itself: true
+[22:25:41]   [0 s] waiting for the Maker's 202094073e2a to reach a terminal state (the Maker's Monero refund sweep): maker maker_recovery_available (schedule leased) | LEZ finalized 2918, tip 2921 (3 unfinalized) [heartbeat]
+[22:26:38]   [58 s] waiting for the Maker's 202094073e2a to reach a terminal state (the Maker's Monero refund sweep): maker refunded (schedule terminal) | LEZ finalized 2923, tip ? [heartbeat]
+[22:26:38]   the sequencer's tip is unreadable; reading the balances without waiting
+[22:26:40]   settled refunded: LEZ moved {'maker': 0, 'taker': 0} as both Nodes say
+[22:27:01] FAILED: monero-lane.py balance --role maker failed: [monero 21:27:01] FAILED: maker create_wallet: no answer (Error response from daemon: container f7ce9ca7960042fbabeac40ea7a80c73c329c21cb02b286ecc03656105fed011 is not running)
+[22:27:01] === xmr-taker-clock-ahead: failed in 1077s

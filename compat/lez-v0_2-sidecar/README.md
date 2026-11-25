@@ -145,9 +145,9 @@ make, and reports the custody and sender balances before and after, the
 sequencer's answer and the including block. It finds the escrow by its
 on-chain swap ID or by following new blocks for an escrow transaction that
 names a given depositor, and waits until the escrow is `Funded`. The devnet
-scenarios `btc-custody-credit`, `zec-custody-credit` and their `-refund`
-variants run it in a throwaway container from the Maker's image (threat
-TM-0032). The devnet Maker image carries it beside the claim probe; no role
+scenarios `btc-custody-credit`, `zec-custody-credit`, `xmr-custody-credit`
+and their `-refund` variants run it in a throwaway container from the Maker's
+image (threat TM-0032). The devnet Maker image carries it beside the claim probe; no role
 package contains it.
 
 The crate now also contains the exact source-complete PoC bridge process,

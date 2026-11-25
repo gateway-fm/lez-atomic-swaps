@@ -23,12 +23,34 @@
 //! Consequently, pre-decode body limiting is not possible without replacing its
 //! typed transport. Selected decoded collection bounds fail closed after
 //! decoding. See [`TRANSPORT_RESIDUAL`].
+//!
+//! Each Digest-authenticated call is two HTTP requests on the client's
+//! connection pool: the unauthenticated one the server challenges with a 401
+//! and a nonce, then the answer. Monero's HTTP server keeps the Digest nonce
+//! per TCP connection, so an answer that the pool sends on another
+//! connection than its challenge (when the challenged connection is not yet
+//! back in the pool) gets the server's HTML 401 page, which `monero-rpc`
+//! 0.5.1 decodes as the JSON answer ("expected value at line 1 column 1");
+//! the server ran nothing. The client (`diqwest` 3.1.0, which `monero-rpc`
+//! uses) sends the answer without reading the challenge's body, so the
+//! challenged connection may still be in use when the answer goes out. The
+//! crate builds its own HTTP client, so this adapter cannot pin both legs to
+//! one connection: a read-only call is made up to [`READ_ATTEMPTS`] times
+//! after such a failure, the mining call a bounded number of times. The two
+//! calls that send money, `transfer` and `sweep_single`, go as raw JSON-RPC
+//! calls that read the HTTP status: a 401 starts the exchange again, and a
+//! failure is either a request the wallet-rpc did not run or one it may have
+//! run (`MoneroWalletEffectError::RequestNotSent` and the operation's `Rpc`
+//! error); a transfer that may have run is looked up before anything is sent
+//! again.
 
 #![forbid(unsafe_code)]
 
+mod regtest_mining;
 mod topology;
 mod wallet_effect;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -40,20 +62,21 @@ use monero_rpc::monero::cryptonote::subaddress::Index as SubaddressIndex;
 use monero_rpc::monero::util::address::AddressType;
 use monero_rpc::{
     BlockHeaderResponse, DaemonJsonRpcClient, DaemonRpcClient, GetBlockHeaderSelector,
-    GetTransfersCategory, GotTransfer, IncomingTransfer, RpcAuthentication, RpcClient,
-    RpcClientBuilder, Transaction, TransactionsResponse, TransferHeight, TransferType,
+    GetTransfersCategory, GetTransfersSelector, GotTransfer, IncomingTransfer, RpcAuthentication,
+    RpcClient, RpcClientBuilder, Transaction, TransactionsResponse, TransferHeight, TransferType,
     WalletClient,
 };
 use thiserror::Error;
 use url::{Host, Url};
 
+pub use regtest_mining::{MoneroRegtestMining, MoneroRegtestMiningError};
 pub use topology::{
-    MoneroTopologyBindingError, MoneroTopologyError, MoneroTopologyVerifier,
-    VerifiedMoneroTopologyAttestation,
+    MAX_PUBLIC_TIP_AGE_SECONDS, MoneroTopologyBindingError, MoneroTopologyError,
+    MoneroTopologyVerifier, VerifiedMoneroTopologyAttestation,
 };
 pub use wallet_effect::{
     ConfirmedMoneroFunding, ConfirmedMoneroSweep, MoneroRegtestWalletEffects,
-    MoneroWalletEffectError, SubmittedMoneroSweep,
+    MoneroWalletEffectError, MoneroWalletRpcLock, SubmittedMoneroSweep,
 };
 
 /// Canonical Monero standard-address type used by exact output terms.
@@ -63,6 +86,34 @@ pub use monero_rpc::monero::cryptonote::hash::Hash as MoneroTransactionId;
 
 /// Exact confirmation policy committed by the M4 LEZ/XMR agreement.
 pub const REQUIRED_MONERO_CONFIRMATIONS: u64 = 10;
+/// Height-zero block hash of Monero Stagenet, the network
+/// [`MoneroNetwork::Stagenet`] names. A Stagenet identity is admitted only
+/// with this genesis.
+pub const MONERO_STAGENET_GENESIS_HASH: [u8; 32] =
+    hex_literal("76ee3cc98646292206cd3e86f74d88b4dcc1d937088645e9b0cbca84b7ce74eb");
+/// Height-zero block hash of Monero Testnet, which no profile admits.
+const MONERO_TESTNET_GENESIS_HASH: [u8; 32] =
+    hex_literal("48ca7cd3c8de5b6a4d53d2861fbdaedca141553559f9be9520068053cda8430b");
+
+const fn hex_literal(text: &str) -> [u8; 32] {
+    const fn nibble(byte: u8) -> u8 {
+        match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            _ => panic!("lowercase hex only"),
+        }
+    }
+    let bytes = text.as_bytes();
+    assert!(bytes.len() == 64, "32-byte hex literal");
+    let mut out = [0_u8; 32];
+    let mut index = 0;
+    while index < 32 {
+        out[index] = (nibble(bytes[2 * index]) << 4) | nibble(bytes[2 * index + 1]);
+        index += 1;
+    }
+    out
+}
+
 /// Fixed deadline applied by `monero-rpc` to every daemon and wallet request.
 pub const RPC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum decoded available-output entries accepted from wallet RPC.
@@ -126,6 +177,57 @@ impl MoneroNetwork {
             Self::Stagenet => AddressNetwork::Stagenet,
         }
     }
+
+    /// The configuration name: `regtest` or `stagenet`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Regtest => "regtest",
+            Self::Stagenet => "stagenet",
+        }
+    }
+
+    /// Whether `address` is encoded for this network: Stagenet bytes on
+    /// Stagenet, mainnet bytes on Regtest (which has no bytes of its own).
+    /// A Testnet address belongs to neither.
+    #[must_use]
+    pub fn admits_address(self, address: &MoneroAddress) -> bool {
+        address.network == self.address_network()
+    }
+
+    /// Whether blocks on this network come only from the role's own
+    /// `generateblocks` (Regtest), or from miners the role does not run
+    /// (Stagenet), whose confirmations it can only wait for.
+    #[must_use]
+    pub const fn mined_by_the_role(self) -> bool {
+        matches!(self, Self::Regtest)
+    }
+}
+
+impl std::str::FromStr for MoneroNetwork {
+    type Err = MoneroNetworkNameError;
+
+    /// Parses a configured network name. `mainnet` and `testnet` are refused
+    /// by name: no profile takes swaps there.
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "regtest" => Ok(Self::Regtest),
+            "stagenet" => Ok(Self::Stagenet),
+            "mainnet" | "testnet" => Err(MoneroNetworkNameError::Refused),
+            _ => Err(MoneroNetworkNameError::Unknown),
+        }
+    }
+}
+
+/// A configured Monero network name that names no admitted network.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum MoneroNetworkNameError {
+    /// Monero mainnet or testnet: refused, no profile takes swaps there.
+    #[error("Monero mainnet and testnet are refused: the network is regtest or stagenet")]
+    Refused,
+    /// Not a Monero network name.
+    #[error("unknown Monero network: the network is regtest or stagenet")]
+    Unknown,
 }
 
 /// Network plus exact height-zero block identity committed before funding.
@@ -144,6 +246,7 @@ pub struct MoneroChainIdentityAttestor {
     network: MoneroNetwork,
     daemon: DaemonJsonRpcClient,
     daemon_origin: String,
+    endpoint: LoopbackRpcEndpoint,
 }
 
 impl MoneroChainIdentityAttestor {
@@ -169,18 +272,127 @@ impl MoneroChainIdentityAttestor {
             network,
             daemon: client,
             daemon_origin: daemon.base_url.clone(),
+            endpoint: LoopbackRpcEndpoint {
+                base_url: daemon.base_url.clone(),
+                username: daemon.username.clone(),
+                password: daemon.password.clone(),
+            },
         })
     }
 
     /// Discovers the exact nonzero block hash at height zero.
     ///
+    /// A Stagenet attestor admits only the Stagenet genesis; a Regtest one
+    /// refuses the Stagenet and Testnet genesis.
+    ///
     /// # Errors
     ///
-    /// Fails closed if the typed RPC fails or returns an all-zero placeholder.
+    /// Fails closed if the typed RPC fails, returns an all-zero placeholder or
+    /// the genesis of another network.
     pub async fn discover(&self) -> Result<MoneroChainIdentity, MoneroEvidenceError> {
         let hash =
-            MoneroRpcPort::rpc("on_get_block_hash(0)", self.daemon.on_get_block_hash(0)).await?;
+            MoneroRpcPort::rpc("on_get_block_hash(0)", || self.daemon.on_get_block_hash(0)).await?;
         identity_from_observed_hash(self.network, hash_bytes(hash.as_ref()))
+    }
+
+    /// Proves from the daemon's `get_info` that it runs the attestor's
+    /// network: `fakechain` for Regtest, `stagenet` for Stagenet. A mainnet
+    /// or testnet daemon is refused whatever the configured network; the
+    /// Regtest genesis equals the mainnet one, so only this read tells them
+    /// apart.
+    ///
+    /// # Errors
+    ///
+    /// [`MoneroEvidenceError::DaemonNetworkMismatch`] for a daemon of another
+    /// network or an untrusted answer; [`MoneroEvidenceError::Rpc`] when the
+    /// bounded read fails.
+    pub async fn verify_network(&self) -> Result<(), MoneroEvidenceError> {
+        match topology::verify_daemon_network(&self.endpoint, self.network).await {
+            Ok(()) => Ok(()),
+            Err(MoneroTopologyError::DaemonNetworkMismatch) => {
+                Err(MoneroEvidenceError::DaemonNetworkMismatch)
+            }
+            Err(error) => Err(MoneroEvidenceError::Rpc {
+                operation: "get_info",
+                source: error.into(),
+            }),
+        }
+    }
+
+    /// Proves the daemon is fit to decide on now: it runs the attestor's
+    /// network (as [`Self::verify_network`]), and on Stagenet it is
+    /// synchronized, not syncing, and its tip is at most
+    /// [`MAX_PUBLIC_TIP_AGE_SECONDS`] from this host's clock.
+    ///
+    /// # Errors
+    ///
+    /// [`MoneroEvidenceError::DaemonNetworkMismatch`] for a daemon of another
+    /// network or an untrusted answer; [`MoneroEvidenceError::DaemonNotCurrent`]
+    /// for one not synchronized or with a stale tip;
+    /// [`MoneroEvidenceError::Rpc`] when a bounded read fails.
+    pub async fn verify_daemon_current(&self) -> Result<(), MoneroEvidenceError> {
+        match topology::verify_daemon_current(&self.endpoint, self.network).await {
+            Ok(()) => Ok(()),
+            Err(MoneroTopologyError::DaemonNetworkMismatch) => {
+                Err(MoneroEvidenceError::DaemonNetworkMismatch)
+            }
+            Err(
+                MoneroTopologyError::DaemonNotSynchronized | MoneroTopologyError::DaemonTipStale,
+            ) => Err(MoneroEvidenceError::DaemonNotCurrent),
+            Err(error) => Err(MoneroEvidenceError::Rpc {
+                operation: "get_info",
+                source: error.into(),
+            }),
+        }
+    }
+
+    /// Reads the daemon's current tip height (its block count less one).
+    ///
+    /// # Errors
+    ///
+    /// Fails closed if the typed RPC fails.
+    pub async fn tip_height(&self) -> Result<u64, MoneroEvidenceError> {
+        let count = MoneroRpcPort::rpc("get_block_count", || self.daemon.get_block_count()).await?;
+        Ok(count.get() - 1)
+    }
+
+    /// The highest height whose block timestamp is at most `unix_seconds`, or
+    /// 0 when no block is that old, found by bisection over the daemon's
+    /// headers (about two dozen reads on Stagenet). A wallet restored from it
+    /// scans every block mined after that time without scanning the chain
+    /// from genesis. Monero block timestamps are only roughly ordered (a
+    /// block's may be up to two hours ahead, or as early as the median of the
+    /// 60 before it), so a caller passes a time well before the first block
+    /// it must see.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when a header read fails.
+    pub async fn height_at_or_before(&self, unix_seconds: u64) -> Result<u64, MoneroEvidenceError> {
+        let tip = self.tip_height().await?;
+        if self.block_timestamp(tip).await? <= unix_seconds {
+            return Ok(tip);
+        }
+        // The answer lies in [low, high]: a height at or before the time, or 0.
+        let (mut low, mut high) = (0, tip.saturating_sub(1));
+        while low < high {
+            let middle = low + (high - low).div_ceil(2);
+            if self.block_timestamp(middle).await? <= unix_seconds {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Ok(low)
+    }
+
+    async fn block_timestamp(&self, height: u64) -> Result<u64, MoneroEvidenceError> {
+        let header = MoneroRpcPort::rpc("get_block_header(height)", || {
+            self.daemon
+                .get_block_header(GetBlockHeaderSelector::Height(height))
+        })
+        .await?;
+        Ok(u64::try_from(header.timestamp.timestamp()).unwrap_or(0))
     }
 
     /// Non-secret exact daemon origin used for discovery.
@@ -513,6 +725,74 @@ impl MoneroOutputVerifier {
     ) -> Result<VerifiedMoneroOutputObservation, MoneroEvidenceError> {
         verify_with_port(&self.rpc, self.identity, expected).await
     }
+    /// The transaction of the open wallet's first incoming output of exactly
+    /// `amount_piconero`, confirmed or not: a candidate for [`Self::verify`],
+    /// which alone decides. A party that did not send the output learns its
+    /// transaction this way.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on RPC failure or more outputs than the response bound.
+    pub async fn find_incoming(
+        &self,
+        amount_piconero: u64,
+    ) -> Result<Option<MoneroTransactionId>, MoneroEvidenceError> {
+        let response = MoneroRpcPort::rpc("incoming_transfers(all)", || {
+            self.rpc.wallet.incoming_transfers(
+                TransferType::All,
+                Some(SHARED_WALLET_ACCOUNT_INDEX),
+                None,
+            )
+        })
+        .await?;
+        let outputs = response.transfers.unwrap_or_default();
+        if outputs.len() > MAX_AVAILABLE_OUTPUTS {
+            return Err(MoneroEvidenceError::SemanticResponseBound {
+                resource: "incoming outputs",
+                maximum: MAX_AVAILABLE_OUTPUTS,
+            });
+        }
+        Ok(outputs
+            .into_iter()
+            .find(|output| output.amount.as_pico() == amount_piconero)
+            .map(|output| output.tx_hash.0))
+    }
+
+    /// The transaction of the open wallet's first incoming transfer of
+    /// exactly `amount_piconero` still in the pool, which
+    /// [`Self::find_incoming`] does not list until it is mined.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on RPC failure or more transfers than the response bound.
+    pub async fn find_incoming_in_pool(
+        &self,
+        amount_piconero: u64,
+    ) -> Result<Option<MoneroTransactionId>, MoneroEvidenceError> {
+        let mut response = MoneroRpcPort::rpc("get_transfers(pool)", || {
+            self.rpc.wallet.get_transfers(GetTransfersSelector {
+                category_selector: HashMap::from([(GetTransfersCategory::Pool, true)]),
+                account_index: Some(SHARED_WALLET_ACCOUNT_INDEX),
+                subaddr_indices: None,
+                block_height_filter: None,
+            })
+        })
+        .await?;
+        let pool = response
+            .remove(&GetTransfersCategory::Pool)
+            .unwrap_or_default();
+        if pool.len() > MAX_AVAILABLE_OUTPUTS {
+            return Err(MoneroEvidenceError::SemanticResponseBound {
+                resource: "pool transfers",
+                maximum: MAX_AVAILABLE_OUTPUTS,
+            });
+        }
+        Ok(pool
+            .into_iter()
+            .filter(|transfer| transfer.amount.as_pico() == amount_piconero)
+            .find_map(|transfer| <[u8; 32]>::try_from(transfer.txid.0.as_slice()).ok())
+            .map(MoneroTransactionId))
+    }
 }
 
 impl fmt::Debug for MoneroOutputVerifier {
@@ -591,6 +871,18 @@ pub enum MoneroEvidenceError {
     /// The actual daemon returned an unusable all-zero height-zero identity.
     #[error("Monero daemon returned an all-zero height-zero hash")]
     ZeroObservedGenesisHash,
+    /// The daemon's height-zero hash is the genesis of another network.
+    #[error("Monero daemon genesis belongs to another network than {network:?}")]
+    GenesisOfAnotherNetwork {
+        /// The configured network.
+        network: MoneroNetwork,
+    },
+    /// The daemon's `get_info` names another network than the configured one.
+    #[error("Monero daemon does not serve the configured network")]
+    DaemonNetworkMismatch,
+    /// The public daemon is not synchronized, or its tip is not recent.
+    #[error("Monero daemon is not synchronized or its tip is stale")]
+    DaemonNotCurrent,
     /// A decoded collection exceeded its post-decode `PoC` bound.
     #[error("decoded Monero `{resource}` exceeded the semantic bound {maximum}")]
     SemanticResponseBound {
@@ -679,12 +971,40 @@ pub enum MoneroEvidenceError {
     NonzeroUnlockDistance,
 }
 
+impl MoneroEvidenceError {
+    /// Whether the exact output was seen on its way to its confirmations: in
+    /// the pool, or in a block with fewer than the required confirmations
+    /// (and so not yet unlocked). Mining is what it waits for.
+    #[must_use]
+    pub const fn awaits_confirmations(&self) -> bool {
+        matches!(
+            self,
+            Self::WalletTransferInPool
+                | Self::DaemonTransactionInPool
+                | Self::NonzeroUnlockDistance
+                | Self::OutputNotUnlocked
+                | Self::InsufficientConfirmations
+        )
+    }
+}
+
 fn identity_from_observed_hash(
     network: MoneroNetwork,
     genesis_hash: [u8; 32],
 ) -> Result<MoneroChainIdentity, MoneroEvidenceError> {
-    MoneroChainIdentity::new(network, genesis_hash)
-        .map_err(|_| MoneroEvidenceError::ZeroObservedGenesisHash)
+    let foreign = match network {
+        MoneroNetwork::Stagenet => genesis_hash != MONERO_STAGENET_GENESIS_HASH,
+        MoneroNetwork::Regtest => {
+            genesis_hash == MONERO_STAGENET_GENESIS_HASH
+                || genesis_hash == MONERO_TESTNET_GENESIS_HASH
+        }
+    };
+    let identity = MoneroChainIdentity::new(network, genesis_hash)
+        .map_err(|_| MoneroEvidenceError::ZeroObservedGenesisHash)?;
+    if foreign {
+        return Err(MoneroEvidenceError::GenesisOfAnotherNetwork { network });
+    }
+    Ok(identity)
 }
 
 fn valid_credential(value: &str, colon_allowed: bool) -> bool {
@@ -693,6 +1013,39 @@ fn valid_credential(value: &str, colon_allowed: bool) -> bool {
         && value
             .bytes()
             .all(|byte| (0x21..=0x7e).contains(&byte) && (colon_allowed || byte != b':'))
+}
+
+/// Attempts of one read-only typed call that fails in transport or in
+/// decoding its answer (see the Digest note in the crate documentation).
+pub const READ_ATTEMPTS: u32 = 3;
+
+/// Makes one read-only, idempotent typed call, and makes it again, up to
+/// [`READ_ATTEMPTS`] in all, while it fails in transport or in decoding the
+/// response (see the Digest note in the crate documentation). An error the
+/// server answered with (a JSON-RPC error) is not retried. Only reads come
+/// here: a transfer or a sweep sent twice could pay twice, and none is ever
+/// passed in.
+async fn read_with_retries<T, F>(call: impl Fn() -> F) -> Result<T, anyhow::Error>
+where
+    F: Future<Output = Result<T, anyhow::Error>>,
+{
+    let mut attempt = 1;
+    loop {
+        match call().await {
+            Err(error) if failed_in_transport(&error) && attempt < READ_ATTEMPTS => attempt += 1,
+            result => return result,
+        }
+    }
+}
+
+/// Whether a typed call failed in the HTTP client (sending, timing out, or
+/// decoding the body), not in a server's JSON-RPC answer. `monero-rpc`
+/// 0.5.1's `get_block` alone turns its client's error into text ("Can not
+/// fetch block: …"), so that read is made again on any failure.
+fn failed_in_transport(error: &anyhow::Error) -> bool {
+    error.is::<reqwest::Error>()
+        || error.is::<diqwest::error::Error>()
+        || error.to_string().starts_with("Can not fetch block: ")
 }
 
 #[derive(Clone, Debug)]
@@ -868,11 +1221,16 @@ impl MoneroRpcPort {
         })
     }
 
-    async fn rpc<T>(
+    /// One read-only typed call, made again on a transport or decode
+    /// failure ([`read_with_retries`]).
+    async fn rpc<T, F>(
         operation: &'static str,
-        future: impl Future<Output = Result<T, anyhow::Error>>,
-    ) -> Result<T, MoneroEvidenceError> {
-        future
+        call: impl Fn() -> F,
+    ) -> Result<T, MoneroEvidenceError>
+    where
+        F: Future<Output = Result<T, anyhow::Error>>,
+    {
+        read_with_retries(call)
             .await
             .map_err(|source| MoneroEvidenceError::Rpc { operation, source })
     }
@@ -919,14 +1277,13 @@ impl MoneroRpcPort {
         let Some(transfer) = transfer else {
             return Ok(Vec::new());
         };
-        let response = Self::rpc(
-            "incoming_transfers(available)",
+        let response = Self::rpc("incoming_transfers(available)", || {
             self.wallet.incoming_transfers(
                 TransferType::Available,
                 Some(transfer.subaddress.major),
                 Some(vec![transfer.subaddress.minor]),
-            ),
-        )
+            )
+        })
         .await?;
         let outputs = response.transfers.unwrap_or_default();
         if outputs.len() > MAX_AVAILABLE_OUTPUTS {
@@ -949,15 +1306,14 @@ impl ObservationPort for MoneroRpcPort {
         expected: &ExpectedMoneroOutput,
     ) -> Result<ObservationSnapshot, MoneroEvidenceError> {
         let genesis_hash =
-            Self::rpc("on_get_block_hash(0)", self.daemon.on_get_block_hash(0)).await?;
+            Self::rpc("on_get_block_hash(0)", || self.daemon.on_get_block_hash(0)).await?;
         if hash_bytes(genesis_hash.as_ref()) != self.identity.genesis_hash() {
             return Err(MoneroEvidenceError::GenesisMismatch);
         }
-        let wallet_transfer = Self::rpc(
-            "get_transfer_by_txid",
+        let wallet_transfer = Self::rpc("get_transfer_by_txid", || {
             self.wallet
-                .get_transfer(expected.transaction_id, Some(SHARED_WALLET_ACCOUNT_INDEX)),
-        )
+                .get_transfer(expected.transaction_id, Some(SHARED_WALLET_ACCOUNT_INDEX))
+        })
         .await?
         .map(WalletTransferSnapshot::from);
         let Some(transfer) = wallet_transfer.as_ref() else {
@@ -967,20 +1323,15 @@ impl ObservationPort for MoneroRpcPort {
         if transfer.in_pool || transfer.height.is_none() {
             return Err(MoneroEvidenceError::WalletTransferInPool);
         }
-        let tip_before = Self::rpc(
-            "get_last_block_header(before)",
-            self.daemon.get_block_header(GetBlockHeaderSelector::Last),
-        )
+        let tip_before = Self::rpc("get_last_block_header(before)", || {
+            self.daemon.get_block_header(GetBlockHeaderSelector::Last)
+        })
         .await?;
         let available_outputs = self.available_outputs(wallet_transfer.as_ref()).await?;
-        let transaction_response = Self::rpc(
-            "get_transactions(pruned)",
-            self.daemon_rpc.get_transactions(
-                vec![expected.transaction_id],
-                Some(false),
-                Some(true),
-            ),
-        )
+        let transaction_response = Self::rpc("get_transactions(pruned)", || {
+            self.daemon_rpc
+                .get_transactions(vec![expected.transaction_id], Some(false), Some(true))
+        })
         .await?;
         Self::bound_transactions(&transaction_response)?;
         let containing_height = transaction_response
@@ -989,17 +1340,15 @@ impl ObservationPort for MoneroRpcPort {
             .and_then(|transactions| transactions.first())
             .and_then(|transaction| transaction.block_height);
         let containing_block = if let Some(height) = containing_height {
-            let header = Self::rpc(
-                "get_block_header_by_height",
+            let header = Self::rpc("get_block_header_by_height", || {
                 self.daemon
-                    .get_block_header(GetBlockHeaderSelector::Height(height)),
-            )
+                    .get_block_header(GetBlockHeaderSelector::Height(height))
+            })
             .await?;
-            let block = Self::rpc(
-                "get_block_by_hash",
+            let block = Self::rpc("get_block_by_hash", || {
                 self.daemon
-                    .get_block(GetBlockHeaderSelector::Hash(header.hash)),
-            )
+                    .get_block(GetBlockHeaderSelector::Hash(header.hash))
+            })
             .await?;
             if block.tx_hashes.len() > MAX_BLOCK_TRANSACTION_HASHES {
                 return Err(MoneroEvidenceError::SemanticResponseBound {
@@ -1012,10 +1361,9 @@ impl ObservationPort for MoneroRpcPort {
             None
         };
 
-        let tip_after = Self::rpc(
-            "get_last_block_header(after)",
-            self.daemon.get_block_header(GetBlockHeaderSelector::Last),
-        )
+        let tip_after = Self::rpc("get_last_block_header(after)", || {
+            self.daemon.get_block_header(GetBlockHeaderSelector::Last)
+        })
         .await?;
 
         Ok(ObservationSnapshot {
@@ -1659,6 +2007,27 @@ mod tests {
             Err(MoneroEvidenceError::ZeroObservedGenesisHash)
         ));
 
+        let stagenet =
+            identity_from_observed_hash(MoneroNetwork::Stagenet, MONERO_STAGENET_GENESIS_HASH)
+                .expect("the Stagenet genesis");
+        assert_eq!(stagenet.network(), MoneroNetwork::Stagenet);
+        for (network, foreign) in [
+            (MoneroNetwork::Stagenet, [7; 32]),
+            (MoneroNetwork::Stagenet, MONERO_TESTNET_GENESIS_HASH),
+            (MoneroNetwork::Regtest, MONERO_STAGENET_GENESIS_HASH),
+            (MoneroNetwork::Regtest, MONERO_TESTNET_GENESIS_HASH),
+        ] {
+            assert!(matches!(
+                identity_from_observed_hash(network, foreign),
+                Err(MoneroEvidenceError::GenesisOfAnotherNetwork { network: refused })
+                    if refused == network
+            ));
+        }
+        assert!(matches!(
+            identity_from_observed_hash(MoneroNetwork::Stagenet, [0; 32]),
+            Err(MoneroEvidenceError::ZeroObservedGenesisHash)
+        ));
+
         let endpoint = LoopbackRpcEndpoint::new("http://127.0.0.1:18081", "daemon", "secret")
             .expect("literal-loopback authenticated endpoint");
         let attestor = MoneroChainIdentityAttestor::new(MoneroNetwork::Regtest, &endpoint)
@@ -1684,5 +2053,38 @@ mod tests {
             MoneroNetwork::Stagenet.address_network(),
             AddressNetwork::Stagenet
         );
+    }
+
+    #[test]
+    fn a_configured_network_is_regtest_or_stagenet_and_never_mainnet_or_testnet() {
+        assert_eq!("regtest".parse(), Ok(MoneroNetwork::Regtest));
+        assert_eq!("stagenet".parse(), Ok(MoneroNetwork::Stagenet));
+        for refused in ["mainnet", "testnet"] {
+            assert_eq!(
+                refused.parse::<MoneroNetwork>(),
+                Err(MoneroNetworkNameError::Refused)
+            );
+        }
+        for unknown in ["", "Stagenet", "fakechain", "stagenet ", "main"] {
+            assert_eq!(
+                unknown.parse::<MoneroNetwork>(),
+                Err(MoneroNetworkNameError::Unknown)
+            );
+        }
+        for network in [MoneroNetwork::Regtest, MoneroNetwork::Stagenet] {
+            assert_eq!(network.name().parse(), Ok(network));
+        }
+        assert!(MoneroNetwork::Regtest.mined_by_the_role());
+        assert!(!MoneroNetwork::Stagenet.mined_by_the_role());
+    }
+
+    #[test]
+    fn an_address_is_admitted_only_on_its_own_network() {
+        assert!(MoneroNetwork::Regtest.admits_address(&address(AddressNetwork::Mainnet)));
+        assert!(!MoneroNetwork::Regtest.admits_address(&address(AddressNetwork::Stagenet)));
+        assert!(!MoneroNetwork::Regtest.admits_address(&address(AddressNetwork::Testnet)));
+        assert!(MoneroNetwork::Stagenet.admits_address(&address(AddressNetwork::Stagenet)));
+        assert!(!MoneroNetwork::Stagenet.admits_address(&address(AddressNetwork::Mainnet)));
+        assert!(!MoneroNetwork::Stagenet.admits_address(&address(AddressNetwork::Testnet)));
     }
 }

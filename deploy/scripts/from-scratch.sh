@@ -39,11 +39,12 @@
 # No long-lived container is left behind and nothing holds the host Docker
 # socket except the reproducible guest build, for the duration of that run.
 #
-# LEZ_TEST_HOOKS=1 builds the LEZ sidecar with its devnet test hooks (feature
-# test-hooks: holds of the revealing claim's preparation and submission), which
-# zec-kill-maker-claim needs; off by default. LEZ_RELEASE_BUILD (set by the
-# release workflows) refuses it, and the sidecar built with test-hooks while
-# LEZ_RELEASE_BUILD is set does not compile.
+# LEZ_TEST_HOOKS=1 builds the Taker Node and the LEZ sidecar with their devnet
+# test hooks (feature test-hooks: a skewed clock, a cheating Taker, a punish
+# nonce thief, holds of a claim's preparation and submission), which the
+# adversarial XMR scenarios and zec-kill-maker-claim need; off by default.
+# LEZ_RELEASE_BUILD (set by the release workflows) refuses it, and a crate built
+# with test-hooks while LEZ_RELEASE_BUILD is set does not compile.
 set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -127,8 +128,8 @@ case "${LEZ_TEST_HOOKS:-0}" in 0|1) ;; *) fail "LEZ_TEST_HOOKS is 0 or 1, not '$
 if [[ "${LEZ_TEST_HOOKS:-0}" == 1 && -n "${LEZ_RELEASE_BUILD:-}" ]]; then
   fail "LEZ_TEST_HOOKS=1 builds the devnet test hooks, which no release build (LEZ_RELEASE_BUILD) may carry"
 fi
-# The release mark goes into the sidecar's build container, where the crate
-# refuses to compile its test hooks under it.
+# The release mark goes into each build container, where the crates with
+# test hooks refuse to compile them under it.
 release_build_env=()
 [[ -z "${LEZ_RELEASE_BUILD:-}" ]] || release_build_env=(-e "LEZ_RELEASE_BUILD=$LEZ_RELEASE_BUILD")
 phase_wanted() { [[ -z "$ONLY" || "$ONLY" == "$1" || ( "$1" == build && "$ONLY" == build:* ) ]]; }
@@ -292,17 +293,26 @@ phase_nix() {
   # Chat and its Delivery runtime, the releases the desks are built against
   # (apps/basecamp/flake.lock), as release packages too. Each is built from its
   # own flake so its binary cache (nixConfig) applies.
-  local module ref delivery_rev
+  # chat_module is built from a scratch copy of its pinned commit with
+  # builder/patches/logos-chat-module applied (ChatConfig.delivery_config).
+  local module ref delivery_rev chat_src="$ASSETS/.nix-out/chat_module-src"
+  local chat_patches="$DEPLOY_ROOT/builder/patches/logos-chat-module"
   delivery_rev="$(jq -r '.nodes["logos-delivery-module"].locked.rev' "$REPO_ROOT/apps/basecamp/flake.lock")"
   for module in chat_module delivery_module; do
-    ref="github:logos-co/logos-chat-module/$chat_rev#lgx-portable"
+    ref="path:/out/chat_module-src#lgx-portable@$chat_rev+$(cat "$chat_patches"/*.patch | sha256sum | cut -c1-16)"
     [[ "$module" == delivery_module ]] && ref="github:logos-co/logos-delivery-module/$delivery_rev#lgx-portable"
     if ! ls "$ASSETS/.nix-out/$module-lgx-portable"/*.lgx >/dev/null 2>&1 \
        || [[ "$(cat "$ASSETS/.nix-out/$module-lgx-portable/.sources" 2>/dev/null)" != "$ref-$(uname -m)" ]]; then
       log "building $module ($ref)"
+      if [[ "$module" == chat_module ]]; then
+        rm -rf "$chat_src"; git init -q "$chat_src"
+        git -C "$chat_src" fetch -q --depth 1 https://github.com/logos-co/logos-chat-module.git "$chat_rev"
+        git -C "$chat_src" checkout -q FETCH_HEAD
+        apply_source_patches "$chat_src" "$chat_patches"
+      fi
       # The out-link and the export directory must not share a name: the
       # export replaces its destination, which would delete the link first.
-      nix_build "$module-lgx" "$ref"
+      nix_build "$module-lgx" "${ref%@*}"
       nix_export "$module-lgx" "$ASSETS/.nix-out/$module-lgx-portable"
       echo "$ref-$(uname -m)" > "$ASSETS/.nix-out/$module-lgx-portable/.sources"
     fi
@@ -315,10 +325,13 @@ phase_rust() {
   PHASE=rust
   # Each role's Node and what it runs, packaged by the stage phase
   # (package-role-node.sh); the Taker image keeps the ZEC provisioners, which
-  # scripts/zec-provision.sh runs from it.
-  local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli
+  # tests/fixtures/zec-catalog-fixture.sh runs from it.
+  local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway maker-node/lez-logos-price-worker
     maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor maker-node/lez-zec-maker-actor
-    taker-node/lez-taker-node taker-node/lez-taker-cli
+    maker-node/lez-xmr-maker-actor maker-node/xmr-reference-monero-fund maker-node/xmr-reference-tag15
+    maker-node/xmr-reference-tag15-finalized maker-node/xmr-reference-monero-refund
+    maker-node/xmr-reference-monero-verify maker-node/xmr-reference-tag17
+    taker-node/lez-taker-node taker-node/lez-taker-cli taker-node/lez-taker-chat-gateway
     taker-node/lez-taker-registry-init
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
     taker-node/zec-local-poc-provision taker-node/zec-local-poc-chat-draft taker-node/zec-local-poc-chat-finalize
@@ -327,14 +340,36 @@ phase_rust() {
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to
   # a different checkout. Its dependency/target cache still makes reruns cheap.
+  # No incremental compilation: a throwaway container builds each checkout
+  # once, and the incremental directory would only grow in the cache volume.
   local b role
   for b in "${bins[@]}"; do mkdir -p "$DEPLOY_ROOT/images/${b%/*}"; done
   log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
+  # LEZ_TEST_HOOKS=1: the devnet test hooks of the Taker Node (a clock offset,
+  # a cheating refund; xmr_supervisor::test_hooks) and of the Maker Node (a
+  # hold of Zcash actor activations; actor_supervisor::runtime::test_hooks),
+  # never in a release build
+  local hooks=""
+  [[ "${LEZ_TEST_HOOKS:-0}" != 1 ]] || { hooks=",lez-taker-node/test-hooks,lez-maker-node/test-hooks"; log "with the devnet test hooks (LEZ_TEST_HOOKS=1)"; }
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
-    -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
+    -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target -e CARGO_INCREMENTAL=0 \
+    -e "LEZ_NODE_HOOKS_FEATURE=$hooks" ${release_build_env[@]+"${release_build_env[@]}"} "$RUST_IMAGE" bash -c '
       set -euo pipefail
-      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
-      for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
+      cargo build --locked --bins --features "lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr$LEZ_NODE_HOOKS_FEATURE" -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
+      # the dealer test fixture tools, alone: built with the others, feature
+      # unification would put the dealer into the Node and actor binaries.
+      # Never in a release build (LEZ_RELEASE_BUILD), where they do not compile.
+      if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then
+        cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
+          --bin zec-local-poc-chat-finalize --bin zec-local-poc-transfer 2>&1 | tail -3
+      fi
+      for b in '"${bins[*]}"'; do
+        case "$b" in
+          taker-node/zec-local-poc-identity) ;;
+          taker-node/zec-local-poc-*) [[ -z "${LEZ_RELEASE_BUILD:-}" ]] || continue ;;
+        esac
+        install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"
+      done
       chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   for role in maker taker; do
     git -C "$REPO_ROOT" rev-parse HEAD > "$DEPLOY_ROOT/images/$role-node/build-source.txt"
@@ -614,18 +649,19 @@ sidecar_tree_stamp() {
 
 # lez-v02-escrow-claim-probe and lez-v02-custody-credit-probe are test-only
 # tools: the devnet Maker image carries them beside the Node package
-# (images/maker-node/Dockerfile) for the zec-maker-early-claim and
-# *-custody-credit scenarios; no role package contains them. With
-# LEZ_TEST_HOOKS=1 the sidecar is built with its test hooks (feature
-# test-hooks: the claim holds of zec-kill-maker-claim), which no release build
-# has.
+# (images/maker-node/Dockerfile) for the zec-maker-early-claim, the XMR
+# adversarial and the *-custody-credit scenarios; no role package contains
+# them. With LEZ_TEST_HOOKS=1 the sidecar is built with its test hooks
+# (feature test-hooks: the punish nonce thief of xmr-punish-replans, the claim
+# holds of zec-kill-maker-claim and xmr-kill-maker), which no release build has.
 build_sidecar() {
   local hooks=""
   [[ "${LEZ_TEST_HOOKS:-0}" != 1 ]] || hooks="--features test-hooks"
   log "building the LEZ sidecar, the identity tool and the escrow claim and custody credit probes${hooks:+ (with the devnet test hooks)}"
   builder_run ${release_build_env[@]+"${release_build_env[@]}"} -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      $hooks --bin lez-v02-bridge-poc --bin lez-v02-escrow-claim-probe --bin lez-v02-custody-credit-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
+      $hooks --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan --bin lez-v02-escrow-claim-probe --bin lez-v02-custody-credit-probe --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc \
+      /cache/target/sidecar/debug/lez-v02-xmr-stage-a-plan \
       /cache/target/sidecar/debug/lez-v02-escrow-claim-probe \
       /cache/target/sidecar/debug/lez-v02-custody-credit-probe \
       /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
@@ -717,8 +753,10 @@ phase_stage() {
   expected="$(sidecar_tree_stamp)"
   staged="$(cat "$PROVISION/sidecar/source-tree.txt" 2>/dev/null || true)"
   [[ "$staged" == "$expected" ]] || fail "the staged sidecar ($PROVISION/sidecar/lez-v02-bridge-poc, tree ${staged:-unstamped}) was not built from this checkout's compat/lez-v0_2-sidecar ($expected); run from-scratch.sh --only build:sidecar first"
-  install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
-  install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
+  for role in maker taker; do
+    # the sidecar, and the Monero Stage-A planner both Nodes run (one-shot, chain-free)
+    install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$PROVISION/sidecar/lez-v02-xmr-stage-a-plan" "$DEPLOY_ROOT/images/$role-node/"
+  done
   # test-only, outside the Maker's package: the zec-maker-early-claim and *-custody-credit scenarios
   install -m 0755 "$PROVISION/sidecar/lez-v02-escrow-claim-probe" "$DEPLOY_ROOT/images/maker-node/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-custody-credit-probe" "$DEPLOY_ROOT/images/maker-node/"

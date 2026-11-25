@@ -62,7 +62,7 @@ pub use m4_finalized_facts::{
 #[cfg(target_os = "linux")]
 pub use m4_stage_a_composer::{
     ActualLocalM4StageAConfig, M4_STAGE_A_DEPLOYMENT_RESIDUAL, M4StageAComposeReceipt,
-    M4StageAParameters, compose_m4_stage_a_actual_local,
+    M4StageAParameters, compose_m4_stage_a_actual_local, plan_m4_stage_a_unsigned_wire,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use m4_tag13_handoff::{

@@ -1,0 +1,7 @@
+[15:09:46] regression run: 1 tests at 39e60679 (tree dirty: 0), results in runtime/regress/20261116T150946Z
+[15:09:46] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[15:09:46] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[15:10:31] group fast
+[15:10:32]     [lane 1] node:btc:restart-maker:TakerSellsForeign (try 1) starts: LEZ finalized 453, tip 459
+[15:12:37] === node:btc:restart-maker:TakerSellsForeign (try 1, lane 1): PASSED in 103 s; LEZ finalized 537, tip 544
+[15:12:37] regression run: 1 of 1 passed in 2 min, 0 new chains, 0 profile switches, 0 frozen tries

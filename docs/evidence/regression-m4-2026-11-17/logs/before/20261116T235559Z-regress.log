@@ -1,0 +1,16 @@
+[23:55:59] regression run: 4 tests at 7d09351a (tree dirty: 0), results in runtime/regress/20261116T235559Z
+[23:55:59] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[23:55:59] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[23:56:29] group zec-v6
+[23:56:29]     timing profile fast -> fast, ZEC profile deterministic-local-devnet-v6 (logs/profile-1.log)
+[23:57:34]     [lane 1] node:zec:zec-taker-refund-offline:TakerSellsLez (try 1) starts: LEZ finalized 131, tip 137
+[23:57:34]     [lane 2] node:zec:zec-taker-refund-offline:TakerSellsForeign (try 1) starts: LEZ finalized 131, tip 137
+[00:02:22] === node:zec:zec-taker-refund-offline:TakerSellsForeign (try 1, lane 2): PASSED in 281 s; LEZ finalized 326, tip 331
+[00:02:40] === node:zec:zec-taker-refund-offline:TakerSellsLez (try 1, lane 1): PASSED in 298 s; LEZ finalized 342, tip 344
+[00:02:40] group refund
+[00:02:40]     timing profile fast -> refund, ZEC profile deterministic-local-devnet-v5 (logs/profile-2.log)
+[00:03:39]     [lane 1] node:btc:taker-refund-offline:TakerSellsLez (try 1) starts: LEZ finalized 377, tip 384
+[00:03:39]     [lane 2] node:btc:taker-refund-offline:TakerSellsForeign (try 1) starts: LEZ finalized 377, tip 384
+[00:07:33] === node:btc:taker-refund-offline:TakerSellsForeign (try 1, lane 2): PASSED in 227 s; LEZ finalized 538, tip 543
+[00:08:55] === node:btc:taker-refund-offline:TakerSellsLez (try 1, lane 1): PASSED in 309 s; LEZ finalized 597, tip 600
+[00:08:55] regression run: 4 of 4 passed in 12 min, 0 new chains, 2 profile switches, 0 frozen tries

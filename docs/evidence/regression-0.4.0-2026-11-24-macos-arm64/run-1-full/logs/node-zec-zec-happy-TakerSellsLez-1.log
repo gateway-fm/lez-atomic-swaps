@@ -1,0 +1,29 @@
+[03:30:01] === zec-happy (stamp 1795573801)
+[03:30:01] preflight: indexer historical reads
+[03:30:02]   indexer serves historical reads at the tip (12580)
+[03:30:02] preflight: LEZ finality check waived by request
+[03:30:02]   Maker CLI published offer-e2e-zectt-1795573802 on its running Node (no corridor)
+[03:30:03]   Taker took offer-e2e-zectt-1795573802: swap zec-19a801b5 (not_activated)
+[03:30:03]   take-time agreement: Maker funds bd945c99a1748f9b…:0, Zcash anchor 845, refund height 861
+[03:30:03]   receipt: swap zec-19a801b51467d3a1923b481daaf62a15ea9aa149c425dd511083335257d2796b, actor config /var/lib/lez/taker/btc/swaps/5b86089590aa81f1fbe8860d980125c427fefa51834871073c506cde68c9a82d/zec-actor/taker/actor-config.json
+[03:30:04]   [0 s] waiting for the Taker's zec-19a801b5 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 844 | LEZ finalized 12578, tip 12582 (4 unfinalized) [heartbeat]
+[03:30:07]   [3 s] waiting for the Taker's zec-19a801b5 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 844 | LEZ finalized 12578, tip 12582 (4 unfinalized) [heartbeat]
+[03:30:23]   [19 s] waiting for the Taker's zec-19a801b5 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 844 | LEZ finalized 12593, tip 12598 (5 unfinalized) [heartbeat]
+[03:30:26]   zebra: mined 1 block(s) → height 845 (mempool had ['56730e4a3fbb'])
+[03:30:29]   zebra: mined 1 block(s) → height 846 (Maker's funding has 1 confirmation(s); the Taker's pre-reveal gate wants 2 (actor at taker_lock_confirmed))
+[03:30:33]   [29 s] waiting for the Taker's zec-19a801b5 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 846 | LEZ finalized 12593, tip 12598 (5 unfinalized) [heartbeat]
+[03:30:33]   Maker's Zcash funding 56730e4a3fbb3bb8c4bbe79098c18921823c0b81bc2af9a014376d401c422602 is in zebra block 845
+[03:30:33]   Taker claimed Zcash (replay=False)
+[03:30:33]   [0 s] waiting for the Taker's zec-19a801b5 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 846 | LEZ finalized 12593, tip 12598 (5 unfinalized) [heartbeat]
+[03:30:33]   zebra: mined 1 block(s) → height 847 (mempool had ['628b1bc532be'])
+[03:30:36]   [3 s] waiting for the Taker's zec-19a801b5 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 847 | LEZ finalized 12593, tip 12598 (5 unfinalized) [heartbeat]
+[03:30:43]   [9 s] waiting for the Taker's zec-19a801b5 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 847 | LEZ finalized 12593, tip 12598 (5 unfinalized) [heartbeat]
+[03:30:43]   Taker's Zcash claim 628b1bc532be71e97b2baef9409bbe7db20879ca02665ce80583fc646beb2bcc is in zebra block 847
+[03:30:43]   the Maker's actor submitted ['lez_followup_claim']
+[03:30:43]   [0 s] waiting for the Taker's zec-19a801b5 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 12610, tip 12614 (4 unfinalized) [heartbeat]
+[03:30:43]   both Nodes report zec-19a801b5 completed
+[03:30:43]   restarting the Maker Node after the completed swap (claim-journal revalidation)
+[03:30:50]   Maker restarted and still reports the swap completed
+[03:30:50]   zec-19a801b5: the Taker re-planned its LEZ lock 0 times
+[03:30:50]   Maker lock attempt count 2 (projected the Taker's lock 1 time(s); 18 supervisor attempts over the swap); Taker LEZ re-plan count 0
+[03:30:50] === zec-happy: passed in 49s

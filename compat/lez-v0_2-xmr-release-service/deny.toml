@@ -1,3 +1,11 @@
+[graph]
+# The release service runs on Linux only (it needs Linux file-safety
+# semantics), as the root workspace and the v0.2 sidecar graphs are audited.
+# This excludes target-only dependencies no Linux build compiles, such as the
+# Apple and Android certificate verifier roots.
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+
 [advisories]
 unmaintained = "workspace"
 yanked = "deny"
@@ -42,6 +50,9 @@ exceptions = [
     { crate = "secp@0.7.0", allow = ["Unlicense"] },
     { crate = "secp256k1@0.31.1", allow = ["CC0-1.0"] },
     { crate = "secp256k1-sys@0.11.0", allow = ["CC0-1.0"] },
+    # The Zcash crates this graph links bring their own exact secp256k1.
+    { crate = "secp256k1@0.33.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1-sys@0.14.1", allow = ["CC0-1.0"] },
     # The archived, unlicensed COMIT DLEQ PoC explicitly redirects users to
     # these maintained permissive crates. Keep the PoC-only exception exact
     # and version-scoped; ADR 0053 forbids a production-acceptance inference.

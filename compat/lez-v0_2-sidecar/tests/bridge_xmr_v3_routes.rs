@@ -27,19 +27,23 @@ use lez_bridge_protocol::{
     FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimV3Request,
     PrepareNativeXmrEscrowV3Request, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrRefundV3Request, PreparedTransaction, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
-    SubmitTransactionRequest, TransactionId, XmrClaimPartialV3, XmrNativeEffectV3,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request, PreparedTransaction,
+    RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest, TransactionId,
+    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
     BridgeServerError, FinalizedIndexerApi, HistoricalAccount, M4StageAFinalizedNonces,
     M4StageAFutureMessageInput, NativeEscrowPlanner, NativePrepareError, NonceSource,
     OfficialNodeRpc, ZecEscrowInstruction, decode_official_public_transaction,
-    plan_m4_stage_a_future_messages, program_id_to_hex, start_bridge_server,
+    plan_m4_stage_a_future_messages, prepared_from_transaction, program_id_to_hex,
+    start_bridge_server,
 };
-use nssa::{AccountId, PrivateKey, PublicKey, Signature, public_transaction::Message};
+use nssa::{
+    AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
+    public_transaction::{Message, WitnessSet},
+};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
@@ -249,6 +253,14 @@ struct SequencerFixture {
     lookups: Arc<AtomicUsize>,
     included_transaction: Arc<Mutex<Option<LeeTransaction>>>,
     submission_reply: SequencerSubmissionReply,
+    /// Lookups still to hold unanswered, as a stopped forwarder does.
+    held_lookups: Arc<AtomicUsize>,
+    /// Sends still to answer with a wrong transaction id (an unknown
+    /// outcome) before the reply mode applies.
+    wrong_replies: Arc<AtomicUsize>,
+    /// Another transaction every lookup finds under the requested hash: a
+    /// definite refusal.
+    foreign_inclusion: Arc<Mutex<Option<LeeTransaction>>>,
 }
 
 impl SequencerFixture {
@@ -268,6 +280,23 @@ impl SequencerFixture {
     fn lookup_count(&self) -> usize {
         self.lookups.load(Ordering::SeqCst)
     }
+
+    fn hold_next_lookup(&self) {
+        self.held_lookups.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn answer_next_send_wrongly(&self) {
+        self.wrong_replies.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn include_foreign(&self, prepared: &PreparedTransaction) {
+        let transaction = decode_official_public_transaction(prepared.exact_bytes.as_slice())
+            .expect("official prepared transaction");
+        *self
+            .foreign_inclusion
+            .lock()
+            .expect("foreign inclusion lock") = Some(LeeTransaction::Public(transaction));
+    }
 }
 
 async fn start_configurable_sequencer(
@@ -278,6 +307,9 @@ async fn start_configurable_sequencer(
         included_transaction: Arc::new(Mutex::new(None)),
         lookups: Arc::new(AtomicUsize::new(0)),
         submission_reply,
+        held_lookups: Arc::new(AtomicUsize::new(0)),
+        wrong_replies: Arc::new(AtomicUsize::new(0)),
+        foreign_inclusion: Arc::new(Mutex::new(None)),
     };
     let server = ServerBuilder::default()
         .build("127.0.0.1:0")
@@ -291,9 +323,26 @@ async fn start_configurable_sequencer(
         Ok::<_, ErrorObjectOwned>(hex::encode([41_u8; 32]))
     })
     .expect("channel method");
-    rpc.register_method("getTransaction", |params, fixture, _| {
+    rpc.register_async_method("getTransaction", |params, fixture, _| async move {
         let requested: HashType = params.one()?;
         fixture.lookups.fetch_add(1, Ordering::SeqCst);
+        if fixture
+            .held_lookups
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |held| {
+                held.checked_sub(1)
+            })
+            .is_ok()
+        {
+            std::future::pending::<()>().await;
+        }
+        if let Some(foreign) = fixture
+            .foreign_inclusion
+            .lock()
+            .expect("foreign inclusion lock")
+            .clone()
+        {
+            return Ok::<_, ErrorObjectOwned>(Some((foreign, 1_u64)));
+        }
         let observed = fixture
             .included_transaction
             .lock()
@@ -308,6 +357,15 @@ async fn start_configurable_sequencer(
     rpc.register_method("sendTransaction", |params, fixture, _| {
         let transaction: LeeTransaction = params.one()?;
         fixture.sends.fetch_add(1, Ordering::SeqCst);
+        if fixture
+            .wrong_replies
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Ok::<_, ErrorObjectOwned>(HashType([99; 32]));
+        }
         let returned_id = match fixture.submission_reply {
             SequencerSubmissionReply::Canonical => transaction.hash(),
             SequencerSubmissionReply::WrongTransactionId => HashType([99; 32]),
@@ -810,7 +868,7 @@ async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
     clippy::too_many_lines,
     reason = "one tag-16 journey keeps exact composition, adversarial bindings, restart recovery, and no-submission proof joined"
 )]
-async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
+async fn taker_prepares_completes_and_submits_exact_tag_16() {
     let (depositor, depositor_key) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1025,12 +1083,16 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
     assert_eq!(submitted.transaction_id, completed.refund.transaction_id);
     assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
     assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
-    let replayed_submission = taker
+    // Accepted is not included: a refund the sequencer admitted and dropped
+    // (its window not yet open at block building) is sent again, the same
+    // bytes under the same request id.
+    let resent_submission = taker
         .fresh_client()
         .submit_transaction(submission_request)
         .await
-        .expect("successful tag-16 submission replays without node I/O");
-    assert_eq!(replayed_submission, submitted);
+        .expect("a tag-16 refund not yet included is sent again");
+    assert_eq!(resent_submission, submitted);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
     assert_remote_code(
         taker
             .fresh_client()
@@ -1042,7 +1104,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
             .await,
         ErrorCode::InvalidTransaction,
     );
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
 
     let taker_directory = taker.directory.path().to_path_buf();
     taker
@@ -1083,7 +1145,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
         0,
         "startup recovery must not regenerate the refund-authority nonce"
     );
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
     restarted_server
         .stop()
         .await
@@ -1112,7 +1174,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
         Err(BridgeServerError::InvalidDurableState)
     ));
     assert_eq!(corrupt_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
     fs::write(&completion_path, completion_bytes).expect("restore refund completion");
 
     fs::remove_file(
@@ -1139,7 +1201,7 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
         Err(BridgeServerError::InvalidDurableState)
     ));
     assert_eq!(missing_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
 
     maker.server.stop().await.expect("maker stop");
     sequencer.stop().expect("sequencer stop");
@@ -1147,7 +1209,11 @@ async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
 }
 
 #[tokio::test]
-async fn tag16_unknown_submission_is_never_resent_after_restart() {
+#[allow(
+    clippy::too_many_lines,
+    reason = "one tag-16 journey keeps the unknown answer, the resends, the restart and the landing joined"
+)]
+async fn tag16_not_included_is_sent_again_until_it_lands() {
     let (depositor, depositor_key) = account(31);
     let (claimant, _) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1207,6 +1273,16 @@ async fn tag16_unknown_submission_is_never_resent_after_restart() {
     );
     assert_eq!(fixture.send_count(), 1);
     assert_eq!(fixture.lookup_count(), 1);
+    // An unknown outcome is no answer: the refund can still land, so the same
+    // bytes go out again.
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(submission.clone())
+            .await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(fixture.send_count(), 2);
 
     let taker_directory = taker.directory.path().to_path_buf();
     taker
@@ -1229,18 +1305,179 @@ async fn tag16_unknown_submission_is_never_resent_after_restart() {
     .await
     .expect("Taker restarts after unknown tag-16 submission");
     assert_remote_code(
-        restarted_client.submit_transaction(submission).await,
+        restarted_client
+            .submit_transaction(submission.clone())
+            .await,
         ErrorCode::UnknownSubmissionOutcome,
     );
     assert_eq!(restart_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(fixture.send_count(), 1);
-    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 3);
+    // Once included it is already known, and nothing is sent.
+    fixture.include_exact(&submission.transaction);
+    let landed = BridgeClient::connect(BridgeClientConfig::new(
+        restarted_server.endpoint(),
+        SidecarCapability::new(CAPABILITY).expect("client capability"),
+        RunId::new(RUN_ID).expect("run id"),
+        submission.runtime.clone(),
+        Duration::from_secs(2),
+    ))
+    .expect("bridge client")
+    .submit_transaction(submission)
+    .await
+    .expect("an included tag-16 refund is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 3);
     restarted_server
         .stop()
         .await
         .expect("restarted Taker stops");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
+}
+
+/// The sidecar's state directory as a SIGKILL leaves it: every file as it is
+/// on disk at that instant, the process that wrote them gone.
+fn copy_state_directory(from: &Path, to: &Path) {
+    for entry in fs::read_dir(from).expect("read state directory") {
+        let entry = entry.expect("state directory entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("entry type").is_dir() {
+            fs::create_dir(&target).expect("copy state subdirectory");
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o700))
+                .expect("private state subdirectory");
+            copy_state_directory(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).expect("copy state file");
+        }
+    }
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one tag-15 journey keeps the held lookup, the kill, the restart and the landing joined"
+)]
+async fn tag15_in_flight_at_a_kill_is_decided_again_after_the_restart() {
+    let (depositor, _) = account(31);
+    let (claimant, claimant_key) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let maker_runtime = runtime(Participant::Maker, claimant);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let maker = start_sidecar(
+        Participant::Maker,
+        claimant,
+        claimant_key.clone(),
+        &sequencer_endpoint,
+    )
+    .await;
+    let prepare_request = PrepareNativeXmrClaimV3Request::new(
+        context(Participant::Maker, "tag15-in-flight-prepare"),
+        maker_runtime.clone(),
+        xmr_terms,
+    );
+    let prepared = maker
+        .fresh_client()
+        .prepare_native_xmr_claim_v3(prepare_request.clone())
+        .await
+        .expect("prepare the exact tag-15 claim");
+    let message = Message::try_from_slice(prepared.claim.exact_message_bytes.as_slice())
+        .expect("canonical unsigned claim message");
+    let (_, claim_authority_key) = account(33);
+    let signature = Signature::new(&claim_authority_key, &message.hash());
+    let complete_request = CompleteNativeXmrClaimV3Request::new(
+        context(Participant::Maker, "tag15-in-flight-complete"),
+        maker_runtime.clone(),
+        xmr_terms,
+        prepared.claim.clone(),
+        AggregateBip340Signature::from_bytes(signature.value),
+    )
+    .expect("exact claim completion request");
+    let completed = maker
+        .fresh_client()
+        .complete_native_xmr_claim_v3(complete_request.clone())
+        .await
+        .expect("complete the exact tag-15 claim");
+    let submission = SubmitTransactionRequest::new(
+        submission_context(Participant::Maker, completed.claim.transaction_id),
+        maker_runtime,
+        completed.claim.clone(),
+    );
+
+    // The Maker's sequencer forwarder stops: the lookup before the claim's
+    // one send is never answered, and the Maker is killed while it waits.
+    fixture.hold_next_lookup();
+    assert!(
+        maker
+            .fresh_client()
+            .submit_transaction(submission.clone())
+            .await
+            .is_err(),
+        "the held submission does not answer"
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 0);
+    let killed = TempDir::new().expect("killed Maker state directory");
+    fs::set_permissions(killed.path(), fs::Permissions::from_mode(0o700))
+        .expect("private killed state directory");
+    copy_state_directory(maker.directory.path(), killed.path());
+
+    let (restarted_client, restarted_server) = try_start_sidecar_at(
+        Participant::Maker,
+        claimant,
+        claimant_key,
+        &sequencer_endpoint,
+        killed.path(),
+        Arc::new(FixedNonce),
+    )
+    .await
+    .expect("the Maker's sidecar starts again on the killed state");
+    // The claim tool runs again: the same preparation, completion and bytes.
+    assert_eq!(
+        restarted_client
+            .prepare_native_xmr_claim_v3(prepare_request)
+            .await
+            .expect("restarted preparation replays"),
+        prepared
+    );
+    assert_eq!(
+        restarted_client
+            .complete_native_xmr_claim_v3(complete_request)
+            .await
+            .expect("restarted completion replays"),
+        completed
+    );
+    // The claim can still land before R and nothing else replaces it: its
+    // in-flight marker is no answer, so the chain decides it again.
+    let submitted = restarted_client
+        .submit_transaction(submission.clone())
+        .await
+        .expect("the in-flight tag-15 claim is looked up and sent again");
+    assert_eq!(submitted.transaction_id, completed.claim.transaction_id);
+    assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 1);
+    // Once included it is already known, and nothing is sent again.
+    fixture.include_exact(&submission.transaction);
+    let landed = BridgeClient::connect(BridgeClientConfig::new(
+        restarted_server.endpoint(),
+        SidecarCapability::new(CAPABILITY).expect("client capability"),
+        RunId::new(RUN_ID).expect("run id"),
+        submission.runtime.clone(),
+        Duration::from_secs(2),
+    ))
+    .expect("bridge client")
+    .submit_transaction(submission)
+    .await
+    .expect("the landed tag-15 claim is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 1);
+
+    restarted_server
+        .stop()
+        .await
+        .expect("restarted Maker stops");
+    sequencer.stop().expect("sequencer stop");
 }
 
 #[tokio::test]
@@ -1447,7 +1684,104 @@ async fn xmr_v3_routes_are_authenticated_bound_with_four_official_builders_enabl
 }
 
 #[tokio::test]
-async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable() {
+async fn xmr_punish_binds_the_committed_message_except_the_claimant_nonce() {
+    let (depositor, _) = account(31);
+    let (claimant, claimant_key) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let request = PrepareNativeXmrPunishV3Request::new(
+        context(Participant::Maker, "prepare-punish-live-nonce"),
+        runtime(Participant::Maker, claimant),
+        xmr_terms,
+    );
+    let planner = |nonce: u128| {
+        NativeEscrowPlanner::new(
+            Participant::Maker,
+            PrivateKey::try_new([32; 32]).expect("Maker key"),
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            runtime(Participant::Maker, claimant),
+            Arc::new(CountingNonce {
+                value: nonce,
+                calls: AtomicUsize::new(0),
+            }),
+        )
+        .expect("Maker planner")
+    };
+
+    // The fixture commits the message at nonce 41; the shared Maker owner
+    // may be at any nonce by the punish time, 0 included.
+    for nonce in [41, 0, 7] {
+        let maker = planner(nonce);
+        let prepared = maker
+            .prepare_native_xmr_punish_v3(&request)
+            .await
+            .expect("tag 17 at the claimant's live nonce");
+        let punish = decode_official_public_transaction(prepared.punish.exact_bytes.as_slice())
+            .expect("official punish transaction");
+        assert_eq!(punish.message().nonces, vec![nonce.into()]);
+        assert_eq!(
+            punish.message().hash() == *xmr_terms.to_input().punish_message_hash.as_bytes(),
+            nonce == 41
+        );
+        maker
+            .validate_prepared_native_xmr_punish_v3(&request, &prepared)
+            .expect("prepared tag 17 revalidates");
+    }
+
+    let maker = planner(7);
+    let swap_id = [1; 32];
+    let metadata = lez_v0_2_sidecar::compute_metadata_pda(&ESCROW_PROGRAM, &swap_id);
+    let custody = lez_v0_2_sidecar::compute_custody_pda(&ESCROW_PROGRAM, &swap_id);
+    let signed = |accounts: Vec<AccountId>, instruction: ZecEscrowInstruction| {
+        let message = Message::try_new(ESCROW_PROGRAM, accounts, vec![7_u128.into()], instruction)
+            .expect("generated message");
+        let witnesses = WitnessSet::for_message(&message, &[&claimant_key]);
+        PrepareNativeXmrPunishV3Result::new(
+            request.context.clone(),
+            xmr_terms,
+            prepared_from_transaction(&PublicTransaction::new(message, witnesses))
+                .expect("bounded transaction"),
+        )
+    };
+    let exact = signed(
+        vec![metadata, custody, claimant],
+        ZecEscrowInstruction::PunishNativeXmr { swap_id },
+    );
+    maker
+        .validate_prepared_native_xmr_punish_v3(&request, &exact)
+        .expect("hand-signed tag 17 at nonce 7");
+    for drift in [
+        signed(
+            vec![metadata, custody, depositor],
+            ZecEscrowInstruction::PunishNativeXmr { swap_id },
+        ),
+        signed(
+            vec![metadata, custody, claimant],
+            ZecEscrowInstruction::PunishNativeXmr { swap_id: [2; 32] },
+        ),
+        signed(
+            vec![metadata, custody, claimant],
+            ZecEscrowInstruction::ClaimNativeXmr { swap_id },
+        ),
+        PrepareNativeXmrPunishV3Result::new(
+            exact.context.clone(),
+            terms(depositor, claimant, 43),
+            exact.punish.clone(),
+        ),
+    ] {
+        assert_eq!(
+            maker.validate_prepared_native_xmr_punish_v3(&request, &drift),
+            Err(NativePrepareError::InvalidTransactionBytes)
+        );
+    }
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one tag-17 journey keeps the binding, the resends, the restart and the landing joined"
+)]
+async fn durable_xmr_punish_is_transaction_bound_sent_until_it_lands_and_restart_stable() {
     let (depositor, _) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1495,25 +1829,31 @@ async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable(
         .fresh_client()
         .submit_transaction(submission_request.clone())
         .await
-        .expect("submit exact durable tag-17 punishment once");
+        .expect("submit exact durable tag-17 punishment");
     assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
     assert_eq!(submitted.transaction_id, prepared.punish.transaction_id);
     assert_eq!(fixture.lookup_count(), 1);
     assert_eq!(fixture.send_count(), 1);
+    // Accepted is not included: the current punishment is decided on the
+    // chain again and sent again (after P nothing else moves the escrow).
     assert_eq!(
         maker
             .fresh_client()
             .submit_transaction(submission_request.clone())
             .await
-            .expect("same tag-17 release replays without node I/O"),
+            .expect("a tag-17 punishment not yet included is sent again"),
         submitted
     );
-    assert_eq!(fixture.lookup_count(), 1);
-    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 2);
 
     maker.server.stop().await.expect("stop first Maker sidecar");
+    // The owner's nonce has not passed the punishment's (41): the restart
+    // answers the same bytes after one nonce read (a punishment is decided
+    // again; one whose nonce was passed is re-planned, see
+    // bridge_xmr_punish_replan.rs), without an inclusion lookup.
     let restarted_nonce = Arc::new(CountingNonce {
-        value: 999,
+        value: 41,
         calls: AtomicUsize::new(0),
     });
     let (restarted_client, restarted_server) = try_start_sidecar_at(
@@ -1535,14 +1875,29 @@ async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable(
     );
     assert_eq!(
         restarted_client
-            .submit_transaction(submission_request)
+            .submit_transaction(submission_request.clone())
             .await
-            .expect("restart replays accepted one-attempt release"),
+            .expect("after a restart the punishment is sent again"),
         submitted
     );
-    assert_eq!(restarted_nonce.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(fixture.lookup_count(), 1);
-    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(restarted_nonce.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.lookup_count(), 3);
+    assert_eq!(fixture.send_count(), 3);
+    // Included: already known, nothing sent.
+    fixture.include_exact(&prepared.punish);
+    let landed = BridgeClient::connect(BridgeClientConfig::new(
+        restarted_server.endpoint(),
+        SidecarCapability::new(CAPABILITY).expect("client capability"),
+        RunId::new(RUN_ID).expect("run id"),
+        maker_runtime,
+        Duration::from_secs(2),
+    ))
+    .expect("bridge client")
+    .submit_transaction(submission_request)
+    .await
+    .expect("an included punishment is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 3);
 
     restarted_server.stop().await.expect("stop restarted Maker");
     sequencer.stop().expect("sequencer stop");
@@ -1642,6 +1997,138 @@ async fn durable_xmr_escrow_pair_uses_actor_ordered_one_attempt_route() {
     );
     assert_eq!(fixture.lookup_count(), 3);
     assert_eq!(fixture.send_count(), 2);
+
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+/// A tag-13 transaction whose send's outcome is unknown (or whose sidecar
+/// was killed while it was in flight) is asked for again before C under its
+/// request id: it is decided on the chain again, not answered
+/// `unknown_submission_outcome` from the journal until the swap expires.
+#[tokio::test]
+async fn an_unknown_xmr_escrow_submission_is_decided_on_the_chain_again() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let prepared = taker
+        .fresh_client()
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, "prepare-unknown-escrow"),
+            taker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("prepare exact durable XMR escrow pair");
+    let initialization = SubmitTransactionRequest::new(
+        submission_context(Participant::Taker, prepared.initialization.transaction_id),
+        taker_runtime,
+        prepared.initialization.clone(),
+    );
+    fixture.answer_next_send_wrongly();
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(initialization.clone())
+            .await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(fixture.send_count(), 1);
+    let accepted = taker
+        .fresh_client()
+        .submit_transaction(initialization.clone())
+        .await
+        .expect("the unknown initialization is decided again and accepted");
+    assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 2);
+    // An acceptance is replayed: the supervisor submits tag 13 on every lock
+    // step until it is final, without first finding it absent, so deciding
+    // it again would re-broadcast it in every send-to-inclusion gap; one the
+    // sequencer dropped ends the swap cleanly at C, nothing locked.
+    let replayed = taker
+        .fresh_client()
+        .submit_transaction(initialization)
+        .await
+        .expect("the acceptance is replayed");
+    assert_eq!(replayed, accepted);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 2);
+
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+/// A definite refusal of tag 14 (the sequencer holds another transaction
+/// under its hash) is still replayed under the new policy: no second lookup,
+/// no send.
+#[tokio::test]
+async fn dedicated_xmr_authorization_refused_by_name_is_still_replayed() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let authorization = prepare_owned_claim_authorization(
+        &taker,
+        taker_runtime.clone(),
+        &xmr_terms,
+        "prepare-refused-by-name",
+    )
+    .await;
+    let escrow = taker
+        .fresh_client()
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, "prepare-refused-by-name-escrow"),
+            taker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("the escrow preparation replays");
+    fixture.include_foreign(&escrow.initialization);
+    let request = SubmitNativeXmrClaimAuthorizationV3Request::new(
+        context(Participant::Taker, "submit-refused-by-name"),
+        taker_runtime,
+        xmr_terms,
+        authorization,
+    );
+    for _ in 0..2 {
+        let refused = taker
+            .fresh_release_client()
+            .submit_native_xmr_claim_authorization_v3(request.clone())
+            .await;
+        let Err(BridgeClientError::Remote(error)) = refused else {
+            panic!("expected a remote refusal, got {refused:?}");
+        };
+        assert_ne!(error.code(), ErrorCode::UnknownSubmissionOutcome);
+        assert_ne!(error.code(), ErrorCode::Unavailable);
+    }
+    assert_eq!(
+        fixture.lookup_count(),
+        1,
+        "the refusal is replayed, not decided again"
+    );
+    assert_eq!(fixture.send_count(), 0);
 
     taker.server.stop().await.expect("taker stop");
     sequencer.stop().expect("sequencer stop");
@@ -1803,7 +2290,7 @@ async fn dedicated_xmr_authorization_already_known_uses_exact_lookup_without_sen
 }
 
 #[tokio::test]
-async fn dedicated_xmr_authorization_wrong_returned_id_is_unknown_and_replay_does_not_resend() {
+async fn dedicated_xmr_authorization_wrong_returned_id_is_unknown_and_decided_again() {
     let (depositor, depositor_key) = account(31);
     let (claimant, _) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1841,15 +2328,26 @@ async fn dedicated_xmr_authorization_wrong_returned_id_is_unknown_and_replay_doe
     assert_eq!(fixture.lookup_count(), 1);
     assert_eq!(fixture.send_count(), 1);
 
+    // An unknown outcome is no answer: the supervisor asks again only before
+    // R, and the same bytes are looked up and sent again.
     assert_remote_code(
         taker
             .fresh_release_client()
-            .submit_native_xmr_claim_authorization_v3(request)
+            .submit_native_xmr_claim_authorization_v3(request.clone())
             .await,
         ErrorCode::UnknownSubmissionOutcome,
     );
-    assert_eq!(fixture.lookup_count(), 1);
-    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(fixture.lookup_count(), 2);
+    assert_eq!(fixture.send_count(), 2);
+    // Once included it is already known, and nothing is sent.
+    fixture.include_exact(&request.authorization);
+    let landed = taker
+        .fresh_release_client()
+        .submit_native_xmr_claim_authorization_v3(request)
+        .await
+        .expect("an included tag 14 is already known");
+    assert_eq!(landed.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.send_count(), 2);
 
     taker.server.stop().await.expect("taker stop");
     sequencer.stop().expect("sequencer stop");

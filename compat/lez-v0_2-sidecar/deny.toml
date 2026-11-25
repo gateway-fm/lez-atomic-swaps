@@ -57,6 +57,9 @@ allow = [
 confidence-threshold = 0.93
 exceptions = [
     { crate = "webpki-roots@1.0.11", allow = ["CDLA-Permissive-2.0"] },
+    # Test-only: the real-planner test's xmr-reference-actor dev-dependency
+    # reaches rust-bitcoin, as the root graph does (root deny.toml).
+    { crate = "hex_lit@0.1.1", allow = ["MITNFA"] },
 ]
 
 [[licenses.clarify]]

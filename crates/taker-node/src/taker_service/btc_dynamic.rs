@@ -141,14 +141,40 @@ impl DynamicBtcRole {
         found
     }
 
-    fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
+    /// The reservation's swap directory, one checked name under the swaps
+    /// root (defence in depth: the id is already validated by its type).
+    pub(super) fn layout(&self, reservation_id: &RequestId) -> Result<SwapLayout> {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
+    }
+
+    /// The role runtime (LEZ identity, signer, swaps root, sidecar recipe)
+    /// the Zcash take-time reservations share.
+    #[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
+    pub(super) const fn runtime(&self) -> &BtcRoleRuntime {
+        &self.runtime
+    }
+
+    /// The Maker's Chat socket the take's rounds go through.
+    #[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
+    pub(super) fn chat_socket(&self) -> &Path {
+        &self.chat_socket
     }
 
     /// Turns a persisted entry into a catalog entry, re-authenticating the
     /// offer against its Delivery source like the static catalog does.
     pub(crate) fn load_entry(
         &self,
+        configured: &PreparedConfigurationV1,
+    ) -> Result<crate::PreparedTakerInitiationV1> {
+        self.load_entry_as(Pair::Bitcoin, true, configured)
+    }
+
+    /// [`Self::load_entry`] for an entry of `pair`; `dynamic` marks the
+    /// Node-owned Bitcoin take.
+    pub(crate) fn load_entry_as(
+        &self,
+        pair: Pair,
+        dynamic: bool,
         configured: &PreparedConfigurationV1,
     ) -> Result<crate::PreparedTakerInitiationV1> {
         let mut bindings = BTreeMap::new();
@@ -159,17 +185,17 @@ impl DynamicBtcRole {
             subscribers.push(RunLocalDelivery::subscriber(directory.clone(), key)?);
         }
         crate::taker_service_config::prepared::load_prepared_entry(
-            Pair::Bitcoin,
+            pair,
             configured,
             &bindings,
             &subscribers,
             Some(&self.chat_socket),
-            true,
+            dynamic,
         )
         .map_err(|error| anyhow::anyhow!("prepared entry: {error}"))
     }
 
-    fn source_for(&self, maker_identity: &[u8; 33]) -> Result<(&str, &Path)> {
+    pub(super) fn source_for(&self, maker_identity: &[u8; 33]) -> Result<(&str, &Path)> {
         self.sources
             .iter()
             .find(|(_, _, maker)| maker == maker_identity)
@@ -178,7 +204,7 @@ impl DynamicBtcRole {
     }
 
     /// Authenticates the offer from the request's announcement or Delivery.
-    async fn authenticate_offer(
+    pub(super) async fn authenticate_offer(
         &self,
         offer_id: &MakerOfferId,
         route: lez_swap_store::MakerRouteV1,
@@ -349,7 +375,7 @@ pub(super) async fn prepare(
     now: u64,
 ) -> Result<DynamicTake> {
     let reservation_id = reservation_id_for(&request.request_id)?;
-    let layout = dynamic.layout(&reservation_id);
+    let layout = dynamic.layout(&reservation_id)?;
     let direction = request.route.direction();
     ensure!(request.route.pair() == Pair::Bitcoin, "not a Bitcoin route");
     let prepared_file = layout.root().join("taker-prepared.json");
@@ -673,7 +699,7 @@ pub(super) async fn execute(
     foreign_units: u64,
     now: u64,
 ) -> Result<()> {
-    let layout = dynamic.layout(reservation_id);
+    let layout = dynamic.layout(reservation_id)?;
     ensure!(layout.exists(), "unknown swap");
     let mut record = TakerSwapRecordV1::load(&layout)?;
     let role_root = layout.role_root();
@@ -914,7 +940,7 @@ pub(super) async fn execute(
 /// its lock. The gate holds the nonce the account must reach before the next
 /// preparation; a lock waits for it, bounded, and past the bound it reports
 /// the dependency unavailable so the owner retries.
-static LEZ_LOCK_GATE: tokio::sync::Mutex<u64> = tokio::sync::Mutex::const_new(0);
+pub(super) static LEZ_LOCK_GATE: tokio::sync::Mutex<u64> = tokio::sync::Mutex::const_new(0);
 
 /// The Taker's Bitcoin lock: broadcasts the exact funding transaction once.
 /// Performs this Taker's first lock and returns the chain it landed on, its
@@ -927,7 +953,7 @@ pub(super) async fn lock(
     dynamic: &DynamicBtcRole,
     reservation_id: &RequestId,
 ) -> Result<(&'static str, String, bool)> {
-    let layout = dynamic.layout(reservation_id);
+    let layout = dynamic.layout(reservation_id)?;
     ensure!(layout.exists(), "unknown swap");
     let mut record = TakerSwapRecordV1::load(&layout)?;
     ensure!(record.actor_activated, "the swap is not active yet");
@@ -1016,7 +1042,7 @@ async fn wait_for_lez_nonce(runtime: &BtcRoleRuntime, target: u64) -> Result<u64
 /// Keeps the swap's sidecar running (respawns it after a Node restart) so the
 /// actor's LEZ observations have somewhere to go.
 pub(super) fn ensure_sidecar(dynamic: &DynamicBtcRole, reservation_id: &RequestId) -> Result<()> {
-    let layout = dynamic.layout(reservation_id);
+    let layout = dynamic.layout(reservation_id)?;
     ensure!(layout.exists(), "unknown swap");
     SwapSidecar::ensure(&dynamic.runtime, &layout, reservation_id).map(|_| ())
 }
@@ -1028,7 +1054,7 @@ pub(super) fn first_lock_chain(
     dynamic: &DynamicBtcRole,
     reservation_id: &RequestId,
 ) -> Option<&'static str> {
-    let layout = dynamic.layout(reservation_id);
+    let layout = dynamic.layout(reservation_id).ok()?;
     let record = TakerSwapRecordV1::load(&layout).ok()?;
     if record.funding_plan.is_some() {
         Some("bitcoin")

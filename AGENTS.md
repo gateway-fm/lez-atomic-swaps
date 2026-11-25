@@ -25,9 +25,14 @@ as well (sign-off, tests with every behavioural change).
   BTC, ZEC, XMR and any later pair. A pair may differ only in the
   cryptographic mechanism that carries the secret (adaptor signature, hash
   preimage, key share). A pair that cannot follow the common flow in a
-  direction does not offer that direction. XMR does not follow this rule
-  yet; aligning it, or withdrawing the direction, is part of the XMR work
-  (issue #161).
+  direction does not offer that direction. XMR `TakerSellsLez` is the one
+  accepted exception
+  ([ADR 0217](docs/architecture/0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md)):
+  a Monero output has no hash lock and no time lock, so there the Taker
+  authorises, the Maker claims LEZ first and reveals its Monero share, and
+  the Taker's LEZ refund, open in [R, P), is the only refund; XMR offers no
+  `TakerSellsForeign`. No other pair or direction may deviate without its own
+  accepted ADR.
 
 ## Evidence
 
@@ -58,10 +63,12 @@ as well (sign-off, tests with every behavioural change).
   and rustdoc checks of every Cargo workspace with CI's flags; `--fast`
   covers formatting everywhere and the root workspace's lints.
 - Before a push that changes code, also run what CI runs beyond the lints:
-  the root workspace tests with the four XMR excludes of `ci.yml`, the Node
+  the root workspace tests (`cargo test --locked --workspace --all-targets`,
+  no excludes, as `ci.yml` runs them), the Node
   suites with `--features pair-zec` and with `--all-features`,
   `python3 -m unittest discover -s deploy/tests`,
-  `scripts/test-check-all-workspaces.sh`, `scripts/test-ci-hardening-policy.sh`
+  `scripts/test-check-all-workspaces.sh`, `scripts/test-ci-hardening-policy.sh`,
+  `scripts/test-ci-cache-scripts.sh`
   and `scripts/check-runtime-profiles.py`, and, when the Zcash adapter,
   SDK or contract changed, `scripts/run-zebra-e2e.sh` in its own project.
   When docs changed, run `scripts/check-requirements-traceability.sh`,

@@ -1,0 +1,212 @@
+
+[01:46:46] === logos-happy (TakerSellsLez)
+
+[01:46:46] both Basecamps recreated on the logos transport
+
+[01:46:54] the Taker's Delivery node dials the Maker's at /ip4/192.168.176.4/tcp/60000/p2p/16Uiu2HAkzQP44SV8hp6Lxxx1MT4F8K23yjSc3KnA55iDoiKNRoc5
+
+[01:47:01] the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket
+   4713
+   {"delivery_sources":[{"directory":"/var/lib/lez/taker/delivery","maker_public_key":"035af697980b2955bf86e46e068ccd3fce7fbeb41320afd19fee2e1296d3006cfc","source_id":"local-maker"}],"chat_socket":"/run/lez/taker/logos-chat-proxy.sock"}
+
+[01:47:01] Maker desk publishes TakerSellsLez Zcash offers from its form until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[01:47:06] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2 awaiting_first_lock 0 -
+
+[01:47:20] taken over Logos Delivery and Chat in 14 s (discovery, conversation, reservation, ceremony)
+
+[01:47:20] Maker desk shows zec-49b48e6a at awaiting_taker_claim
+
+[01:47:20] driving the Taker's ZEC actor on the Node until zec-49b48e6a shows claim_available
+   [02:47:20]   take-time agreement: Maker funds a23322041cb559a5…:0, Zcash anchor 657, refund height 673
+   [02:47:20]   receipt: swap zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2, actor config /var/lib/lez/taker/btc/swaps/ec5c2dcce53764275e3e3d1a3f23bd8698de091dfb64147b5201b015801d79c0/zec-actor/taker/actor-config.json
+   [02:47:21]   [0 s] waiting for the Taker's zec-49b48e6a to reach claim_available (zec-drive to claim_available): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 656 | LEZ finalized 10650, tip 10653 (3 unfinalized) [heartbeat]
+   [02:47:37]   [16 s] waiting for the Taker's zec-49b48e6a to reach claim_available (zec-drive to claim_available): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 656 | LEZ finalized 10663, tip 10670 (7 unfinalized) [heartbeat]
+   [02:47:40]   zebra: mined 1 block(s) → height 657 (mempool had ['8339cf9bdbff'])
+   [02:47:46]   [25 s] waiting for the Taker's zec-49b48e6a to reach claim_available (zec-drive to claim_available): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 657 | LEZ finalized 10663, tip 10670 (7 unfinalized) [heartbeat]
+   [02:47:46]   zebra: mined 1 block(s) → height 658 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+   [02:47:46]   taker zec-49b48e6a is claim_available
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Zcash claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[01:47:51] Taker desk: claim_zec on zec-49b48e6a
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_zec
+2 passed, 0 failed
+
+[01:47:53] Maker desk shows zec-49b48e6a at completed
+
+[01:47:53] Taker desk shows zec-49b48e6a at completed
+
+[01:47:53] driving the Taker's ZEC actor on the Node until zec-49b48e6a shows completed
+   [02:47:53]   take-time agreement: Maker funds a23322041cb559a5…:0, Zcash anchor 657, refund height 673
+   [02:47:53]   receipt: swap zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2, actor config /var/lib/lez/taker/btc/swaps/ec5c2dcce53764275e3e3d1a3f23bd8698de091dfb64147b5201b015801d79c0/zec-actor/taker/actor-config.json
+   [02:47:53]   [0 s] waiting for the Taker's zec-49b48e6a to reach completed (zec-drive to completed): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker claim_evidence_available | zebra 658 | LEZ finalized 10683, tip 10686 (3 unfinalized) [heartbeat]
+   [02:47:53]   zebra: mined 1 block(s) → height 659 (mempool had ['19dad05c6608'])
+   [02:47:57]   [3 s] waiting for the Taker's zec-49b48e6a to reach completed (zec-drive to completed): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 659 | LEZ finalized 10683, tip 10686 (3 unfinalized) [heartbeat]
+   [02:48:00]   [6 s] waiting for the Taker's zec-49b48e6a to reach completed (zec-drive to completed): taker completed (gen 4) | actor at completed | maker completed | zebra 659 | LEZ finalized 10683, tip 10686 (3 unfinalized) [heartbeat]
+   [02:48:00]   taker zec-49b48e6a is completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+[02:48:04]   take-time agreement: Maker funds a23322041cb559a5…:0, Zcash anchor 657, refund height 673
+[02:48:04]   receipt: swap zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2, actor config /var/lib/lez/taker/btc/swaps/ec5c2dcce53764275e3e3d1a3f23bd8698de091dfb64147b5201b015801d79c0/zec-actor/taker/actor-config.json
+[02:48:05]   ZEC evidence written to <checkout>/deploy/runtime/evidence/zec/zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2.json (taker completed, maker completed, funding 657, spend 659)
+
+[01:48:05] Chat gateways: Taker {"jsonrpc":"2.0","id":1,"result":{"schema_version":1,"role":"taker","session_bound":true,"session_count":1,"queued_frames":0,"pending_requests":0,"discovered_offers":6}}; Maker {"jsonrpc":"2.0","id":1,"result":{"schema_version":1,"role":"maker","session_bound":true,"session_count":1,"queued_frames":0,"pending_requests":0,"discovered_offers":0}}
+
+[01:48:05] Taker gateway offers from Delivery: 1 offer(s) of 1 Maker(s): ['035af697980b']
+
+[01:48:05] Logos phase kept in runtime/evidence/logos/20261125T014646Z-Zcash-TakerSellsLez (both containers since 2026-11-25T01:46:46Z, both Chat module logs)
+   == 20261125T014646Z-Zcash-TakerSellsLez
+      online: Maker 01:46:54.162, Taker 01:47:01.317; conversation created 01:47:16.092
+      first request 01:47:16.137, 7827 B: 14.8 s after the Taker came online, 22.0 s after the Maker; relay peers then: Taker 1, Maker 1
+      Chat: the Taker sent 4 message(s), the Maker received 3
+      first request: 2 copies sent before the Maker's first answer (01:47:16.137, 01:47:17.138); the Maker's Chat module received it at 01:47:17.195, copy 2 (a resend delivered it)
+      publish 01:47:16.093 /logos-chat/1/56fc6de3/proto 0xcbe361898f65: relayed to 1 peer(s); Maker relay 01:47:16.096, handed to its Chat module 01:47:16.097
+      publish 01:47:16.096 /logos-chat/1/27a91b337fbe/proto 0x0b54c49f51f1: relayed to 1 peer(s); Maker relay 01:47:16.098, handed to its Chat module no
+      publish 01:47:16.139 /logos-chat/1/27a91b337fbe/proto 0x6d5229a7c557: relayed to 1 peer(s); Maker relay 01:47:16.147, handed to its Chat module no
+      publish 01:47:17.140 /logos-chat/1/27a91b337fbe/proto 0xdaf41152e17e: relayed to 1 peer(s); Maker relay 01:47:17.148, handed to its Chat module 01:47:17.153
+      publish 01:47:17.591 /logos-chat/1/27a91b337fbe/proto 0xdd4a35adddae: relayed to 1 peer(s); Maker relay 01:47:17.602, handed to its Chat module 01:47:17.609
+      publish 01:47:17.839 /logos-chat/1/27a91b337fbe/proto 0x37a7df147dbc: relayed to 1 peer(s); Maker relay 01:47:17.844, handed to its Chat module 01:47:17.847
+      the Maker subscribed to the conversation's topic at 01:47:16.148; the first request reached its relay at 01:47:16.147: margin -0.001 s
+      Maker protocols: relay=true rlnRelay=false store=false filter=true lightPush=true peerExchange=true rendezvous=true
+
+[01:48:06] maker Delivery node: errors, warnings and peer events
+   2026-11-25T01:47:08.251929879Z [2026-11-25 01:47:08.251] [out] [delivery_module] WRN 2026-11-25 01:47:08.250+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=8 error="no store peer available"
+   2026-11-25T01:47:11.258756714Z [2026-11-25 01:47:11.257] [out] [delivery_module] WRN 2026-11-25 01:47:11.256+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=8 error="no store peer available"
+   2026-11-25T01:47:14.262685007Z [2026-11-25 01:47:14.262] [out] [delivery_module] WRN 2026-11-25 01:47:14.261+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=8 error="no store peer available"
+   2026-11-25T01:47:17.264858092Z [2026-11-25 01:47:17.264] [out] [delivery_module] WRN 2026-11-25 01:47:17.263+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=14 error="no store peer available"
+   2026-11-25T01:47:20.266919302Z [2026-11-25 01:47:20.266] [out] [delivery_module] WRN 2026-11-25 01:47:20.265+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=14 error="no store peer available"
+   2026-11-25T01:47:23.272375720Z [2026-11-25 01:47:23.272] [out] [delivery_module] WRN 2026-11-25 01:47:23.270+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=17 error="no store peer available"
+   2026-11-25T01:47:26.274509846Z [2026-11-25 01:47:26.274] [out] [delivery_module] WRN 2026-11-25 01:47:26.272+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=17 error="no store peer available"
+   2026-11-25T01:47:29.277139333Z [2026-11-25 01:47:29.276] [out] [delivery_module] WRN 2026-11-25 01:47:29.275+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=23 error="no store peer available"
+   2026-11-25T01:47:31.316704834Z [2026-11-25 01:47:31.316] [out] [delivery_module] DBG 2026-11-25 01:47:31.315+00:00 Dialing peer                               topics="libp2p dialer" tid=380 peerId=16U*9JfMGk addrs="[/ip4/192.168.176.5/tcp/51892]"
+   2026-11-25T01:47:31.316717876Z [2026-11-25 01:47:31.316] [out] [delivery_module] DBG 2026-11-25 01:47:31.315+00:00 Expanded address and hostname              topics="libp2p dialer" tid=380 expandedAddress=/ip4/192.168.176.5/tcp/51892 hostname=192.168.176.5 resolvedAddresses="[/ip4/192.168.176.5/tcp/
+   2026-11-25T01:47:31.317292709Z [2026-11-25 01:47:31.317] [out] [delivery_module] DBG 2026-11-25 01:47:31.315+00:00 Dialing peer                               topics="libp2p dialer" tid=380 peerId=16U*9JfMGk addrs="[/ip4/192.168.176.5/tcp/38211]"
+   2026-11-25T01:47:31.317301709Z [2026-11-25 01:47:31.317] [out] [delivery_module] DBG 2026-11-25 01:47:31.316+00:00 Expanded address and hostname              topics="libp2p dialer" tid=380 expandedAddress=/ip4/192.168.176.5/tcp/38211 hostname=192.168.176.5 resolvedAddresses="[/ip4/192.168.176.5/tcp/
+   2026-11-25T01:47:31.317605751Z [2026-11-25 01:47:31.317] [out] [delivery_module] DBG 2026-11-25 01:47:31.316+00:00 Dialing failed                             topics="libp2p dialer" tid=380 description="TcpTransport dial error: (111) Connection refused" peerId=16U*9JfMGk
+   2026-11-25T01:47:31.319558001Z [2026-11-25 01:47:31.319] [out] [delivery_module] DBG 2026-11-25 01:47:31.318+00:00 Dial successful                            topics="libp2p dialer" tid=380 peerId=16U*9JfMGk
+   2026-11-25T01:47:32.279472835Z [2026-11-25 01:47:32.279] [out] [delivery_module] WRN 2026-11-25 01:47:32.278+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=23 error="no store peer available"
+   2026-11-25T01:47:35.284161461Z [2026-11-25 01:47:35.282] [out] [delivery_module] WRN 2026-11-25 01:47:35.280+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=23 error="no store peer available"
+   2026-11-25T01:47:38.284241296Z [2026-11-25 01:47:38.284] [out] [delivery_module] WRN 2026-11-25 01:47:38.282+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=29 error="no store peer available"
+   2026-11-25T01:47:41.287570631Z [2026-11-25 01:47:41.287] [out] [delivery_module] WRN 2026-11-25 01:47:41.286+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=29 error="no store peer available"
+   2026-11-25T01:47:44.289948799Z [2026-11-25 01:47:44.289] [out] [delivery_module] WRN 2026-11-25 01:47:44.288+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=29 error="no store peer available"
+   2026-11-25T01:47:47.294161175Z [2026-11-25 01:47:47.293] [out] [delivery_module] WRN 2026-11-25 01:47:47.291+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=35 error="no store peer available"
+   2026-11-25T01:47:50.296847510Z [2026-11-25 01:47:50.296] [out] [delivery_module] WRN 2026-11-25 01:47:50.295+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=35 error="no store peer available"
+   2026-11-25T01:47:53.298649345Z [2026-11-25 01:47:53.298] [out] [delivery_module] WRN 2026-11-25 01:47:53.297+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=35 error="no store peer available"
+   2026-11-25T01:47:56.300592471Z [2026-11-25 01:47:56.300] [out] [delivery_module] WRN 2026-11-25 01:47:56.299+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=35 error="no store peer available"
+   2026-11-25T01:47:59.304360250Z [2026-11-25 01:47:59.304] [out] [delivery_module] WRN 2026-11-25 01:47:59.302+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=41 error="no store peer available"
+   2026-11-25T01:48:01.317886418Z [2026-11-25 01:48:01.317] [out] [delivery_module] DBG 2026-11-25 01:48:01.316+00:00 Dialing peer                               topics="libp2p dialer" tid=380 peerId=16U*9JfMGk addrs="[/ip4/192.168.176.5/tcp/51892]"
+   2026-11-25T01:48:01.317907793Z [2026-11-25 01:48:01.317] [out] [delivery_module] DBG 2026-11-25 01:48:01.316+00:00 Expanded address and hostname              topics="libp2p dialer" tid=380 expandedAddress=/ip4/192.168.176.5/tcp/51892 hostname=192.168.176.5 resolvedAddresses="[/ip4/192.168.176.5/tcp/
+   2026-11-25T01:48:01.318363584Z [2026-11-25 01:48:01.318] [out] [delivery_module] DBG 2026-11-25 01:48:01.316+00:00 Dialing peer                               topics="libp2p dialer" tid=380 peerId=16U*9JfMGk addrs="[/ip4/192.168.176.5/tcp/38211]"
+   2026-11-25T01:48:01.318377418Z [2026-11-25 01:48:01.318] [out] [delivery_module] DBG 2026-11-25 01:48:01.316+00:00 Expanded address and hostname              topics="libp2p dialer" tid=380 expandedAddress=/ip4/192.168.176.5/tcp/38211 hostname=192.168.176.5 resolvedAddresses="[/ip4/192.168.176.5/tcp/
+   2026-11-25T01:48:01.318890376Z [2026-11-25 01:48:01.318] [out] [delivery_module] DBG 2026-11-25 01:48:01.317+00:00 Dialing failed                             topics="libp2p dialer" tid=380 description="TcpTransport dial error: (111) Connection refused" peerId=16U*9JfMGk
+   2026-11-25T01:48:01.321436043Z [2026-11-25 01:48:01.320] [out] [delivery_module] DBG 2026-11-25 01:48:01.319+00:00 Dial successful                            topics="libp2p dialer" tid=380 peerId=16U*9JfMGk
+   2026-11-25T01:48:02.306639418Z [2026-11-25 01:48:02.306] [out] [delivery_module] WRN 2026-11-25 01:48:02.304+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=41 error="no store peer available"
+   2026-11-25T01:48:02.306666127Z [2026-11-25 01:48:02.306] [out] [delivery_module] WRN 2026-11-25 01:48:02.305+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=380 requestId=5fea77a28d579a25feae msgHash=0xd59822f01660206614a13e41b6c2
+   2026-11-25T01:48:02.306668335Z [2026-11-25 01:48:02.306] [out] [delivery_module] WRN 2026-11-25 01:48:02.305+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=380 requestId=6eeb3cef39f098a2f135 msgHash=0xd98cd35384c8e96625cacee37646
+   2026-11-25T01:48:02.306669877Z [2026-11-25 01:48:02.306] [out] [delivery_module] WRN 2026-11-25 01:48:02.305+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=380 requestId=befddb081b3686056e1b msgHash=0xe82ca1848de0310c7e3f9025ba41
+   2026-11-25T01:48:02.306671293Z [2026-11-25 01:48:02.306] [out] [delivery_module] WRN 2026-11-25 01:48:02.305+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=380 requestId=14bd7a07587e368cda35 msgHash=0xf65ab13844b0557f5ee7eee2ec8f
+   2026-11-25T01:48:04.308710711Z [2026-11-25 01:48:04.308] [out] [delivery_module] WRN 2026-11-25 01:48:04.306+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=380 requestId=443c5f010adc5f0cdece msgHash=0x3aab4ec8fe44ca94b76b24c8c772
+   2026-11-25T01:48:04.308736711Z [2026-11-25 01:48:04.308] [out] [delivery_module] WRN 2026-11-25 01:48:04.307+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=380 requestId=f164b322a23fc5e0d24b msgHash=0x052addcabc44fc33c3a4d2c7d0e4
+   2026-11-25T01:48:04.308738753Z [2026-11-25 01:48:04.308] [out] [delivery_module] WRN 2026-11-25 01:48:04.307+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=380 requestId=91f303aeb50bd67db40e msgHash=0x7f13b0b91eb1fefacfe08c3a996d
+   2026-11-25T01:48:04.308740461Z [2026-11-25 01:48:04.308] [out] [delivery_module] WRN 2026-11-25 01:48:04.307+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=380 requestId=954a920fa3459f176783 msgHash=0x56cbc4a4a9588a7bd57676b861f5
+   2026-11-25T01:48:05.311355920Z [2026-11-25 01:48:05.311] [out] [delivery_module] WRN 2026-11-25 01:48:05.309+00:00 Skipping store validation for              topics="send service" tid=380 messageCount=33 error="no store peer available"
+
+[01:48:06] taker Delivery node: errors, warnings and peer events
+   2026-11-25T01:47:01.324018626Z [2026-11-25 01:47:01.321] [out] [delivery_module] DBG 2026-11-25 01:47:01.316+00:00 Dial successful                            topics="libp2p dialer" tid=348 peerId=16U*KNRoc5
+   2026-11-25T01:47:01.324024459Z [2026-11-25 01:47:01.322] [out] [delivery_module] INF 2026-11-25 01:47:01.321+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=348 pubsubTopic=/waku/2/rs/7341/0
+   2026-11-25T01:47:01.325439876Z [2026-11-25 01:47:01.324] [out] [delivery_module] INF 2026-11-25 01:47:01.322+00:00 Incoming WakuRelay connection              topics="waku relay" tid=348 connection=16U*KNRoc5:6b063e153e8111a57581bfcb protocol=/vac/waku/relay/2.0.0
+   2026-11-25T01:47:01.329339959Z [2026-11-25 01:47:01.328] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_change","peerId":"16Uiu2HAkzQP44SV8hp6Lxxx1MT4F8K23yjSc3KnA55iDoiKNRoc5","peerEvent":"EventMetadataUpdated"}
+   2026-11-25T01:47:01.329341584Z [2026-11-25 01:47:01.328] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback: Unknown event type: connection_change
+   2026-11-25T01:47:01.329343668Z [2026-11-25 01:47:01.328] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_change","peerId":"16Uiu2HAkzQP44SV8hp6Lxxx1MT4F8K23yjSc3KnA55iDoiKNRoc5","peerEvent":"EventConnected"}
+   2026-11-25T01:47:01.329347626Z [2026-11-25 01:47:01.328] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback: Unknown event type: connection_change
+   2026-11-25T01:47:01.329354626Z [2026-11-25 01:47:01.329] [out] [delivery_module] INF 2026-11-25 01:47:01.327+00:00 Finished dialing multiple peers            tid=348 successfulConns=1 attempted=1
+   2026-11-25T01:47:01.329355751Z [2026-11-25 01:47:01.329] [out] [delivery_module] INF 2026-11-25 01:47:01.327+00:00 Relay peer connections                     topics="waku node peer_manager" tid=348 inRelayConns=0/50 outRelayConns=1/25 totalConnections=1/150 notConnectedPeers=0 outsideBackoffPeers=0
+   2026-11-25T01:47:01.332328209Z [2026-11-25 01:47:01.330] [out] [delivery_module] WRN 2026-11-25 01:47:01.328+00:00 No external IP provided for the ENR, this node will not be discoverable topics="eth p2p discv5" tid=348
+   2026-11-25T01:47:01.332352293Z [2026-11-25 01:47:01.331] [out] [delivery_module] WRN 2026-11-25 01:47:01.329+00:00 NAT already initialized, skipping as cannot be done multiple times topics="nat" tid=348
+   2026-11-25T01:47:01.336005543Z [2026-11-25 01:47:01.335] [out] [delivery_module] DBG 2026-11-25 01:47:01.332+00:00 calculateConnectionState                   tid=348 relayCount=0 storeClientCount=0 lightpushCount=1 filterCount=1
+   2026-11-25T01:47:01.437898043Z [2026-11-25 01:47:01.437] [out] [delivery_module] DBG 2026-11-25 01:47:01.436+00:00 calculateConnectionState                   tid=348 relayCount=1 storeClientCount=0 lightpushCount=1 filterCount=1
+   2026-11-25T01:47:01.437920251Z [2026-11-25 01:47:01.437] [out] [delivery_module] DBG 2026-11-25 01:47:01.436+00:00 connectionStatus change                    tid=348 oldstatus=Disconnected newstatus=PartiallyConnected
+   2026-11-25T01:47:01.438222168Z [2026-11-25 01:47:01.438] [out] [delivery_module] ERR 2026-11-25 01:47:01.436+00:00 checkStore failed to get remote msgHashes  tid=348 pubsubTopic=/waku/2/rs/7341/6 cTopics="[/lez-atomic-swaps/1/offers/json]" error="BAD_RESPONSE: no service store peer connected"
+   2026-11-25T01:47:01.438226959Z [2026-11-25 01:47:01.438] [out] [delivery_module] ERR 2026-11-25 01:47:01.436+00:00 checkStore failed to get remote msgHashes  tid=348 pubsubTopic=/waku/2/rs/7341/0 cTopics="[/logos-chat/1/ffbe6950/proto]" error="BAD_RESPONSE: no service store peer connected"
+   2026-11-25T01:47:01.438229543Z [2026-11-25 01:47:01.438] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_status_change","connectionStatus":"PartiallyConnected"}
+   2026-11-25T01:47:19.347127343Z [2026-11-25 01:47:19.346] [out] [delivery_module] WRN 2026-11-25 01:47:19.345+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=3 error="no store peer available"
+   2026-11-25T01:47:22.351131969Z [2026-11-25 01:47:22.350] [out] [delivery_module] WRN 2026-11-25 01:47:22.349+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:25.354512388Z [2026-11-25 01:47:25.354] [out] [delivery_module] WRN 2026-11-25 01:47:25.352+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:28.360159791Z [2026-11-25 01:47:28.359] [out] [delivery_module] WRN 2026-11-25 01:47:28.358+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:31.317640668Z [2026-11-25 01:47:31.317] [out] [delivery_module] DBG 2026-11-25 01:47:31.316+00:00 Accepted an incoming connection            topics="libp2p switch" tid=348 conn=:6b063e333e8111a57581bfe5
+   2026-11-25T01:47:31.317653043Z [2026-11-25 01:47:31.317] [out] [delivery_module] DBG 2026-11-25 01:47:31.316+00:00 About to accept incoming connection        topics="libp2p switch" tid=348
+   2026-11-25T01:47:31.320278209Z [2026-11-25 01:47:31.320] [out] [delivery_module] DBG 2026-11-25 01:47:31.318+00:00 dialMe answer is reachable                 topics="libp2p autonatservice" tid=348 peerId=16Uiu2HAkzQP44SV8hp6Lxxx1MT4F8K23yjSc3KnA55iDoiKNRoc5
+   2026-11-25T01:47:31.364719751Z [2026-11-25 01:47:31.364] [out] [delivery_module] WRN 2026-11-25 01:47:31.363+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:34.369084878Z [2026-11-25 01:47:34.368] [out] [delivery_module] WRN 2026-11-25 01:47:34.367+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:37.372155921Z [2026-11-25 01:47:37.371] [out] [delivery_module] WRN 2026-11-25 01:47:37.370+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:40.377103547Z [2026-11-25 01:47:40.376] [out] [delivery_module] WRN 2026-11-25 01:47:40.375+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:43.383593007Z [2026-11-25 01:47:43.383] [out] [delivery_module] WRN 2026-11-25 01:47:43.380+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:46.385486217Z [2026-11-25 01:47:46.385] [out] [delivery_module] WRN 2026-11-25 01:47:46.383+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:49.390195926Z [2026-11-25 01:47:49.389] [out] [delivery_module] WRN 2026-11-25 01:47:49.388+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:52.393402053Z [2026-11-25 01:47:52.393] [out] [delivery_module] WRN 2026-11-25 01:47:52.392+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:55.397257138Z [2026-11-25 01:47:55.397] [out] [delivery_module] WRN 2026-11-25 01:47:55.395+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:47:58.400200875Z [2026-11-25 01:47:58.400] [out] [delivery_module] WRN 2026-11-25 01:47:58.398+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:48:01.319107459Z [2026-11-25 01:48:01.318] [out] [delivery_module] DBG 2026-11-25 01:48:01.317+00:00 Accepted an incoming connection            topics="libp2p switch" tid=348 conn=:6b063e513e8111a57581c001
+   2026-11-25T01:48:01.319126043Z [2026-11-25 01:48:01.318] [out] [delivery_module] DBG 2026-11-25 01:48:01.317+00:00 About to accept incoming connection        topics="libp2p switch" tid=348
+   2026-11-25T01:48:01.321388584Z [2026-11-25 01:48:01.321] [out] [delivery_module] ERR 2026-11-25 01:48:01.319+00:00 failed to send the buffer                  topics="libp2p yamux" tid=348 description="Write couldn't finish writing"
+   2026-11-25T01:48:01.321925626Z [2026-11-25 01:48:01.321] [out] [delivery_module] DBG 2026-11-25 01:48:01.320+00:00 dialMe answer is reachable                 topics="libp2p autonatservice" tid=348 peerId=16Uiu2HAkzQP44SV8hp6Lxxx1MT4F8K23yjSc3KnA55iDoiKNRoc5
+   2026-11-25T01:48:01.403210418Z [2026-11-25 01:48:01.403] [out] [delivery_module] WRN 2026-11-25 01:48:01.401+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+   2026-11-25T01:48:04.406309753Z [2026-11-25 01:48:04.406] [out] [delivery_module] WRN 2026-11-25 01:48:04.404+00:00 Skipping store validation for              topics="send service" tid=348 messageCount=6 error="no store peer available"
+
+[01:48:06] maker Chat module:
+   2026-11-25T01:46:54.162 INFO: chat_module::actions: delivery is online
+   2026-11-25T01:47:17.195 INFO: chat_module::actions: received 7827 bytes in 0dcf838c5ff44b1318ffc5b9e8b031e2 from a65313bb
+   2026-11-25T01:47:17.288 INFO: chat_module::actions: sent 3989 bytes to 0dcf838c5ff44b1318ffc5b9e8b031e2
+   2026-11-25T01:47:17.650 INFO: chat_module::actions: received 10566 bytes in 0dcf838c5ff44b1318ffc5b9e8b031e2 from a65313bb
+   2026-11-25T01:47:17.688 INFO: chat_module::actions: sent 4253 bytes to 0dcf838c5ff44b1318ffc5b9e8b031e2
+   2026-11-25T01:47:17.952 INFO: chat_module::actions: received 4114 bytes in 0dcf838c5ff44b1318ffc5b9e8b031e2 from a65313bb
+   2026-11-25T01:47:18.187 INFO: chat_module::actions: sent 423 bytes to 0dcf838c5ff44b1318ffc5b9e8b031e2
+
+[01:48:06] taker Chat module:
+   2026-11-25T01:47:01.317 INFO: chat_module::actions: delivery is online
+   2026-11-25T01:47:16.092 INFO: chat_module::actions: created direct conversation 0dcf838c5ff44b1318ffc5b9e8b031e2
+   2026-11-25T01:47:16.137 INFO: chat_module::actions: sent 7827 bytes to 0dcf838c5ff44b1318ffc5b9e8b031e2
+   2026-11-25T01:47:17.138 INFO: chat_module::actions: sent 7827 bytes to 0dcf838c5ff44b1318ffc5b9e8b031e2
+   2026-11-25T01:47:17.432 INFO: chat_module::actions: received 3989 bytes in 0dcf838c5ff44b1318ffc5b9e8b031e2 from 414f2e6f
+   2026-11-25T01:47:17.588 INFO: chat_module::actions: sent 10566 bytes to 0dcf838c5ff44b1318ffc5b9e8b031e2
+   2026-11-25T01:47:17.772 INFO: chat_module::actions: received 4253 bytes in 0dcf838c5ff44b1318ffc5b9e8b031e2 from 414f2e6f
+   2026-11-25T01:47:17.837 INFO: chat_module::actions: sent 4114 bytes to 0dcf838c5ff44b1318ffc5b9e8b031e2
+   2026-11-25T01:47:18.240 INFO: chat_module::actions: received 423 bytes in 0dcf838c5ff44b1318ffc5b9e8b031e2 from 414f2e6f
+
+[01:48:06] the Taker Node's last lines:
+   taker actor zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2: activate → activated - (phase offered, revision 0, next create_and_fund_lez)
+   taker actor zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez)
+   taker actor zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2: drive → submitted lez_fund (phase offered, revision 0, next create_and_fund_lez)
+   taker actor zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
+   taker actor zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2: drive → awaiting_observation maker_lock (phase taker_lock_confirmed, revision 1, next wait)
+   taker actor zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2: drive → projected maker_lock (phase both_legs_locked, revision 2, next claim_zcash)
+   taker actor zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2: claim → projected zcash_revealing_claim (phase claim_evidence_available, revision 3, next wait)
+   taker actor zec-49b48e6a63073b549a5b5c2c09a887ac1f06afae4ab16854519eb23cd83afed2: drive → projected lez_followup_claim (phase completed, revision 4, next complete)
+
+[01:48:06] both Basecamps recreated on the local transport
+
+[01:48:14] === logos-happy (TakerSellsLez): passed in 88s

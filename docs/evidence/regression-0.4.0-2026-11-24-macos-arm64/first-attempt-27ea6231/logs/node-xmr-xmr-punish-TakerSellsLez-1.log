@@ -1,0 +1,38 @@
+[21:35:50] === xmr-punish (stamp 1795552550)
+[21:35:50] preflight: indexer historical reads
+[21:35:54]   indexer serves historical reads at the tip (2456)
+[21:35:54] preflight: LEZ finality check waived by request
+[21:35:55]   the Maker's LEZ owner 55NmB8JYSArN… has nonce 2 before the swap
+[21:37:22]   the Maker's Monero wallet holds 8.994 XMR unlocked
+[21:38:42]   Maker CLI published offer-e2e-xmr-1795552550 on its running Node
+[21:40:00]   Taker took offer-e2e-xmr-1795552550: swap 325b211abcfd (not_activated)
+[21:40:00]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[21:40:01]   [1 s] waiting for the Taker's 325b211abcfd to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 2478, tip 2481 (3 unfinalized) [heartbeat]
+[21:40:26]   [25 s] waiting for the Taker's 325b211abcfd to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 2478, tip 2481 (3 unfinalized) [heartbeat]
+[21:41:29]   [88 s] waiting for the Taker's 325b211abcfd to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 2486, tip 2490 (4 unfinalized) [heartbeat]
+[21:41:45]   [105 s] waiting for the Taker's 325b211abcfd to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker offered | LEZ finalized 2486, tip 2490 (4 unfinalized) [heartbeat]
+[21:42:41]   [160 s] waiting for the Taker's 325b211abcfd to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 2498, tip 2501 (3 unfinalized) [heartbeat]
+[21:42:41]   the Taker has verified the Maker's Monero; stopping the Taker Node: it neither claims nor refunds
+[21:42:44]   [0 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker taker_lock_confirmed (schedule leased) | LEZ finalized 2502, tip ? [heartbeat]
+[21:43:10]   [27 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2502, tip ? [heartbeat]
+[21:44:13]   [90 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2506, tip 2509 (3 unfinalized) [heartbeat]
+[21:45:16]   [153 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2522, tip 2525 (3 unfinalized) [heartbeat]
+[21:46:19]   [216 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2537, tip 2539 (2 unfinalized) [heartbeat]
+[21:47:22]   [278 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2553, tip 2555 (2 unfinalized) [heartbeat]
+[21:48:24]   [341 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2566, tip 2569 (3 unfinalized) [heartbeat]
+[21:49:27]   [404 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2580, tip 2583 (3 unfinalized) [heartbeat]
+[21:50:30]   [467 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2591, tip 2594 (3 unfinalized) [heartbeat]
+[21:51:31]   [528 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2604, tip 2608 (4 unfinalized) [heartbeat]
+[21:52:35]   [591 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2619, tip 2622 (3 unfinalized) [heartbeat]
+[21:53:38]   [655 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2638, tip ? [heartbeat]
+[21:54:44]   [721 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2646, tip 2650 (4 unfinalized) [heartbeat]
+[21:55:47]   [784 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2673, tip 2675 (2 unfinalized) [heartbeat]
+[21:56:00]   [797 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker maker_recovery_available (schedule leased) | LEZ finalized 2673, tip 2675 (2 unfinalized) [heartbeat]
+[21:56:49]   [845 s] waiting for the Maker's 325b211abcfd to reach a terminal state (the punish time, then the Maker's tag 17): maker punished (schedule terminal) | LEZ finalized 2684, tip 2686 (2 unfinalized) [heartbeat]
+[21:56:54]   the Maker punished; its LEZ owner's nonce moved 2 → 3
+[21:57:14]   LEZ moved {'maker': 50000, 'taker': -50000}: the Taker's lot to the Maker
+[21:58:28]   the Maker's Monero wallet received [] during the swap (lot 1 XMR)
+[21:58:36]   the Taker's Monero wallet received [] during the swap (lot 1 XMR)
+[21:58:36]   the Maker's Monero funding 1bb085280d0aeb19… stays at the shared address: neither party received it
+[21:58:37]   the Taker, back up, reads punished (actor punish_open)
+[21:58:37] === xmr-punish: passed in 1367s

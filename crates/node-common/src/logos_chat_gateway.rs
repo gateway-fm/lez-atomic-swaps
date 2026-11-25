@@ -47,6 +47,23 @@ const MAXIMUM_REMOTE_FAILURE_MESSAGE_BYTES: usize = 4 * 1024;
 // the peer wait strictly inside it so the proxy can return a correlated error
 // and release its pending slot before the outer connection is abandoned.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
+// A Taker request still unanswered at these offsets from its first send is
+// queued again, the same frame (same id, same bytes). Over Logos Delivery the
+// Maker's node hands on a message only for a content topic it has subscribed
+// to, and the Maker subscribes to a new conversation's topic only after its
+// Chat client has processed the Taker's invite: a first request that arrives
+// sooner is dropped, and nothing else brings it back (no store, no Chat-level
+// retransmission). The Maker answers a repeated frame from its in-flight set or
+// its response cache, and its daemon replays every Chat round by request
+// digest, so a resend never runs a round twice; a resent request whose answer
+// was the one lost gets that answer again.
+const REQUEST_RESEND_AFTER: [Duration; 5] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+    Duration::from_secs(16),
+];
 
 const INVALID_PARAMS_CODE: i32 = -32_602;
 const DEPENDENCY_UNAVAILABLE_CODE: i32 = -32_010;
@@ -55,7 +72,7 @@ const MAKER_APPLICATION_CONFLICT_CODE: i32 = -32_009;
 const MAKER_OFFER_UNAVAILABLE_CODE: i32 = -32_018;
 
 /// The exact application Chat methods allowed through the transport bridge.
-pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 12] = [
+pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 17] = [
     "btc_chat_propose_v1",
     "btc_chat_propose_v2",
     "btc_chat_complete_v1",
@@ -64,10 +81,15 @@ pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 12] = [
     "btc_ceremony_reserve_v1",
     "btc_ceremony_nonce_v1",
     "btc_ceremony_partial_v1",
+    "zec_reserve_v1",
     "zec_chat_propose_v1",
     "zec_chat_complete_v1",
     "xmr_chat_stage_a_v1",
     "xmr_chat_activate_v1",
+    "xmr_reserve_v1",
+    "xmr_ceremony_reserve_v1",
+    "xmr_ceremony_nonce_v1",
+    "xmr_ceremony_partial_v1",
 ];
 
 /// Fixed endpoint role for one gateway process.
@@ -485,6 +507,8 @@ pub struct LogosChatGateway {
     selected_offer: Mutex<Option<SelectedOfferV1>>,
     trusted_clock: Arc<dyn Fn() -> Result<u64, LogosChatGatewayError> + Send + Sync>,
     sequence: AtomicU64,
+    request_timeout: Duration,
+    request_resend_after: Vec<Duration>,
 }
 
 impl std::fmt::Debug for LogosChatGateway {
@@ -547,6 +571,8 @@ impl LogosChatGateway {
             selected_offer: Mutex::new(None),
             trusted_clock: Arc::new(trusted_clock),
             sequence: AtomicU64::new(0),
+            request_timeout: REQUEST_TIMEOUT,
+            request_resend_after: REQUEST_RESEND_AFTER.to_vec(),
         })
     }
 
@@ -847,15 +873,15 @@ impl LogosChatGateway {
                 },
             );
         }
-        if let Err(error) = self.enqueue(outbox) {
+        if let Err(error) = self.enqueue(outbox.clone()) {
             if let Ok(mut pending) = self.pending.lock() {
                 pending.remove(&frame_id);
             }
             return Err(remote_failure(error));
         }
         drop(lifecycle);
-        let response = tokio::time::timeout(REQUEST_TIMEOUT, receiver).await;
-        if let Ok(Ok(result)) = response {
+        let response = self.await_response(&outbox, receiver).await;
+        if let Some(result) = response {
             result
         } else {
             if let Ok(mut pending) = self.pending.lock() {
@@ -863,6 +889,42 @@ impl LogosChatGateway {
             }
             Err(remote_failure(LogosChatGatewayError::DependencyUnavailable))
         }
+    }
+
+    /// Waits for the correlated response within the request timeout, queueing
+    /// the same frame again at each resend offset while the request is still
+    /// pending (`REQUEST_RESEND_AFTER`). `None` when no response arrived.
+    async fn await_response(
+        &self,
+        outbox: &LogosChatGatewayOutboxItemV1,
+        mut receiver: oneshot::Receiver<Result<Value, RemoteFailureV1>>,
+    ) -> Option<Result<Value, RemoteFailureV1>> {
+        let started = tokio::time::Instant::now();
+        let deadline = started + self.request_timeout;
+        for offset in &self.request_resend_after {
+            let resend_at = started + *offset;
+            if resend_at >= deadline {
+                break;
+            }
+            match tokio::time::timeout_at(resend_at, &mut receiver).await {
+                Ok(answer) => return answer.ok(),
+                Err(_elapsed) => {
+                    let still_pending = self
+                        .pending
+                        .lock()
+                        .is_ok_and(|pending| pending.contains_key(&outbox.frame_id));
+                    if !still_pending {
+                        break;
+                    }
+                    // A full outbox only delays the resend to the next offset.
+                    let _ = self.enqueue(outbox.clone());
+                }
+            }
+        }
+        tokio::time::timeout_at(deadline, receiver)
+            .await
+            .ok()
+            .and_then(Result::ok)
     }
 
     /// Validates and consumes one exact Chat event.
@@ -1805,6 +1867,7 @@ mod tests {
         let error = anyhow::Error::new(LocalRpcRemoteError {
             code: -32_045,
             message: "requires Chat completion v2".into(),
+            data: None,
         });
         let failure = maker_remote_failure(&error);
         assert_eq!(failure.code, -32_045);
@@ -1813,6 +1876,7 @@ mod tests {
         let oversized = anyhow::Error::new(LocalRpcRemoteError {
             code: -32_045,
             message: "x".repeat(4 * 1024 + 1).into_boxed_str(),
+            data: None,
         });
         assert_ne!(
             maker_remote_failure(&oversized).message.as_ref(),
@@ -2212,5 +2276,358 @@ mod tests {
                 Box::<str>::from("conversation-b"),
             ])
         );
+    }
+
+    // ---- the Taker's resend (REQUEST_RESEND_AFTER) --------------------------
+
+    /// A fake Maker daemon on a Unix socket: every Chat method answers with a
+    /// fresh value and counts its calls, after `delay`.
+    fn fake_maker_daemon(
+        directory: &std::path::Path,
+        delay: Duration,
+    ) -> (std::path::PathBuf, Arc<AtomicU64>) {
+        use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
+        let socket = directory.join("maker-chat.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let calls = Arc::new(AtomicU64::new(0));
+        let mut module = jsonrpsee::RpcModule::new(Arc::clone(&calls));
+        for method in super::LOGOS_CHAT_GATEWAY_METHODS_V1 {
+            module
+                .register_async_method(method, move |_params, calls, _| async move {
+                    tokio::time::sleep(delay).await;
+                    let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                    let fresh = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos();
+                    Ok::<_, jsonrpsee::types::ErrorObjectOwned>(json!({
+                        "schema_version": 1,
+                        "method": method,
+                        "call": call,
+                        "maker_nonces": format!("fresh-{fresh}"),
+                    }))
+                })
+                .unwrap();
+        }
+        let (stop_handle, server_handle) = stop_channel();
+        let service = ServerBuilder::default()
+            .to_service_builder()
+            .build(module, stop_handle.clone());
+        tokio::spawn(async move {
+            let _server_handle = server_handle;
+            while let Ok((stream, _)) = listener.accept().await {
+                let service = service.clone();
+                let stop = stop_handle.clone();
+                tokio::spawn(async move {
+                    let _ = serve_with_graceful_shutdown(stream, service, stop.shutdown()).await;
+                });
+            }
+        });
+        (socket, calls)
+    }
+
+    fn bound(role: LogosChatGatewayRoleV1, socket: Option<std::path::PathBuf>) -> LogosChatGateway {
+        let gateway = LogosChatGateway::new(role, socket).unwrap();
+        let (local, peer) = match role {
+            LogosChatGatewayRoleV1::Taker => ("local://taker", "local://maker"),
+            LogosChatGatewayRoleV1::Maker => ("local://maker", "local://taker"),
+        };
+        gateway
+            .bind_session(&LogosChatGatewayBindRequestV1 {
+                schema_version: GATEWAY_SCHEMA_VERSION_V1,
+                conversation_id: "conversation-1".into(),
+                local_address: local.into(),
+                peer_address: peer.into(),
+            })
+            .unwrap();
+        gateway
+    }
+
+    fn fast_taker(timeout: Duration, resend_after: &[Duration]) -> Arc<LogosChatGateway> {
+        let mut gateway = bound(LogosChatGatewayRoleV1::Taker, None);
+        gateway.request_timeout = timeout;
+        gateway.request_resend_after = resend_after.to_vec();
+        Arc::new(gateway)
+    }
+
+    /// Takes the head of `gateway`'s outbox as the Chat bridge does (peek, send, ack).
+    fn take_head(gateway: &LogosChatGateway) -> Option<super::LogosChatGatewayOutboxItemV1> {
+        let item = gateway
+            .outbox_peek(LogosChatGatewayOutboxRequestV1 {
+                schema_version: GATEWAY_SCHEMA_VERSION_V1,
+            })
+            .unwrap()?;
+        gateway
+            .outbox_ack(&LogosChatGatewayOutboxAckRequestV1 {
+                schema_version: GATEWAY_SCHEMA_VERSION_V1,
+                frame_id: item.frame_id.clone(),
+                conversation_id: item.conversation_id.clone(),
+            })
+            .unwrap();
+        Some(item)
+    }
+
+    fn deliver(
+        to: &Arc<LogosChatGateway>,
+        sender: &str,
+        item: &super::LogosChatGatewayOutboxItemV1,
+    ) -> super::LogosChatGatewayAckV1 {
+        to.ingest(&LogosChatGatewayIngestRequestV1 {
+            schema_version: GATEWAY_SCHEMA_VERSION_V1,
+            conversation_id: item.conversation_id.clone(),
+            sender_address: sender.into(),
+            content: item.content.clone(),
+        })
+        .unwrap()
+    }
+
+    /// Carries frames both ways until `stop`: `drop_request(n)` drops the n-th
+    /// request copy (1-based), `drop_response(n)` the n-th response copy.
+    /// Returns every request and response copy seen.
+    #[allow(clippy::type_complexity)]
+    fn network(
+        taker: Arc<LogosChatGateway>,
+        maker: Option<Arc<LogosChatGateway>>,
+        drop_request: fn(usize) -> bool,
+        drop_response: fn(usize) -> bool,
+    ) -> (
+        tokio::task::JoinHandle<(Vec<Box<str>>, Vec<Box<str>>)>,
+        Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = Arc::clone(&stop);
+        let handle = tokio::spawn(async move {
+            let (mut requests, mut responses) = (Vec::new(), Vec::new());
+            while !done.load(Ordering::SeqCst) {
+                if let Some(item) = take_head(&taker) {
+                    requests.push(item.content.clone());
+                    if let Some(maker) = maker.as_ref()
+                        && !drop_request(requests.len())
+                    {
+                        deliver(maker, "local://taker", &item);
+                    }
+                }
+                if let Some(maker) = maker.as_ref()
+                    && let Some(item) = take_head(maker)
+                {
+                    responses.push(item.content.clone());
+                    if !drop_response(responses.len()) {
+                        deliver(&taker, "local://maker", &item);
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            (requests, responses)
+        });
+        (handle, stop)
+    }
+
+    const FAST_RESEND: [Duration; 3] = [
+        Duration::from_millis(150),
+        Duration::from_millis(300),
+        Duration::from_millis(600),
+    ];
+
+    #[tokio::test]
+    async fn a_dropped_first_request_is_answered_after_a_resend() {
+        let directory = tempfile::tempdir().unwrap();
+        let (socket, calls) = fake_maker_daemon(directory.path(), Duration::ZERO);
+        let maker = Arc::new(bound(LogosChatGatewayRoleV1::Maker, Some(socket)));
+        let taker = fast_taker(Duration::from_secs(3), &FAST_RESEND);
+        let (net, stop) = network(Arc::clone(&taker), Some(maker), |n| n == 1, |_| false);
+
+        let answer = taker
+            .request("btc_reserve_v1", json!({ "schema_version": 1 }))
+            .await
+            .unwrap();
+        stop.store(true, Ordering::SeqCst);
+        let (requests, responses) = net.await.unwrap();
+
+        assert_eq!(answer["method"], "btc_reserve_v1");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(requests.len(), 2, "the dropped first copy and one resend");
+        assert_eq!(
+            requests[0], requests[1],
+            "a resend is the same frame, byte for byte"
+        );
+        assert_eq!(responses.len(), 1);
+        assert!(taker.pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn both_copies_delivered_run_once_and_the_late_response_is_ignored() {
+        let directory = tempfile::tempdir().unwrap();
+        // the daemon answers after the first resend, so the second copy meets
+        // the first still in flight
+        let (socket, calls) = fake_maker_daemon(directory.path(), Duration::from_millis(250));
+        let maker = Arc::new(bound(LogosChatGatewayRoleV1::Maker, Some(socket)));
+        let taker = fast_taker(Duration::from_secs(3), &FAST_RESEND);
+        let (net, stop) = network(
+            Arc::clone(&taker),
+            Some(Arc::clone(&maker)),
+            |_| false,
+            |_| false,
+        );
+
+        let answer = taker
+            .request("zec_reserve_v1", json!({ "schema_version": 1 }))
+            .await
+            .unwrap();
+        // a copy that reaches the Maker after it answered is answered from its cache
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        stop.store(true, Ordering::SeqCst);
+        let (requests, responses) = net.await.unwrap();
+
+        assert_eq!(answer["call"], 1);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "one execution for every copy"
+        );
+        assert!(requests.len() >= 2);
+        assert!(requests.iter().all(|copy| copy == &requests[0]));
+        assert!(!responses.is_empty());
+        assert!(
+            responses.iter().all(|copy| copy == &responses[0]),
+            "every answer is the cached one"
+        );
+        // the late duplicate answer finds no pending request
+        let late = super::LogosChatGatewayOutboxItemV1 {
+            schema_version: GATEWAY_SCHEMA_VERSION_V1,
+            frame_id: "late".into(),
+            conversation_id: "conversation-1".into(),
+            content: responses[0].clone(),
+        };
+        assert!(deliver(&taker, "local://maker", &late).was_replay);
+    }
+
+    #[tokio::test]
+    async fn no_answer_at_all_is_dependency_unavailable_at_the_timeout() {
+        let taker = fast_taker(Duration::from_millis(800), &FAST_RESEND);
+        let (net, stop) = network(Arc::clone(&taker), None, |_| true, |_| true);
+        let started = tokio::time::Instant::now();
+
+        let failure = taker
+            .request("xmr_reserve_v1", json!({ "schema_version": 1 }))
+            .await
+            .unwrap_err();
+        let waited = started.elapsed();
+        stop.store(true, Ordering::SeqCst);
+        let (requests, _) = net.await.unwrap();
+
+        assert_eq!(failure.code, super::DEPENDENCY_UNAVAILABLE_CODE);
+        assert_eq!(failure.message.as_ref(), "Chat peer operation unavailable");
+        assert!(waited >= Duration::from_millis(800) && waited < Duration::from_millis(1500));
+        assert_eq!(requests.len(), 4, "the first send and three resends");
+        assert!(taker.pending.lock().unwrap().is_empty());
+        assert_eq!(
+            taker
+                .status(super::LogosChatGatewayStatusRequestV1 {
+                    schema_version: GATEWAY_SCHEMA_VERSION_V1,
+                })
+                .unwrap()
+                .pending_requests,
+            0
+        );
+    }
+
+    #[test]
+    fn production_resends_fall_inside_the_request_timeout() {
+        assert!(
+            super::REQUEST_RESEND_AFTER
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+        );
+        assert!(
+            super::REQUEST_RESEND_AFTER
+                .iter()
+                .all(|offset| *offset < super::REQUEST_TIMEOUT)
+        );
+        let gateway = LogosChatGateway::new(LogosChatGatewayRoleV1::Taker, None).unwrap();
+        assert_eq!(gateway.request_timeout, super::REQUEST_TIMEOUT);
+        assert_eq!(
+            gateway.request_resend_after,
+            super::REQUEST_RESEND_AFTER.to_vec()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dropped_answer_is_sent_again_from_the_cache_on_a_resend() {
+        let directory = tempfile::tempdir().unwrap();
+        let (socket, calls) = fake_maker_daemon(directory.path(), Duration::ZERO);
+        let maker = Arc::new(bound(LogosChatGatewayRoleV1::Maker, Some(socket)));
+        let taker = fast_taker(Duration::from_secs(3), &FAST_RESEND);
+        let (net, stop) = network(Arc::clone(&taker), Some(maker), |_| false, |n| n == 1);
+
+        let answer = taker
+            .request("btc_ceremony_nonce_v1", json!({ "schema_version": 1 }))
+            .await
+            .unwrap();
+        stop.store(true, Ordering::SeqCst);
+        let (_, responses) = net.await.unwrap();
+
+        assert_eq!(answer["call"], 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0], responses[1]);
+    }
+
+    #[tokio::test]
+    async fn a_replayed_xmr_ceremony_round_gets_the_byte_identical_answer() {
+        let directory = tempfile::tempdir().unwrap();
+        let (socket, calls) = fake_maker_daemon(directory.path(), Duration::ZERO);
+        let maker = Arc::new(bound(LogosChatGatewayRoleV1::Maker, Some(socket)));
+        for method in ["xmr_ceremony_nonce_v1", "xmr_ceremony_partial_v1"] {
+            let frame = LogosChatFrameV1::new(
+                LogosChatGatewayRoleV1::Taker,
+                LogosChatMessageV1::Request {
+                    nonce: 7,
+                    method: method.into(),
+                    parameter: json!({ "schema_version": 1, "reservation_id": "r" }),
+                },
+            )
+            .unwrap();
+            let request = frame.to_outbox("conversation-1".into()).unwrap();
+            let before = calls.load(Ordering::SeqCst);
+            assert!(!deliver(&maker, "local://taker", &request).was_replay);
+            let mut first = None;
+            for _ in 0..200 {
+                first = take_head(&maker);
+                if first.is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let first = first.expect("the Maker answered");
+            assert!(deliver(&maker, "local://taker", &request).was_replay);
+            let second = take_head(&maker).expect("the cached answer queued again");
+            assert_eq!(
+                first, second,
+                "{method}: the same response frame, byte for byte"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                before + 1,
+                "{method}: the daemon ran once"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_maker_never_initiates_a_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let maker = Arc::new(bound(
+            LogosChatGatewayRoleV1::Maker,
+            Some(directory.path().join("absent.sock")),
+        ));
+        let failure = maker
+            .request("btc_reserve_v1", json!({ "schema_version": 1 }))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            failure,
+            super::remote_failure(LogosChatGatewayError::SessionUnavailable)
+        );
+        assert!(take_head(&maker).is_none());
     }
 }

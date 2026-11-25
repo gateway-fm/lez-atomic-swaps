@@ -22,7 +22,8 @@
 #
 # The commands are those of the rust job in .github/workflows/ci.yml and of
 # scripts/verify-lez-v02-provisional.sh, verify-lez-v02-sidecar.sh,
-# verify-spel-compatibility.sh and run-lez-standalone-e2e.sh. Those still run
+# verify-lez-v02-xmr-release-service.sh, verify-spel-compatibility.sh and
+# run-lez-standalone-e2e.sh. Those still run
 # their own checks; scripts/test-check-all-workspaces.sh fails when this list
 # and the tree, or these commands and theirs, drift apart. Workspaces that
 # embed a Risc0 guest are linted with RISC0_SKIP_BUILD=1: no guest build and
@@ -67,6 +68,8 @@ done
 #   provisional  scripts/verify-lez-v02-provisional.sh (root, guest, methods,
 #                deployer)
 #   sidecar      scripts/verify-lez-v02-sidecar.sh; needs RAPIDSNARK_LIB_DIR
+#   xmr-release-service
+#                scripts/verify-lez-v02-xmr-release-service.sh; Linux only
 #   spel-*       scripts/verify-spel-compatibility.sh and
 #                scripts/run-lez-standalone-e2e.sh
 #   fmt-only     no CI job or verifier lints it; fmt only
@@ -83,18 +86,14 @@ readonly workspaces=(
   "compat/spel-zec-escrow/methods/Cargo.toml|spel-methods"
   "compat/lez-standalone-e2e/Cargo.toml|spel-standalone"
   "compat/lez-v0_1_2-sidecar/Cargo.toml|fmt-only"
-  "compat/lez-v0_2-xmr-release-service/Cargo.toml|fmt-only"
+  "compat/lez-v0_2-xmr-release-service/Cargo.toml|xmr-release-service"
   "compat/lez-v0.2-sequencer-reproducers/Cargo.toml|fmt-only"
   "compat/lez-v0.2-sequencer-reproducers/guest/Cargo.toml|fmt-only"
 )
 
-# XMR is parked until M4: the rust job of ci.yml leaves these crates out of
-# its root clippy, test and doc runs.
+# Crates the rust job of ci.yml leaves out of its root clippy, test and doc
+# runs: none since the Monero crates (M4) run there.
 readonly root_excludes=(
-  lez-xmr-monero-adapter
-  lez-xmr-release-authority
-  xmr-reference-actor
-  lez-xmr-swap-sdk
 )
 
 if (( list_only )); then
@@ -242,11 +241,11 @@ lint_workspace() {
   case "$kind" in
     root)
       run "clippy ${manifest}" cargo clippy --locked --workspace --all-targets \
-        "${root_exclude_args[@]}" -- -D warnings
+        ${root_exclude_args[@]+"${root_exclude_args[@]}"} -- -D warnings
       run "clippy ${manifest} (Node pair features)" cargo clippy --locked \
         -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
       run "doc ${manifest}" rustdoc_strict cargo doc --locked --workspace --no-deps \
-        "${root_exclude_args[@]}"
+        ${root_exclude_args[@]+"${root_exclude_args[@]}"}
       ;;
     provisional-root|spel-fixture)
       run "clippy ${manifest}" in_nested_target cargo clippy --locked \
@@ -275,6 +274,16 @@ lint_workspace() {
     sidecar)
       if [[ -z "${RAPIDSNARK_LIB_DIR:-}" || ! -d "${RAPIDSNARK_LIB_DIR}" ]]; then
         note_skip "clippy and doc of ${manifest}: they link the checksum-pinned rapidsnark libraries (set RAPIDSNARK_LIB_DIR to run them); the lez-v02-sidecar job of ci.yml runs them (scripts/verify-lez-v02-sidecar.sh)"
+        return
+      fi
+      run "clippy ${manifest}" in_nested_target cargo +1.96.0 clippy \
+        --manifest-path "$manifest" --locked --all-targets --all-features -- -D warnings
+      run "doc ${manifest}" in_nested_target cargo +1.96.0 rustdoc \
+        --manifest-path "$manifest" --locked --all-features --lib -- -D warnings
+      ;;
+    xmr-release-service)
+      if [[ "$(uname -s)" != Linux ]]; then
+        note_skip "clippy and doc of ${manifest}: the M4 XMR release service requires Linux file-safety semantics; the lez-v02-xmr-release-service job of ci.yml runs them (scripts/verify-lez-v02-xmr-release-service.sh)"
         return
       fi
       run "clippy ${manifest}" in_nested_target cargo +1.96.0 clippy \
@@ -328,7 +337,7 @@ if (( ${#selected[@]} > 0 )); then
 fi
 
 root_exclude_args=()
-for crate in "${root_excludes[@]}"; do
+for crate in ${root_excludes[@]+"${root_excludes[@]}"}; do
   root_exclude_args+=(--exclude "$crate")
 done
 

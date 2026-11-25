@@ -17,14 +17,17 @@ Status vocabulary:
 
 ## Milestone phase register
 
+The `m*-complete` tags named here are not in this repository, which carries only
+`v0.x` release tags; `docs/submission.md` gives the commits of the imported ones.
+
 | Milestone | Active phase | Phase status | Completion tag | Owner transition |
 |---|---|---|---|---|
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
 | M3 | Progressive local PoC closure | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | None | Owner entered M3 on 2026-07-14 and directed completion. Closure-evidence push, remote CI, and the annotated tag remain; cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
 | M4 | Not active | Awaiting owner transition | None | Not requested |
-| M5 | Not active | Awaiting owner transition | None | Not requested |
-| M6 | Not active | Awaiting owner transition | None | Not requested |
+| M5 | Gap work in progress | Not complete; see `docs/submission.md` | None | Gap work directed; completion not requested |
+| M6 | Local-functional PoC | Implemented 2026-08-04 (ADR 0128) | `m6-poc-complete` | Owner approved the prototype on 2026-08-04 |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
 ## M3 PoC scorecard
@@ -57,7 +60,7 @@ evidence instead of assigning a percentage to unlike work items.
 | M3 local closure gates | GREEN on 2026-07-19 | Pinned quality runner, Rust format/strict Clippy/all-target tests/warning-free docs, focused vectors/Testnet4, Node audit/license, repository and chain-container isolation, traceability, and action/CI policy passed. All 11 cargo-deny graphs passed advisories/bans/licenses/sources; all 150 Mermaid diagrams passed conservative GitHub parsing and exact rendering. Remote Trivy and actual-node lanes remain push-CI evidence, not local substitutions |
 | Concurrent actual-node startup | Certified actual-node saving 31 s; full AD runtime 16m06.52s | Run AA's pre-change service logs measured 39 seconds Core, 58 seconds LEZ, and a 98-second sequential window. AB exposed the unparsed actor handoff; AC crossed it but exposed false cleanup-boolean status. Both failed closed and count as no benchmark. Run AD on clean pushed `0826dd5` completed both directions and cleanup with exit zero. Core took 38 seconds and LEZ 67 seconds in one 67-second overlapped window, certifying a 31-second startup saving. AD was 127.09 seconds faster end-to-end than AA, but only 31 seconds is attributed to startup until structured phase timings explain the remaining variance |
 | Structured M3 phase evidence | Clean pushed Run AF: 16m40.17s outer with 510 ms unattributed; 16m47.57s through exact cleanup | ADR 0049 fixes monotonic outer and child phases, secret-safe exact schemas, effect binding, parent containment, and five-file pre/post-publication rehash. `m3f7compose20260718af` at `0b54ab6` passed both real custom-token directions and cleanup. Forward/reverse children were 346.06/386.06 s inside 346.28/386.31 s parents. Forward LEZ second lock/revealing claim were 243.62/99.48 s; reverse Bitcoin second lock, LEZ first lock, and LEZ follow-up claim were 141.01/126.64/116.11 s. Every other child phase was below one second. Exact effects, balances, conservation, zero replay/custody, and no foreign cleanup remain GREEN. An unrelated host workload makes the 22-second Run-AE wall-time difference non-certifiable as a speedup |
-| Gateway proposal acceptance errata | 1 nonblocking upstream production/review item | GW-M3-001 records the nonexistent DLC Schnorr adaptor-vector path and the proposed replacement evidence contract. It does not block local milestone certification under the owner policy, but remains visible for Logos/Gateway review and production readiness |
+| Gateway proposal acceptance errata | 2 | GW-M3-001 records the nonexistent DLC Schnorr adaptor-vector path and its replacement evidence contract, accepted by Logos. GW-M4-001 records that COMIT's `cross-curve-dleq` publishes no vectors and proves differently, and the comparison run instead; it has no Logos decision. It does not block local milestone certification under the owner policy, but remains visible for Logos/Gateway review and production readiness |
 | QA / chaos / information security / production phases | Not active | Each phase begins only after its owner transition; continuous CI/security baselines remain enforced |
 | M3 completion tag | None | Closure-evidence push, remote tag-commit audit, and the annotated tag remain |
 

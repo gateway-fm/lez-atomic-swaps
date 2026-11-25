@@ -13,9 +13,10 @@ use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
     METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3, METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
-    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
-    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
+    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, ObserveNativeXmrEscrowTipV3Request,
     XmrNativeEscrowTermsV3,
 };
 use lez_bridge_protocol::{
@@ -246,6 +247,11 @@ struct PersistedEntry {
     /// and its record replays deterministically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     earlier_outcomes: Vec<PersistedOutcome>,
+    /// When the request id was first recorded, in the store's own order
+    /// (older stores lack it and read as zero, the oldest): the capacity
+    /// rule evicts settled submissions oldest first.
+    #[serde(default)]
+    sequence: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -484,6 +490,7 @@ impl DurableStore {
                 self.ensure_capacity()?;
                 Vec::new()
             };
+        let sequence = self.sequence_of(context.request_id.as_str());
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
@@ -498,6 +505,7 @@ impl DurableStore {
                     },
                 )),
                 earlier_outcomes,
+                sequence,
             },
         );
         self.persist().map_err(|_| OperationFailure::internal())
@@ -532,6 +540,7 @@ impl DurableStore {
                 earlier
             })
             .unwrap_or_default();
+        let sequence = self.sequence_of(context.request_id.as_str());
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
@@ -540,17 +549,68 @@ impl DurableStore {
                 replay_request,
                 outcome,
                 earlier_outcomes,
+                sequence,
             },
         );
         self.persist().map_err(|_| OperationFailure::internal())
     }
 
-    fn ensure_capacity(&self) -> Result<(), OperationFailure> {
-        if self.persisted.entries.len() >= MAX_STORE_ENTRIES {
-            Err(OperationFailure::internal())
-        } else {
-            Ok(())
+    /// The sequence of `request_id`: its own when recorded, else the next.
+    fn sequence_of(&self, request_id: &str) -> u64 {
+        self.persisted.entries.get(request_id).map_or_else(
+            || {
+                self.persisted
+                    .entries
+                    .values()
+                    .map(|entry| entry.sequence)
+                    .max()
+                    .map_or(1, |latest| latest.saturating_add(1))
+            },
+            |entry| entry.sequence,
+        )
+    }
+
+    /// Makes room for one more request id. A full store evicts, in order:
+    /// one repeatable entry (a read, which keeps no outcome: only its id's
+    /// binding to its request goes, and a read is safe to run again), then
+    /// the oldest settled submission (a superseded transaction's: every
+    /// re-plan of a claim or punishment is a new transaction with a request
+    /// id of its own, and the current one is the newest). Preparations,
+    /// which the store restores at start, and submissions in flight are
+    /// never evicted; a store full of them refuses the request.
+    ///
+    /// Without eviction, reads with fresh ids (the Taker's clock and scan
+    /// watch) or a long run of re-plans filled the store's 4,096 entries,
+    /// and every later request of the swap was refused.
+    fn ensure_capacity(&mut self) -> Result<(), OperationFailure> {
+        if self.persisted.entries.len() < MAX_STORE_ENTRIES {
+            return Ok(());
         }
+        let repeatable = self
+            .persisted
+            .entries
+            .iter()
+            .find(|(_, entry)| matches!(entry.outcome, PersistedOutcome::Repeatable))
+            .map(|(id, _)| id.clone());
+        let evicted = repeatable.or_else(|| {
+            self.persisted
+                .entries
+                .iter()
+                .filter(|(_, entry)| {
+                    is_submission_method(&entry.method)
+                        && matches!(
+                            entry.outcome,
+                            PersistedOutcome::Success(_) | PersistedOutcome::Error(_)
+                        )
+                })
+                .min_by_key(|(_, entry)| entry.sequence)
+                .map(|(id, _)| id.clone())
+        });
+        let Some(evicted) = evicted else {
+            return Err(OperationFailure::internal());
+        };
+        self.persisted.entries.remove(&evicted);
+        Ok(())
     }
 
     #[allow(
@@ -1111,13 +1171,10 @@ async fn restore_runtime_requests(
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
     }
     if let Some((request, expected)) = restored_xmr_punish_v3 {
-        let observed = runtime
-            .prepare_native_xmr_punish_v3(&request)
+        runtime
+            .restore_native_xmr_punish_v3(&request, &expected)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
-        if observed != expected {
-            return Err(BridgeServerError::InvalidDurableState);
-        }
     }
     Ok(())
 }
@@ -1617,28 +1674,33 @@ fn register_methods(
         // D1) or sent again. A replayed "accepted" never reached the node
         // (chain 35, 2026-10-29). The same for an owned revealing claim
         // (FINDINGS 24): a claim whose nonce another claim of this signer
-        // took is named Superseded.
+        // took is named Superseded; and for the XMR recoveries (tags 16 and
+        // 17) and the Maker's tag-15 claim.
         // An unknown outcome, or the in-flight marker a sidecar killed
         // mid-submission leaves, is no answer either: replayed, it would
         // answer `unknown_submission_outcome` to every later attempt under
-        // the same request id, until the caller's window closed (issue
-        // #187). Every owned submission whose caller sends its request id
-        // again, only after it observed the transaction absent and inside its
-        // own window, decides it again
-        // (BridgeRuntime::submission_unknown_decided_again); a definite
-        // refusal stays replayed. Sending identical bytes again is harmless:
-        // one transaction id, one nonce, included at most once. The native
-        // refund is in that class on both paths: the ZEC SDK's `lez_refund`
-        // and the BTC actor's witnessed refund share one planner slot (a
-        // resend of a refund is always wanted; the BTC actor never asks again
-        // after an unknown outcome). The others (the BTC actor's witnessed
-        // escrow and claim and its token effects, which its own journal sends
-        // once and never asks for again, the XMR effects and the reference
-        // clock transaction) keep their one attempt.
+        // the same request id, until the caller's window closed
+        // (node:xmr:xmr-kill-maker, "claim tool running"). Every owned
+        // submission whose caller sends its request id again, only after it
+        // observed the transaction absent and inside its own window, decides
+        // it again (BridgeRuntime::submission_unknown_decided_again); a
+        // definite refusal stays replayed. The recoveries (tags 16 and 17)
+        // decide every outcome again: a refusal of them can lift with time
+        // (a tag 16 dropped before R lands from R). Sending
+        // identical bytes again is harmless: one transaction id, one nonce,
+        // included at most once. The native refund is in that class on both
+        // paths: the ZEC SDK's `lez_refund` and the BTC actor's witnessed
+        // refund share one planner slot (a resend of a refund is always
+        // wanted; the BTC actor never asks again after an unknown outcome).
+        // The others (the BTC actor's witnessed escrow and claim and its
+        // token effects, which its own journal sends once and never asks for
+        // again, and the reference clock transaction) keep their one attempt.
         let decide_success_again = runtime
             .submission_success_decided_again(&request.transaction)
             .await;
-        let failures = if runtime
+        let failures = if runtime.xmr_recovery_submission(&request.transaction).await {
+            FailureReplay::DecideAgain
+        } else if runtime
             .submission_unknown_decided_again(&request.transaction)
             .await
         {
@@ -2055,6 +2117,34 @@ fn register_xmr_v3_methods(
                 .await
         },
     )?;
+    module.register_async_method(
+        METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+        |params, state, _| async move {
+            let request: ObserveNativeXmrEscrowTipV3Request = params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                request.context.sidecar_role,
+            )?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .observe_native_xmr_escrow_tip_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
     Ok(())
 }
 
@@ -2133,14 +2223,27 @@ impl ServerState {
         Operation: FnOnce() -> Fut,
         Fut: Future<Output = Result<Value, OperationFailure>>,
     {
-        // The XMR claim authorization's node facts move: its journaled
-        // success is decided again. Everything else replays.
+        // The XMR claim authorization's node facts move, and a tag-17
+        // punishment whose nonce was taken is re-planned: their journaled
+        // successes are decided again. The Taker's tag 14 is sent again under
+        // its request id only before R, after its supervisor re-read the
+        // Monero funding: an unknown or in-flight outcome of it is decided on
+        // the chain again (looked up, then sent once more), as for the
+        // submissions of `submit_transaction`. Everything else replays.
         self.execute_with_policy(
             method,
             context,
             request,
-            method == METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-            FailureReplay::Replay,
+            matches!(
+                method,
+                METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
+                    | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
+            ),
+            if method == METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3 {
+                FailureReplay::DecideUnknownAgain
+            } else {
+                FailureReplay::Replay
+            },
             operation,
         )
         .await
@@ -2167,6 +2270,7 @@ impl ServerState {
         self.validate_context(context)?;
         let (request_sha256, replay_request) =
             encode_request(method, request).map_err(|failure| protocol_error(context, failure))?;
+        let mut decided_before = None;
         {
             let mut store = self.store.lock().await;
             if let Some(outcome) = store
@@ -2174,14 +2278,16 @@ impl ServerState {
                 .map_err(|failure| protocol_error(context, failure))?
             {
                 match &outcome {
-                    PersistedOutcome::Success(_) if decide_success_again => {}
+                    PersistedOutcome::Success(value) if decide_success_again => {
+                        decided_before = Some(value.clone());
+                    }
                     PersistedOutcome::SubmissionInFlight(_)
-                        if failures == FailureReplay::DecideUnknownAgain
-                            && is_submission_method(method) => {}
+                        if failures != FailureReplay::Replay && is_submission_method(method) => {}
                     PersistedOutcome::Error(reply)
-                        if failures == FailureReplay::DecideUnknownAgain
-                            && is_submission_method(method)
-                            && reply.code == ErrorCode::UnknownSubmissionOutcome => {}
+                        if is_submission_method(method)
+                            && (failures == FailureReplay::DecideAgain
+                                || (failures == FailureReplay::DecideUnknownAgain
+                                    && reply.code == ErrorCode::UnknownSubmissionOutcome)) => {}
                     _ => return outcome.into_rpc_result(),
                 }
             }
@@ -2206,6 +2312,14 @@ impl ServerState {
                 PersistedOutcome::Error(protocol_reply(context, failure))
             }
         };
+        // A preparation decided again that answers as before changes nothing
+        // durable (a punishment is decided again on every drive of it).
+        if let (Some(before), PersistedOutcome::Success(value)) = (&decided_before, &outcome)
+            && before == value
+            && !is_submission_method(method)
+        {
+            return outcome.into_rpc_result();
+        }
         let prepare = matches!(
             method,
             METHOD_PREPARE_CURRENT_PROFILE_CLOCK
@@ -2259,6 +2373,8 @@ enum FailureReplay {
     /// An unknown outcome and an in-flight marker are decided again; a
     /// definite refusal is replayed.
     DecideUnknownAgain,
+    /// Every failure is decided again.
+    DecideAgain,
 }
 
 fn is_submission_method(method: &str) -> bool {
@@ -2393,5 +2509,118 @@ fn valid_method(method: &str) -> bool {
             | METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3
+            | METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3
     )
+}
+
+#[cfg(test)]
+mod store_capacity_tests {
+    use super::{
+        BTreeMap, DurableStore, MAX_STORE_ENTRIES, METHOD_OBSERVE_FINALIZED_CLOCK,
+        METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_SUBMIT_TRANSACTION, PersistedEntry,
+        PersistedOutcome, PersistedStore, STORE_SCHEMA_VERSION,
+    };
+    use lez_bridge_protocol::{Hex32, Participant, RunId, RuntimeCompatibility, RuntimeDescriptor};
+
+    fn seq(index: usize) -> u64 {
+        u64::try_from(index).expect("small index")
+    }
+
+    fn entry(method: &str, outcome: PersistedOutcome, sequence: u64) -> PersistedEntry {
+        PersistedEntry {
+            method: method.to_owned(),
+            request_sha256: "0".repeat(64),
+            replay_request: None,
+            outcome,
+            earlier_outcomes: Vec::new(),
+            sequence,
+        }
+    }
+
+    fn store(entries: BTreeMap<String, PersistedEntry>) -> DurableStore {
+        DurableStore {
+            path: std::env::temp_dir().join("lez-sidecar-capacity-unused.json"),
+            persisted: PersistedStore {
+                schema_version: STORE_SCHEMA_VERSION,
+                run_id: RunId::new("capacity-test".to_owned()).expect("run id"),
+                runtime: RuntimeDescriptor::new(
+                    Participant::Taker,
+                    RuntimeCompatibility::LeeV0_2_0,
+                    Hex32::from_bytes([1; 32]),
+                    Hex32::from_bytes([2; 32]),
+                    Hex32::from_bytes([3; 32]),
+                    Hex32::from_bytes([4; 32]),
+                    Hex32::from_bytes([5; 32]),
+                ),
+                entries,
+            },
+        }
+    }
+
+    /// A store filled with reads (the Taker's clock and scan watch, a fresh
+    /// request id each) used to refuse every later request of the swap. A
+    /// full store now evicts a read; one full of settled submissions (a long
+    /// run of re-plans) evicts the oldest; preparations and submissions in
+    /// flight are kept, and a store of only those still refuses.
+    #[test]
+    fn a_full_request_store_evicts_reads_then_old_submissions_never_preparations() {
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "prepare".to_owned(),
+            entry(
+                METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+                PersistedOutcome::Success(serde_json::json!({})),
+                1,
+            ),
+        );
+        for index in 1..MAX_STORE_ENTRIES {
+            entries.insert(
+                format!("read-{index:05}"),
+                entry(
+                    METHOD_OBSERVE_FINALIZED_CLOCK,
+                    PersistedOutcome::Repeatable,
+                    1 + seq(index),
+                ),
+            );
+        }
+        let mut reads = store(entries);
+        assert_eq!(reads.persisted.entries.len(), MAX_STORE_ENTRIES);
+        reads.ensure_capacity().expect("a read is evicted");
+        assert_eq!(reads.persisted.entries.len(), MAX_STORE_ENTRIES - 1);
+        assert!(reads.persisted.entries.contains_key("prepare"));
+
+        let settled = PersistedOutcome::Success(serde_json::json!({}));
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "prepare".to_owned(),
+            entry(METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, settled.clone(), 1),
+        );
+        for index in 1..MAX_STORE_ENTRIES {
+            entries.insert(
+                format!("submit-{index:05}"),
+                entry(METHOD_SUBMIT_TRANSACTION, settled.clone(), 10 + seq(index)),
+            );
+        }
+        let mut replans = store(entries);
+        replans
+            .ensure_capacity()
+            .expect("the oldest submission is evicted");
+        assert!(!replans.persisted.entries.contains_key("submit-00001"));
+        assert!(replans.persisted.entries.contains_key("submit-00002"));
+        assert!(replans.persisted.entries.contains_key("prepare"));
+        assert_eq!(replans.sequence_of("new"), 10 + seq(MAX_STORE_ENTRIES));
+
+        let mut entries = BTreeMap::new();
+        for index in 0..MAX_STORE_ENTRIES {
+            entries.insert(
+                format!("prepare-{index:05}"),
+                entry(
+                    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+                    settled.clone(),
+                    seq(index),
+                ),
+            );
+        }
+        assert!(store(entries).ensure_capacity().is_err());
+    }
 }

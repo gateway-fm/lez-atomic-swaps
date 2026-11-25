@@ -27,6 +27,27 @@ x-role-logging: &role-logging
     max-size: "200m"
     max-file: "3"
 
+# The wallet-rpc services of the Monero profile (compose.yaml, monerod).
+x-monero-wallet: &monero-wallet
+  image: ${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}
+  profiles: [monero]
+  depends_on: [monerod]
+  entrypoint: ["/usr/local/bin/monero-wallet-rpc"]
+  command: ["--config-file=/run-config/wallet.conf"]
+  environment:
+    HOME: /tmp
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+  networks: [chains]
+  user: "65532:65532"
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 128
+  mem_limit: 1g
+  stop_grace_period: 30s
+  logging: *default-logging
+
 # A lane (scripts/lane.sh, compose.lane.yaml) is one more Maker/Taker pair with
 # its own Bitcoin Core, miner and Zebra beside the one LEZ network: the
 # LEZ_CONTAINER_PREFIX, LEZ_LANE_RUNTIME, LEZ_ZEBRA_PORT and VNC port variables
@@ -42,10 +63,13 @@ services:
     build: ./images/bitcoin-core
     image: ${LEZ_IMAGE_PREFIX:-lez}-bitcoin-core:${LEZ_IMAGE_TAG:-local}
     container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-bitcoin-core
+    # regtest checks the whole block index after every block by default (half
+    # a second a block on a 230,000-block devnet chain); the chain is the same
     command:
       - "-conf=/run-config/bitcoin.conf"
       - "-datadir=/var/lib/bitcoin"
       - "-printtoconsole"
+      - "-checkblockindex=0"
     environment:
       HOME: /tmp
     labels:
@@ -114,6 +138,86 @@ services:
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     stop_grace_period: 15s
+
+  # Monero regtest for the LEZ <-> XMR pair, in the profile "monero", off by
+  # default (LEZ_MONERO=1, which gen-config.sh keeps in runtime.env; up.sh and
+  # lanes.sh then start it). The isolated lane's image (tests/e2e/monero) on
+  # the release scripts/verify-monero-release.sh verified (stage-assets.sh);
+  # stage-assets.sh and up.sh copy its Dockerfile into the context, since
+  # Compose's bake builder refuses a Dockerfile outside this directory.
+  # An offline fakechain: no peers, no miner; blocks are generated on demand
+  # (the Monero adapter mines its own ten confirmations, the harness the
+  # rest). Every RPC takes a Digest login (gen-config.sh, runtime/monero); the
+  # funding wallet and each role's wallet-rpc are services of their own, and
+  # each role's Node reaches monerod and its own wallet-rpc over loopback
+  # forwards (node-entrypoint.sh). No health check: nothing waits for it.
+  # Its volumes take their owner (65532) from the image.
+  monerod:
+    build: ./images/monerod
+    image: ${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-monerod
+    profiles: [monero]
+    entrypoint: ["/usr/local/bin/monerod"]
+    command: ["--config-file=/run-config/monerod.conf", "--non-interactive"]
+    environment:
+      HOME: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: market-xmr-0001
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: monerod
+    ports:
+      - "127.0.0.1:${LEZ_MONEROD_PORT:-18081}:18081"
+    volumes:
+      - ./${LEZ_LANE_RUNTIME:-runtime}/monero/monerod.conf:/run-config/monerod.conf:ro
+      - monerod_data:/var/lib/monero
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    networks: [chains]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 2g
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  xmr-funding-wallet:
+    <<: *monero-wallet
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-xmr-funding-wallet
+    labels:
+      org.logos-co.atomic-swaps.run: market-xmr-0001
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: funding-wallet-rpc
+    # the harness funds the roles from it (scripts/monero-lane.py)
+    ports:
+      - "127.0.0.1:${LEZ_XMR_FUNDING_WALLET_PORT:-18083}:18083"
+    volumes:
+      - ./${LEZ_LANE_RUNTIME:-runtime}/monero/wallet-funding.conf:/run-config/wallet.conf:ro
+      - xmr_funding_wallet_data:/var/lib/monero-wallet
+
+  maker-xmr-wallet:
+    <<: *monero-wallet
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-maker-xmr-wallet
+    labels:
+      org.logos-co.atomic-swaps.run: market-xmr-0001
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: maker-wallet-rpc
+    # reached by the role's Node only, over its forward
+    volumes:
+      - ./${LEZ_LANE_RUNTIME:-runtime}/monero/wallet-maker.conf:/run-config/wallet.conf:ro
+      - maker_xmr_wallet_data:/var/lib/monero-wallet
+
+  taker-xmr-wallet:
+    <<: *monero-wallet
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-taker-xmr-wallet
+    labels:
+      org.logos-co.atomic-swaps.run: market-xmr-0001
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: taker-wallet-rpc
+    volumes:
+      - ./${LEZ_LANE_RUNTIME:-runtime}/monero/wallet-taker.conf:/run-config/wallet.conf:ro
+      - taker_xmr_wallet_data:/var/lib/monero-wallet
 
   btc-miner:
     build: ./images/btc-miner
@@ -358,6 +462,15 @@ services:
       LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB: ${LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB:-25}
       LEZ_BTC_LOCK_FEE_MAX_PERCENT: ${LEZ_BTC_LOCK_FEE_MAX_PERCENT:-5}
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
+      # The ZEC profile take-time swaps are agreed under (zec-role.json).
+      LEZ_ZEC_PROFILE: ${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}
+      # The Monero windows take-time swaps are agreed under (xmr-role.json, only
+      # where the role has Monero logins: LEZ_MONERO=1).
+      LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS: ${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:-}
+      LEZ_XMR_REFUND_SECONDS: ${LEZ_XMR_REFUND_SECONDS:-}
+      LEZ_XMR_PUNISH_SECONDS: ${LEZ_XMR_PUNISH_SECONDS:-}
+      # regtest (the lane's monerod) or stagenet (compose.stagenet.yaml)
+      LEZ_XMR_NETWORK: ${LEZ_MONERO_NETWORK:-regtest}
       # The actor supervisor's polling (gen-config.sh, per timing profile);
       # empty = the Node's defaults (5 s requeue, 30 s failure backoff).
       LEZ_MAKER_ACTOR_REQUEUE_SECONDS: ${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}
@@ -371,11 +484,15 @@ services:
       LEZ_NODE_FINALITY_STALL_SECONDS: ${LEZ_NODE_FINALITY_STALL_SECONDS:-}
       # Actor decision trace on stderr (`docker logs`); empty = off.
       LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
+      # A Logos price module file in the container and its sha256
+      # (node-entrypoint.sh, deploy/README.md); empty = none.
+      LEZ_LOGOS_PRICE_MODULE: ${LEZ_LOGOS_PRICE_MODULE:-}
+      LEZ_LOGOS_PRICE_MODULE_SHA256: ${LEZ_LOGOS_PRICE_MODULE_SHA256:-}
     volumes:
       - maker_state:/var/lib/lez/maker
       # The Node's sockets; the Taker Node reaches the Maker's Chat socket here.
       - maker_socket:/run/lez/maker
-      # The Maker half of the prepared ZEC corridor (scripts/zec-provision.sh).
+      # The Maker half of the prepared ZEC corridor (tests/fixtures/zec-catalog-fixture.sh).
       - zec_maker:/var/lib/lez/zec
       - delivery_dir:/delivery
       # The identity's public half; the key stays with Basecamp's wallet.
@@ -460,6 +577,15 @@ services:
       LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB: ${LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB:-25}
       LEZ_BTC_LOCK_FEE_MAX_PERCENT: ${LEZ_BTC_LOCK_FEE_MAX_PERCENT:-5}
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
+      # The ZEC profile take-time swaps are agreed under (zec-role.json).
+      LEZ_ZEC_PROFILE: ${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}
+      # The Monero windows take-time swaps are agreed under (xmr-role.json, only
+      # where the role has Monero logins: LEZ_MONERO=1).
+      LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS: ${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:-}
+      LEZ_XMR_REFUND_SECONDS: ${LEZ_XMR_REFUND_SECONDS:-}
+      LEZ_XMR_PUNISH_SECONDS: ${LEZ_XMR_PUNISH_SECONDS:-}
+      # regtest (the lane's monerod) or stagenet (compose.stagenet.yaml)
+      LEZ_XMR_NETWORK: ${LEZ_MONERO_NETWORK:-regtest}
       # The Bitcoin observer's pause between sweeps (gen-config.sh, per timing
       # profile); empty = the Node's default (15 s).
       LEZ_TAKER_OBSERVER_SWEEP_SECONDS: ${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}
@@ -617,6 +743,14 @@ volumes:
     name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-bitcoin-core-data
   zebra_data:
     name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-zebra-data
+  monerod_data:
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-monerod-data
+  xmr_funding_wallet_data:
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-xmr-funding-wallet
+  maker_xmr_wallet_data:
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-maker-xmr-wallet
+  taker_xmr_wallet_data:
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-taker-xmr-wallet
   maker_state:
     name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-maker-state
   maker_socket:

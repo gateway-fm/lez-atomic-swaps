@@ -1,0 +1,28 @@
+diff --git a/lez/storage/src/indexer/mod.rs b/lez/storage/src/indexer/mod.rs
+index 0955ef268..d8aa94d4e 100644
+--- a/lez/storage/src/indexer/mod.rs
++++ b/lez/storage/src/indexer/mod.rs
+@@ -48,6 +48,9 @@ pub const CF_ACC_META: &str = "cf_acc_meta";
+ /// Name of account id to tx hash map column family.
+ pub const CF_ACC_TO_TX: &str = "cf_acc_to_tx";
+ 
++/// Bound on the live write-ahead log, four `cf_breakpoint` memtables.
++pub const MAX_TOTAL_WAL_SIZE: u64 = 256 * 1024 * 1024;
++
+ pub struct RocksDBIO {
+     pub db: DBWithThreadMode<MultiThreaded>,
+ }
+@@ -75,6 +78,13 @@ impl RocksDBIO {
+         let mut db_opts = Options::default();
+         db_opts.create_missing_column_families(true);
+         db_opts.create_if_missing(true);
++        // Only `cf_breakpoint` (a whole state every `BREAKPOINT_INTERVAL`
++        // blocks) fills memtables; the other families take small writes,
++        // rarely flush, and keep every write-ahead log file since alive.
++        // RocksDB's own bound (0: four times all memtable budgets, ~28 GiB
++        // here) lets that grow to gigabytes; past this one, the families
++        // holding the oldest log are flushed and it is dropped.
++        db_opts.set_max_total_wal_size(MAX_TOTAL_WAL_SIZE);
+         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+             &db_opts,
+             path,

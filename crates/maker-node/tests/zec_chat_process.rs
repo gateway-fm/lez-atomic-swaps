@@ -1591,6 +1591,9 @@ fn assert_fresh_taker_artifacts(
     );
     // The Taker reveals first in both directions, so it holds the preimage.
     assert!(config.owns_claim_preimage());
+    // The Taker's actor activates at the time the Taker accepted, not at the
+    // time its activation runs.
+    assert_eq!(config.accepted_at(), Some(UnixSeconds::new(accepted_at)));
     let config_inode = fs::symlink_metadata(&config_path).unwrap().ino();
     let config_bytes = fs::read(&config_path).unwrap();
     let agreement_inode = fs::symlink_metadata(&agreement_path).unwrap().ino();
@@ -2073,6 +2076,18 @@ fn assert_completed_durable(
     let maker_config = ActorConfig::load_private(actor[0].manifest().config_path()).unwrap();
     assert_eq!(maker_config.role(), ActorRole::Maker);
     assert!(!maker_config.is_local_zcash_funder());
+    // The Maker's actor activates at the time the Maker accepted, read from
+    // its own clock while the offer was open.
+    let maker_accepted_at = maker_config
+        .accepted_at()
+        .expect("the Maker's actor config records its acceptance")
+        .value();
+    assert!(
+        authenticated.offer().created_at_unix_seconds() <= maker_accepted_at
+            && maker_accepted_at < authenticated.offer().expires_at_unix_seconds()
+            && maker_accepted_at <= now(),
+        "the Maker's recorded acceptance {maker_accepted_at} is outside the offer's life"
+    );
     let connection = Connection::open(database).unwrap();
     let maker_claim_rows: i64 = connection
         .query_row(

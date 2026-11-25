@@ -1489,6 +1489,22 @@ fn maker_tag17_route_preflights_invokes_once_and_observes_without_private_share(
     assert_eq!(observed_plan, sending_plan);
     assert_eq!(source, XmrWorkflowReconciliationSource::LezFinalizedEvent);
     assert_observer_pending(&mut observer, step);
+
+    // A recorded punishment that is not final is driven again: its record
+    // is removed so the tool writes the one it sends now, and the journal
+    // keeps the step's one spent invocation.
+    let evidence = reopened
+        .effect_authority()
+        .evidence_root()
+        .join("tag17-punishment-submission.json");
+    write_private(&evidence, b"{\"recorded\":true}\n", 0o600);
+    let started = fs::read(&fixture.workflow).unwrap();
+    let mut redrive = reopened
+        .prepare_effect_redrive(step, &actor_lock, &workflow_lock)
+        .expect("a recorded Tag17 is driven again");
+    assert!(!evidence.exists(), "the recorded submission is removed");
+    assert!(redrive.status().expect("run Tag17 redrive").success());
+    assert_eq!(fs::read(&fixture.workflow).unwrap(), started);
 }
 
 #[test]

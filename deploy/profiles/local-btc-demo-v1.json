@@ -78,6 +78,95 @@
       "depends_on": []
     },
     {
+      "id": "monerod",
+      "lifecycle": "service",
+      "executable": "monerod",
+      "role": "shared",
+      "pair": "monero",
+      "sockets": [],
+      "state": [
+        {
+          "path": "volume:lez-monerod-data",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [
+        "Monero daemon RPC login (runtime/monero)"
+      ],
+      "public_identities": [],
+      "health": "none of its own (compose profile monero; off by default): the Nodes' probe-monero get_info",
+      "depends_on": []
+    },
+    {
+      "id": "xmr-funding-wallet",
+      "lifecycle": "service",
+      "executable": "monero-wallet-rpc",
+      "role": "shared",
+      "pair": "monero",
+      "sockets": [],
+      "state": [
+        {
+          "path": "volume:lez-xmr-funding-wallet",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [
+        "funding wallet-rpc login",
+        "Monero daemon RPC login"
+      ],
+      "public_identities": [],
+      "health": "none of its own (compose profile monero; off by default)",
+      "depends_on": [
+        "monerod"
+      ]
+    },
+    {
+      "id": "maker-xmr-wallet",
+      "lifecycle": "service",
+      "executable": "monero-wallet-rpc",
+      "role": "maker",
+      "pair": "monero",
+      "sockets": [],
+      "state": [
+        {
+          "path": "volume:lez-maker-xmr-wallet",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [
+        "Maker wallet-rpc login",
+        "Monero daemon RPC login"
+      ],
+      "public_identities": [],
+      "health": "none of its own (compose profile monero; off by default)",
+      "depends_on": [
+        "monerod"
+      ]
+    },
+    {
+      "id": "taker-xmr-wallet",
+      "lifecycle": "service",
+      "executable": "monero-wallet-rpc",
+      "role": "taker",
+      "pair": "monero",
+      "sockets": [],
+      "state": [
+        {
+          "path": "volume:lez-taker-xmr-wallet",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [
+        "Taker wallet-rpc login",
+        "Monero daemon RPC login"
+      ],
+      "public_identities": [],
+      "health": "none of its own (compose profile monero; off by default)",
+      "depends_on": [
+        "monerod"
+      ]
+    },
+    {
       "id": "network",
       "lifecycle": "service",
       "executable": "LogosBasecamp + blockchain_module + lez_indexer_module (LEZ Network desk)",

@@ -18,6 +18,7 @@ sessions = [
     "dep:lez-bridge-adapter",
     "dep:lez-bridge-client",
     "dep:lez-bridge-protocol",
+    "dep:lez-node-common",
     "dep:lez-swap-core",
     "dep:lez-swap-store",
     "dep:lez-xmr-release-authority",
@@ -34,6 +35,7 @@ lez-adaptor-signature = { version = "=0.1.0", path = "../adaptor-signature", opt
 lez-bridge-adapter = { version = "=0.1.0", path = "../lez-bridge-adapter", optional = true }
 lez-bridge-client = { version = "=0.1.0", path = "../lez-bridge-client", optional = true }
 lez-bridge-protocol = { version = "=0.1.0", path = "../lez-bridge-protocol", optional = true }
+lez-node-common = { version = "=0.1.0", path = "../node-common", optional = true }
 lez-swap-core = { version = "=0.1.0", path = "../swap-core", optional = true }
 lez-swap-store = { version = "=0.1.0", path = "../swap-store", optional = true }
 lez-xmr-release-authority = { version = "=0.1.0", path = "../xmr-release-authority", optional = true }
@@ -48,6 +50,11 @@ sha2 = "=0.10.9"
 tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread"] }
 url = "=2.5.9"
 zeroize = "=1.9.0"
+
+[[example]]
+name = "full-lifecycle"
+path = "examples/full-lifecycle.rs"
+required-features = ["sessions"]
 
 [[bin]]
 name = "xmr-reference-tag15"
@@ -70,6 +77,11 @@ path = "src/bin/xmr-reference-monero-refund.rs"
 required-features = ["sessions"]
 
 [[bin]]
+name = "xmr-reference-monero-fund"
+path = "src/bin/xmr-reference-monero-fund.rs"
+required-features = ["sessions"]
+
+[[bin]]
 name = "xmr-reference-monero-verify"
 path = "src/bin/xmr-reference-monero-verify.rs"
 required-features = ["sessions"]
@@ -83,7 +95,7 @@ required-features = ["sessions"]
 command-fds = "=0.3.3"
 jsonrpsee = { version = "0.26.0", features = ["server"] }
 rand_chacha = "=0.3.1"
-rusqlite = { version = "=0.41.0", features = ["bundled"] }
+rusqlite = { version = "=0.43.0", default-features = false, features = ["bundled", "cache"] }
 tempfile = "=3.27.0"
 tower = "0.5.2"
 tower-http = { version = "0.7.0", features = ["auth"] }

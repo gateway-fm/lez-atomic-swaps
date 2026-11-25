@@ -1,0 +1,9 @@
+[09:52:03] regression run: 1 tests at 7b4e46da (tree dirty:        0), results in runtime/regress/rerun1-20261122T095202Z
+[09:52:03] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[09:52:10]     ui:btc:logos-happy:TakerSellsForeign (try 1) starts: LEZ finalized 154, tip 161
+[09:53:10] === ui:btc:logos-happy:TakerSellsForeign (try 1): FAILED in 60 s (+7 s before it); LEZ finalized 198, tip 209
+        ✗ taker: taking one offer prepares the real Taker BTC action
+      [09:52:54] FAILED: step failed
+         taker BTC reservation failed: btc_reserve_v1: local RPC error -32010: Chat peer operation unavailable
+[09:53:10] regression run: 0 of 1 passed in 1 min, 0 new chains, 0 profile switches,        0 frozen tries
+[09:53:10]   not passed: ui:btc:logos-happy:TakerSellsForeign

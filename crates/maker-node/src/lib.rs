@@ -7,14 +7,17 @@ mod daemon_lifecycle;
 mod extension_api;
 mod logos_price_source;
 mod price_source;
-mod route_health;
 mod rpc_contracts;
 #[cfg(feature = "pair-xmr")]
 mod xmr_chat;
+#[cfg(feature = "pair-xmr")]
+mod xmr_reserve;
 #[cfg(feature = "pair-zec")]
 mod zec_application;
 #[cfg(feature = "pair-zec")]
 mod zec_chat;
+#[cfg(feature = "pair-zec")]
+mod zec_reserve;
 
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
@@ -31,17 +34,18 @@ pub use daemon_lifecycle::{
     ProcessMakerDaemon,
 };
 pub use extension_api::OfferPublishRequestV1;
+pub use lez_node_common::route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
 pub use lez_node_common::*;
 pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
-pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
 pub use rpc_contracts::{
     ListRequest, MakerDependencyStateV1, MakerHealthV1, MakerOfferListRequest, MakerRouteHealthV1,
+    MakerWalletBalancesRequest,
 };
 #[cfg(feature = "pair-xmr")]
-pub use xmr_chat::XmrMakerChatAuthority;
-#[cfg(feature = "pair-xmr")]
 use xmr_chat::register_xmr_chat_methods;
+#[cfg(feature = "pair-xmr")]
+pub use xmr_reserve::XmrMakerReservations;
 #[cfg(feature = "pair-zec")]
 pub use zec_application::{
     AppliedZcashFundingEvent, ZcashFundingApplyError, ZcashFundingProjectionOutcome,
@@ -80,6 +84,8 @@ pub fn refuse_start_with_legacy_zec_swaps(store: &SqliteSwapStore) -> anyhow::Re
 }
 #[cfg(feature = "pair-zec")]
 use zec_chat::register_zec_chat_methods;
+#[cfg(feature = "pair-zec")]
+pub use zec_reserve::ZecMakerReservations;
 
 use std::{
     fs,
@@ -128,8 +134,8 @@ use lez_swap_store::{
 };
 #[cfg(feature = "pair-xmr")]
 use lez_xmr_swap_sdk::{
-    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
-    XmrActivatedAgreementV1, XmrAgreementV1, XmrRoleV1, XmrSwapDirectionV1,
+    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrActivatedAgreementV1,
+    XmrAgreementV1, XmrSwapDirectionV1,
 };
 #[cfg(feature = "pair-zec")]
 use lez_zec_swap_sdk::{
@@ -177,13 +183,17 @@ pub struct MakerRpc {
     /// The LEZ chain's progress for `maker_health`, from the lifecycle's
     /// indexer and sequencer.
     lez_finality: Option<Arc<LezFinalityWatch>>,
+    /// Take-time Monero agreements (`xmr_reserve_v1`).
     #[cfg(feature = "pair-xmr")]
-    xmr_chat_authority: Option<Arc<XmrMakerChatAuthority>>,
+    xmr_reservations: Option<Arc<XmrMakerReservations>>,
     #[cfg(feature = "pair-zec")]
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
     #[cfg(feature = "pair-zec")]
     #[cfg(feature = "pair-zec")]
     zec_actor_provisioner: Option<Arc<ZecMakerActorProvisioner>>,
+    /// Take-time Zcash agreements (`zec_reserve_v1`).
+    #[cfg(feature = "pair-zec")]
+    zec_reservations: Option<Arc<ZecMakerReservations>>,
 }
 
 impl std::fmt::Debug for MakerRpc {
@@ -231,8 +241,8 @@ impl std::fmt::Debug for MakerRpc {
             .field("lez_finality", &self.lez_finality);
         #[cfg(feature = "pair-xmr")]
         debug.field(
-            "xmr_chat_authority",
-            &self.xmr_chat_authority.as_ref().map(|_| "configured"),
+            "xmr_reservations",
+            &self.xmr_reservations.as_ref().map(|_| "configured"),
         );
         #[cfg(feature = "pair-zec")]
         debug
@@ -243,6 +253,10 @@ impl std::fmt::Debug for MakerRpc {
             .field(
                 "zec_actor_provisioner",
                 &self.zec_actor_provisioner.as_ref().map(|_| "configured"),
+            )
+            .field(
+                "zec_reservations",
+                &self.zec_reservations.as_ref().map(|_| "configured"),
             );
         debug.finish()
     }
@@ -268,10 +282,12 @@ impl MakerRpc {
             btc_lifecycle: None,
             lez_finality: None,
             #[cfg(feature = "pair-xmr")]
-            xmr_chat_authority: None,
+            xmr_reservations: None,
             #[cfg(feature = "pair-zec")]
             #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
+            #[cfg(feature = "pair-zec")]
+            zec_reservations: None,
         }
     }
 
@@ -296,12 +312,14 @@ impl MakerRpc {
             btc_lifecycle: None,
             lez_finality: None,
             #[cfg(feature = "pair-xmr")]
-            xmr_chat_authority: None,
+            xmr_reservations: None,
             #[cfg(feature = "pair-zec")]
             zec_completion_store: None,
             #[cfg(feature = "pair-zec")]
             #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
+            #[cfg(feature = "pair-zec")]
+            zec_reservations: None,
         }
     }
 
@@ -334,6 +352,35 @@ impl MakerRpc {
         self
     }
 
+    /// Attaches the take-time Zcash agreement (`zec_reserve_v1`) over the
+    /// LEZ role of `role_config_file` (the Node-owned lifecycle's), and
+    /// registers the templates of the reservations completed before a restart.
+    ///
+    /// # Errors
+    ///
+    /// Fails without the ZEC actor authority, or for an invalid Zcash or LEZ
+    /// role configuration.
+    #[cfg(feature = "pair-zec")]
+    pub fn with_zec_reservations(
+        mut self,
+        config_file: &Path,
+        role_config_file: &Path,
+        zcash_key_file: &Path,
+    ) -> anyhow::Result<Self> {
+        let provisioner = self
+            .zec_actor_provisioner
+            .clone()
+            .context("ZEC reservations need the ZEC actor authority")?;
+        let reservations = Arc::new(ZecMakerReservations::load(
+            config_file,
+            role_config_file,
+            zcash_key_file,
+        )?);
+        reservations.restore(&provisioner);
+        self.zec_reservations = Some(reservations);
+        Ok(self)
+    }
+
     /// Attaches fixture-independent BTC role-agreement authority, optionally
     /// retaining the legacy pre-finalized actor path for Chat v1.
     #[must_use]
@@ -362,10 +409,13 @@ impl MakerRpc {
     }
 
     #[cfg(feature = "pair-xmr")]
-    /// Attaches daemon-owned Monero validation and actor authority.
+    /// Attaches the take-time Monero agreement (`xmr_reserve_v1`) and keeps
+    /// the sidecars of the swaps it activated before a restart running.
     #[must_use]
-    pub fn with_xmr_chat_authority(mut self, authority: XmrMakerChatAuthority) -> Self {
-        self.xmr_chat_authority = Some(Arc::new(authority));
+    pub fn with_xmr_reservations(mut self, reservations: XmrMakerReservations) -> Self {
+        let reservations = Arc::new(reservations);
+        reservations.restore();
+        self.xmr_reservations = Some(reservations);
         self
     }
 
@@ -418,6 +468,18 @@ impl MakerRpc {
 pub trait MakerRouteHealthProbe: Send + Sync {
     /// Returns the current availability of the selected route's chain dependency.
     fn state(&self, route: MakerRouteV1) -> MakerDependencyStateV1;
+}
+
+/// The hash-pinned process probe (`--route-health-config`); a route no
+/// command names is disabled.
+impl MakerRouteHealthProbe for ProcessRouteHealthProbe {
+    fn state(&self, route: MakerRouteV1) -> MakerDependencyStateV1 {
+        match self.route_available(route) {
+            None => MakerDependencyStateV1::Disabled,
+            Some(true) => MakerDependencyStateV1::Available,
+            Some(false) => MakerDependencyStateV1::Unavailable,
+        }
+    }
 }
 
 /// Serializable operator-facing snapshot. Secret evidence is deliberately omitted.
@@ -981,12 +1043,42 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                     let alerts = store
                         .list_operator_alerts(swap.id(), 0, false)
                         .map_err(internal_store_error)?;
-                    SwapView::with_pending_alerts(swap, &alerts).map_err(internal_store_error)
+                    let mut view = SwapView::with_pending_alerts(swap, &alerts)
+                        .map_err(internal_store_error)?;
+                    // An actor-driven swap advances in its actor, not in this
+                    // aggregate (Chat leaves it Offered): its phase is the
+                    // actor's last observation, the one the monitor shows.
+                    if let Some(phase) = store
+                        .maker_actor_progress(swap.id())
+                        .map_err(maker_actor_process_error)?
+                        .and_then(|progress| actor_phase(progress.observation()))
+                    {
+                        view.phase = phase;
+                    }
+                    Ok(view)
                 })
                 .collect()
         },
     )?;
     Ok(())
+}
+
+/// The swap phase an actor observation names (`claim_evidence_available` is
+/// `ClaimEvidenceAvailable`); the supervisor admits only these names.
+fn actor_phase(observation: &MakerActorProgressObservationV1) -> Option<Phase> {
+    let MakerActorProgressObservationV1::Active { phase, .. } = observation else {
+        return None;
+    };
+    let name: String = phase
+        .split('_')
+        .map(|word| {
+            let mut letters = word.chars();
+            letters.next().map_or_else(String::new, |first| {
+                first.to_ascii_uppercase().to_string() + letters.as_str()
+            })
+        })
+        .collect();
+    serde_json::from_value(serde_json::Value::String(name)).ok()
 }
 
 /// Why a Zcash row needs its owner, by name, and the holding swap for a
@@ -1271,11 +1363,12 @@ fn maker_actor_process_error(error: MakerActorProcessError) -> ErrorObjectOwned 
     }
 }
 /// `maker_wallet_balances_v1`: what this Maker's own Bitcoin Core wallet and
-/// LEZ owner account hold. Read-only; a Node without the BTC lifecycle
-/// reports both as disabled instead of failing.
+/// LEZ owner account hold, and on request what its Zcash role can fund from.
+/// Read-only; a Node without the BTC lifecycle reports both as disabled
+/// instead of failing.
 fn register_wallet_balances_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_async_method("maker_wallet_balances_v1", |params, context, _| async move {
-        let _: ListRequest = params.one()?;
+        let request: MakerWalletBalancesRequest = params.one()?;
         let Some(lifecycle) = context.btc_lifecycle.as_ref() else {
             return Ok::<_, ErrorObjectOwned>(serde_json::json!({
                 "schema_version": 1,
@@ -1284,8 +1377,20 @@ fn register_wallet_balances_method(module: &mut RpcModule<MakerRpc>) -> anyhow::
             }));
         };
         let balances = lifecycle.wallet_balances().await;
-        serde_json::to_value(balances)
-            .map_err(|_| rpc_error(INTERNAL_ERROR, "wallet balances could not be encoded"))
+        #[cfg_attr(not(feature = "pair-zec"), allow(unused_mut))]
+        let mut balances = serde_json::to_value(balances)
+            .map_err(|_| rpc_error(INTERNAL_ERROR, "wallet balances could not be encoded"))?;
+        #[cfg(feature = "pair-zec")]
+        if request.zcash
+            && let Some(reservations) = &context.zec_reservations
+            && let Some(key) = &context.chat_signing_key
+        {
+            balances["zcash"] = serde_json::to_value(reservations.funder_balance(key).await)
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "wallet balances could not be encoded"))?;
+        }
+        #[cfg(not(feature = "pair-zec"))]
+        let _ = request;
+        Ok(balances)
     })?;
     Ok(())
 }

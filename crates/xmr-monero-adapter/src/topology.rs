@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use super::{
     LoopbackRpcEndpoint, MoneroChainIdentity, MoneroNetwork, RPC_REQUEST_TIMEOUT,
-    VerifiedMoneroOutputObservation,
+    VerifiedMoneroOutputObservation, read_with_retries,
 };
 
 const RPC_ID: &str = "lez-m4-topology-v1";
@@ -29,6 +29,13 @@ const GET_CONNECTIONS_REQUEST: &str =
     r#"{"jsonrpc":"2.0","id":"lez-m4-topology-v1","method":"get_connections"}"#;
 const GET_VERSION_REQUEST: &str =
     r#"{"jsonrpc":"2.0","id":"lez-m4-topology-v1","method":"get_version"}"#;
+const GET_LAST_BLOCK_HEADER_REQUEST: &str =
+    r#"{"jsonrpc":"2.0","id":"lez-m4-topology-v1","method":"get_last_block_header"}"#;
+/// How old, by this host's clock, the tip of a public network's daemon may
+/// be. Stagenet targets a block every 120 s; a tip an hour old is thirty
+/// intervals (e^-30 at the target rate, and about 0.25 % even at a fifth of
+/// it), so it says the daemon stalled, is cut off, or lies about the tip.
+pub const MAX_PUBLIC_TIP_AGE_SECONDS: u64 = 60 * 60;
 
 /// Verifies one exact run's isolated Monero daemon and wallet topology.
 pub struct MoneroTopologyVerifier<'endpoint> {
@@ -41,14 +48,17 @@ pub struct MoneroTopologyVerifier<'endpoint> {
 }
 
 impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
-    /// Creates an exact three-origin local Regtest topology verifier.
+    /// Creates an exact three-origin topology verifier.
     ///
     /// The foreign wallet contributes credentials that must work at its own
     /// origin and finish with HTTP 401 when replayed against `target_wallet`.
+    /// On Regtest [`Self::verify`] proves the peerless offline daemon; on
+    /// Stagenet a synchronized daemon with a recent tip (see
+    /// [`MAX_PUBLIC_TIP_AGE_SECONDS`]).
     ///
     /// # Errors
     ///
-    /// Rejects non-Regtest profiles, aliased origins, or HTTP-client failures.
+    /// Rejects aliased origins or HTTP-client failures.
     pub fn new(
         run_id: RunId,
         identity: MoneroChainIdentity,
@@ -56,9 +66,6 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         target_wallet: &'endpoint LoopbackRpcEndpoint,
         foreign_wallet: &'endpoint LoopbackRpcEndpoint,
     ) -> Result<Self, MoneroTopologyError> {
-        if identity.network() != MoneroNetwork::Regtest {
-            return Err(MoneroTopologyError::RequiresRegtest);
-        }
         if daemon.base_url == target_wallet.base_url
             || daemon.base_url == foreign_wallet.base_url
             || target_wallet.base_url == foreign_wallet.base_url
@@ -79,8 +86,41 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         })
     }
 
+    /// Creates the verifier for a role with one wallet-rpc: that wallet is
+    /// both target and foreign. With no foreign credentials to replay,
+    /// [`Self::verify`] proves the daemon profile, the empty peer set, the
+    /// wallet's liveness and that the wallet refuses a wrong password for
+    /// its own user with 401, so the attestation never stands for a wallet
+    /// that does not enforce its credentials.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an aliased daemon or HTTP-client failures.
+    pub fn for_one_wallet_rpc(
+        run_id: RunId,
+        identity: MoneroChainIdentity,
+        daemon: &'endpoint LoopbackRpcEndpoint,
+        wallet: &'endpoint LoopbackRpcEndpoint,
+    ) -> Result<Self, MoneroTopologyError> {
+        if daemon.base_url == wallet.base_url {
+            return Err(MoneroTopologyError::AliasedRpcOrigins);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(RPC_REQUEST_TIMEOUT)
+            .build()
+            .map_err(|_| MoneroTopologyError::HttpClientBuild)?;
+        Ok(Self {
+            run_id,
+            identity,
+            daemon,
+            target_wallet: wallet,
+            foreign_wallet: wallet,
+            client,
+        })
+    }
+
     /// Proves the exact daemon profile, empty peer set, wallet liveness, and
-    /// cross-wallet Digest authentication rejection.
+    /// (with two wallets) cross-wallet Digest authentication rejection.
     ///
     /// # Errors
     ///
@@ -96,17 +136,36 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
                 GET_INFO_REQUEST,
             )
             .await?;
-        validate_info(&info)?;
-
-        let connections: GetConnectionsResult = self
-            .call_success(
-                "daemon.get_connections",
-                self.daemon,
-                self.daemon,
-                GET_CONNECTIONS_REQUEST,
-            )
-            .await?;
-        validate_connections(&connections)?;
+        match self.identity.network() {
+            MoneroNetwork::Regtest => {
+                validate_info(&info)?;
+                let connections: GetConnectionsResult = self
+                    .call_success(
+                        "daemon.get_connections",
+                        self.daemon,
+                        self.daemon,
+                        GET_CONNECTIONS_REQUEST,
+                    )
+                    .await?;
+                validate_connections(&connections)?;
+            }
+            // A public network's daemon has peers and syncs: what it must
+            // show is that it serves the network, is synchronized, and that
+            // its tip is recent by this host's clock (a stalled or far-behind
+            // daemon would hold back or misreport confirmations).
+            MoneroNetwork::Stagenet => {
+                validate_public_info(&info, MoneroNetwork::Stagenet)?;
+                let header: GetLastBlockHeaderResult = self
+                    .call_success(
+                        "daemon.get_last_block_header",
+                        self.daemon,
+                        self.daemon,
+                        GET_LAST_BLOCK_HEADER_REQUEST,
+                    )
+                    .await?;
+                validate_fresh_tip(&header, &info, unix_now())?;
+            }
+        }
 
         let target_version: GetVersionResult = self
             .call_success(
@@ -128,8 +187,21 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
             .await?;
         validate_wallet_version("foreign_wallet.get_version", &foreign_version)?;
 
+        // The credentials replayed against the target must be refused: the
+        // foreign wallet's, or with one wallet its own user with a wrong
+        // password.
+        let wrong = LoopbackRpcEndpoint {
+            base_url: self.target_wallet.base_url.clone(),
+            username: self.target_wallet.username.clone(),
+            password: format!("{}-wrong", self.target_wallet.password),
+        };
+        let replayed = if self.target_wallet.base_url == self.foreign_wallet.base_url {
+            &wrong
+        } else {
+            self.foreign_wallet
+        };
         let crossed = self
-            .send(self.target_wallet, self.foreign_wallet, GET_VERSION_REQUEST)
+            .send(self.target_wallet, replayed, GET_VERSION_REQUEST)
             .await?;
         if crossed.status() != StatusCode::UNAUTHORIZED {
             return Err(MoneroTopologyError::ForeignCredentialNotRejected {
@@ -137,12 +209,12 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
             });
         }
 
-        let genesis = self
+        let daemon = self
             .daemon
             .client()
             .map_err(|_| MoneroTopologyError::TypedDaemonClientBuild)?
-            .daemon()
-            .on_get_block_hash(0)
+            .daemon();
+        let genesis = read_with_retries(|| daemon.on_get_block_hash(0))
             .await
             .map_err(|_| MoneroTopologyError::GenesisRpc)?;
         if genesis.as_ref() != self.identity.genesis_hash() {
@@ -172,17 +244,31 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         credentials: &LoopbackRpcEndpoint,
         body: &'static str,
     ) -> Result<T, MoneroTopologyError> {
-        let response = self.send(target, credentials, body).await?;
-        if response.status() != StatusCode::OK {
-            return Err(MoneroTopologyError::UnexpectedHttpStatus {
-                operation,
-                actual: response.status().as_u16(),
-            });
-        }
-        let bytes = read_bounded(operation, response).await?;
+        // A Digest answer sent on another pooled connection than its
+        // challenge gets a 401 (see the crate documentation): a transport
+        // failure or a 401 starts the exchange once more, with a fresh
+        // challenge. Credentials the server refuses are refused twice.
+        let bytes = match self.exchange(operation, target, credentials, body).await {
+            Err(
+                MoneroTopologyError::HttpTransport
+                | MoneroTopologyError::BodyRead { .. }
+                | MoneroTopologyError::UnexpectedHttpStatus { actual: 401, .. },
+            ) => self.exchange(operation, target, credentials, body).await?,
+            result => result?,
+        };
         let envelope: RpcEnvelope<T> = serde_json::from_slice(&bytes)
             .map_err(|_| MoneroTopologyError::MalformedRpcEnvelope { operation })?;
         envelope.into_result(operation)
+    }
+
+    async fn exchange(
+        &self,
+        operation: &'static str,
+        target: &LoopbackRpcEndpoint,
+        credentials: &LoopbackRpcEndpoint,
+        body: &'static str,
+    ) -> Result<Vec<u8>, MoneroTopologyError> {
+        exchange(&self.client, operation, target, credentials, body).await
     }
 
     async fn send(
@@ -191,13 +277,124 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         credentials: &LoopbackRpcEndpoint,
         body: &'static str,
     ) -> Result<Response, MoneroTopologyError> {
-        self.client
-            .post(format!("{}{JSON_RPC_PATH}", target.base_url))
-            .header(CONTENT_TYPE, "application/json")
-            .body(body)
-            .send_with_digest_auth(&credentials.username, &credentials.password)
-            .await
-            .map_err(|_| MoneroTopologyError::HttpTransport)
+        send(&self.client, target, credentials, body).await
+    }
+}
+
+async fn exchange(
+    client: &reqwest::Client,
+    operation: &'static str,
+    target: &LoopbackRpcEndpoint,
+    credentials: &LoopbackRpcEndpoint,
+    body: &'static str,
+) -> Result<Vec<u8>, MoneroTopologyError> {
+    let response = send(client, target, credentials, body).await?;
+    if response.status() != StatusCode::OK {
+        return Err(MoneroTopologyError::UnexpectedHttpStatus {
+            operation,
+            actual: response.status().as_u16(),
+        });
+    }
+    read_bounded(operation, response).await
+}
+
+async fn send(
+    client: &reqwest::Client,
+    target: &LoopbackRpcEndpoint,
+    credentials: &LoopbackRpcEndpoint,
+    body: &'static str,
+) -> Result<Response, MoneroTopologyError> {
+    client
+        .post(format!("{}{JSON_RPC_PATH}", target.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .body(body)
+        .send_with_digest_auth(&credentials.username, &credentials.password)
+        .await
+        .map_err(|_| MoneroTopologyError::HttpTransport)
+}
+
+/// Proves from the daemon's bounded `get_info` that it serves `network`:
+/// `nettype` `fakechain` for Regtest, `stagenet` with the stagenet flag for
+/// Stagenet. A mainnet or testnet daemon is refused for every network, and
+/// so is an answer the daemon marks untrusted. Unlike
+/// [`MoneroTopologyVerifier::verify`] it asks nothing of the peer set, so it
+/// also holds for a Stagenet daemon that syncs from the public network.
+pub(crate) async fn verify_daemon_network(
+    daemon: &LoopbackRpcEndpoint,
+    network: MoneroNetwork,
+) -> Result<(), MoneroTopologyError> {
+    const OPERATION: &str = "daemon.get_info";
+    let client = reqwest::Client::builder()
+        .timeout(RPC_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|_| MoneroTopologyError::HttpClientBuild)?;
+    // A Digest answer on another pooled connection than its challenge gets a
+    // 401 (see the crate documentation): start the exchange once more.
+    let bytes = match exchange(&client, OPERATION, daemon, daemon, GET_INFO_REQUEST).await {
+        Err(
+            MoneroTopologyError::HttpTransport
+            | MoneroTopologyError::BodyRead { .. }
+            | MoneroTopologyError::UnexpectedHttpStatus { actual: 401, .. },
+        ) => exchange(&client, OPERATION, daemon, daemon, GET_INFO_REQUEST).await?,
+        result => result?,
+    };
+    let envelope: RpcEnvelope<GetInfoResult> =
+        serde_json::from_slice(&bytes).map_err(|_| MoneroTopologyError::MalformedRpcEnvelope {
+            operation: OPERATION,
+        })?;
+    validate_network_info(&envelope.into_result(OPERATION)?, network)
+}
+
+/// One bounded daemon read, once more on a lost answer or a Digest 401 on
+/// another pooled connection (see the crate documentation).
+async fn daemon_read<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    operation: &'static str,
+    daemon: &LoopbackRpcEndpoint,
+    request: &'static str,
+) -> Result<T, MoneroTopologyError> {
+    let bytes = match exchange(client, operation, daemon, daemon, request).await {
+        Err(
+            MoneroTopologyError::HttpTransport
+            | MoneroTopologyError::BodyRead { .. }
+            | MoneroTopologyError::UnexpectedHttpStatus { actual: 401, .. },
+        ) => exchange(client, operation, daemon, daemon, request).await?,
+        result => result?,
+    };
+    let envelope: RpcEnvelope<T> = serde_json::from_slice(&bytes)
+        .map_err(|_| MoneroTopologyError::MalformedRpcEnvelope { operation })?;
+    envelope.into_result(operation)
+}
+
+/// Proves the daemon is fit to decide on now: it serves `network`
+/// ([`verify_daemon_network`]), and on a public network it is synchronized
+/// and its tip is recent by this host's clock, as
+/// [`MoneroTopologyVerifier::verify`] proves for a Stagenet receipt. It asks
+/// nothing of a wallet, so a role checks its daemon this way before each
+/// decision it takes on what that daemon reports.
+pub(crate) async fn verify_daemon_current(
+    daemon: &LoopbackRpcEndpoint,
+    network: MoneroNetwork,
+) -> Result<(), MoneroTopologyError> {
+    let client = reqwest::Client::builder()
+        .timeout(RPC_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|_| MoneroTopologyError::HttpClientBuild)?;
+    let info: GetInfoResult =
+        daemon_read(&client, "daemon.get_info", daemon, GET_INFO_REQUEST).await?;
+    match network {
+        MoneroNetwork::Regtest => validate_network_info(&info, network),
+        MoneroNetwork::Stagenet => {
+            validate_public_info(&info, network)?;
+            let header: GetLastBlockHeaderResult = daemon_read(
+                &client,
+                "daemon.get_last_block_header",
+                daemon,
+                GET_LAST_BLOCK_HEADER_REQUEST,
+            )
+            .await?;
+            validate_fresh_tip(&header, &info, unix_now())
+        }
     }
 }
 
@@ -215,7 +412,9 @@ impl fmt::Debug for MoneroTopologyVerifier<'_> {
     }
 }
 
-/// Non-forgeable proof of one exact local Regtest topology and auth boundary.
+/// Non-forgeable proof of one exact topology and auth boundary: the local
+/// peerless offline Regtest, or a synchronized Stagenet daemon with a fresh
+/// tip.
 ///
 /// Fields are private, no public constructor or status-validation port exists,
 /// and the type deliberately does not implement `Clone`.
@@ -350,9 +549,9 @@ fn validate_binding(
 /// Failure to establish the local Regtest topology and authentication proof.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum MoneroTopologyError {
-    /// The isolation capability is deliberately local-Regtest-only.
-    #[error("Monero topology attestation requires the Regtest profile")]
-    RequiresRegtest,
+    /// The daemon's `get_info` names another network than the configured one.
+    #[error("Monero daemon does not serve the configured network")]
+    DaemonNetworkMismatch,
     /// Every trust/auth role must have its own process origin.
     #[error("Monero daemon, target wallet, and foreign wallet origins must be distinct")]
     AliasedRpcOrigins,
@@ -409,6 +608,15 @@ pub enum MoneroTopologyError {
     /// `get_info` did not prove the exact offline fakechain profile.
     #[error("Monero daemon did not report the exact offline peerless Regtest profile")]
     DaemonProfileMismatch,
+    /// A public network's daemon is not synchronized, still syncing, or below
+    /// the target height it reports.
+    #[error("Monero daemon is not synchronized with its network")]
+    DaemonNotSynchronized,
+    /// A public network's daemon reports a tip that is not its own `get_info`
+    /// tip, is marked untrusted, or is older (or further ahead) than
+    /// `MAX_PUBLIC_TIP_AGE_SECONDS` by this host's clock.
+    #[error("Monero daemon's tip is stale or inconsistent")]
+    DaemonTipStale,
     /// `get_connections` did not independently prove an empty connection set.
     #[error("Monero daemon returned a nonempty or untrusted connection set")]
     ConnectionsPresent,
@@ -490,6 +698,28 @@ struct GetInfoResult {
     incoming_connections_count: u64,
     outgoing_connections_count: u64,
     version: String,
+    /// Absent (an older or fixture answer) reads as not synchronized.
+    #[serde(default)]
+    synchronized: bool,
+    #[serde(default)]
+    busy_syncing: bool,
+    #[serde(default)]
+    height: u64,
+    #[serde(default)]
+    target_height: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetLastBlockHeaderResult {
+    status: String,
+    untrusted: bool,
+    block_header: LastBlockHeader,
+}
+
+#[derive(Debug, Deserialize)]
+struct LastBlockHeader {
+    height: u64,
+    timestamp: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -558,6 +788,70 @@ fn validate_info(info: &GetInfoResult) -> Result<(), MoneroTopologyError> {
         return Err(MoneroTopologyError::DaemonProfileMismatch);
     }
     Ok(())
+}
+
+fn validate_network_info(
+    info: &GetInfoResult,
+    network: MoneroNetwork,
+) -> Result<(), MoneroTopologyError> {
+    let (nettype, stagenet) = match network {
+        MoneroNetwork::Regtest => ("fakechain", false),
+        MoneroNetwork::Stagenet => ("stagenet", true),
+    };
+    if info.status != "OK"
+        || info.untrusted
+        || info.nettype != nettype
+        || info.mainnet
+        || info.testnet
+        || info.stagenet != stagenet
+    {
+        return Err(MoneroTopologyError::DaemonNetworkMismatch);
+    }
+    Ok(())
+}
+
+/// A public network's daemon: it serves `network` ([`validate_network_info`]),
+/// says it is synchronized and not syncing, and its height has reached the
+/// target it reports (0 once synchronized).
+fn validate_public_info(
+    info: &GetInfoResult,
+    network: MoneroNetwork,
+) -> Result<(), MoneroTopologyError> {
+    validate_network_info(info, network)?;
+    if !info.synchronized
+        || info.busy_syncing
+        || info.height == 0
+        || (info.target_height != 0 && info.height < info.target_height)
+    {
+        return Err(MoneroTopologyError::DaemonNotSynchronized);
+    }
+    Ok(())
+}
+
+/// The tip the daemon reports is its `get_info` tip, trusted, and at most
+/// [`MAX_PUBLIC_TIP_AGE_SECONDS`] old (a timestamp up to that far ahead of
+/// this clock is also refused: Monero admits blocks up to two hours ahead).
+fn validate_fresh_tip(
+    header: &GetLastBlockHeaderResult,
+    info: &GetInfoResult,
+    now: u64,
+) -> Result<(), MoneroTopologyError> {
+    if header.status != "OK"
+        || header.untrusted
+        // A block found between the two reads moves the header one ahead.
+        || !(header.block_header.height.checked_add(1) == Some(info.height)
+            || header.block_header.height == info.height)
+        || now.abs_diff(header.block_header.timestamp) > MAX_PUBLIC_TIP_AGE_SECONDS
+    {
+        return Err(MoneroTopologyError::DaemonTipStale);
+    }
+    Ok(())
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 fn validate_connections(connections: &GetConnectionsResult) -> Result<(), MoneroTopologyError> {
@@ -638,6 +932,176 @@ mod tests {
     const FOREIGN_PASSWORD: &str = "foreign-secret";
     const CHALLENGE: &str = "Digest realm=\"monero-rpc\", qop=\"auth\", algorithm=MD5, nonce=\"fixed-test-nonce\", opaque=\"fixed-test-opaque\"";
 
+    /// `get_info` of the pinned monerod 0.18.5.1 on Stagenet while it syncs,
+    /// as the daemon printed it (fields this crate does not read included).
+    const STAGENET_GET_INFO: &str = r#"{"adjusted_time":1522906619,"alt_blocks_count":0,"block_size_limit":600000,"block_size_median":300000,"block_weight_limit":600000,"block_weight_median":300000,"bootstrap_daemon_address":"","busy_syncing":true,"credits":0,"cumulative_difficulty":56672896,"cumulative_difficulty_top64":0,"database_size":70955008,"difficulty":5226,"difficulty_top64":0,"free_space":22355439616,"grey_peerlist_size":1262,"height":48557,"height_without_bootstrap":48557,"incoming_connections_count":0,"mainnet":false,"nettype":"stagenet","offline":false,"outgoing_connections_count":8,"restricted":false,"rpc_connections_count":1,"stagenet":true,"start_time":1795270425,"status":"OK","synchronized":false,"target":120,"target_height":2255223,"testnet":false,"top_block_hash":"dc0a4320bf1ab8eebd2130ad2de06b8f06ce903ea8ec17b379022c91ba19189e","top_hash":"","tx_count":70,"tx_pool_size":0,"untrusted":false,"update_available":false,"version":"0.18.5.1-release","was_bootstrap_ever_used":false,"white_peerlist_size":16,"wide_cumulative_difficulty":"0x360c280","wide_difficulty":"0x146a"}"#;
+
+    fn info_with(replacements: &[(&str, &str)]) -> GetInfoResult {
+        let mut text = STAGENET_GET_INFO.to_owned();
+        for (from, to) in replacements {
+            assert!(text.contains(from), "fixture holds {from}");
+            text = text.replace(from, to);
+        }
+        serde_json::from_str(&text).expect("get_info fixture")
+    }
+
+    #[test]
+    fn daemon_network_check_admits_only_the_configured_network() {
+        let stagenet = info_with(&[]);
+        assert_eq!(
+            validate_network_info(&stagenet, MoneroNetwork::Stagenet),
+            Ok(())
+        );
+        assert_eq!(
+            validate_network_info(&stagenet, MoneroNetwork::Regtest),
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+        // The isolated Regtest profile refuses a Stagenet daemon too.
+        assert_eq!(
+            validate_info(&stagenet),
+            Err(MoneroTopologyError::DaemonProfileMismatch)
+        );
+
+        let fakechain = info_with(&[
+            (r#""nettype":"stagenet""#, r#""nettype":"fakechain""#),
+            (r#""stagenet":true"#, r#""stagenet":false"#),
+        ]);
+        assert_eq!(
+            validate_network_info(&fakechain, MoneroNetwork::Regtest),
+            Ok(())
+        );
+        assert_eq!(
+            validate_network_info(&fakechain, MoneroNetwork::Stagenet),
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+
+        let mainnet = info_with(&[
+            (r#""nettype":"stagenet""#, r#""nettype":"mainnet""#),
+            (r#""stagenet":true"#, r#""stagenet":false"#),
+            (r#""mainnet":false"#, r#""mainnet":true"#),
+        ]);
+        let testnet = info_with(&[
+            (r#""nettype":"stagenet""#, r#""nettype":"testnet""#),
+            (r#""stagenet":true"#, r#""stagenet":false"#),
+            (r#""testnet":false"#, r#""testnet":true"#),
+        ]);
+        let untrusted = info_with(&[(r#""untrusted":false"#, r#""untrusted":true"#)]);
+        let mislabelled = info_with(&[(r#""mainnet":false"#, r#""mainnet":true"#)]);
+        for refused in [&mainnet, &testnet, &untrusted, &mislabelled] {
+            for network in [MoneroNetwork::Regtest, MoneroNetwork::Stagenet] {
+                assert_eq!(
+                    validate_network_info(refused, network),
+                    Err(MoneroTopologyError::DaemonNetworkMismatch)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_public_daemon_must_be_synchronized_with_a_fresh_tip_of_its_own() {
+        // The fixture is a daemon still syncing (48,557 of 2,255,223).
+        let syncing = info_with(&[]);
+        assert_eq!(
+            validate_public_info(&syncing, MoneroNetwork::Stagenet),
+            Err(MoneroTopologyError::DaemonNotSynchronized)
+        );
+        let synced = info_with(&[
+            (r#""busy_syncing":true"#, r#""busy_syncing":false"#),
+            (r#""synchronized":false"#, r#""synchronized":true"#),
+            (r#""target_height":2255223"#, r#""target_height":0"#),
+        ]);
+        assert_eq!(
+            validate_public_info(&synced, MoneroNetwork::Stagenet),
+            Ok(())
+        );
+        // Synchronized by its word, yet below the target it names, or busy.
+        for refused in [
+            info_with(&[
+                (r#""busy_syncing":true"#, r#""busy_syncing":false"#),
+                (r#""synchronized":false"#, r#""synchronized":true"#),
+            ]),
+            info_with(&[
+                (r#""synchronized":false"#, r#""synchronized":true"#),
+                (r#""target_height":2255223"#, r#""target_height":0"#),
+            ]),
+        ] {
+            assert_eq!(
+                validate_public_info(&refused, MoneroNetwork::Stagenet),
+                Err(MoneroTopologyError::DaemonNotSynchronized)
+            );
+        }
+        // A synchronized daemon of another network is refused for that.
+        assert_eq!(
+            validate_public_info(&synced, MoneroNetwork::Regtest),
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+
+        let now = 1_795_300_000;
+        let header = |height: u64, timestamp: u64, untrusted: bool| GetLastBlockHeaderResult {
+            status: "OK".to_owned(),
+            untrusted,
+            block_header: LastBlockHeader { height, timestamp },
+        };
+        // `synced` is at height 48,557: its tip is block 48,556.
+        assert_eq!(
+            validate_fresh_tip(&header(48_556, now - 600, false), &synced, now),
+            Ok(())
+        );
+        // A block found between `get_info` and the header read.
+        assert_eq!(
+            validate_fresh_tip(&header(48_557, now - 1, false), &synced, now),
+            Ok(())
+        );
+        for stale in [
+            header(48_556, now - MAX_PUBLIC_TIP_AGE_SECONDS - 1, false),
+            header(48_556, now + MAX_PUBLIC_TIP_AGE_SECONDS + 1, false),
+            header(48_555, now, false),
+            header(48_558, now, false),
+            header(48_556, now, true),
+        ] {
+            assert_eq!(
+                validate_fresh_tip(&stale, &synced, now),
+                Err(MoneroTopologyError::DaemonTipStale)
+            );
+        }
+    }
+
+    /// A role checks its daemon before each decision on what it reports: a
+    /// Regtest role refuses a daemon that is not the fakechain (the Regtest
+    /// genesis is the mainnet one), a Stagenet role one still syncing.
+    #[tokio::test]
+    async fn a_daemon_is_checked_current_for_the_roles_network() {
+        let fakechain = spawn_server("user", "password", RpcBehavior::valid()).await;
+        assert_eq!(
+            verify_daemon_current(&fakechain.endpoint, MoneroNetwork::Regtest).await,
+            Ok(())
+        );
+        assert_eq!(
+            verify_daemon_current(&fakechain.endpoint, MoneroNetwork::Stagenet).await,
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+        let mainnet = RpcBehavior {
+            info: valid_info(0, 0)
+                .replace(r#""nettype":"fakechain""#, r#""nettype":"mainnet""#)
+                .replace(r#""mainnet":false"#, r#""mainnet":true"#),
+            ..RpcBehavior::valid()
+        };
+        let mainnet = spawn_server("user", "password", mainnet).await;
+        assert_eq!(
+            verify_daemon_current(&mainnet.endpoint, MoneroNetwork::Regtest).await,
+            Err(MoneroTopologyError::DaemonNetworkMismatch)
+        );
+        let syncing = RpcBehavior {
+            info: success(STAGENET_GET_INFO),
+            ..RpcBehavior::valid()
+        };
+        let syncing = spawn_server("user", "password", syncing).await;
+        assert_eq!(
+            verify_daemon_current(&syncing.endpoint, MoneroNetwork::Stagenet).await,
+            Err(MoneroTopologyError::DaemonNotSynchronized)
+        );
+    }
+
     #[derive(Clone)]
     struct RpcBehavior {
         info: String,
@@ -645,6 +1109,12 @@ mod tests {
         version: String,
         bad_auth_status: u16,
         authorized_status: u16,
+        /// Answers the first `lost_answers` authorized requests for
+        /// `lost_method` with monero's HTML 401 page, as monero's server
+        /// does when a Digest answer arrives on another connection than its
+        /// challenge.
+        lost_method: &'static str,
+        lost_answers: usize,
     }
 
     impl RpcBehavior {
@@ -655,6 +1125,8 @@ mod tests {
                 version: success(r#"{"release":true,"version":65567}"#),
                 bad_auth_status: 401,
                 authorized_status: 200,
+                lost_method: "",
+                lost_answers: 0,
             }
         }
     }
@@ -708,7 +1180,21 @@ mod tests {
             .authorization
             .as_deref()
             .is_some_and(|header| verify_digest(header, username, password, &request.body));
-        let behavior = behavior.lock().await.clone();
+        let behavior = {
+            let mut shared = behavior.lock().await;
+            if authorized
+                && shared.lost_answers > 0
+                && request
+                    .body
+                    .contains(&format!(r#""method":"{}""#, shared.lost_method))
+            {
+                shared.lost_answers -= 1;
+                drop(shared);
+                let page = "<html><head><title>Unauthorized Access</title></head><body><h1>401 Unauthorized</h1></body></html>";
+                return write_response(&mut stream, 401, "Content-Type: text/html\r\n", page).await;
+            }
+            shared.clone()
+        };
         if !authorized {
             let (status, challenge) = if has_authorization {
                 (behavior.bad_auth_status, String::new())
@@ -886,6 +1372,61 @@ mod tests {
         assert_eq!(attestation.foreign_wallet_version(), 65567);
     }
 
+    async fn verify_with_lost_answers(
+        method: &'static str,
+        lost_answers: usize,
+    ) -> Result<VerifiedMoneroTopologyAttestation, MoneroTopologyError> {
+        let (_daemon, target, foreign) = valid_servers().await;
+        let mut lossy = RpcBehavior::valid();
+        lossy.lost_method = method;
+        lossy.lost_answers = lost_answers;
+        let daemon = spawn_server("daemon-user", "daemon-secret", lossy).await;
+        MoneroTopologyVerifier::new(
+            run("topology-lost-answer"),
+            identity(),
+            &daemon.endpoint,
+            &target.endpoint,
+            &foreign.endpoint,
+        )
+        .expect("distinct verifier")
+        .verify()
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_digest_answer_refused_with_the_401_page_is_made_again() {
+        // The bounded reads start their exchange again with a fresh challenge.
+        assert!(
+            verify_with_lost_answers("get_info", 1).await.is_ok(),
+            "get_info answered on its second exchange"
+        );
+        assert!(
+            verify_with_lost_answers("get_connections", 1).await.is_ok(),
+            "get_connections answered on its second exchange"
+        );
+        // The typed genesis read decodes the page as its answer and retries,
+        // up to READ_ATTEMPTS calls.
+        assert!(
+            verify_with_lost_answers("on_get_block_hash", 2)
+                .await
+                .is_ok(),
+            "genesis answered on its third call"
+        );
+
+        // The bounded reads once more only, the typed read READ_ATTEMPTS times.
+        assert_eq!(
+            verify_with_lost_answers("get_info", 2).await,
+            Err(MoneroTopologyError::UnexpectedHttpStatus {
+                operation: "daemon.get_info",
+                actual: 401
+            })
+        );
+        assert_eq!(
+            verify_with_lost_answers("on_get_block_hash", 3).await,
+            Err(MoneroTopologyError::GenesisRpc)
+        );
+    }
+
     #[tokio::test]
     async fn aliases_and_foreign_origin_drift_fail_before_rpc() {
         let (daemon, target, _foreign) = valid_servers().await;
@@ -942,6 +1483,45 @@ mod tests {
             verifier.verify().await,
             Err(MoneroTopologyError::ForeignCredentialNotRejected { actual: 403 })
         ));
+    }
+
+    /// One wallet-rpc has no foreign credentials, yet its attestation was
+    /// minted without any wrong-credential probe. Now its own user with a
+    /// wrong password must finish with 401.
+    #[tokio::test]
+    async fn one_wallet_rpc_must_refuse_a_wrong_password_with_401() {
+        let (daemon, target, _foreign) = valid_servers().await;
+        let attestation = MoneroTopologyVerifier::for_one_wallet_rpc(
+            run("topology-one-wallet"),
+            identity(),
+            &daemon.endpoint,
+            &target.endpoint,
+        )
+        .expect("one-wallet verifier")
+        .verify()
+        .await
+        .expect("a wallet that refuses a wrong password");
+        assert_eq!(attestation.target_wallet_version(), 65567);
+        for status in [200, 403] {
+            let mut lax = RpcBehavior::valid();
+            lax.bad_auth_status = status;
+            let wallet = spawn_server(USER, PASSWORD, lax).await;
+            let verifier = MoneroTopologyVerifier::for_one_wallet_rpc(
+                run("topology-one-lax-wallet"),
+                identity(),
+                &daemon.endpoint,
+                &wallet.endpoint,
+            )
+            .expect("one-wallet verifier");
+            assert!(
+                matches!(
+                    verifier.verify().await,
+                    Err(MoneroTopologyError::ForeignCredentialNotRejected { actual })
+                        if actual == status
+                ),
+                "{status}"
+            );
+        }
     }
 
     #[tokio::test]

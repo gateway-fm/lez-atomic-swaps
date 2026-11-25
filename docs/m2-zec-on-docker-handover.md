@@ -1,5 +1,9 @@
 # M2 on the Docker devnet: ZEC handover
 
+(Historical brief. `zec-provision.sh` below is now the catalog tests' devnet test
+fixture `deploy/tests/fixtures/zec-catalog-fixture.sh`; Zcash swaps are set up
+at take time.)
+
 Branch `feat/m2-zec-on-docker`. This is the engineering brief for finishing
 the Zcash leg on the existing Docker stack, written by the reviewing session
 for the session that changes code. Everything below was read from the tree

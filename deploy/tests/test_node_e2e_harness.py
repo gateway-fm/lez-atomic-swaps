@@ -7,6 +7,7 @@ its pure helpers are driven with fakes.
 import datetime
 import importlib.util
 import inspect
+import io
 import json
 import os
 import pathlib
@@ -513,6 +514,90 @@ class ChainsOverRpc(unittest.TestCase):
         self.assertEqual(ran, [['docker', 'restart', f'{e2e.PREFIX}-taker-node']])
 
 
+class FailedTestNodeLogs(unittest.TestCase):
+    """node-logs (regress.sh, a try that did not pass): bounded, Delivery dumps
+    dropped and counted, anything shaped like a secret redacted."""
+
+    def test_secret_shapes_are_redacted_and_counted(self):
+        text = ('rpcpassword=c2VjcmV0LXZhbHVlLWZvci10ZXN0\n'
+                '{"capability_token": "0123456789abcdef0123456789abcdef"}\n'
+                'Authorization: Basic X19jb29raWVfXzpzZWNyZXQ=\n'
+                '-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIBase64Body\n-----END EC PRIVATE KEY-----\n'
+                'taker actor 0f1f91d21ec5: drive → projected maker_lock (phase both_legs_locked)\n'
+                '{"event":"taker_actor_command_failed","step":"effect","class":"ObservationUnavailable"}\n')
+        redacted, count = e2e.redact(text)
+        self.assertEqual(count, 4)
+        for secret in ('c2VjcmV0LXZhbHVlLWZvci10ZXN0', '0123456789abcdef0123456789abcdef',
+                       'X19jb29raWVfXzpzZWNyZXQ=', 'MHcCAQEEIBase64Body'):
+            self.assertNotIn(secret, redacted)
+        self.assertIn('rpcpassword=[REDACTED]', redacted)
+        # what explains a failure is kept as it was
+        self.assertIn('drive → projected maker_lock (phase both_legs_locked)', redacted)
+        self.assertIn('"class":"ObservationUnavailable"', redacted)
+
+    def test_lines_are_bounded_after_the_delivery_dumps_are_dropped(self):
+        dump = f'[delivery] {e2e.DELIVERY_DUMP} ' + 'x' * 23_000
+        text = '\n'.join(f'line {n}' if n % 3 else dump for n in range(30))
+        kept, dropped = e2e.bounded_lines(text, limit=5)
+        self.assertEqual(dropped, 10)
+        self.assertEqual(kept.splitlines(), ['line 23', 'line 25', 'line 26', 'line 28', 'line 29'])
+
+    def test_both_nodes_saved_from_logs_and_health_only(self):
+        ran = []
+
+        def fake_run(argv, **_):
+            ran.append(argv)
+            return unittest.mock.Mock(stdout=f'{argv[1]} output token=abcdefabcdefabcdef12\n'.encode())
+
+        with tempfile.TemporaryDirectory() as out, \
+                patch.object(e2e, 'NATIVE_RUN_ROOT', ''), \
+                patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'rpc', lambda role, *_, **__: {'result': {'ready': True, 'role': role}}):
+            notes = e2e.keep_node_logs(pathlib.Path(out) / 'try.nodes')
+            files = sorted(p.name for p in (pathlib.Path(out) / 'try.nodes').iterdir())
+            container = (pathlib.Path(out) / 'try.nodes' / 'taker-container.log').read_text()
+        self.assertEqual(files, [f'{role}-{kind}' for role in ('maker', 'taker')
+                                 for kind in ('basecamp.log', 'container.log', 'health.json', 'node.log')])
+        self.assertEqual(len(notes), 8)
+        self.assertIn('token=[REDACTED]', container)
+        self.assertEqual(ran[0], ['docker', 'logs', '-t', '--tail', '20000', f'{e2e.PREFIX}-maker-node'])
+        # nothing but logs is read: no state directory, database, cookie or runtime/ file
+        for argv in ran:
+            self.assertFalse(any('/var/lib/lez' in part or 'runtime/' in part or 'cookie' in part for part in argv), argv)
+
+
+class RecordingStartsWithoutOffers(unittest.TestCase):
+    """withdraw-offers (ui-e2e.sh --record): every active offer is withdrawn
+    through the desk's own owner RPC, each with its revision and its own
+    request id."""
+
+    def test_every_active_offer_is_withdrawn_at_its_revision(self):
+        calls = []
+
+        def fake_call(role, method, params, *_):
+            calls.append((role, method, params))
+            if method == 'maker_offer_list':
+                return [{'offer': {'id': 'aa' * 32}, 'revision': 1}, {'offer': {'id': 'bb' * 32}, 'revision': 3}]
+            return {}
+
+        with patch.object(e2e, 'call', fake_call):
+            withdrawn = e2e.withdraw_open_offers('20261121T000000Z')
+        self.assertEqual(withdrawn, ['aa' * 32, 'bb' * 32])
+        self.assertEqual(calls[0], ('maker', 'maker_offer_list', {'states': ['active']}))
+        self.assertEqual(calls[1:], [
+            ('maker', 'maker_offer_withdraw', {'request_id': 'ui-record-withdraw-20261121T000000Z-1',
+                                               'offer_id': 'aa' * 32, 'expected_revision': 1}),
+            ('maker', 'maker_offer_withdraw', {'request_id': 'ui-record-withdraw-20261121T000000Z-2',
+                                               'offer_id': 'bb' * 32, 'expected_revision': 3}),
+        ])
+
+    def test_no_open_offer_withdraws_nothing(self):
+        calls = []
+        with patch.object(e2e, 'call', lambda role, method, params, *_: calls.append(method) or []):
+            self.assertEqual(e2e.withdraw_open_offers('s'), [])
+        self.assertEqual(calls, ['maker_offer_list'])
+
+
 REPO = SCRIPTS.parents[1]
 PROBE = 'lez-v02-escrow-claim-probe'
 
@@ -588,6 +673,155 @@ class ZecKillMakerClaim(unittest.TestCase):
         # before the ZEC sidecars start, which read it
         self.assertLess(entrypoint.index('export LEZ_TEST_HOOKS_DIR'),
                         entrypoint.index('node_helper "$bin/lez-v02-bridge-poc"'))
+
+
+class ZecActivateAfterExpiry(unittest.TestCase):
+    """zec-activate-after-expiry: what can be checked without a stack."""
+
+    def test_it_is_registered_refused_natively_and_held_by_the_maker_node(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-activate-after-expiry'], e2e.scenario_zec_activate_after_expiry)
+        self.assertIn('zec-activate-after-expiry', e2e.NATIVE_REFUSED)
+        self.assertEqual(e2e.ZEC_ACTIVATION_HOLD, 'hold-zec-activations')
+        runtime = (REPO / 'crates/maker-node/src/actor_supervisor/runtime.rs').read_text()
+        self.assertIn(f'test_hooks::flag("{e2e.ZEC_ACTIVATION_HOLD}")', runtime)
+        self.assertIn(f'Backoff("{e2e.ZEC_ACTIVATION_HELD_CLASS}")', runtime)
+        # the hook only in a devnet build of the Maker Node
+        self.assertIn(',lez-maker-node/test-hooks', (REPO / 'deploy/scripts/from-scratch.sh').read_text())
+        self.assertIn('\ntest-hooks = []\n', (REPO / 'crates/maker-node/Cargo.toml').read_text())
+
+    def test_the_offer_expires_while_the_maker_is_down(self):
+        self.assertLessEqual(e2e.ZEC_SHORT_OFFER_TTL_SECONDS, 120)
+        source = inspect.getsource(e2e.scenario_zec_activate_after_expiry)
+        self.assertIn('offer_ttl_seconds=ZEC_SHORT_OFFER_TTL_SECONDS', source)
+        # held before the take, the Maker stopped, started after the expiry, the hold cleared last
+        order = [source.index(step) for step in (
+            'maker_test_hook(ZEC_ACTIVATION_HOLD, "1")', 'zec_take_or_resume(', 'node_stop("maker")',
+            'expired_at + 10', 'node_start("maker")', 'maker_test_hook(ZEC_ACTIVATION_HOLD, None)',
+            'zec_happy_after_take(')]
+        self.assertEqual(order, sorted(order))
+
+    def test_the_publication_takes_the_offer_ttl(self):
+        calls = []
+        with patch.object(e2e, 'maker_cli', lambda *argv: calls.append(argv) or []), \
+                patch.object(e2e, 'zec_taker_sells_lez', lambda: True):
+            e2e.zec_dynamic_publish('1700000000', [('request', 'offer')], offer_ttl_seconds=60)
+        configured = [argv for argv in calls if argv[0] == 'configure-pair']
+        self.assertTrue(configured)
+        for argv in configured:
+            self.assertEqual(argv[argv.index('--offer-ttl-seconds') + 1], '60')
+        calls.clear()
+        with patch.object(e2e, 'maker_cli', lambda *argv: calls.append(argv) or []), \
+                patch.object(e2e, 'zec_taker_sells_lez', lambda: True):
+            e2e.zec_dynamic_publish('1700000000', [('request', 'offer')])
+        self.assertTrue(all(argv[argv.index('--offer-ttl-seconds') + 1] == '3600'
+                            for argv in calls if argv[0] == 'configure-pair'))
+
+    def test_the_held_activation_is_read_from_the_makers_monitor(self):
+        held = {'progress': {'observation': {'state': 'not_activated'}},
+                'last_outcome': {'step': 'activate', 'outcome': 'failed',
+                                 'failure_class': 'test_hook_activation_held'}}
+        self.assertTrue(e2e.zec_maker_activation_held(held))
+        self.assertFalse(e2e.zec_maker_activation_held({**held, 'progress': {'observation': {'state': 'active'}}}))
+        self.assertFalse(e2e.zec_maker_activation_held({**held, 'last_outcome': {'step': 'status'}}))
+        self.assertFalse(e2e.zec_maker_activation_held({}))
+
+    def test_selling_zec_is_refused_before_anything_runs(self):
+        with patch.object(e2e, 'zec_taker_sells_lez', lambda: False), \
+                patch.object(e2e, 'require_maker_node_test_hooks', lambda *_: self.fail('nothing may be checked')):
+            with self.assertRaisesRegex(e2e.Failure, 'selling-LEZ'):
+                e2e.scenario_zec_activate_after_expiry('1700000000')
+
+    def test_a_maker_node_without_the_hooks_fails_at_once_naming_the_build(self):
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), \
+                patch.object(e2e.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 1, b'', b'')):
+            with self.assertRaisesRegex(e2e.Failure, 'LEZ_TEST_HOOKS=1'):
+                e2e.require_maker_node_test_hooks('hold-zec-activations')
+
+
+class ZecClaimAtOneConfirmation(unittest.TestCase):
+    """zec-claim-at-one-confirmation (issue #130): what can be checked without a stack."""
+
+    class Stop(Exception):
+        pass
+
+    def test_it_is_registered_and_presses_the_claim_at_one_confirmation(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-claim-at-one-confirmation'],
+                      e2e.scenario_zec_claim_at_one_confirmation)
+        self.assertNotIn('zec-claim-at-one-confirmation', e2e.NATIVE_REFUSED)
+        seen = {}
+        with patch.object(e2e, 'zec_provision', lambda: {'offer_id': 'offer-1'}), \
+                patch.object(e2e, 'zec_take_or_resume', lambda offer, stamp: f'swap-of-{offer}'), \
+                patch.object(e2e, 'zec_happy_after_take',
+                             lambda stamp, since, swap_id, corridor, claim_at_one=False:
+                             seen.update(swap_id=swap_id, claim_at_one=claim_at_one) or {'swap_id': swap_id}):
+            result = e2e.scenario_zec_claim_at_one_confirmation('1700000000')
+        self.assertEqual(seen, {'swap_id': 'swap-of-offer-1', 'claim_at_one': True})
+        self.assertTrue(result['claim_pressed_at_one_confirmation'])
+
+    def test_the_happy_path_mines_only_the_mempool_and_checks_the_queue_after_the_press(self):
+        events = []
+
+        def wait_until(swap_id, config, states, **kwargs):
+            events.append(('wait', tuple(sorted(states)), kwargs.get('mine_pending_only')))
+            return {'progress_generation': 3}
+
+        def queued(swap_id, corridor):
+            events.append(('queued', swap_id))
+            raise self.Stop
+
+        corridor = {'receipt_output': 'receipt', 'zebra_tip_at_provisioning': 10,
+                    'funding_outpoints': [{'transaction_id': 'aa' * 32, 'output_index': 0}]}
+        with patch.object(e2e, 'zec_taker_actor_config', lambda receipt: {}), \
+                patch.object(e2e, 'zec_wait_until', wait_until), \
+                patch.object(e2e, 'zec_spend_of', lambda outpoint, height: ('bb' * 32, 12)), \
+                patch.object(e2e, 'call', lambda *a, **k: events.append(('claim', a[1])) or {}), \
+                patch.object(e2e, 'zec_claim_queued_at_one_confirmation', queued), \
+                patch.object(e2e, 'log', lambda *a: None):
+            with self.assertRaises(self.Stop):
+                e2e.zec_happy_after_take('1700000000', 'since', 'swap-1', corridor, claim_at_one=True)
+        self.assertEqual(events, [('wait', ('claim_available',), True), ('claim', 'taker_swap_claim_v1'),
+                                  ('queued', 'swap-1')])
+
+    def test_zec_happy_keeps_mining_the_second_confirmation_before_the_press(self):
+        events = []
+        corridor = {'receipt_output': 'receipt', 'zebra_tip_at_provisioning': 10,
+                    'funding_outpoints': [{'transaction_id': 'aa' * 32, 'output_index': 0}]}
+
+        def wait_until(swap_id, config, states, **kwargs):
+            events.append(kwargs.get('mine_pending_only'))
+            raise self.Stop
+
+        with patch.object(e2e, 'zec_taker_actor_config', lambda receipt: {}), \
+                patch.object(e2e, 'zec_wait_until', wait_until):
+            with self.assertRaises(self.Stop):
+                e2e.zec_happy_after_take('1700000000', 'since', 'swap-1', corridor, claim_at_one=False)
+        self.assertEqual(events, [False])
+
+    def test_the_queued_answer_is_required_with_both_counts_before_the_second_block(self):
+        queued = {'state': 'claim_in_progress',
+                  'last_outcome': {'outcome': 'queued', 'waiting_for': {
+                      'kind': 'zcash_funding_confirmations', 'chain': 'zcash',
+                      'confirmations': 1, 'required_confirmations': 2}}}
+        mined = []
+        for depth, view, accepted in (
+                (1, queued, True),
+                (2, queued, False),
+                (1, {**queued, 'state': 'claim_available'}, False),
+                (1, {**queued, 'last_outcome': {'outcome': 'submitted'}}, False),
+                (1, {**queued, 'last_outcome': {**queued['last_outcome'], 'waiting_for': {
+                    **queued['last_outcome']['waiting_for'], 'confirmations': 0}}}, False)):
+            mined.clear()
+            with patch.object(e2e, 'zec_funding_confirmations', lambda corridor, depth=depth: depth), \
+                    patch.object(e2e, 'taker_view', lambda swap_id, view=view: view), \
+                    patch.object(e2e, 'zebra_mine', lambda count, why: mined.append(count)), \
+                    patch.object(e2e, 'log', lambda *a: None):
+                if accepted:
+                    e2e.zec_claim_queued_at_one_confirmation('swap-1', {})
+                    self.assertEqual(mined, [1])
+                else:
+                    with self.assertRaises(e2e.Failure):
+                        e2e.zec_claim_queued_at_one_confirmation('swap-1', {})
+                    self.assertEqual(mined, [], (depth, view))
 
 
 class MakerEarlyClaim(unittest.TestCase):
@@ -711,6 +945,23 @@ class MakerEarlyClaim(unittest.TestCase):
             self.assertNotIn(PROBE, (SCRIPTS / packager).read_text())
 
 
+XMR_NEW_SCENARIOS = ('xmr-taker-clock-ahead', 'xmr-punish-replans', 'xmr-maker-claim-without-authorization',
+                     'xmr-maker-early-punish', 'xmr-unfunded-punish', 'xmr-taker-cheats')
+
+
+def xmr_probe_evidence(**changes):
+    snapshot = {'sequencer_tip': 10, 'tip_timestamp_ms': 1_000, 'status': 'Funded', 'custody_balance': 50_000,
+                'claimant_balance': 7, 'claimant_nonce': 1}
+    evidence = {'schema': 'lez_v02_escrow_claim_probe_v1', 'test_only': True, 'effect': 'xmr-punish',
+                'stored_secret_digest': None, 'presented_preimage_matches_digest': False,
+                'submitted_before_refund_at': True, 'punish_at_ms': 5_000, 'submitted_before_punish_at': True,
+                'transaction_id': 'ee' * 32, 'included': False, 'included_in_block': None, 'observed_seconds': 30,
+                'submission': {'decision': 'accepted', 'error_code': None, 'error_message': None},
+                'before': dict(snapshot), 'after': dict(snapshot), 'escrow_kept_custody': True}
+    evidence.update(changes)
+    return evidence
+
+
 CREDIT_PROBE = 'lez-v02-custody-credit-probe'
 
 
@@ -726,6 +977,330 @@ def credit_evidence(**changes):
     return evidence
 
 
+class XmrOwnRefundAndAdversaries(unittest.TestCase):
+    """The Node's own refund, the devnet test hooks and the XMR adversarial
+    scenarios: what can be checked without a stack."""
+
+    def run_commands(self, returncode=0, stdout=''):
+        ran = []
+
+        def fake_run(command, **_):
+            ran.append(command)
+            return unittest.mock.Mock(returncode=returncode, stdout=stdout, stderr='')
+
+        return ran, fake_run
+
+    def test_the_cheating_refund_is_switched_on_once_the_monero_is_in(self):
+        # set at the take, the Taker's refund went out before the Maker's
+        # funding and the wait for claim_available timed out
+        calls = []
+
+        class Stop(Exception):
+            pass
+
+        def stop(*_):
+            raise Stop
+
+        with patch.multiple(e2e, xmr_require_test_hooks=lambda role: None, xmr_before=lambda: {},
+                            xmr_take=lambda stamp, offer: ('aa' * 32, {}),
+                            xmr_wait_funded=lambda swap, windows: calls.append('funded'),
+                            xmr_hook=lambda role, name, value: calls.append((name, value)),
+                            xmr_windows_ms=stop):
+            with self.assertRaises(Stop):
+                e2e.scenario_xmr_taker_cheats('1')
+        self.assertEqual(calls[:2], ['funded', ('cheat-refund-before-r', '1')])
+
+    def test_a_scenarios_second_take_has_a_stamp_of_its_own(self):
+        # the Maker's configure-pair and publish request ids and the Taker's
+        # take request id come from the stamp; the second take under the same
+        # stamp was refused (-32009, the request id conflicts with its mutation)
+        for scenario in (e2e.scenario_xmr_unfunded_punish, e2e.scenario_xmr_taker_cheats):
+            stamps, order = [], []
+
+            class Stop(Exception):
+                pass
+
+            def take(stamp, offer_id):
+                stamps.append(stamp)
+                if len(stamps) == 2:
+                    raise Stop
+                return 'aa' * 32, {'LEZ_XMR_REFUND_SECONDS': 1, 'LEZ_XMR_PUNISH_SECONDS': 1,
+                                   'LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS': 1}
+
+            quiet = lambda *a, **k: {'state': 'refunded', 'attention_reason': None, 'status': 'Refunded',
+                                     'before': {'status': 'Refunded'}, 'refund_submitted': 'x',
+                                     'lez': {}, 'refunded': None}
+            with patch.object(e2e, 'xmr_take', take), patch.object(e2e, 'xmr_take_unfunded', take), \
+                    patch.multiple(e2e, xmr_before=quiet, xmr_require_test_hooks=quiet, xmr_hook=quiet,
+                                   xmr_wait_funded=quiet, xmr_wait_until=quiet, xmr_taker_record=quiet,
+                                   xmr_windows_ms=lambda swap: {'C': 0, 'R': 10**15, 'P': 0},
+                                   lez_finalized_time_ms=lambda: 0, wait_lez_time=quiet, node_stop=quiet,
+                                   node_start=quiet, wait_healthy=quiet,
+                                   taker_view=lambda swap: {'state': 'claim_available'},
+                                   xmr_escrow_probe=lambda *a, **k: {'included_in_block': 7,
+                                                                     'before': {'status': 'Refunded'}},
+                                   wait_lez_final_through=lambda height, profile, why: order.append(('final', height)),
+                                   timing_profile=lambda: {},
+                                   xmr_maker_wallet=quiet, lez_balances=lambda: order.append('balances') or {},
+                                   expected_settlement=lambda *a: {}, wait_maker_terminal=lambda *a, **k: 'refunded',
+                                   assert_lez_settled=quiet, log=quiet), \
+                    patch.object(e2e.time, 'sleep', lambda s: None):
+                with self.assertRaises(Stop):
+                    scenario('1795280156')
+            self.assertEqual(len(set(stamps)), 2, (scenario.__name__, stamps))
+            if scenario is e2e.scenario_xmr_unfunded_punish:
+                # the indexer's balances are finalized only: the punishment's
+                # block is waited for before they are read
+                self.assertEqual(order[:2], [('final', 7), 'balances'])
+
+    def test_the_scenarios_are_registered_and_need_the_containers(self):
+        for name in XMR_NEW_SCENARIOS:
+            self.assertIn(name, e2e.XMR_SCENARIOS)
+            self.assertIn(name, e2e.NATIVE_REFUSED)
+        for name in ('xmr-taker-refund', 'xmr-taker-refund-kill'):
+            self.assertIn(name, e2e.NATIVE_REFUSED)
+
+    def test_a_hook_is_written_whole_in_the_roles_state_and_cleared(self):
+        ran, fake_run = self.run_commands()
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'log', lambda *_: None):
+            e2e.xmr_hook('taker', 'clock-offset-ms', '60000')
+            e2e.xmr_hook('maker', 'punish-nonce-thefts', None)
+        self.assertEqual(ran[0][:5], ['docker', 'exec', 'lez-taker-node', 'sh', '-c'])
+        self.assertEqual(ran[0][-4:], ['hook', '/var/lib/lez/taker/test-hooks', 'clock-offset-ms', '60000'])
+        self.assertEqual(ran[1][-4:], ['hook', '/var/lib/lez/maker/test-hooks', 'punish-nonce-thefts', ''])
+        with tempfile.TemporaryDirectory() as root:
+            for value in ('60000', ''):
+                subprocess.run(['sh', '-c', e2e.XMR_HOOK_SCRIPT, 'hook', f'{root}/hooks', 'clock-offset-ms', value],
+                               check=True)
+                path = pathlib.Path(root, 'hooks', 'clock-offset-ms')
+                self.assertEqual(path.read_text() if path.exists() else None, '60000\n' if value else None)
+            self.assertEqual(oct(pathlib.Path(root, 'hooks').stat().st_mode & 0o777), '0o700')
+
+    def test_the_switch_is_written_where_the_entrypoint_reads_it_and_the_taker_restarted(self):
+        ran, fake_run = self.run_commands()
+        restarted = []
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'node_restart', restarted.append), patch.object(e2e, 'wait_healthy', lambda _: None), \
+                patch.object(e2e, 'log', lambda *_: None):
+            with e2e.xmr_owner_refund_only():
+                self.assertEqual(ran[-1][-2:], ['/var/lib/lez/taker/xmr-automatic-refund', 'false'])
+            self.assertEqual(ran[-1][-2:], ['/var/lib/lez/taker/xmr-automatic-refund', 'true'])
+        self.assertEqual(restarted, ['taker', 'taker'])
+        entrypoint = (REPO / 'modules/lez-role-node/node-entrypoint.sh').read_text()
+        self.assertIn('"$state/xmr-automatic-refund"', entrypoint)
+        self.assertIn('xmr_automatic_refund:$automatic', entrypoint)
+        self.assertIn('export LEZ_TEST_HOOKS_DIR="$state/test-hooks"', entrypoint)
+        self.assertEqual(e2e.XMR_NODE_STATE, {'maker': '/var/lib/lez/maker', 'taker': '/var/lib/lez/taker'})
+
+    def test_the_owner_commanded_refunds_switch_the_nodes_own_refund_off(self):
+        source = inspect.getsource(e2e.scenario_xmr_taker_refund)
+        self.assertIn('with xmr_owner_refund_only():', source)
+        never = inspect.getsource(e2e.scenario_xmr_maker_never_funds)
+        self.assertNotIn('taker_swap_refund_v1', never)
+        self.assertIn('own refund from R', never)
+
+    def test_the_desk_refund_journey_switches_the_nodes_own_refund_off(self):
+        # with it on, the Taker Node refunded at R and the journey, waiting for
+        # the closing warning and the desk's Refund button, saw refunded instead
+        ui = (SCRIPTS / 'ui-e2e.sh').read_text()
+        journey = ui[ui.index('scenario_xmr_taker_refund() {'):ui.index('scenario_xmr_concurrent() {')]
+        self.assertLess(journey.index('taker_own_refund false'), journey.index('take swap'))
+        self.assertIn('taker_own_refund true', journey)
+        self.assertIn('/var/lib/lez/taker/xmr-automatic-refund', ui)
+        self.assertIn('taker_own_refund true', ui[ui.index('trap '):ui.index("' EXIT")])
+
+    def probe(self, evidence, returncode=0, expect_moved=False):
+        ran, fake_run = self.run_commands(returncode, json.dumps(evidence) + '\n')
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'xmr_escrow_program_id', lambda: 'bb' * 32), \
+                patch.object(e2e, 'log', lambda *_: None):
+            return e2e.xmr_escrow_probe('xmr-punish', 'aa' * 32, expect_moved, 'before P'), ran
+
+    def test_the_xmr_effect_is_the_makers_owner_through_its_own_sequencer_route(self):
+        evidence, ran = self.probe(xmr_probe_evidence())
+        self.assertTrue(evidence['escrow_kept_custody'])
+        self.assertEqual(ran[0][:4], ['docker', 'exec', 'lez-maker-node', 'install'])
+        command = ran[1]
+        self.assertEqual(command[:4], ['docker', 'exec', 'lez-maker-node', f'/usr/local/bin/{PROBE}'])
+        self.assertEqual(command[command.index('--effect') + 1], 'xmr-punish')
+        self.assertEqual(command[command.index('--swap-id') + 1], 'aa' * 32)
+        self.assertEqual(command[command.index('--private-key-file') + 1], e2e.XMR_PROBE_SIGNER)
+        self.assertEqual(command[command.index('--sequencer-url') + 1], 'http://127.0.0.1:3040/')
+
+    def test_an_escrow_that_moved_or_stayed_against_the_expectation_fails(self):
+        moved = xmr_probe_evidence(escrow_kept_custody=False, included=True, included_in_block=11,
+                                   after={'status': 'Claimed', 'custody_balance': 0, 'claimant_balance': 50_007,
+                                          'sequencer_tip': 11, 'tip_timestamp_ms': 6_000, 'claimant_nonce': 2})
+        with self.assertRaisesRegex(e2e.Failure, 'expected it to stay'):
+            self.probe(moved, returncode=3)
+        self.probe(moved, returncode=3, expect_moved=True)
+        with self.assertRaisesRegex(e2e.Failure, 'expected it to move'):
+            self.probe(xmr_probe_evidence(), expect_moved=True)
+        with self.assertRaisesRegex(e2e.Failure, 'failed: exit 1'):
+            self.probe(xmr_probe_evidence(), returncode=1)
+
+    def test_the_probe_sends_the_xmr_effects_the_nodes_never_send(self):
+        probe = (REPO / f'compat/lez-v0_2-sidecar/src/bin/{PROBE}.rs').read_text()
+        for text in ('XmrPunish', 'XmrClaim', 'ZecEscrowInstruction::PunishNativeXmr',
+                     'ZecEscrowInstruction::ClaimNativeXmr', 'TEST-ONLY'):
+            self.assertIn(text, probe)
+
+    def test_the_devnet_build_has_the_test_hooks_only_on_request(self):
+        # The release side of this is test_release_workflow.NoTestHooksInARelease.
+        from_scratch = (SCRIPTS / 'from-scratch.sh').read_text()
+        self.assertIn('hooks=",lez-taker-node/test-hooks,lez-maker-node/test-hooks"', from_scratch)
+        self.assertIn('hooks="--features test-hooks"', from_scratch)
+        self.assertIn('test-hooks = ["pair-xmr"]', (REPO / 'crates/taker-node/Cargo.toml').read_text())
+        self.assertIn('test-hooks = []', (REPO / 'crates/maker-node/Cargo.toml').read_text())
+        self.assertIn('test-hooks = []', (REPO / 'compat/lez-v0_2-sidecar/Cargo.toml').read_text())
+
+    def test_the_scenarios_with_hooks_fail_at_once_without_them(self):
+        for scenario, role in ((e2e.scenario_xmr_taker_clock_ahead, 'taker'),
+                               (e2e.scenario_xmr_punish_replans, 'maker'),
+                               (e2e.scenario_xmr_taker_cheats, 'taker')):
+            body = inspect.getsource(scenario).split('"""', 2)[2]
+            self.assertEqual(body.lstrip().splitlines()[0], f'xmr_require_test_hooks("{role}")')
+        ran = []
+        with patch.object(e2e.subprocess, 'run', lambda argv, **_: ran.append(argv) or
+                               subprocess.CompletedProcess(argv, 1, b'', b'')):
+            with self.assertRaisesRegex(e2e.Failure, 'LEZ_TEST_HOOKS=1'):
+                e2e.xmr_require_test_hooks('taker')
+        self.assertEqual(ran[0][-3:], ['-qa', 'clock-offset-ms', '/usr/local/bin/lez-taker-node'])
+        with patch.object(e2e.subprocess, 'run', lambda argv, **_: subprocess.CompletedProcess(argv, 0)):
+            e2e.xmr_require_test_hooks('maker')
+        for program, text in e2e.XMR_TEST_HOOK_BUILDS.values():
+            # The text is read only by code the feature builds in.
+            source = {'clock-offset-ms': 'crates/taker-node/src/taker_service/xmr_supervisor.rs',
+                      'punish-nonce-thefts': 'compat/lez-v0_2-sidecar/src/bridge_runtime.rs'}[text]
+            uses = [line for line in (REPO / source).read_text().splitlines()
+                    if f'"{text}"' in line]
+            self.assertEqual(len(uses), 1, (source, uses))
+
+    def test_the_stolen_units_are_counted_against_the_lot(self):
+        source = inspect.getsource(e2e.scenario_xmr_punish_replans)
+        self.assertIn('XMR_PUNISH_NONCE_THEFTS', source)
+        self.assertEqual(e2e.XMR_PUNISH_NONCE_THEFTS, 6)
+        with tempfile.TemporaryDirectory() as root:
+            slots = pathlib.Path(root, 'btc', 'swaps', 'x', 'sidecar', 'planner')
+            slots.mkdir(parents=True)
+            for index in (1, 6, 7):
+                (slots / f'xmr-native-punish-supersession.{index}.v3.json').write_text('{}')
+            (slots / 'xmr-native-punish-reservation.v3.json').write_text('{}')
+            found = subprocess.run([sys.executable, '-c', e2e.XMR_SUPERSESSION_FINDER, root], capture_output=True,
+                                   text=True, check=True)
+        self.assertEqual(found.stdout.strip(), '3')
+
+    def test_the_swap_record_reader_finds_the_swap_by_its_facts(self):
+        with tempfile.TemporaryDirectory() as root:
+            for name, swap in (('one', 'aa' * 32), ('two', 'bb' * 32)):
+                directory = pathlib.Path(root, 'btc', 'swaps', name)
+                directory.mkdir(parents=True)
+                (directory / 'xmr-swap.json').write_text(json.dumps({'swap_id': swap, 'refund_at_ms': 7}))
+            (pathlib.Path(root, 'btc', 'swaps', 'two') / 'xmr-taker-progress.json').write_text('{"refund_submitted": "16"}')
+            read = lambda *argv: subprocess.run([sys.executable, '-c', e2e.XMR_SWAP_RECORD_READER, *argv, root],
+                                                capture_output=True, text=True, check=False)
+            self.assertEqual(json.loads(read('bb' * 32, 'xmr-taker-progress.json').stdout), {'refund_submitted': '16'})
+            self.assertIsNone(json.loads(read('aa' * 32, 'xmr-taker-progress.json').stdout))
+            self.assertEqual(json.loads(read('aa' * 32, 'xmr-swap.json').stdout)['refund_at_ms'], 7)
+            self.assertEqual(read('cc' * 32, 'xmr-swap.json').returncode, 3)
+
+
+class XmrKillMakerClaimHolds(unittest.TestCase):
+    """xmr-kill-maker's two claim kill points hold the Maker's tag-15 tool in
+    its sidecar with a test hook, so the kill lands at the same step on every
+    run (it once stopped the sequencer forwarder on the Maker's phase, and the
+    tool was either still preparing or already submitting)."""
+
+    def test_the_claim_points_are_held_by_the_sidecar_and_must_complete(self):
+        points = [point for point, _ in e2e.XMR_KILL_POINTS['maker']]
+        self.assertEqual(points[-2:], ['claim preparation held', 'claim tool running'])
+        self.assertEqual(e2e.XMR_CLAIM_HOLDS, {'claim preparation held': 'hold-claim-preparations',
+                                               'claim tool running': 'hold-claim-submissions'})
+        # the claim is driven again long before R: a Taker that authorised it
+        # reads a missed claim as attention_required, never refund_available
+        self.assertFalse(set(e2e.XMR_CLAIM_HOLDS) & e2e.XMR_KILL_MAY_REFUND)
+        runtime = (REPO / 'compat/lez-v0_2-sidecar/src/bridge_runtime.rs').read_text()
+        for hook in e2e.XMR_CLAIM_HOLDS.values():
+            self.assertIn(f'crate::test_hooks::take("{hook}")', runtime)
+        self.assertNotIn('SIGSTOP', inspect.getsource(e2e.xmr_kill_point_swap_once))
+
+    def test_the_hold_is_set_for_its_swap_and_cleared_after_it_even_on_failure(self):
+        calls = []
+
+        class Stop(Exception):
+            pass
+
+        def once(stamp, role, point, reached, may_refund, hook):
+            calls.append(('swap', hook))
+            raise Stop
+
+        with patch.multiple(e2e, xmr_kill_point_swap_once=once,
+                            xmr_hook=lambda role, name, value: calls.append((role, name, value))):
+            with self.assertRaises(Stop):
+                e2e.xmr_kill_point_swap('1', 'maker', 'claim tool running', None, False)
+        self.assertEqual(calls, [('maker', 'hold-claim-submissions', '1'), ('swap', 'hold-claim-submissions'),
+                                 ('maker', 'hold-claim-submissions', None)])
+
+    def test_other_points_and_the_taker_set_no_hold(self):
+        calls = []
+        with patch.multiple(e2e, xmr_kill_point_swap_once=lambda *args: calls.append(args[-1]) or {},
+                            xmr_hook=lambda *args: calls.append(args)):
+            e2e.xmr_kill_point_swap('1', 'maker', 'funded', None, False)
+            e2e.xmr_kill_point_swap('1', 'taker', 'claim tool running', None, False)
+        self.assertEqual(calls, [None, None])
+
+    def test_the_hold_is_taken_once_its_count_reads_zero(self):
+        for returncode, stdout, taken in ((0, '0\n', True), (0, '1\n', False), (1, '', False)):
+            def fake_run(command, **_):
+                self.assertEqual(command[-1], '/var/lib/lez/maker/test-hooks/hold-claim-submissions')
+                return unittest.mock.Mock(returncode=returncode, stdout=stdout, stderr='')
+
+            with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run):
+                self.assertEqual(e2e.xmr_claim_hold_taken('hold-claim-submissions'), taken)
+
+    def test_the_maker_walk_needs_the_sidecars_claim_hooks_first(self):
+        required = []
+
+        class Stop(Exception):
+            pass
+
+        def walk(*_):
+            raise Stop
+
+        cleared = []
+        with patch.multiple(e2e, xmr_require_test_hooks=lambda role, text=None: required.append((role, text)),
+                            xmr_hook=lambda role, name, value: cleared.append((role, name, value)),
+                            xmr_kill_point_swap=walk):
+            with self.assertRaises(Stop):
+                e2e.scenario_xmr_kill_walk('1', 'maker')
+            self.assertEqual(required, [('maker', 'hold-claim-preparations'), ('maker', 'hold-claim-submissions')])
+            # both holds cleared before the first swap, whatever an earlier run left
+            self.assertEqual(cleared, [('maker', 'hold-claim-preparations', None),
+                                       ('maker', 'hold-claim-submissions', None)])
+            with self.assertRaises(Stop):
+                e2e.scenario_xmr_kill_walk('1', 'taker')
+        self.assertEqual(len(required), 2)
+        self.assertEqual(len(cleared), 2)
+
+    def test_a_failed_cleanup_neither_masks_the_swaps_failure_nor_raises(self):
+        class Stop(Exception):
+            pass
+
+        def once(*_):
+            raise Stop
+
+        def hook(role, name, value):
+            if value is None:
+                raise subprocess.CalledProcessError(1, ['docker', 'exec'])
+
+        logged = []
+        with patch.multiple(e2e, xmr_kill_point_swap_once=once, xmr_hook=hook, log=logged.append):
+            with self.assertRaises(Stop):
+                e2e.xmr_kill_point_swap('1', 'maker', 'claim preparation held', None, False)
+        self.assertTrue(any('could not clear' in line and 'hold-claim-preparations' in line for line in logged))
+
+
 class CustodyCredit(unittest.TestCase):
     """The *-custody-credit scenarios (TM-0032): what can be checked without a stack."""
 
@@ -737,11 +1312,60 @@ class CustodyCredit(unittest.TestCase):
         e2e.CUSTODY_CREDIT.update({'depositor': depositor, 'units': units, 'thread': done,
                                    'evidence': credit_evidence() if evidence is None else evidence, 'error': error})
 
-    def test_four_scenarios_are_registered_with_their_pair(self):
+    def test_six_scenarios_are_registered_with_their_pair(self):
         self.assertEqual(sorted(name for name in e2e.SCENARIOS if 'custody-credit' in name),
                          ['btc-custody-credit', 'btc-custody-credit-refund'])
         self.assertEqual(sorted(name for name in e2e.ZEC_SCENARIOS if 'custody-credit' in name),
                          ['zec-custody-credit', 'zec-custody-credit-refund'])
+        self.assertEqual(sorted(name for name in e2e.XMR_SCENARIOS if 'custody-credit' in name),
+                         ['xmr-custody-credit', 'xmr-custody-credit-refund'])
+
+    def test_the_finalized_lez_time_is_the_indexers_block_header(self):
+        # the sequencer's getBlock answers the encoded block (a string); the
+        # indexer's getBlockById answers the header with its timestamp
+        asked = []
+
+        class Answer(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def urlopen(request, timeout):
+            asked.append((request.full_url, json.loads(request.data)))
+            return Answer(json.dumps({'jsonrpc': '2.0', 'id': 1, 'result': {
+                'header': {'block_id': 500, 'timestamp': 1_795_277_043_886}, 'body': {}}}).encode())
+
+        with patch.object(e2e, 'lez_rpc_number', lambda url, method: 500), \
+                patch.object(e2e.urllib.request, 'urlopen', urlopen):
+            self.assertEqual(e2e.lez_finalized_time_ms(), 1_795_277_043_886)
+        self.assertEqual(asked, [(e2e.STACK_INDEXER_URL, {'jsonrpc': '2.0', 'id': 1, 'method': 'getBlockById',
+                                                          'params': [500]})])
+
+    def test_the_escrow_probe_signs_with_the_key_compose_mounts(self):
+        # compose mounts the Maker's identity directory at /run-lez-identity/maker;
+        # /run-lez-identity/lez-signer.key does not exist in the container
+        compose = (SCRIPTS.parent / 'compose.yaml').read_text()
+        self.assertIn('/lez/maker:/run-lez-identity/maker:ro', compose)
+        self.assertEqual(e2e.XMR_MAKER_OWNER_KEY, '/run-lez-identity/maker/lez-signer.key')
+        self.assertIn('XMR_MAKER_OWNER_KEY, XMR_PROBE_SIGNER', inspect.getsource(e2e.xmr_escrow_probe))
+
+    def test_the_escrow_probe_reads_the_stacks_manifest_on_every_lane(self):
+        # lanes 2..N share the stack's LEZ chain and escrow; runtime/lanes/<k>
+        # holds no market-bootstrap.env (gen-config.sh, bootstrap-market.sh)
+        with tempfile.TemporaryDirectory() as root:
+            stack = pathlib.Path(root) / 'runtime'
+            lane = stack / 'lanes' / '3'
+            lane.mkdir(parents=True)
+            (stack / 'market-bootstrap.env').write_text(
+                'M3_POC_LEZ_CHANNEL_ID=x\nM3_POC_LEZ_ESCROW_PROGRAM_ID=' + 'ab' * 32 + '\n')
+            for lane_runtime in (stack, lane):
+                with patch.object(e2e, 'RUNTIME', stack), patch.object(e2e, 'LANE_RUNTIME', lane_runtime):
+                    self.assertEqual(e2e.xmr_escrow_program_id(), 'ab' * 32)
+        for script in ('gen-config.sh', 'bootstrap-market.sh'):
+            source = (SCRIPTS / script).read_text()
+            self.assertNotRegex(source, r'lanes/[^\n]*market-bootstrap\.env', script)
 
     def test_the_evidence_of_a_landed_stranger_credit_is_accepted(self):
         evidence = e2e.parse_custody_credit_evidence(0, json.dumps(credit_evidence()) + '\n', 1)
@@ -899,6 +1523,41 @@ class CustodyCredit(unittest.TestCase):
         self.assertIn(CREDIT_PROBE, (REPO / '.github/workflows/release-images.yml').read_text())
         for packager in ('package-role-node.sh', 'package-role-node-darwin.sh'):
             self.assertNotIn(CREDIT_PROBE, (SCRIPTS / packager).read_text())
+
+
+
+class RuntimePaths(unittest.TestCase):
+    """Names read back from files or the environment stay under their root."""
+
+    def test_a_plain_name_joins_directly_under_its_root(self):
+        root = pathlib.Path('/srv/runtime/zec')
+        for name in ['run-20260101-0001', 'swap.json', '.stage', '........']:
+            self.assertEqual(e2e.runtime_child(root, name), root / name)
+
+    def test_a_name_that_walks_the_tree_is_refused(self):
+        root = pathlib.Path('/srv/runtime/zec')
+        for name in ['', '.', '..', '../x', '../../etc/passwd', '/abs', 'a/b', 'a\\b', 'a\0b', 'x/..']:
+            with self.assertRaises(e2e.Failure, msg=repr(name)):
+                e2e.runtime_child(root, name)
+
+    def test_the_current_run_id_is_one_plain_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lane = pathlib.Path(directory)
+            (lane / 'zec').mkdir()
+            with patch.object(e2e, 'LANE_RUNTIME', lane):
+                (lane / 'zec' / 'current').write_text('run-0001\n')
+                self.assertEqual(e2e.zec_current_run_id(), 'run-0001')
+                (lane / 'zec' / 'current').write_text('../../outside\n')
+                with self.assertRaises(e2e.Failure):
+                    e2e.zec_current_run_id()
+
+    def test_a_configured_credential_file_must_not_walk_the_tree(self):
+        with patch.dict(os.environ, {'LEZ_ZEBRA_API_KEY_FILE': '/run/secrets/zebra.key'}):
+            self.assertEqual(e2e.configured_file('LEZ_ZEBRA_API_KEY_FILE'),
+                             pathlib.Path('/run/secrets/zebra.key'))
+        with patch.dict(os.environ, {'LEZ_ZEBRA_API_KEY_FILE': '/run/secrets/../../etc/shadow'}):
+            with self.assertRaises(e2e.Failure):
+                e2e.configured_file('LEZ_ZEBRA_API_KEY_FILE')
 
 
 if __name__ == '__main__':

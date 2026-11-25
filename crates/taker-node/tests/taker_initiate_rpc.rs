@@ -20,10 +20,12 @@ use lez_swap_store::{
     SqliteSwapStore, SqliteTakerFacadeStore,
 };
 use lez_taker_node::{
-    DeliveryPublicationV1, RunLocalDelivery, TakerHealthRequestV1, TakerHealthV1,
-    TakerInitiationCapabilityV1, TakerInitiationCommitV1, TakerMakerIdentityV1,
-    TakerSwapInitiateRequestV1, TakerSwapStateV1, TakerTerminalActionCapabilityV1,
-    load_taker_service_context, taker_service_rpc_module,
+    DEFAULT_OBSERVER_SWEEP_INTERVAL, DeliveryPublicationV1, RunLocalDelivery,
+    TakerDependencyStateV1, TakerHealthRequestV1, TakerHealthV1, TakerInitiationCapabilityV1,
+    TakerInitiationCommitV1, TakerMakerIdentityV1, TakerRouteHealthV1, TakerSwapInitiateRequestV1,
+    TakerSwapStateV1, TakerTerminalActionCapabilityV1, load_taker_service_context,
+    route_health::ProcessRouteHealthProbe, taker_service_rpc_module,
+    taker_service_rpc_module_with_timing,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
@@ -177,7 +179,9 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
 async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry() {
     // Bitcoin has a Node lifecycle, so it passes the pair gate and fails only
     // against the prepared catalog (which holds a Zcash entry for this offer);
-    // Monero has no Node lifecycle and is refused before any lookup.
+    // Monero has a Node lifecycle only with `pair-xmr`: with it, a Node whose
+    // Monero role is not configured has nothing to select; without it, the
+    // pair is refused before any lookup.
     let fixture = Fixture::new();
     let module =
         taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
@@ -192,7 +196,11 @@ async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry(
             "m6-xmr-initiate-rejected-001",
             Pair::Monero,
             SwapDirection::TakerSellsLez,
-            "initiation_unsupported_pair",
+            if cfg!(feature = "pair-xmr") {
+                "initiation_selection_mismatch"
+            } else {
+                "initiation_unsupported_pair"
+            },
         ),
     ] {
         let mut request = fixture.request(label);
@@ -364,6 +372,95 @@ async fn concurrent_request_ids_for_one_prepared_swap_have_one_conflict() {
     let durable = [&first_request.request_id, &second_request.request_id]
         .map(|request_id| registry.lookup_initiation(request_id).unwrap());
     assert_eq!(durable.iter().filter(|facts| facts.is_some()).count(), 1);
+}
+
+/// R3 on the Taker: with route health configured in the Maker's format,
+/// `taker_health` reports each probed route's chain, an unavailable one
+/// degrades the Node, and a new take on it is refused before the registry is
+/// touched, with the pair named.
+#[tokio::test]
+async fn an_unavailable_route_is_reported_and_its_take_refused_by_name() {
+    let fixture = Fixture::new();
+    let program = fixture.root.join("health");
+    fs::write(&program, b"#!/bin/sh\nexit \"$1\"\n").unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o500)).unwrap();
+    let digest = hex::encode(Sha256::digest(fs::read(&program).unwrap()));
+    let command = |pair: &str, direction: &str, exit: &str| {
+        json!({"route": {"pair": pair, "direction": direction}, "program": program,
+               "program_sha256": digest, "args": [exit], "timeout_milliseconds": 2_000})
+    };
+    let probe = ProcessRouteHealthProbe::from_json_bytes(
+        &serde_json::to_vec(&json!({"schema_version": 1, "commands": [
+            command("Bitcoin", "TakerSellsForeign", "0"),
+            command("Zcash", "TakerSellsLez", "1"),
+        ]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let module = taker_service_rpc_module_with_timing(
+        load_taker_service_context(&fixture.config).unwrap(),
+        DEFAULT_OBSERVER_SWEEP_INTERVAL,
+        600,
+        Some(probe),
+    )
+    .unwrap();
+
+    let health: TakerHealthV1 = module
+        .call("taker_health", [TakerHealthRequestV1 { schema_version: 1 }])
+        .await
+        .unwrap();
+    let route_health = |pair, direction, state| TakerRouteHealthV1 {
+        route: MakerRouteV1::new(pair, direction).unwrap(),
+        state,
+    };
+    let expected = vec![
+        route_health(
+            Pair::Bitcoin,
+            SwapDirection::TakerSellsForeign,
+            TakerDependencyStateV1::Available,
+        ),
+        route_health(
+            Pair::Zcash,
+            SwapDirection::TakerSellsLez,
+            TakerDependencyStateV1::Unavailable,
+        ),
+    ];
+    assert_eq!(health.routes(), expected.as_slice());
+    assert!(health.is_degraded());
+    let available = TakerHealthV1::new(
+        true,
+        TakerDependencyStateV1::Available,
+        TakerDependencyStateV1::Available,
+    );
+    assert!(
+        !available
+            .clone()
+            .with_routes(expected[..1].to_vec())
+            .is_degraded()
+    );
+    assert!(available.with_routes(expected).is_degraded());
+
+    let request = fixture.request("m6-zec-initiate-chain-down-001");
+    let response = rpc_response(
+        &module,
+        "taker_swap_initiate_v1",
+        serde_json::to_value([request.clone()]).unwrap(),
+    )
+    .await;
+    assert_rpc_error(
+        &response,
+        -32_010,
+        "Taker dependency unavailable",
+        "chain_unavailable",
+    );
+    assert_eq!(response["error"]["data"]["pair"], "Zcash", "{response}");
+    assert_eq!(
+        SqliteTakerFacadeStore::open_existing(&fixture.registry)
+            .unwrap()
+            .lookup_initiation(&request.request_id)
+            .unwrap(),
+        None
+    );
 }
 
 struct Fixture {

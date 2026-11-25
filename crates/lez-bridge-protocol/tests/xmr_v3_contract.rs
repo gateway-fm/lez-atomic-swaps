@@ -7,18 +7,19 @@ use lez_bridge_protocol::{
     FinalizedBlockIdentity, FinalizedNativeXmrEffectFactsV3, FinalizedNativeXmrScanOutcomeV3,
     FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3, Hex32,
     METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
-    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
-    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
-    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, MessageContext, NativeCustodyFacts,
-    ObservedTransactionFacts, Participant, PrepareCurrentProfileClockRequest,
-    PrepareCurrentProfileClockResult, PrepareNativeXmrClaimAuthorizationV3Request,
-    PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
-    PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,
-    PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
-    PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolValueError, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
+    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
+    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    MessageContext, NativeCustodyFacts, ObservedTransactionFacts, Participant,
+    PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult,
+    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
+    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
+    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
+    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
+    PrepareNativeXmrRefundV3Result, PreparedTransaction, PreparedWitnessedClaim,
+    ProtocolValueError, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
     SubmitNativeXmrClaimAuthorizationV3Result, SubmitTransactionResult, TransactionId,
     VerifyCurrentProfileClockRequest, VerifyCurrentProfileClockResult,
     XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3, XmrNativeEffectV3,
@@ -163,6 +164,10 @@ fn xmr_v3_method_names_are_strictly_additive() {
     assert_eq!(
         METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
         "lez_bridge.v3.classify_finalized_native_xmr_effect"
+    );
+    assert_eq!(
+        METHOD_OBSERVE_NATIVE_XMR_ESCROW_TIP_V3,
+        "lez_bridge.v3.observe_native_xmr_escrow_tip"
     );
 }
 
@@ -819,6 +824,67 @@ fn punish_finalized_facts_enforce_inclusive_punish_boundary() {
             );
         }
     }
+}
+
+#[test]
+fn punish_finalized_facts_free_only_the_claimant_nonce() {
+    let clock = ChainClock::new(h(71), 110, 30_000);
+    let window = DiscoveryWindow::new(90, 21).expect("window");
+    let classify = |terms: XmrNativeEscrowTermsV3, facts| {
+        let (target, _) = effect_fixture(XmrNativeEffectV3::Punish);
+        ClassifyFinalizedNativeXmrEffectV3Result::new(
+            context(),
+            terms,
+            XmrNativeEffectV3::Punish,
+            target,
+            FinalizedNativeXmrScanOutcomeV3::found(clock, window, facts),
+        )
+    };
+
+    // The committed (nonce-0) message and one signed at a later live nonce.
+    for message_hash in [h(19), h(0x5a)] {
+        let (_, mut facts) = effect_fixture(XmrNativeEffectV3::Punish);
+        facts.instruction.message_hash = message_hash;
+        let _ = classify(terms(), facts).expect("tag 17 at any claimant nonce");
+    }
+
+    let (_, mut facts) = effect_fixture(XmrNativeEffectV3::Punish);
+    facts.instruction.ordered_account_ids =
+        AccountIds::new(vec![h(5), h(6), h(7)]).expect("accounts");
+    assert_eq!(
+        classify(terms(), facts),
+        Err(ProtocolValueError::XmrFactsMismatch(
+            "instruction account order"
+        ))
+    );
+    let (_, mut facts) = effect_fixture(XmrNativeEffectV3::Punish);
+    facts.instruction.swap_id = h(0x5b);
+    assert_eq!(
+        classify(terms(), facts),
+        Err(ProtocolValueError::XmrFactsMismatch("instruction swap id"))
+    );
+    let (_, mut facts) = effect_fixture(XmrNativeEffectV3::Punish);
+    facts.instruction.program_id = h(0x5c);
+    assert_eq!(
+        classify(terms(), facts),
+        Err(ProtocolValueError::XmrFactsMismatch("instruction program"))
+    );
+    let (_, mut facts) = effect_fixture(XmrNativeEffectV3::Punish);
+    facts.instruction.effect = XmrNativeEffectV3::Claim;
+    assert_eq!(
+        classify(terms(), facts),
+        Err(ProtocolValueError::XmrFactsMismatch("instruction effect"))
+    );
+    let (_, facts) = effect_fixture(XmrNativeEffectV3::Punish);
+    let other_amount = XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
+        amount: 43,
+        ..terms_input()
+    })
+    .expect("valid XMR v3 terms");
+    assert_eq!(
+        classify(other_amount, facts),
+        Err(ProtocolValueError::XmrFactsMismatch("version-3 metadata"))
+    );
 }
 
 #[test]

@@ -1,0 +1,28 @@
+[03:17:16] === zec-restart-maker (stamp 1795573036)
+[03:17:17] preflight: indexer historical reads
+[03:17:17]   indexer serves historical reads at the tip (11990)
+[03:17:17] preflight: LEZ finality check waived by request
+[03:17:18]   Maker CLI published offer-e2e-zectt-1795573037 on its running Node (no corridor)
+[03:17:18]   Taker took offer-e2e-zectt-1795573037: swap zec-3c35cedb (not_activated)
+[03:17:18]   take-time agreement: Maker funds 5176bae993c5c398…:0, Zcash anchor 1406, refund height 1422
+[03:17:18]   receipt: swap zec-3c35cedb14c7462f90e6fc3c476c1ca501d84f3a1584bab8ac5018cead658775, actor config /var/lib/lez/taker/btc/swaps/7cce30ca4eb5bf2377b10853637aad9ec10f203c2b32ba4cd120fa7b538f5e09/zec-actor/taker/actor-config.json
+[03:17:19]   [0 s] waiting for the Taker's zec-3c35cedb to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 1405 | LEZ finalized 11986, tip 11994 (8 unfinalized) [heartbeat]
+[03:17:22]   [3 s] waiting for the Taker's zec-3c35cedb to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 1405 | LEZ finalized 11986, tip 11994 (8 unfinalized) [heartbeat]
+[03:17:38]   [19 s] waiting for the Taker's zec-3c35cedb to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 1405 | LEZ finalized 12008, tip 12010 (2 unfinalized) [heartbeat]
+[03:17:38]   zebra: mined 1 block(s) → height 1406 (mempool had ['25e8f5f10252'])
+[03:17:41]   [22 s] waiting for the Taker's zec-3c35cedb to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1406 | LEZ finalized 12008, tip 12010 (2 unfinalized) [heartbeat]
+[03:17:41]   zebra: mined 1 block(s) → height 1407 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[03:17:41]   [0 s] waiting for the Maker's zec-3c35cedb to reach both_legs_locked (the Maker at both legs locked before the Taker's reveal): maker both_legs_locked (schedule queued) | LEZ finalized 12008, tip 12010 (2 unfinalized) [heartbeat]
+[03:17:41]   restarting the Maker Node between the first lock and the reveal
+[03:17:48]   [0 s] waiting for the Maker's zec-3c35cedb to reach both_legs_locked (the Maker back at both legs locked after its restart): maker both_legs_locked (schedule queued) | LEZ finalized 12008, tip 12010 (2 unfinalized) [heartbeat]
+[03:17:48]   stopping the Maker Node before the Taker reveals
+[03:17:49]   Taker claimed Zcash
+[03:17:49]   the Taker's Zcash claim b72918922bb1 is broadcast, unmined
+[03:17:49]   starting lez-maker-node again: the Taker's claim is broadcast while it was down
+[03:17:55]   [0 s] waiting for the Taker's zec-3c35cedb to reach completed (after the maker restart): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker claim_evidence_available | zebra 1407 | LEZ finalized 12008, tip 12010 (2 unfinalized) [heartbeat]
+[03:17:55]   zebra: mined 1 block(s) → height 1408 (mempool had ['b72918922bb1'])
+[03:17:59]   [3 s] waiting for the Taker's zec-3c35cedb to reach completed (after the maker restart): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 1408 | LEZ finalized 12023, tip 12026 (3 unfinalized) [heartbeat]
+[03:18:02]   [6 s] waiting for the Taker's zec-3c35cedb to reach completed (after the maker restart): taker completed (gen 4) | actor at completed | maker completed | zebra 1408 | LEZ finalized 12023, tip 12026 (3 unfinalized) [heartbeat]
+[03:18:02]   [0 s] waiting for the Taker's zec-3c35cedb to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 12023, tip 12026 (3 unfinalized) [heartbeat]
+[03:18:02]   both Nodes report zec-3c35cedb completed
+[03:18:02] === zec-restart-maker: passed in 46s

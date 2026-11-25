@@ -1,0 +1,11 @@
+[04:50:42] regression run: 4 tests at 2680735c (tree dirty:        1), results in runtime/regress/demos-20261125T045041Z
+[04:50:42] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[04:50:49]     ui:xmr:xmr-punish:TakerSellsLez (try 1) starts: LEZ finalized 1400, tip 1406
+[05:09:20] === ui:xmr:xmr-punish:TakerSellsLez (try 1): PASSED in 1110 s (+7 s before it); LEZ finalized 2220, tip 2228
+[05:09:27]     ui:xmr:xmr-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 2231, tip 2234
+[05:25:30] === ui:xmr:xmr-taker-refund:TakerSellsLez (try 1): PASSED in 963 s (+7 s before it); LEZ finalized 2907, tip 2911
+[05:25:42]     ui:xmr:xmr-happy:TakerSellsLez (try 1) starts: LEZ finalized 2917, tip 2919
+[05:29:04] === ui:xmr:xmr-happy:TakerSellsLez (try 1): PASSED in 202 s (+12 s before it); LEZ finalized 3062, tip 3067
+[05:29:13]     ui:xmr:xmr-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 3069, tip 3073
+[05:33:51] === ui:xmr:xmr-concurrent:TakerSellsLez (try 1): PASSED in 278 s (+9 s before it); LEZ finalized 3259, tip 3269
+[05:33:51] regression run: 4 of 4 passed in 43 min, 0 new chains, 0 profile switches,        0 frozen tries
