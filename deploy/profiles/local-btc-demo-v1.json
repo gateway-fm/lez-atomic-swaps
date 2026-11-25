@@ -62,19 +62,19 @@
     {
       "id": "zebra",
       "lifecycle": "service",
-      "executable": "zebrad",
+      "executable": "LogosBasecamp + zebrad_module (Zcash Node desk)",
       "role": "shared",
       "pair": "zcash",
       "sockets": [],
       "state": [
         {
-          "path": "volume:lez-zebra-data",
+          "path": "volume:lez-zebra-module-data",
           "backup": "recreatable"
         }
       ],
       "credentials": [],
       "public_identities": [],
-      "health": "zebrad getblockchaininfo",
+      "health": "zebrad_module JSON-RPC getblockchaininfo with its cookie",
       "depends_on": []
     },
     {

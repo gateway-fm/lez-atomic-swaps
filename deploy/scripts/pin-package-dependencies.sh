@@ -6,7 +6,8 @@
 #
 # Every package of the set is written to <dir>/<name>.lgx, and <dir>/packages.tsv
 # lists name, version, variants, dependencies, sha256 and root hash. Ours
-# (the role desks, the LEZ Network desk, lez_swap_node, lez_<role>_node) get
+# (the role desks, the LEZ Network and Zcash Node desks, lez_swap_node,
+# lez_<role>_node) get
 # each dependency once, as `{"name": n, "version": <requirement>}`, so an
 # installer cannot substitute the default catalog's other packages of the
 # same name (lez_core 0.4.3 and 0.5.1, lez_indexer_module 1.1.2 and 1.2.1,
@@ -16,7 +17,8 @@
 #     version (AGENTS.md) and are tested only together, and for every package
 #     whose version is a pre-release: the patched upstream modules (lez_core,
 #     lez_indexer_module) and the Chat module our catalog publishes
-#     (package-chat-module.sh, chat_module 0.2.2-delivery.1). A pre-release
+#     (package-chat-module.sh, chat_module 0.2.2-delivery.1), and zebrad_module,
+#     built from an unreleased commit that kept 0.2.0. A pre-release
 #     sorts below the official release it is cut from, so a range on it takes
 #     that release instead (`~0.4.1-sign.4` also takes lez_core 0.4.1 to
 #     0.4.3);
@@ -62,7 +64,11 @@ python3 -I - "$out" "${pkgs[@]}" <<'PY'
 import gzip, hashlib, io, json, os, shutil, sys, tarfile
 
 OURS = {"lez_atomic_swap_maker", "lez_atomic_swap_taker", "lez_network",
-        "lez_swap_node", "lez_maker_node", "lez_taker_node"}
+        "lez_zcash_node", "lez_swap_node", "lez_maker_node", "lez_taker_node"}
+# Upstream modules we build from an unreleased commit whose manifest keeps the
+# version of an earlier release (zebrad_module ab43ad3 says 0.2.0, as 6fa8663
+# did): required exactly, like a pre-release, so no other 0.2.x stands in.
+UNRELEASED = {"zebrad_module"}
 out, paths = sys.argv[1], sys.argv[2:]
 
 def dep_names(deps):
@@ -76,7 +82,7 @@ def dep_names(deps):
 def requirement(name, version):
     # ours and every pre-release (a patched build) exactly; a Logos release
     # with `~`, so a patch release of theirs may stand in
-    return version if name in OURS or "-" in version.split("+")[0] else "~" + version
+    return version if name in OURS | UNRELEASED or "-" in version.split("+")[0] else "~" + version
 
 packages = {}
 for path in paths:

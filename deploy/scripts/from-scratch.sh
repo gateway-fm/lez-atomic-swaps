@@ -221,8 +221,10 @@ phase_sources() {
 # `access-tokens = github.com=<the job token>` so github: fetches are not
 # rate limited; it never appears on a command line or in the store.
 nix_build() { # nix_build <output-link-name> <flake-ref> [extra nix args...]
-  local name="$1" ref="$2"; shift 2
-  docker run --rm -v lez-nix-store-arm:/nix -v "$REPO_ROOT:/workspace:ro" \
+  local name="$1" ref="$2" cpus=(); shift 2
+  # LEZ_BUILD_CPUS caps the build container's CPUs, as for build:zebrad-module.
+  [[ -z "${LEZ_BUILD_CPUS:-}" ]] || cpus=(--cpus "$LEZ_BUILD_CPUS")
+  docker run --rm "${cpus[@]}" -v lez-nix-store-arm:/nix -v "$REPO_ROOT:/workspace:ro" \
     -v "$BASECAMP_SRC:/src/basecamp:ro" -v "$ASSETS/.nix-out:/out" \
     -e NIX_CURL_FLAGS='--user-agent lez-from-scratch/1.0' -e NIX_CONFIG "$NIX_IMAGE" bash -c '
       set -e
@@ -337,7 +339,7 @@ phase_rust() {
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
     taker-node/zec-local-poc-provision taker-node/zec-local-poc-chat-draft taker-node/zec-local-poc-chat-finalize
     taker-node/zec-local-poc-identity taker-node/zec-local-poc-transfer
-    zebra/lez-runtime-healthcheck
+    zebra-module/lez-runtime-healthcheck
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to
   # a different checkout. Its dependency/target cache still makes reruns cheap.
@@ -835,7 +837,8 @@ phase_stage() {
   # (images/basecamp-ui/assets/packages/, packages.tsv lists them), then
   # installed from those files: the runtime modules into the bundle (each desk
   # hosts its role's LEZ signer in lez_core and has lez_swap_node run its Node;
-  # the LEZ Network desk starts blockchain_module and lez_indexer_module), the
+  # the LEZ Network desk starts blockchain_module and lez_indexer_module, the
+  # Zcash Node desk zebrad_module), the
   # desks into their user directories, each role's Node package into its
   # image context. Skipped where the bundle is staged elsewhere, and in the
   # API-only evidence mode, which builds no Nix packages.
@@ -853,22 +856,23 @@ phase_stage() {
       mv "$chain_lgx.part" "$chain_lgx"
     fi
     local release="$ASSETS/packages" pkgs=() lgx name
-    for name in maker taker network chat_module delivery_module; do
+    for name in maker taker network zcash chat_module delivery_module; do
       lgx="$(ls "$ASSETS/.nix-out/$name-lgx-portable"/*.lgx 2>/dev/null | head -1)"
       [[ -n "$lgx" ]] || fail "no $name release package in $ASSETS/.nix-out/$name-lgx-portable; run from-scratch.sh --only nix first"
       pkgs+=("$lgx")
     done
     pkgs+=("$PROVISION/lez_core/lez_core.lgx" "$PROVISION/lez_swap_node/lez_swap_node.lgx"
-      "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$chain_lgx"
+      "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$chain_lgx" "$PROVISION/zebrad_module/zebrad_module.lgx"
       "$DEPLOY_ROOT/images/maker-node/lez_maker_node.lgx" "$DEPLOY_ROOT/images/taker-node/lez_taker_node.lgx")
     rm -rf "$release"
     bash "$DEPLOY_ROOT/scripts/pin-package-dependencies.sh" --out "$release" "${pkgs[@]}"
-    for name in lez_core lez_swap_node blockchain_module lez_indexer_module chat_module delivery_module; do
+    for name in lez_core lez_swap_node blockchain_module lez_indexer_module zebrad_module chat_module delivery_module; do
       bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/$name.lgx" module
     done
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_atomic_swap_maker.lgx" maker
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_atomic_swap_taker.lgx" taker
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_network.lgx" network
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_zcash_node.lgx" zcash
     for role in maker taker; do
       install -m 0644 "$release/lez_${role}_node.lgx" "$DEPLOY_ROOT/images/$role-node/lez_${role}_node.lgx"
     done

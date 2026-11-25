@@ -29,7 +29,16 @@ case "$role" in
     rm -rf "$user_dir/plugins/lez_network"
     cp -a /var/lez-assets/network-user/plugins/lez_network "$user_dir/plugins/"
     ;;
-  *) echo "BASECAMP_ROLE must be maker, taker or network" >&2; exit 2 ;;
+  # The Zcash node's Basecamp (compose.yaml zebra): as the network's, its
+  # user directory on the service's state volume, the Zcash Node desk from
+  # the image.
+  zcash)
+    user_dir="${BASECAMP_USER_DIR:-/var/lez/basecamp-zcash-user}"
+    mkdir -p "$user_dir/plugins"
+    rm -rf "$user_dir/plugins/lez_zcash_node"
+    cp -a /var/lez-assets/zcash-user/plugins/lez_zcash_node "$user_dir/plugins/"
+    ;;
+  *) echo "BASECAMP_ROLE must be maker, taker, network or zcash" >&2; exit 2 ;;
 esac
 
 if ! pgrep -x Xvfb >/dev/null; then
@@ -54,9 +63,10 @@ fi
 # Basecamp's lez_swap_node launch the role's Node, both when the desk opens;
 # the same desk is the one the party uses over VNC and the UI tests drive.
 # With either configured, open this Basecamp's desk once the launcher shows it.
-# The LEZ network node or indexer's Basecamp opens its LEZ Network desk the same way.
+# The LEZ network node or indexer's Basecamp opens its LEZ Network desk the same way,
+# and the Zcash node's its Zcash Node desk.
 # open-desks.mjs logs to /tmp/open-desks.log; "1 passed" there means the desk is open.
-if [[ -n "${LEZ_MAKER_SIGNER_SOCKET:-}${LEZ_TAKER_SIGNER_SOCKET:-}${LEZ_MAKER_NODE_LAUNCHER:-}${LEZ_TAKER_NODE_LAUNCHER:-}${LEZ_NETWORK_NODE_CONFIG:-}${LEZ_INDEXER_CONFIG:-}" ]]; then
+if [[ -n "${LEZ_MAKER_SIGNER_SOCKET:-}${LEZ_TAKER_SIGNER_SOCKET:-}${LEZ_MAKER_NODE_LAUNCHER:-}${LEZ_TAKER_NODE_LAUNCHER:-}${LEZ_NETWORK_NODE_CONFIG:-}${LEZ_INDEXER_CONFIG:-}${LEZ_ZEBRA_NETWORK:-}" ]]; then
   rm -f /tmp/open-desks.log
   # open-desks.mjs connects to Basecamp's QML inspector once and gives up when
   # nothing listens yet: start it as soon as the inspector does.
