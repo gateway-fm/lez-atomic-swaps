@@ -57,6 +57,37 @@ it (ADR 0215). Publish the release with its notes first; the assets follow
 about 2.5 hours later. `scripts/package-dist.sh <prefix> <tag>` produces the bundle
 locally from a committed tree.
 
+**The regression from a bundle.** `scripts/regress.sh` runs in an unpacked
+bundle as in a checkout, once `start.sh` has brought the stack up on a
+timing profile the regression takes (`LEZ_TIMING_PROFILE=fast ./scripts/start.sh`,
+then `./scripts/regress.sh full`). Every command it starts takes the images,
+their tag and the escrow program from `release.env`, uses the images start.sh
+pulled and builds nothing. Release images carry no devnet test hooks and none
+of the Zcash dealer test fixture's tools, and a bundle carries neither
+`tests/` nor the repository's sources, so these tests do not run from a
+bundle:
+
+- they need the devnet test hooks (`LEZ_TEST_HOOKS=1`):
+  `node:xmr:xmr-taker-clock-ahead`, `node:xmr:xmr-punish-replans`,
+  `node:xmr:xmr-taker-cheats`, `node:xmr:xmr-kill-maker` (its claim kill
+  points hold the claim in the Maker's sidecar), `node:zec:zec-kill-maker-claim`
+  and `node:zec:zec-activate-after-expiry`;
+- they need the Zcash dealer test fixture: `node:zec:zec-regenerated-catalog`
+  and `node:zec:zec-tampered-catalog` in both directions, and
+  `node:zec:zec-maker-early-claim`;
+- it compiles the repository's TEST price module: `node:btc:maker-price-module`;
+- every Zcash test selling ZEC (`node:zec:*:TakerSellsForeign` and
+  `ui:zec:*:TakerSellsForeign`): the harness pays the Taker's Zcash key from
+  the Maker's with `zec-local-poc-transfer`, a dealer fixture tool the release
+  Taker image does not carry.
+
+`regress.sh` leaves each of them out with a line that names the reason, as it
+leaves out the Monero tests on a stack without Monero; `node-e2e.py` refuses
+one by name. `python3 scripts/node-e2e.py release-unavailable` prints the set,
+and `./scripts/regress.sh list full` prints the tests a bundle runs and names
+the others on stderr. A devnet built with
+`LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh` runs every test.
+
 Upgrading from one release to the next is not supported before 1.0.0. Drain
 the old release first: withdraw every offer, let each open swap reach
 `completed` or `refunded` (a refund waits for its refund time), then install
@@ -1070,6 +1101,7 @@ running for weeks needs its old `basecamp_*.log` files removed from outside.
 compose.yaml               the stack (image names: ${LEZ_IMAGE_PREFIX}-<service>:${LEZ_IMAGE_TAG})
 scripts/start.sh           prebuilt path: pull the release images, identities, stack, bootstrap, desk suites
 scripts/package-dist.sh    assemble the release bundle (deploy/ from git archive + release.env)
+scripts/release-env.sh     sourced: a bundle's release.env (images, tag, escrow program) for every script
 scripts/from-scratch.sh    everything from an empty host (prerequisites, sources, payloads, runner, stack)
 scripts/up.sh              one-command bring-up (+ desk verification); LEZ_IMAGES=pull skips the build
 scripts/swap-through-ui.sh one complete swap driven through the two desks

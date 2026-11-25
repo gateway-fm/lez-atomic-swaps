@@ -68,14 +68,19 @@ owner_call() { # owner_call <role> <method> <params>
 # container of the role image. stdin stays connected: two calls below feed
 # python3 a heredoc. The fresh container takes the stopped Basecamp's image and
 # mounts as they are (`compose run` would first re-check the role image's
-# build, a few seconds a call, as it is built on the basecamp-ui service).
+# build, a few seconds a call, as it is built on the basecamp-ui service, and
+# a release bundle, with no images/, cannot build it at all: #190). With no
+# Basecamp container at all, one is created, not started, from the image the
+# stack names (--no-build), so its volumes are mounted the same way.
 in_role() {
   local role="$1"; shift
-  if [[ "$in_place" == 1 ]]; then docker exec -i "$(node_of "$role")" "$@"
-  elif docker container inspect "$(node_of "$role")" >/dev/null 2>&1; then
-    docker run --rm -i --network none --user 4713:4713 --volumes-from "$(node_of "$role")" --entrypoint "$1" \
-      "$(docker inspect -f '{{.Config.Image}}' "$(node_of "$role")")" "${@:2}"
-  else "${compose[@]}" run --rm -T --no-deps --entrypoint "$1" "$role-node" "${@:2}"; fi
+  if [[ "$in_place" == 1 ]]; then docker exec -i "$(node_of "$role")" "$@"; return; fi
+  if ! docker container inspect "$(node_of "$role")" >/dev/null 2>&1; then
+    "${compose[@]}" up --no-start --no-build --no-deps "$role-node" </dev/null >&2 ||
+      { echo "cannot create the $role's Basecamp container to reach its state" >&2; return 1; }
+  fi
+  docker run --rm -i --network none --user 4713:4713 --volumes-from "$(node_of "$role")" --entrypoint "$1" \
+    "$(docker inspect -f '{{.Config.Image}}' "$(node_of "$role")")" "${@:2}"
 }
 # Holds a role's Node down inside its Basecamp (scripts/node-hold.sh: the
 # hold file keeps the supervisor from restarting it, and the Node's process

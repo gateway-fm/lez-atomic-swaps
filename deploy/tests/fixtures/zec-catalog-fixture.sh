@@ -351,11 +351,21 @@ restart_native_node() { # restart_native_node <role>
   done
   fail "the native $role Node did not come back ready"
 }
+# compose_up <service> [up flags...]: the service (re)created from the image it
+# already has. --no-build: the role images are built on another service
+# (service:basecamp-ui), and for those `compose up` builds on every call, which
+# a release bundle (no images/) cannot do. compose's own output is shown when
+# it fails (#190: it went to /dev/null, and the build error with it).
+compose_up() {
+  local service="$1" output; shift
+  output="$("${compose[@]}" up -d --no-deps --no-build "$@" "$service" 2>&1)" ||
+    fail "docker compose up $service failed: $(tail -n 5 <<<"$output")"
+}
 recreate_nodes() {
   if [[ -n "$NATIVE" ]]; then restart_native_node maker; restart_native_node taker; return; fi
-  "${compose[@]}" up -d --no-deps --force-recreate maker-node >/dev/null 2>&1
+  compose_up maker-node --force-recreate
   wait_healthy "$MAKER_NODE"
-  "${compose[@]}" up -d --no-deps --force-recreate taker-node >/dev/null 2>&1
+  compose_up taker-node --force-recreate
   wait_healthy "$TAKER_NODE"
 }
 
@@ -527,7 +537,7 @@ if [[ "$next_branch" != "$NU7_BRANCH" || "$worn" == 1 ]]; then
     fail "$LANE/zebra/zebrad.toml does not activate NU7: rerun scripts/gen-config.sh"
   "${compose[@]}" rm -sf zebra >/dev/null 2>&1 || true
   docker volume rm "$VOLUME_PREFIX-zebra-data" >/dev/null 2>&1 || true
-  "${compose[@]}" up -d --no-deps zebra >/dev/null 2>&1 || fail "zebra did not start"
+  compose_up zebra
   for _ in $(seq 1 30); do next_branch="$(zebra_next_branch 2>/dev/null)" && break; sleep 2; done
   [[ "$next_branch" == "$NU7_BRANCH" ]] ||
     fail "the recreated zebra is on branch ${next_branch:-unknown}, not NU7: rebuild its image (docker compose build zebra)"

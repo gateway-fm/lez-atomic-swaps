@@ -46,8 +46,12 @@ fi
 # through lez_core (lez-wallet-vault-claim, the proof-of-concept tool's flags
 # and evidence fields); the escrow deployment is a program deployment, not a
 # wallet operation, and keeps its deployer.
-docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1 ||
+# A bundle (LEZ_IMAGES pull or present) builds nothing: the image is the release's.
+if ! docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1; then
+  [[ "${LEZ_IMAGES:-build}" == build ]] ||
+    { echo "${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local} is not present (start.sh pulls it)" >&2; exit 65; }
   docker compose build heartbeat >/dev/null
+fi
 docker run --rm --network "$LEZ_STACK_NETWORK" --user "$(id -u):$(id -g)" \
   ${provision_mount[@]+"${provision_mount[@]}"} -v "$market_root:/market" -v "$DEPLOY_ROOT/scripts:/scripts:ro" \
   -e MARKET_ROOT=/market -e ESCROW_PROGRAM_ID="$escrow_pin" \

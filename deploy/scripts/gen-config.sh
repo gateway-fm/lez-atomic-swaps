@@ -9,6 +9,11 @@ DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly DEPLOY_ROOT
 # shellcheck source=host.sh
 source "$DEPLOY_ROOT/scripts/host.sh"
+# In a release bundle, the images its release.env names (the Taker image for
+# zebra's miner address, the LEZ network image for regenesis), also when this
+# runs on its own or from node-e2e.py rather than from start.sh or up.sh (#190).
+# shellcheck source=release-env.sh
+source "$DEPLOY_ROOT/scripts/release-env.sh"
 RUNTIME="${1:-$DEPLOY_ROOT/runtime}"
 readonly RUNTIME
 readonly LEZ_SOURCE="$DEPLOY_ROOT/assets/lez-source"
