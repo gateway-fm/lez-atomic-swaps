@@ -5,6 +5,7 @@ use std::{
     process::{Command, Stdio},
     sync::{Arc, Barrier},
     thread,
+    time::Duration,
 };
 
 use lez_swap_core::{
@@ -20,6 +21,16 @@ use lez_swap_store::{
 };
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
+
+/// How long a test waits for a reaped child's lock to be released.
+///
+/// The kernel releases a `flock` when the last descriptor of its open file
+/// description closes. On Linux a process's descriptors are closed before its
+/// parent can reap it. On macOS the release can trail the reap: a child killed
+/// or exited and already reaped by `wait` can be seen holding its lock for a
+/// few milliseconds more (tens under load), with no process left that has the
+/// file open. A lock still held after this bound is held by something real.
+const REAPED_LOCK_RELEASE: Duration = Duration::from_secs(30);
 
 fn swap(id: &str, pair: Pair) -> SwapCoordinator {
     let foreign = Chain::from(pair);
@@ -335,12 +346,16 @@ fn competing_connections_exact_replay_registration_and_fence_same_swap() {
     drop(setup);
 
     let barrier = Arc::new(Barrier::new(3));
+    // Each connection is opened before its thread starts: the race under test
+    // is the registration, and an open checkpoints the WAL, which another
+    // connection's open in the same instant refuses
+    // (`LegacyMigrationCheckpointBusy`); a thread that panicked there would
+    // never reach the barrier and leave the test waiting on it forever.
     let registrations = [1_u8, 2_u8].map(|_| {
-        let database = database.clone();
+        let mut store = SqliteSwapStore::open(&database).unwrap();
         let actor = actor.clone();
         let barrier = Arc::clone(&barrier);
         thread::spawn(move || {
-            let mut store = SqliteSwapStore::open(database).unwrap();
             barrier.wait();
             store.register_maker_actor(&actor, 10).unwrap().was_replay()
         })
@@ -356,10 +371,9 @@ fn competing_connections_exact_replay_registration_and_fence_same_swap() {
         MakerActorLeaseOwner::new([12; 16]).unwrap(),
     ]
     .map(|owner| {
-        let database = database.clone();
+        let mut store = SqliteSwapStore::open(&database).unwrap();
         let barrier = Arc::clone(&barrier);
         thread::spawn(move || {
-            let mut store = SqliteSwapStore::open(database).unwrap();
             barrier.wait();
             store
                 .claim_maker_actor(&SwapId::new("zec-race").unwrap(), owner, 10)
@@ -393,11 +407,11 @@ fn competing_connections_can_claim_distinct_swaps_independently() {
     drop(setup);
 
     let barrier = Arc::new(Barrier::new(3));
+    // Opened before the threads start, as in the test above.
     let claims = [("zec-left", [31; 16]), ("zec-right", [32; 16])].map(|(id, owner)| {
-        let database = database.clone();
+        let mut store = SqliteSwapStore::open(&database).unwrap();
         let barrier = Arc::clone(&barrier);
         thread::spawn(move || {
-            let mut store = SqliteSwapStore::open(database).unwrap();
             barrier.wait();
             store
                 .claim_maker_actor(
@@ -480,7 +494,12 @@ fn inherited_lock_is_a_nonforgeable_abandoned_lease_recovery_capability() {
 
     child.kill().unwrap();
     child.wait().unwrap();
-    let recovered = ActorHeldLock::acquire(&locked_record).unwrap();
+    let recovered = ActorHeldLock::acquire_for_within(
+        locked_record.swap_id(),
+        locked_record.manifest().state_database_path(),
+        REAPED_LOCK_RELEASE,
+    )
+    .unwrap();
     let next = store
         .recover_abandoned_maker_actor(
             &lease,
@@ -780,8 +799,10 @@ fn pinned_executable_child_holds_distinct_actor_and_workflow_locks() {
 
     child.kill().unwrap();
     child.wait().unwrap();
-    drop(ActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
-    drop(ActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
+    drop(ActorHeldLock::acquire_for_within(&swap_id, &actor_state, REAPED_LOCK_RELEASE).unwrap());
+    drop(
+        ActorHeldLock::acquire_for_within(&swap_id, &workflow_state, REAPED_LOCK_RELEASE).unwrap(),
+    );
 }
 
 /// macOS form of the test above: there is no /proc/<pid>/fd, so the child
@@ -844,8 +865,10 @@ fn pinned_executable_child_holds_distinct_actor_and_workflow_locks() {
 
     child.kill().unwrap();
     child.wait().unwrap();
-    drop(ActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
-    drop(ActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
+    drop(ActorHeldLock::acquire_for_within(&swap_id, &actor_state, REAPED_LOCK_RELEASE).unwrap());
+    drop(
+        ActorHeldLock::acquire_for_within(&swap_id, &workflow_state, REAPED_LOCK_RELEASE).unwrap(),
+    );
 }
 
 #[test]

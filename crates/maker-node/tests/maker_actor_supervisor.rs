@@ -23,9 +23,9 @@ use btc_fixture::BtcAuthorityFixture;
 use btc_reference_actor::ActorConfig as BtcActorConfig;
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
-    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorResolution,
-    clear_maker_lez_claim_admissions, prepare_maker_actor, supervise_one_abandoned_maker_actor,
-    supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
+    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
+    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, clear_maker_lez_claim_admissions,
+    prepare_maker_actor, supervise_one_due_maker_actor_until,
 };
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, RecoverySchedule, SwapCoordinator,
@@ -47,6 +47,64 @@ use zec_reference_actor::ActorConfig;
 
 use support::actor_deployment;
 use xmr_chat_fixture::XmrChatFixture;
+
+/// How long a test waits, after a pass, for its actor's lock to be released.
+///
+/// A pass ends with its actor process reaped and its lock dropped, and the
+/// next pass of these tests starts at once, where a Node waits at least its
+/// requeue delay (a second or more). The kernel releases the lock when the
+/// last descriptor of it closes, and on macOS that can trail the pass: a
+/// reaped child's `flock` can stay held for a few milliseconds after `wait`
+/// returns (tens under load). A next pass in that window finds the lock taken
+/// and backs off
+/// (`actor_lock_unavailable`), which is right for a Node and not what the test
+/// is about. Each pass here therefore waits until its actor's lock is free; a
+/// lock still held after this bound is held by something real, and the test
+/// fails on it.
+const PASS_LOCK_RELEASE: Duration = Duration::from_secs(30);
+
+fn assert_lock_released(
+    store: &SqliteSwapStore,
+    outcome: Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError>,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    if let Ok(Some(outcome)) = &outcome {
+        let record = store
+            .maker_actor_process(outcome.swap_id())
+            .unwrap()
+            .expect("the supervised actor's row");
+        let released = ActorHeldLock::acquire_for_within(
+            record.swap_id(),
+            record.manifest().state_database_path(),
+            PASS_LOCK_RELEASE,
+        );
+        assert!(
+            released.is_ok(),
+            "{}: the actor's lock is still held after its pass: {released:?}",
+            outcome.swap_id().as_str()
+        );
+    }
+    outcome
+}
+
+fn supervise_one_due_maker_actor(
+    store: &mut SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    now: u64,
+    config: &MakerActorSupervisorConfig,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    let outcome = lez_maker_node::supervise_one_due_maker_actor(store, owner, now, config);
+    assert_lock_released(store, outcome)
+}
+
+fn supervise_one_abandoned_maker_actor(
+    store: &mut SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    now: u64,
+    config: &MakerActorSupervisorConfig,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    let outcome = lez_maker_node::supervise_one_abandoned_maker_actor(store, owner, now, config);
+    assert_lock_released(store, outcome)
+}
 
 fn boottime_milliseconds() -> u64 {
     #[cfg(target_os = "linux")]
