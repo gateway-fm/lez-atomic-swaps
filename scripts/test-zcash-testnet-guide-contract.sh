@@ -14,7 +14,8 @@ fail() {
 
 required_literals=(
   "Zebra 7.0.0"
-  "v7.0.0"
+  "v7.1.0"
+  "zfnd/zebra:7.1.0"
   "77190ad9"
   "consensus.nextblock"
   "Self-hosted"
