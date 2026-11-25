@@ -26,17 +26,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             parameters.as_str(),
             None,
         ),
-        [_, transport, endpoint, method, parameters, flag, cookie_file]
-            if flag == "--cookie-file" =>
-        {
-            (
-                transport.as_str(),
-                endpoint.as_str(),
-                method.as_str(),
-                parameters.as_str(),
-                Some(Path::new(cookie_file.as_str())),
-            )
-        }
+        [
+            _,
+            transport,
+            endpoint,
+            method,
+            parameters,
+            flag,
+            cookie_file,
+        ] if flag == "--cookie-file" => (
+            transport.as_str(),
+            endpoint.as_str(),
+            method.as_str(),
+            parameters.as_str(),
+            Some(Path::new(cookie_file.as_str())),
+        ),
         _ => {
             return Err(
                 "usage: lez-runtime-healthcheck <tcp|uds> <endpoint> <method> <JSON params> [--cookie-file <path>]"
@@ -119,8 +123,7 @@ fn cookie_credential(path: &Path) -> Result<String, Box<dyn std::error::Error>> 
 }
 
 fn base64_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let bytes = [
@@ -185,7 +188,8 @@ mod tests {
         assert_eq!(base64_encode(b"__cookie__:a"), "X19jb29raWVfXzph");
         assert_eq!(base64_encode(b"u:pw"), "dTpwdw==");
         assert_eq!(base64_encode(b"u:p"), "dTpw");
-        let directory = std::env::temp_dir().join(format!("lez-healthcheck-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("lez-healthcheck-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("scratch directory");
         let cookie = directory.join(".cookie");
         std::fs::write(&cookie, b"__cookie__:secret\n").expect("cookie");
