@@ -1,0 +1,31 @@
+[03:27:01] === zec-taker-cli (stamp 179557362102)
+[03:27:01] preflight: indexer historical reads
+[03:27:02]   indexer serves historical reads at the tip (12437)
+[03:27:02] preflight: LEZ finality check waived by request
+[03:27:02]   Maker CLI published offer-e2e-zectt-179557362202 on its running Node (no corridor)
+[03:27:03]   lez-taker-cli swap take: exit 0 after 0 s
+[03:27:03]   Taker took offer-e2e-zectt-179557362202: swap zec-fe5149f4 (not_activated)
+[03:27:03]   take-time agreement: Maker funds e2a714c1bb146122…:0, Zcash anchor 760, refund height 776
+[03:27:03]   receipt: swap zec-fe5149f4b4d72f4ae8a5f3a80185c5f2e9bc098c2c3db27d2f817da244aae5de, actor config /var/lib/lez/taker/btc/swaps/e17952b7af1d7558a2d56508e458d9c9957cd432c2dad1ace90e1574b8b5c7e6/zec-actor/taker/actor-config.json
+[03:27:03]   [0 s] waiting for the Taker's zec-fe5149f4 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 759 | LEZ finalized 12426, tip 12435 (9 unfinalized) [heartbeat]
+[03:27:06]   [3 s] waiting for the Taker's zec-fe5149f4 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 759 | LEZ finalized 12426, tip 12435 (9 unfinalized) [heartbeat]
+[03:27:22]   [19 s] waiting for the Taker's zec-fe5149f4 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 759 | LEZ finalized 12447, tip 12451 (4 unfinalized) [heartbeat]
+[03:27:29]   zebra: mined 1 block(s) → height 760 (mempool had ['32bf3da5af2f'])
+[03:27:32]   [28 s] waiting for the Taker's zec-fe5149f4 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 760 | LEZ finalized 12460, tip 12467 (7 unfinalized) [heartbeat]
+[03:27:32]   zebra: mined 1 block(s) → height 761 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[03:27:32]   Maker's Zcash funding 32bf3da5af2ff1925ac396554e97d1d6096c9492688af5dc671483c663817315 is in zebra block 760
+[03:27:32]   lez-taker-cli swap claim: exit 0 after 0 s
+[03:27:32]   Taker claimed Zcash (replay=False)
+[03:27:32]   [0 s] waiting for the Taker's zec-fe5149f4 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 761 | LEZ finalized 12460, tip 12467 (7 unfinalized) [heartbeat]
+[03:27:32]   zebra: mined 1 block(s) → height 762 (mempool had ['4dd9adbdc4d7'])
+[03:27:39]   [6 s] waiting for the Taker's zec-fe5149f4 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 762 | LEZ finalized 12460, tip 12467 (7 unfinalized) [heartbeat]
+[03:27:42]   [9 s] waiting for the Taker's zec-fe5149f4 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 762 | LEZ finalized 12460, tip 12467 (7 unfinalized) [heartbeat]
+[03:27:42]   Taker's Zcash claim 4dd9adbdc4d755717cdcafd45e8de67e65f97efc3964ffbaa7b10100f73c84ed is in zebra block 762
+[03:27:42]   the Maker's actor submitted ['lez_followup_claim']
+[03:27:42]   [0 s] waiting for the Taker's zec-fe5149f4 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 12460, tip 12467 (7 unfinalized) [heartbeat]
+[03:27:42]   both Nodes report zec-fe5149f4 completed
+[03:27:42]   restarting the Maker Node after the completed swap (claim-journal revalidation)
+[03:27:49]   Maker restarted and still reports the swap completed
+[03:27:49]   zec-fe5149f4: the Taker re-planned its LEZ lock 0 times
+[03:27:49]   Maker lock attempt count 2 (projected the Taker's lock 1 time(s); 18 supervisor attempts over the swap); Taker LEZ re-plan count 0
+[03:27:49] === zec-taker-cli: passed in 48s

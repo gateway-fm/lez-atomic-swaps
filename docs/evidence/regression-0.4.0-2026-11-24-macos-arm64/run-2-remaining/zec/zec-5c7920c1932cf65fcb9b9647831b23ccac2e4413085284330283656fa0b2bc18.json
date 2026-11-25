@@ -1,0 +1,83 @@
+{
+  "corridor": "take-time-1795576364",
+  "direction": "TakerSellsLez",
+  "exported_at_unix_seconds": 1795576888,
+  "maker": {
+    "error": null,
+    "node_view": {
+      "actor_kind": "zcash",
+      "attempt_count": 246,
+      "lease_generation": 246,
+      "manual_action": {
+        "action": "refund",
+        "lease_generation": null,
+        "request_id": "e2e-zec-maker-refund-1795576364",
+        "requested_after_generation": 14,
+        "state": "completed"
+      },
+      "progress": {
+        "observation": {
+          "next_action": "complete",
+          "phase": "refunded",
+          "revision": 6,
+          "state": "active"
+        },
+        "observed_at": 1795576862,
+        "source_generation": 246
+      },
+      "schedule_state": "terminal",
+      "schema_version": 1,
+      "swap_id": "zec-5c7920c1932cf65fcb9b9647831b23ccac2e4413085284330283656fa0b2bc18"
+    }
+  },
+  "offer_id": "offer-e2e-zectt-1795576362",
+  "pair": "Zcash",
+  "profile": "deterministic-local-devnet-v8",
+  "schema_version": 1,
+  "swap_id": "zec-5c7920c1932cf65fcb9b9647831b23ccac2e4413085284330283656fa0b2bc18",
+  "taker": {
+    "actor_status": {
+      "lez_refund_at_ms": 1795576844000,
+      "next_action": "complete",
+      "phase": "refunded",
+      "required_margin_ms": 120000,
+      "revealing_claim_hold_attention_ms": 160000,
+      "revision": 4,
+      "role": "taker",
+      "schema_version": 1,
+      "state": "active"
+    },
+    "node_view": {
+      "actor_phase": "refunded",
+      "available_action": null,
+      "foreign_units": 100000000,
+      "lez_units": 50000,
+      "offer_id": "offer-e2e-zectt-1795576362",
+      "privacy_guidance": null,
+      "progress_generation": 4,
+      "route": {
+        "direction": "TakerSellsLez",
+        "pair": "Zcash"
+      },
+      "schema_version": 1,
+      "state": "refunded",
+      "swap_id": "zec-5c7920c1932cf65fcb9b9647831b23ccac2e4413085284330283656fa0b2bc18"
+    }
+  },
+  "zcash_refund_height": 882,
+  "zebra": {
+    "funding_output_spend": {
+      "height": 883,
+      "transaction_id": "ec5e35c651dd9e618ff83ba01a2ec3f3771b2d7f7e4d2f19dad438286d817e3b"
+    },
+    "maker_funding": {
+      "height": 866,
+      "transaction_id": "0c08920866985bb47072d233aca5aa2fe65787cc40b6cab31faeb0e0b3e53da7"
+    },
+    "provisioned_outpoint": {
+      "output_index": 0,
+      "transaction_id": "7a6ed9df8da4c74951192faf44e1e56ec27dfffdfec40047f20f9844f2cd5743"
+    },
+    "tip_height": 883
+  }
+}

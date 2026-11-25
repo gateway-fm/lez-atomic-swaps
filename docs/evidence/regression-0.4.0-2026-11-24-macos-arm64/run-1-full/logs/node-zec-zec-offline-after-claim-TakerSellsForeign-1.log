@@ -1,0 +1,32 @@
+[03:26:13] === zec-offline-after-claim (stamp 179557357302)
+[03:26:13] preflight: indexer historical reads
+[03:26:13]   indexer serves historical reads at the tip (12397)
+[03:26:13] preflight: LEZ finality check waived by request
+[03:26:14]   the Maker's key paid the Taker's: 90148688c4ce50eb…
+[03:26:14]   zebra: mined 1 block(s) → height 656 (the payment to the Taker's key)
+[03:26:14]   zebra: mined 100 block(s) → height 756 (the Taker's payment matures into a funder output)
+[03:26:14]   Maker CLI published offer-e2e-zectt-179557357302 on its running Node (no corridor)
+[03:26:17]   Taker took offer-e2e-zectt-179557357302: swap zec-0b3a83d9 (not_activated)
+[03:26:17]   take-time agreement: Taker funds 6391b1e040adec05…:0, Zcash anchor 757, refund height 765
+[03:26:17]   receipt: swap zec-0b3a83d9c839beb92f1af82f58ab2a33a1d3cf91eeb49a2d89c7573294c76400, actor config /var/lib/lez/taker/btc/swaps/69526d6eddfff33829c38ee9d3552e5cef89641219db5511bff72a69677168bd/zec-actor/taker/actor-config.json
+[03:26:17]   [0 s] waiting for the Taker's zec-0b3a83d9 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 756 | LEZ finalized 12395, tip 12402 (7 unfinalized) [heartbeat]
+[03:26:23]   [6 s] waiting for the Taker's zec-0b3a83d9 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 756 | LEZ finalized 12395, tip 12402 (7 unfinalized) [heartbeat]
+[03:26:27]   zebra: mined 1 block(s) → height 757 (mempool had ['585ecef9e0e4'])
+[03:26:33]   [16 s] waiting for the Taker's zec-0b3a83d9 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 757 | LEZ finalized 12413, tip 12419 (6 unfinalized) [heartbeat]
+[03:26:39]   [22 s] waiting for the Taker's zec-0b3a83d9 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 757 | LEZ finalized 12413, tip 12419 (6 unfinalized) [heartbeat]
+[03:26:39]   zebra: mined 1 block(s) → height 758 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[03:26:40]   cutting Logos Chat and Delivery at 'claim sent'
+[03:26:40]   the Taker's side (uid 4713) is refused: connect EACCES, list Delivery EACCES, 0 descriptors into it
+[03:26:40]   both Nodes report chat and delivery unavailable, and degraded; the Maker holds no Chat connection
+[03:26:40]   killing lez-l2-maker-node with SIGKILL
+[03:26:41]   lez-l2-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[03:26:48]   the Taker's side is still refused: connect EACCES, list Delivery EACCES
+[03:26:48]   [0 s] waiting for the Taker's zec-0b3a83d9 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 758 | LEZ finalized 12413, tip 12419 (6 unfinalized) [heartbeat]
+[03:26:48]   zebra: mined 1 block(s) → height 759 (mempool had ['53ea2e8473bd'])
+[03:26:54]   [6 s] waiting for the Taker's zec-0b3a83d9 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 759 | LEZ finalized 12426, tip 12435 (9 unfinalized) [heartbeat]
+[03:26:55]   [0 s] waiting for the Taker's zec-0b3a83d9 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 12426, tip 12435 (9 unfinalized) [heartbeat]
+[03:26:55]   both Nodes report zec-0b3a83d9 completed
+[03:26:55]   the cut held: 7 samples of the Maker's Chat socket, none with a connection; the Taker's side still refused
+[03:26:55]   the swap completed with both off-chain dependencies cut
+[03:26:55]   both dependencies are back and neither Node is degraded
+[03:26:55] === zec-offline-after-claim: passed in 42s

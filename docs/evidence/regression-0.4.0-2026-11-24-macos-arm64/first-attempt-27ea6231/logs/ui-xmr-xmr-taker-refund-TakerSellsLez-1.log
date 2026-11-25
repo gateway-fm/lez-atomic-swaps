@@ -1,0 +1,91 @@
+
+[20:55:34] === xmr-taker-refund (TakerSellsLez)
+
+[20:55:52] the Taker Node refunds by itself: false
+   [21:56:11]   the Maker's Monero wallet holds 4566.909 XMR unlocked
+
+[20:56:12] Maker desk publishes TakerSellsLez Monero offers from its form until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[20:56:24] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   d575d2b36c321e6641679f6118c9fcad2f4ac6b1f74d6b336d7a73dc1ab545ec awaiting_first_lock 0 -
+
+[20:57:30] The Taker Node locks its LEZ on its own and the Maker Node funds Monero; the Taker will not claim it
+
+[20:57:30] Taker desk shows d575d2b36c32 claimable (not pressed)
+
+[20:57:30] Maker desk shows d575d2b36c32 funded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  label: Your Monero claim is ready
+  [32m✓[0m taker: swap reaches claim_ready
+2 passed, 0 failed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached awaiting_taker_claim|claiming_lez|completed (awaiting_taker_claim|claiming_lez|completed)
+  [32m✓[0m maker: wait awaiting_taker_claim|claiming_lez|completed reached by the Node
+4 passed, 0 failed
+
+[20:59:30] waiting for the Taker Node to read d575d2b36c32 refund_available (the Nodes drive the swap themselves)
+
+[21:08:39] The Taker never claimed: the refund time (720 s after the take) has passed, the Maker can no longer claim and the Taker desk offers Refund
+
+[21:08:39] Taker desk shows d575d2b36c32 with its refund window open
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  label: Refund window open
+  [32m✓[0m taker: swap reaches refund_ready
+2 passed, 0 failed
+
+[21:08:43] waiting for the Taker Node to read d575d2b36c32 attention_required (the Nodes drive the swap themselves)
+
+[21:10:57] Halfway to the punish time (1000 s after the take) with no refund, the Taker desk warns that its refund window is closing
+
+[21:10:57] Taker desk warns that d575d2b36c32's refund window is closing
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  label: Refund window closing
+  [32m✓[0m taker: swap reaches attention_required
+2 passed, 0 failed
+
+[21:11:10] Maker desk shows d575d2b36c32 sweeping its Monero back
+
+[21:11:10] Taker desk: refund_lez on d575d2b36c32
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  » The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached
+  [32m✓[0m taker: perform refund_lez
+2 passed, 0 failed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Refund sweep: recovering your Monero
+  Node-owned swap: Maker reached recovering (recovering)
+  [32m✓[0m maker: wait recovering reached by the Node
+4 passed, 0 failed
+
+[21:12:36] The Taker's LEZ refund is final; the Maker Node has swept its Monero back, and both desks show the swap refunded
+
+[21:12:36] Maker desk shows d575d2b36c32 at refunded
+
+[21:12:36] Taker desk shows d575d2b36c32 at refunded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches refunded
+2 passed, 0 failed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunded (refunded)
+  [32m✓[0m maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[21:16:57] the Taker Node refunds by itself: true
+
+[21:16:57] evidence export skipped: a Monero swap's record is node-e2e.py's (node:xmr tests)
+
+[21:16:57] === xmr-taker-refund (TakerSellsLez): passed in 1283s

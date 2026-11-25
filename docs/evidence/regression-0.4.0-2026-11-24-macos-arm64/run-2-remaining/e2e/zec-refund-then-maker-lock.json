@@ -1,0 +1,44 @@
+{
+  "scenario": "zec-refund-then-maker-lock",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179557474702",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-427d6da9bae7fee39455578780f2132b81d6b720a0802fa18baecb32d06b10ba",
+  "corridor": "take-time-1795574748",
+  "profile": "deterministic-local-devnet-v8",
+  "zcash_funding": {
+    "transaction_id": "e902ad1bc67c972f6508789f3e967b672e4197688541f7b4e8d9681f2f3fc901",
+    "height": 977
+  },
+  "zcash_refund": {
+    "transaction_id": "7e155efbbda93e9f2dc6bc29e4e9fc5695bc79bc74cf9419698c773ba58c014d",
+    "height": 994
+  },
+  "zcash_refund_height": 993,
+  "maker_terminal_phase": "refunded",
+  "taker_terminal_state": "refunded",
+  "refund_admitted_before_maker_lock": true,
+  "result": "passed",
+  "seconds": 551
+}

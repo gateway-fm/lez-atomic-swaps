@@ -1,0 +1,31 @@
+[05:03:28] === zec-balance-refusal (stamp 1795579408)
+[05:03:28] preflight: indexer historical reads
+[05:03:28]   indexer serves historical reads at the tip (34)
+[05:03:28] preflight: LEZ finality check waived by request
+[05:03:28]   Taker LEZ account holds 0, below the 50000 lot
+[05:03:29]   Maker CLI published offer-e2e-zectt-1795579408 on its running Node (no corridor)
+[05:03:30]   Taker took offer-e2e-zectt-1795579408: swap zec-0477c4b4 (not_activated)
+[05:03:30]   take-time agreement: Maker funds a23322041cb559a5…:0, Zcash anchor 1106, refund height 1122
+[05:03:30]   receipt: swap zec-0477c4b488693206938fb198b86f376d6f3a4972d017dbceae0a650c584dfb79, actor config /var/lib/lez/taker/btc/swaps/ae31f339eafd010f0130d018b743aecf5f551f240521d6852f147b813ae1f3c3/zec-actor/taker/actor-config.json
+[05:03:30]   [0 s] waiting for the Taker's balance refusal on zec-0477c4b4: taker not_activated (reason None, class None) | maker leased | LEZ finalized 34, tip 41 (7 unfinalized) [heartbeat]
+[05:03:35]   [5 s] waiting for the Taker's balance refusal on zec-0477c4b4: taker awaiting_first_lock (reason None, class None) | maker offered | LEZ finalized 34, tip 41 (7 unfinalized) [heartbeat]
+[05:03:41]   [10 s] waiting for the Taker's balance refusal on zec-0477c4b4: taker attention_required (reason lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient) | maker offered | LEZ finalized 37, tip 58 (21 unfinalized) [heartbeat]
+[05:03:41]   taker zec-0477c4b488693206938fb198b86f376d6f3a4972d017dbceae0a650c584dfb79: attention_required (lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient), no action offered | maker: offered
+[05:04:26]   45 s later the row still reads the refusal (the supervisor backs off, nothing locked)
+[05:04:26]   funding the account: scripts/bootstrap-market.sh claims the deferred vault
+[05:04:40]   Taker LEZ account holds 2000000 (vault claim b22af8f8dd2e0f32…)
+[05:04:40]   [0 s] waiting for the Taker's zec-0477c4b4 to leave attention_required once funded: taker awaiting_first_lock (reason None, class None) | maker offered | LEZ finalized 103, tip 109 (6 unfinalized) [heartbeat]
+[05:04:40]   taker zec-0477c4b488693206938fb198b86f376d6f3a4972d017dbceae0a650c584dfb79: awaiting_first_lock 0 s after funding, no attention_reason (the supervisor's retry; no hand drive)
+[05:04:41]   [0 s] waiting for the Taker's zec-0477c4b4 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 1105 | LEZ finalized 103, tip 109 (6 unfinalized) [heartbeat]
+[05:04:50]   [9 s] waiting for the Taker's zec-0477c4b4 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 1105 | LEZ finalized 103, tip 109 (6 unfinalized) [heartbeat]
+[05:04:53]   zebra: mined 1 block(s) → height 1106 (mempool had ['a1c635be5114'])
+[05:05:00]   [19 s] waiting for the Taker's zec-0477c4b4 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1106 | LEZ finalized 103, tip 109 (6 unfinalized) [heartbeat]
+[05:05:00]   zebra: mined 1 block(s) → height 1107 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[05:05:00]   Taker claimed Zcash on zec-0477c4b4 (replay=False)
+[05:05:00]   [0 s] waiting for the Taker's zec-0477c4b4 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1107 | LEZ finalized 103, tip 109 (6 unfinalized) [heartbeat]
+[05:05:00]   zebra: mined 1 block(s) → height 1108 (mempool had ['1011129caeeb'])
+[05:05:04]   [3 s] waiting for the Taker's zec-0477c4b4 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 1108 | LEZ finalized 117, tip 125 (8 unfinalized) [heartbeat]
+[05:05:10]   [9 s] waiting for the Taker's zec-0477c4b4 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 1108 | LEZ finalized 117, tip 125 (8 unfinalized) [heartbeat]
+[05:05:10]   [0 s] waiting for the Taker's zec-0477c4b4 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 117, tip 125 (8 unfinalized) [heartbeat]
+[05:05:10]   both Nodes report zec-0477c4b4 completed
+[05:05:10] === zec-balance-refusal: passed in 102s

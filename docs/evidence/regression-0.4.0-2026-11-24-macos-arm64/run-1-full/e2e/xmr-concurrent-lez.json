@@ -1,0 +1,80 @@
+{
+  "scenario": "xmr-concurrent",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "1795568810",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swaps": [
+    "4b3505f5b4d477b763beb56ecf00f789285b03d360d9cc35d450db0ca19cd16f",
+    "a47f9aba459041a8b46e7046ea668921f0059709be2d5a97263d385ef1d3c17e"
+  ],
+  "offers": [
+    "offer-e2e-xmr-1795568810-a",
+    "offer-e2e-xmr-1795568810-b"
+  ],
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "lez_before": {
+    "maker": 2549994,
+    "taker": 1450006
+  },
+  "lez_deltas": {
+    "maker": 100000,
+    "taker": -100000
+  },
+  "maker_monero_fundings": [
+    {
+      "txid": "36e5b6e4c8b7cde249d576cf1ae04c0cbc88f6df1d5e626b1229315ad99e8aff",
+      "amount": 1000000000000,
+      "height": 361,
+      "destinations": [
+        "42X5X2nUyruGWPs1SaC8qnZTx73EQUaanerorPjGuGQqjQjx1FLSuH5VTwpqrt9SdH8VrD8nMY98JHSh855LtQJDNH8ZbvK"
+      ]
+    },
+    {
+      "txid": "c206e7d1305ef42a5860d3701355362fdaec22c5bf2ea6da8ceb22d675b657c8",
+      "amount": 1000000000000,
+      "height": 371,
+      "destinations": [
+        "44vYKNLbqcHTVN8kPeJaxEcVfDyJf75c6BWAYwZ1r8Z59ih6EBo1pvXUkL8RsyGwdUJbTU3QVuoz7jUaATjenfVKAjFLbuM"
+      ]
+    }
+  ],
+  "taker_monero_sweeps": [
+    {
+      "txid": "b0361d3a0dbca8be9cdce9c5e7d9af454e80ce310548ca4330ad8344dcfa9033",
+      "amount": 998191600000,
+      "height": 391
+    },
+    {
+      "txid": "8e45a5f8e05f95b04930d5fd403a7d3b50e55de67e0b7165f0b1e0f57c7fd2de",
+      "amount": 998191600000,
+      "height": 381
+    }
+  ],
+  "result": "passed",
+  "seconds": 251
+}

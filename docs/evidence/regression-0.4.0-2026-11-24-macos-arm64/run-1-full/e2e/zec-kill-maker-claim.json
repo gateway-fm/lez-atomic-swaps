@@ -1,0 +1,85 @@
+{
+  "scenario": "zec-kill-maker-claim",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179556724202",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "points": [
+    {
+      "swap_id": "zec-942bb68d55f96093afc62d128796c57f7b9e098425f75d43be5f845597c7730e",
+      "corridor": "take-time-1795567244",
+      "profile": "deterministic-local-devnet-v7",
+      "kill": {
+        "point": "claim preparation held",
+        "hook": "hold-claim-preparations",
+        "taker_state": "claim_in_progress",
+        "maker_phase": "claim_evidence_available",
+        "container": "lez-l2-maker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-25T00:41:18.610153051Z"
+      },
+      "maker_claim_operations": [
+        "lez_followup_claim"
+      ],
+      "lez_before": {
+        "maker": 2450000,
+        "taker": 1550001
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "zec-3386e35f865581596ba3ff84e6b4b770466f18b07b3d46a4e78bebf15a7601c0",
+      "corridor": "take-time-1795567316",
+      "profile": "deterministic-local-devnet-v7",
+      "kill": {
+        "point": "claim submission in flight",
+        "hook": "hold-claim-submissions",
+        "taker_state": "claim_in_progress",
+        "maker_phase": "claim_evidence_available",
+        "container": "lez-l2-maker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-25T00:42:33.672433086Z"
+      },
+      "maker_claim_operations": [
+        "lez_followup_claim"
+      ],
+      "lez_before": {
+        "maker": 2500000,
+        "taker": 1500001
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "outcome": "completed"
+    }
+  ],
+  "result": "passed",
+  "seconds": 157
+}

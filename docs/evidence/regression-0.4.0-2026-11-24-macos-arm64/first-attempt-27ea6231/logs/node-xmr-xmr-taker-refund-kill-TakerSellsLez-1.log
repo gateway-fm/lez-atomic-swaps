@@ -1,0 +1,69 @@
+[22:18:05] === xmr-taker-refund-kill (stamp 179555508502)
+[22:18:08] preflight: indexer historical reads
+[22:18:15]   indexer serves historical reads at the tip (2849)
+[22:18:15] preflight: LEZ finality check waived by request
+[22:18:44]   the Taker Node refunds by itself: false
+[22:19:21]   the Maker's Monero wallet holds 4918.499 XMR unlocked
+[22:20:42]   Maker CLI published offer-e2e-xmr-179555508502 on its running Node
+[22:21:13]   Taker took offer-e2e-xmr-179555508502: swap 16f1f5805a4e (not_activated)
+[22:21:13]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[22:21:13]   [0 s] waiting for the Taker's 16f1f5805a4e to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 2880, tip 2882 (2 unfinalized) [heartbeat]
+[22:21:25]   [12 s] waiting for the Taker's 16f1f5805a4e to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 2880, tip 2882 (2 unfinalized) [heartbeat]
+[22:21:59]   [46 s] waiting for the Taker's 16f1f5805a4e to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker offered | LEZ finalized 2886, tip 2890 (4 unfinalized) [heartbeat]
+[22:22:12]   [59 s] waiting for the Taker's 16f1f5805a4e to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 2893, tip 2896 (3 unfinalized) [heartbeat]
+[22:23:16]   [123 s] waiting for the Taker's 16f1f5805a4e to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 2902, tip 2905 (3 unfinalized) [heartbeat]
+[22:23:16]   the Maker's Monero is at depth; the Taker does not claim it
+[22:23:17]   [0 s] waiting for the Taker's 16f1f5805a4e to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 2902, tip 2905 (3 unfinalized) [heartbeat]
+[22:24:21]   [64 s] waiting for the Taker's 16f1f5805a4e to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 2909, tip 2911 (2 unfinalized) [heartbeat]
+[22:25:25]   [128 s] waiting for the Taker's 16f1f5805a4e to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 2918, tip 2921 (3 unfinalized) [heartbeat]
+[22:26:28]   [191 s] waiting for the Taker's 16f1f5805a4e to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 2923, tip ? [heartbeat]
+Traceback (most recent call last):
+  File "<checkout>/deploy/scripts/node-e2e.py", line 7358, in xmr_owner_refund_only
+    yield
+  File "<checkout>/deploy/scripts/node-e2e.py", line 7161, in scenario_xmr_taker_refund
+    return xmr_taker_refund_commanded(stamp, kill)
+  File "<checkout>/deploy/scripts/node-e2e.py", line 7170, in xmr_taker_refund_commanded
+    view = xmr_wait_until(swap_id, {"refund_available"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
+                          describe="(the agreement's refund time)")
+  File "<checkout>/deploy/scripts/node-e2e.py", line 6968, in xmr_wait_until
+    view = taker_view(swap_id)
+  File "<checkout>/deploy/scripts/node-e2e.py", line 804, in taker_view
+    raise Failure(f"taker taker_swap_monitor_v1 failed: {json.dumps(reply['error'])[:300]}")
+Failure: taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error response from daemon: container 9145693cae11e9e1d51cfb8ef9296f9d7b62fdbb7a5020f1af660621c8bf244b is not running"}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<checkout>/deploy/scripts/node-e2e.py", line 9350, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "<checkout>/deploy/scripts/node-e2e.py", line 9344, in main
+    if not run(name):
+           ~~~^^^^^^
+  File "<checkout>/deploy/scripts/node-e2e.py", line 9211, in run
+    summary.update({**SCENARIOS, **ZEC_SCENARIOS, **XMR_SCENARIOS}[name](stamp))
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "<checkout>/deploy/scripts/node-e2e.py", line 8910, in <lambda>
+    "xmr-taker-refund-kill": lambda stamp: scenario_xmr_taker_refund(stamp, kill=True),
+                                           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "<checkout>/deploy/scripts/node-e2e.py", line 7160, in scenario_xmr_taker_refund
+    with xmr_owner_refund_only():
+         ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/contextlib.py", line 224, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "<checkout>/deploy/scripts/node-e2e.py", line 7360, in xmr_owner_refund_only
+    xmr_set_automatic_refund(True)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "<checkout>/deploy/scripts/node-e2e.py", line 7345, in xmr_set_automatic_refund
+    node_run("taker", "sh", "-c", 'printf "%s\\n" "$2" > "$1.tmp" && mv "$1.tmp" "$1"', "switch",
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+             f"{XMR_NODE_STATE['taker']}/xmr-automatic-refund", word)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<checkout>/deploy/scripts/node-e2e.py", line 467, in node_run
+    subprocess.run(node_command(role, list(argv)), check=True, capture_output=True)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/subprocess.py", line 692, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command ['docker', 'exec', 'lez-l2-taker-node', 'sh', '-c', 'printf "%s\\n" "$2" > "$1.tmp" && mv "$1.tmp" "$1"', 'switch', '/var/lib/lez/taker/xmr-automatic-refund', 'true'] returned non-zero exit status 1.

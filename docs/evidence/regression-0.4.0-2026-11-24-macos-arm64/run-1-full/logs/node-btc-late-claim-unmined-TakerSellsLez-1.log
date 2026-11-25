@@ -1,0 +1,29 @@
+[01:43:24] === late-claim-unmined (stamp 179556740402)
+[01:43:24] preflight: indexer historical reads
+[01:43:24]   indexer serves historical reads at the tip (7661)
+[01:43:24] preflight: LEZ finality check waived by request
+[01:43:25]   Maker published offer-e2e-179556740402
+[01:43:26]   Taker took offer-e2e-179556740402: swap 0f719b3973f5 (not_activated)
+[01:43:26]   Taker locked lez: 5314d04e9b03 (replay=False)
+[01:43:26]   [0 s] waiting for the Taker's 0f719b3973f5 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 7656, tip 7660 (4 unfinalized) [heartbeat]
+[01:43:33]   [6 s] waiting for the Taker's 0f719b3973f5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 7656, tip 7660 (4 unfinalized) [heartbeat]
+[01:43:39]   [12 s] waiting for the Taker's 0f719b3973f5 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 7673, tip 7676 (3 unfinalized) [heartbeat]
+[01:43:39]   stopping the miner so the Taker's Bitcoin claim waits in the mempool
+[01:43:43]   stopping the Taker Node
+[01:43:44]   the claim a63bd7ab973f waits in the mempool with the Taker down; mining empty blocks every 2s until the window closes (1795567825) and the Maker's refund opens at height 6158
+[01:43:44]   [0 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 5926, claim a63bd7ab973f in the mempool | LEZ finalized 7673, tip 7676 (3 unfinalized) [heartbeat]
+[01:44:46]   [61 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 5953, claim a63bd7ab973f in the mempool | LEZ finalized 7720, tip 7727 (7 unfinalized) [heartbeat]
+[01:45:48]   [123 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 5980, claim a63bd7ab973f in the mempool | LEZ finalized 7771, tip 7778 (7 unfinalized) [heartbeat]
+[01:46:49]   [185 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 6007, claim a63bd7ab973f in the mempool | LEZ finalized 7823, tip 7829 (6 unfinalized) [heartbeat]
+[01:47:49]   [245 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 6033, claim a63bd7ab973f in the mempool | LEZ finalized 7855, tip 7863 (8 unfinalized) [heartbeat]
+[01:48:50]   [306 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 6059, claim a63bd7ab973f in the mempool | LEZ finalized 7906, tip 7913 (7 unfinalized) [heartbeat]
+[01:49:52]   [368 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 6086, claim a63bd7ab973f in the mempool | LEZ finalized 7959, tip 7964 (5 unfinalized) [heartbeat]
+[01:50:54]   [430 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 6113, claim a63bd7ab973f in the mempool | LEZ finalized 8013, tip 8015 (2 unfinalized) [heartbeat]
+[01:51:54]   [490 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 6139, claim a63bd7ab973f in the mempool | LEZ finalized 8055, tip 8065 (10 unfinalized) [heartbeat]
+[01:52:38]   the refund path is open at height 6158; the claim was never mined; the Maker is at both_legs_locked
+[01:52:38]   the Maker's refund asked for: {"schema_version": 1, "swap_id": "0f719b3973f596082df113326faea486f33efcac9358ab6e622254f4d42c7b3b", "action": "refund", "requested_after_generation": 277, "was_replay": false}
+[01:52:42]   [0 s] waiting for both Nodes to settle 0f719b3973f5: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 8095, tip 8099 (4 unfinalized) [heartbeat]
+[01:52:53]   the held claim a63bd7ab973f was mined after all, at height 6159
+[01:52:53]   balances: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[01:52:53]   settled completed: both Nodes and both chains agree
+[01:52:53] === late-claim-unmined: passed in 569s

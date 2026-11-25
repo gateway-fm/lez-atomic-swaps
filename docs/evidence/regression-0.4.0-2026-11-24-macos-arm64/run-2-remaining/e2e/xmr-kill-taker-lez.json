@@ -1,0 +1,319 @@
+{
+  "scenario": "xmr-kill-taker",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "1795559686",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "role": "taker",
+  "points": [
+    {
+      "swap_id": "84569e1b4455c4b85138351ec42ead6035d3170914e17ae1012d0270ff091bdb",
+      "kill": {
+        "point": "after the take",
+        "taker_state": "awaiting_first_lock",
+        "taker_actor_phase": "lez_locking",
+        "maker_phase": "leased",
+        "container": "lez-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-24T22:35:23.732179513Z"
+      },
+      "outcome": "completed",
+      "lez_before": {
+        "maker": 2050000,
+        "taker": 1950000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "lez_transactions": {
+        "maker": 0,
+        "taker": 3
+      },
+      "maker_funding": [
+        {
+          "txid": "2062a7281a99db56172d6d4a2ca5edaf0f00d8422d16cb7b13c741bcfdee0d0c",
+          "amount": 1000000000000,
+          "height": 111,
+          "destinations": [
+            "47J1sn1RWmCLHo3Vp7kVUNNkexfsycTEB5ae8ebyqzqa1UXCbz1Cq6PTbogDRTcBKeVKqYBzE6jJsj3XGtUHhfKAB4MEAjr"
+          ]
+        }
+      ],
+      "taker_sweep": {
+        "txid": "a4dd7a26256b0f7d4b804352f207f6e1ab13aca20bf8e97d27efe77ee9333558",
+        "amount": 998191600000,
+        "height": 121
+      }
+    },
+    {
+      "swap_id": "519451489b3528b2cedcbbd77ea050210d364d54a03e017fa20eb6a614fdf948",
+      "kill": {
+        "point": "lock in flight",
+        "taker_state": "awaiting_first_lock",
+        "taker_actor_phase": "lez_locking",
+        "maker_phase": "offered",
+        "container": "lez-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-24T22:38:37.503375505Z"
+      },
+      "outcome": "completed",
+      "lez_before": {
+        "maker": 2100000,
+        "taker": 1900000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "lez_transactions": {
+        "maker": 0,
+        "taker": 3
+      },
+      "maker_funding": [
+        {
+          "txid": "8a589c655926f45858b515339ba687c67cd4286352082fda2c13c6ca482e94eb",
+          "amount": 1000000000000,
+          "height": 131,
+          "destinations": [
+            "43XcPJXEUehHvJ5ZsgBni6e2w63HAekpnJVrRxStrQBxXJBBcR7oKrn42qruAwVCD5UCTQaMANTfSauJH3pjwGDJMutMBFx"
+          ]
+        }
+      ],
+      "taker_sweep": {
+        "txid": "257cc7f79aa7cfa0eb02a88ec3dcf72d1e0694c657b9e79516155be62c9d25a6",
+        "amount": 998191600000,
+        "height": 141
+      }
+    },
+    {
+      "swap_id": "a22e37908b6f24cc6230a45d8753d6ae1f2d621f31ca82dc3cc4a3b1d99c5ff5",
+      "kill": {
+        "point": "locked",
+        "taker_state": "awaiting_second_lock",
+        "taker_actor_phase": "taker_lock_confirmed",
+        "maker_phase": "taker_lock_confirmed",
+        "container": "lez-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-24T22:42:32.428327169Z"
+      },
+      "outcome": "completed",
+      "lez_before": {
+        "maker": 2150000,
+        "taker": 1850000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "lez_transactions": {
+        "maker": 0,
+        "taker": 3
+      },
+      "maker_funding": [
+        {
+          "txid": "186b7ef3c2db7d8fd5781932f6312c737d2275a41619927d6fe9ce99cfdcd043",
+          "amount": 1000000000000,
+          "height": 151,
+          "destinations": [
+            "449KK2sccABjaWuA3obcevfzV7qJqDLKqjHQHUZESqWLBLf2wdCnXgsCKeTq6AaeASSDchCFCZKnVZ5CPHg1LsdmMRNADLW"
+          ]
+        }
+      ],
+      "taker_sweep": {
+        "txid": "066e549c528d75004217640f71278e576e93fcbc63fd7466889ad4c50cb199fd",
+        "amount": 998191600000,
+        "height": 161
+      }
+    },
+    {
+      "swap_id": "e93fa60d7b92c624b40731bff9670f465c8fc0613270b74201de636f42731287",
+      "kill": {
+        "point": "Monero verified",
+        "taker_state": "claim_available",
+        "taker_actor_phase": "both_legs_locked",
+        "maker_phase": "taker_lock_confirmed",
+        "container": "lez-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-24T22:45:53.819548638Z"
+      },
+      "outcome": "completed",
+      "lez_before": {
+        "maker": 2200000,
+        "taker": 1800000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "lez_transactions": {
+        "maker": 0,
+        "taker": 3
+      },
+      "maker_funding": [
+        {
+          "txid": "9b44d1323e9bd43ec8f0bd2986f6554f1ec04895b191b1946bced3c4e30be1b8",
+          "amount": 1000000000000,
+          "height": 171,
+          "destinations": [
+            "49Q5x2DobWuheuzdpsLECwMn8nBG3NN2z9wgqazcTcvY1wHNg5Zwa9SCd43SezQBFsdi88SjXWLq8fdQPtDuZpCFG64Zh5X"
+          ]
+        }
+      ],
+      "taker_sweep": {
+        "txid": "eb0bb803cb462f780ae31692e3df7e0119e40eb6e14e9bc61d492d3280e4c6b3",
+        "amount": 998191600000,
+        "height": 181
+      }
+    },
+    {
+      "swap_id": "21b601ba250d910cbab22ed60845488fd21ae66702cf3e37faf1889d1a9db171",
+      "kill": {
+        "point": "claim authorised",
+        "taker_state": "claim_in_progress",
+        "taker_actor_phase": "claim_authorizing",
+        "maker_phase": "both_legs_locked",
+        "container": "lez-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-24T22:49:27.548218583Z"
+      },
+      "outcome": "completed",
+      "lez_before": {
+        "maker": 2250000,
+        "taker": 1750000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "lez_transactions": {
+        "maker": 0,
+        "taker": 3
+      },
+      "maker_funding": [
+        {
+          "txid": "7123b1db1b161cf19ad11c163c988d7ad4927a3f86686a8318e9aeead3fef3a8",
+          "amount": 1000000000000,
+          "height": 191,
+          "destinations": [
+            "45ufsRsMUMyGb87EzqnmvDWU2myWA5CGy7VkujAqMcEgZz43JN8cChxgnCMJ5LcxsRU9qS55MUrv3H8QxmfafZeiShztNus"
+          ]
+        }
+      ],
+      "taker_sweep": {
+        "txid": "9b1e930a5f0e72bf27dcbd837d2116f43b8b9efc2faf5fc22a3c322f1baffebd",
+        "amount": 998191600000,
+        "height": 201
+      }
+    },
+    {
+      "swap_id": "0fd6a6c6ce4b1468a88bae7d8588b3b0c378f25ff16f8abf934aa93c3ba71cd0",
+      "kill": {
+        "point": "waiting for the Maker's claim",
+        "taker_state": "claim_in_progress",
+        "taker_actor_phase": "awaiting_maker_claim",
+        "maker_phase": "claim_evidence_available",
+        "container": "lez-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-24T22:53:29.355973084Z"
+      },
+      "outcome": "completed",
+      "lez_before": {
+        "maker": 2300000,
+        "taker": 1700000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "lez_transactions": {
+        "maker": 0,
+        "taker": 3
+      },
+      "maker_funding": [
+        {
+          "txid": "35747971db91eebdce5661cd3237d93abe82fb1ac47ce2bce0267cf2e8664483",
+          "amount": 1000000000000,
+          "height": 211,
+          "destinations": [
+            "482cxNHuvEx9Z5DHjPyVv4JWcn7DMr64i7LBefVhTTupdkGxqog6G4JgEDrfqCA5gYLR9ysY5h2LGiyeKfCCv9yVGXKYpRe"
+          ]
+        }
+      ],
+      "taker_sweep": {
+        "txid": "ec0bbbb9dbe6bb22699912edabeb73d66b138921b1fa6cd1f0f3df646fc78041",
+        "amount": 998191600000,
+        "height": 221
+      }
+    },
+    {
+      "swap_id": "069c94370154b26211ef340c6fcbe2afe580c073357d1b5a6734e04badf3fdb3",
+      "kill": {
+        "point": "sweeping",
+        "taker_state": "claim_in_progress",
+        "taker_actor_phase": "sweeping",
+        "maker_phase": "completed",
+        "container": "lez-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-24T22:56:59.322418834Z"
+      },
+      "outcome": "completed",
+      "lez_before": {
+        "maker": 2350000,
+        "taker": 1650000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "lez_transactions": {
+        "maker": 0,
+        "taker": 3
+      },
+      "maker_funding": [
+        {
+          "txid": "2a56fa9f8cb59c5442e5e982fd0fbc020473ad3a2558fdbde34e77c8f049f520",
+          "amount": 1000000000000,
+          "height": 231,
+          "destinations": [
+            "45LzaUx39pMDgyG2kezmCEW2UUF4Rpc62RKYQTiFBcnY1JFaNwEHXPx9d8cvwAKNyj2QXZ9LwhDeXhsYpXppSEADAb5h7RG"
+          ]
+        }
+      ],
+      "taker_sweep": {
+        "txid": "e4657c3a8f1bc663330d2c6186e0270fcb2fa0c3ff6b11b4d5d34a619f253172",
+        "amount": 998191600000,
+        "height": 241
+      }
+    }
+  ],
+  "result": "passed",
+  "seconds": 1393
+}

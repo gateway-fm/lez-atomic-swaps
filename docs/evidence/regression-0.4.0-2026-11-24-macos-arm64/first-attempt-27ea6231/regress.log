@@ -1,0 +1,208 @@
+[18:34:22] regression full: 178 tests at 27ea6231 (tree dirty:        0), results in runtime/regress/20261124T183422Z
+[18:34:22] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[18:34:25] lanes: 2 (lane 1 is the stack; lanes 2..2: scripts/lanes.sh up)
+[18:36:31] group fast
+[18:36:31]     [lane 1] node:xmr:xmr-unfunded-punish:TakerSellsLez (try 1) starts: LEZ finalized 218, tip 220
+[18:36:32]     [lane 2] node:xmr:xmr-kill-maker:TakerSellsLez (try 1) starts: LEZ finalized 218, tip 221
+[19:14:20] === node:xmr:xmr-unfunded-punish:TakerSellsLez (try 1, lane 1): PASSED in 2251 s; LEZ finalized 1175, tip 1179
+[19:14:20]     [lane 1] node:xmr:xmr-taker-cheats:TakerSellsLez (try 1) starts: LEZ finalized 1175, tip 1179
+[19:18:29] === node:xmr:xmr-kill-maker:TakerSellsLez (try 1, lane 2): PASSED in 2495 s; LEZ finalized 1232, tip 1234
+[19:18:29]     [lane 2] node:xmr:xmr-kill-taker:TakerSellsLez (try 1) starts: LEZ finalized 1232, tip 1234
+[19:44:19] === node:xmr:xmr-taker-cheats:TakerSellsLez (try 1, lane 1): PASSED in 1775 s; LEZ finalized 1788, tip 1791
+[19:44:19]     [lane 1] node:btc:kill-maker:TakerSellsLez (try 1) starts: LEZ finalized 1788, tip 1791
+[20:05:01] === node:btc:kill-maker:TakerSellsLez (try 1, lane 1): PASSED in 1232 s; LEZ finalized 2135, tip 2139
+[20:05:01]     [lane 1] node:btc:kill-taker:TakerSellsLez (try 1) starts: LEZ finalized 2135, tip 2139
+[20:08:48] === node:xmr:xmr-kill-taker:TakerSellsLez (try 1, lane 2): PASSED in 2998 s; LEZ finalized 2177, tip ?
+[20:08:58]     [lane 2] node:xmr:xmr-maker-early-punish:TakerSellsLez (try 1) starts: LEZ finalized 2177, tip ?
+[20:29:31] === node:xmr:xmr-maker-early-punish:TakerSellsLez (try 1, lane 2): FAILED in 1185 s; LEZ finalized 2418, tip 2422
+      [21:14:38]         "error_code": null,
+      [21:14:38]         "error_message": null
+      [21:29:05] FAILED: the escrow probe (xmr-punish, after the Taker's refund, past P) gave no evidence: exit 1
+[20:29:32]     [lane 2] node:xmr:xmr-punish-replans:TakerSellsLez (try 1) starts: LEZ finalized 2418, tip 2422
+[20:34:59] === node:btc:kill-taker:TakerSellsLez (try 1, lane 1): PASSED in 1777 s; LEZ finalized 2449, tip 2452
+[20:35:09]     [lane 1] node:xmr:xmr-punish:TakerSellsLez (try 1) starts: LEZ finalized 2449, tip ?
+[20:55:25] === node:xmr:xmr-punish-replans:TakerSellsLez (try 1, lane 2): PASSED in 1528 s; LEZ finalized 2667, tip 2670
+[20:55:25]     [lane 2] ui:xmr:xmr-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 2667, tip 2670
+[20:58:37] === node:xmr:xmr-punish:TakerSellsLez (try 1, lane 1): PASSED in 1367 s; LEZ finalized 2707, tip 2711
+[20:58:37]     [lane 1] node:xmr:xmr-custody-credit-refund:TakerSellsLez (try 1) starts: LEZ finalized 2707, tip 2711
+[21:08:06] === node:xmr:xmr-custody-credit-refund:TakerSellsLez (try 1, lane 1): FAILED in 556 s; LEZ finalized 2774, tip 2778
+      [22:07:28] FAILED: taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Cannot connect to the Docker daemon at unix://<home>/.docker/run/docker.sock. Is the docker daemon running?"}
+[21:08:06]     [lane 1] node:xmr:xmr-taker-clock-ahead:TakerSellsLez (try 1) starts: LEZ finalized 2774, tip 2778
+[21:17:08] === ui:xmr:xmr-taker-refund:TakerSellsLez (try 1, lane 2): PASSED in 1283 s; LEZ finalized 2840, tip 2844
+[21:17:09]     [lane 2] node:xmr:xmr-taker-refund-kill:TakerSellsLez (try 1) starts: LEZ finalized 2840, tip 2844
+[21:26:33]     finality has stood at 2923 for 60 s (sequencer tip ): the chain is frozen, every lane's test is void
+[21:26:54] === node:xmr:xmr-taker-refund-kill:TakerSellsLez (try 1, lane 2): FROZEN in 0 s; LEZ finalized 2923, tip ?
+[21:26:54] === node:xmr:xmr-taker-clock-ahead:TakerSellsLez (try 1, lane 1): FROZEN in 0 s; LEZ finalized 2923, tip ?
+[21:26:54]     new LEZ chain (1) 
+[21:28:42]     up.sh --fresh-lez failed (logs/chain-1.log): 
+[21:28:42] no LEZ chain could be started; stopping
+[21:28:42] regression full: 9 of 178 passed in 174 min, 1 new chains, 0 profile switches,        2 frozen tries
+[21:28:42]   not passed: node:xmr:xmr-maker-early-punish:TakerSellsLez
+[21:28:42]   not passed: node:xmr:xmr-custody-credit-refund:TakerSellsLez
+[21:28:42]   not passed: node:xmr:xmr-taker-refund-kill:TakerSellsLez
+[21:28:42]   not passed: node:xmr:xmr-taker-clock-ahead:TakerSellsLez
+[21:28:42]   not passed: node:xmr:xmr-taker-refund:TakerSellsLez
+[21:28:42]   not passed: node:xmr:xmr-maker-never-funds:TakerSellsLez
+[21:28:42]   not passed: node:xmr:xmr-maker-claim-without-authorization:TakerSellsLez
+[21:28:42]   not passed: node:btc:kill-maker:TakerSellsForeign
+[21:28:42]   not passed: node:btc:kill-taker:TakerSellsForeign
+[21:28:42]   not passed: node:zec:zec-kill-maker-claim:TakerSellsLez
+[21:28:42]   not passed: node:btc:late-claim-unmined:TakerSellsLez
+[21:28:42]   not passed: node:xmr:xmr-monerod-down:TakerSellsLez
+[21:28:42]   not passed: node:zec:zec-custody-credit-refund:TakerSellsLez
+[21:28:42]   not passed: node:zec:zec-refund-then-maker-lock:TakerSellsLez
+[21:28:42]   not passed: node:zec:zec-taker-refund:TakerSellsLez
+[21:28:42]   not passed: node:zec:zec-taker-refund-offline:TakerSellsLez
+[21:28:42]   not passed: ui:zec:zec-taker-refund:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-maker-early-claim:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-maker-refund:TakerSellsLez
+[21:28:43]   not passed: ui:zec:zec-maker-refund:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-activate-after-expiry:TakerSellsLez
+[21:28:43]   not passed: node:btc:late-claim-unmined:TakerSellsForeign
+[21:28:43]   not passed: node:btc:taker-cli-refund:TakerSellsForeign
+[21:28:43]   not passed: node:xmr:xmr-wallet-restart:TakerSellsLez
+[21:28:43]   not passed: node:btc:btc-custody-credit-refund:TakerSellsLez
+[21:28:43]   not passed: node:btc:taker-refund-offline:TakerSellsLez
+[21:28:43]   not passed: node:xmr:xmr-concurrent:TakerSellsLez
+[21:28:43]   not passed: node:btc:taker-refund:TakerSellsLez
+[21:28:43]   not passed: ui:zec:zec-maker-refund:TakerSellsForeign
+[21:28:43]   not passed: node:btc:maker-refund:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-maker-refund:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:zec-stale-window:TakerSellsForeign
+[21:28:43]   not passed: ui:btc:taker-refund:TakerSellsLez
+[21:28:43]   not passed: ui:btc:taker-refund:TakerSellsForeign
+[21:28:43]   not passed: node:btc:refund-then-maker-lock:TakerSellsLez
+[21:28:43]   not passed: ui:btc:maker-refund:TakerSellsLez
+[21:28:43]   not passed: ui:btc:maker-refund:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-kill-maker:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-refund-then-maker-lock:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-taker-refund-offline:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-kill-taker:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:zec-taker-refund:TakerSellsForeign
+[21:28:43]   not passed: ui:xmr:xmr-concurrent:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-taker-refund:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-kill-maker:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-bitcoin-down:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-bitcoin-down:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-kill-taker:TakerSellsLez
+[21:28:43]   not passed: node:xmr:xmr-outage-before-take:TakerSellsLez
+[21:28:43]   not passed: node:xmr:xmr-happy:TakerSellsLez
+[21:28:43]   not passed: node:xmr:xmr-cut-after-lock:TakerSellsLez
+[21:28:43]   not passed: node:xmr:xmr-custody-credit:TakerSellsLez
+[21:28:43]   not passed: node:xmr:mixed-three-pair:TakerSellsLez
+[21:28:43]   not passed: node:xmr:xmr-shared-address-dust:TakerSellsLez
+[21:28:43]   not passed: ui:xmr:xmr-happy:TakerSellsLez
+[21:28:43]   not passed: node:btc:taker-refund:TakerSellsForeign
+[21:28:43]   not passed: node:btc:taker-refund-offline:TakerSellsForeign
+[21:28:43]   not passed: node:btc:early-lock:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-early-lock:TakerSellsForeign
+[21:28:43]   not passed: node:btc:maker-refund:TakerSellsForeign
+[21:28:43]   not passed: node:btc:refund-then-maker-lock:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-early-lock:TakerSellsLez
+[21:28:43]   not passed: node:btc:early-lock:TakerSellsLez
+[21:28:43]   not passed: ui:btc:logos-happy:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-slow-funding:TakerSellsLez
+[21:28:43]   not passed: node:btc:zebra-down:TakerSellsLez
+[21:28:43]   not passed: node:btc:zebra-down:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:zec-concurrent-staggered:TakerSellsLez
+[21:28:43]   not passed: ui:btc:concurrent:TakerSellsForeign
+[21:28:43]   not passed: node:btc:concurrent-kill-maker:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:zec-node-offline:TakerSellsLez
+[21:28:43]   not passed: ui:zec:logos-happy:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-survivor:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:zec-node-offline:TakerSellsForeign
+[21:28:43]   not passed: ui:btc:survivor:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-regenerated-catalog:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:logos-happy:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-regenerated-catalog:TakerSellsLez
+[21:28:43]   not passed: ui:zec:zec-concurrent:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-concurrent-kill-maker:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-concurrent-kill-maker:TakerSellsForeign
+[21:28:43]   not passed: ui:btc:survivor:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-corrupt-state:TakerSellsForeign
+[21:28:43]   not passed: node:btc:concurrent:TakerSellsForeign
+[21:28:43]   not passed: node:btc:maker-price-module:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-concurrent:TakerSellsLez
+[21:28:43]   not passed: ui:btc:happy:TakerSellsForeign
+[21:28:43]   not passed: ui:btc:happy:TakerSellsLez
+[21:28:43]   not passed: ui:zec:zec-restart-maker:TakerSellsLez
+[21:28:43]   not passed: ui:btc:restart-maker:TakerSellsForeign
+[21:28:43]   not passed: node:btc:concurrent-kill-maker:TakerSellsLez
+[21:28:43]   not passed: ui:zec:zec-concurrent:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:zec-survivor:TakerSellsForeign
+[21:28:43]   not passed: node:btc:late-claim-confirms:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:zec-survivor:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-custody-credit:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-corrupt-state:TakerSellsLez
+[21:28:43]   not passed: ui:zec:zec-desk-offer:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-restart-taker:TakerSellsLez
+[21:28:43]   not passed: node:btc:offline-after-claim:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-concurrent:TakerSellsForeign
+[21:28:43]   not passed: node:btc:happy:TakerSellsForeign
+[21:28:43]   not passed: node:btc:mixed-pair:TakerSellsForeign
+[21:28:43]   not passed: node:btc:offline-after-second-lock:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-claim-collision:TakerSellsForeign
+[21:28:43]   not passed: node:btc:outage-before-take:TakerSellsForeign
+[21:28:43]   not passed: ui:btc:concurrent:TakerSellsLez
+[21:28:43]   not passed: ui:btc:restart-taker:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-survivor:TakerSellsLez
+[21:28:43]   not passed: node:btc:mixed-pair:TakerSellsLez
+[21:28:43]   not passed: ui:btc:restart-taker:TakerSellsLez
+[21:28:43]   not passed: ui:zec:zec-happy:TakerSellsLez
+[21:28:43]   not passed: node:btc:replay:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-tampered-catalog:TakerSellsForeign
+[21:28:43]   not passed: node:btc:survivor:TakerSellsForeign
+[21:28:43]   not passed: node:btc:offline-after-lock:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-outage-before-take:TakerSellsLez
+[21:28:43]   not passed: node:btc:concurrent:TakerSellsLez
+[21:28:43]   not passed: node:btc:taker-cli:TakerSellsForeign
+[21:28:43]   not passed: ui:zec:zec-restart-taker:TakerSellsLez
+[21:28:43]   not passed: node:btc:regenerated-config:TakerSellsLez
+[21:28:43]   not passed: node:zec:zec-restart-maker:TakerSellsForeign
+[21:28:43]   not passed: node:btc:maker-cli:TakerSellsForeign
+[21:28:43]   not passed: node:zec:zec-restart-maker:TakerSellsLez
+[21:28:44]   not passed: ui:btc:restart-maker:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-wrong-inputs:TakerSellsForeign
+[21:28:44]   not passed: node:btc:offline-after-claim:TakerSellsForeign
+[21:28:44]   not passed: node:zec:zec-custody-credit:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-offline-after-claim:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-restart-taker:TakerSellsForeign
+[21:28:44]   not passed: node:btc:btc-custody-credit:TakerSellsForeign
+[21:28:44]   not passed: ui:zec:zec-desk-offer:TakerSellsForeign
+[21:28:44]   not passed: node:btc:btc-custody-credit:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-replay:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-offline-after-second-lock:TakerSellsLez
+[21:28:44]   not passed: node:btc:offline-after-second-lock:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-offline-after-second-lock:TakerSellsForeign
+[21:28:44]   not passed: ui:zec:zec-restart-maker:TakerSellsForeign
+[21:28:44]   not passed: node:btc:wrong-inputs:TakerSellsForeign
+[21:28:44]   not passed: node:btc:restart-maker:TakerSellsForeign
+[21:28:44]   not passed: node:zec:zec-dynamic-happy:TakerSellsLez
+[21:28:44]   not passed: node:btc:late-claim-confirms:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-offline-after-claim:TakerSellsForeign
+[21:28:44]   not passed: ui:zec:zec-restart-taker:TakerSellsForeign
+[21:28:44]   not passed: node:zec:zec-taker-cli:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-happy:TakerSellsForeign
+[21:28:44]   not passed: node:zec:zec-dynamic-happy:TakerSellsForeign
+[21:28:44]   not passed: ui:zec:zec-happy:TakerSellsForeign
+[21:28:44]   not passed: node:zec:zec-wrong-inputs:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-offline-after-lock:TakerSellsForeign
+[21:28:44]   not passed: node:btc:regenerated-config:TakerSellsForeign
+[21:28:44]   not passed: node:zec:zec-happy:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-offline-after-lock:TakerSellsLez
+[21:28:44]   not passed: node:btc:happy:TakerSellsLez
+[21:28:44]   not passed: node:btc:replay:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-tampered-catalog:TakerSellsLez
+[21:28:44]   not passed: node:btc:restart-taker:TakerSellsLez
+[21:28:44]   not passed: node:btc:restart-taker:TakerSellsForeign
+[21:28:44]   not passed: node:btc:offline-after-lock:TakerSellsLez
+[21:28:44]   not passed: node:btc:restart-maker:TakerSellsLez
+[21:28:44]   not passed: node:btc:survivor:TakerSellsLez
+[21:28:44]   not passed: ui:btc:node-offline:TakerSellsForeign
+[21:28:44]   not passed: node:btc:wrong-inputs:TakerSellsLez
+[21:28:44]   not passed: ui:btc:node-offline:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-replay:TakerSellsForeign
+[21:28:44]   not passed: node:btc:tampered-config:TakerSellsForeign
+[21:28:44]   not passed: node:btc:tampered-config:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-balance-refusal:TakerSellsLez
+[21:28:44]   not passed: node:zec:zec-balance-refusal:TakerSellsForeign

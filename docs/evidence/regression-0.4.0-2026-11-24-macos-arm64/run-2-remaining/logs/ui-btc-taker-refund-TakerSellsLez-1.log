@@ -1,0 +1,48 @@
+
+[03:43:14] === taker-refund (TakerSellsLez)
+
+[03:43:14] Maker desk publishes TakerSellsLez offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[03:43:19] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   fbb4bef5ce1834a73e03a6de4f0dee075a612636b0b26f325b06185dfc1da9db awaiting_first_lock 0 -
+
+[03:43:22] The Maker's Basecamp, with its Node, is stopped before it can lock; the Taker locks anyway and must recover its funds later
+
+[03:43:23] Taker desk: lock_lez on fbb4bef5ce18
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[03:43:24] The Maker's lock cutoff (100 s after the take) passes with no Maker lock; the desk then offers Refund
+
+[03:43:24] Taker desk: refund_lez on fbb4bef5ce18
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  » The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached
+  [32m✓[0m taker: perform refund_lez
+2 passed, 0 failed
+
+[03:45:01] The Maker's Basecamp is started again; its Node reconciles the refunded swap
+
+[03:45:07] Taker desk shows fbb4bef5ce18 at refunded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches refunded
+2 passed, 0 failed
+
+[03:47:58] Maker desk shows fbb4bef5ce18 at refunded
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunded (refunded)
+  [32m✓[0m maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[03:48:01] === taker-refund (TakerSellsLez): passed in 287s

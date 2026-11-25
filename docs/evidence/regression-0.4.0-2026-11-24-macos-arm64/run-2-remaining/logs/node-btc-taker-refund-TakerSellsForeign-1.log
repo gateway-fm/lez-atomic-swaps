@@ -1,0 +1,21 @@
+[04:52:57] === taker-refund (stamp 179557877702)
+[04:52:58] preflight: indexer historical reads
+[04:52:58]   indexer serves historical reads at the tip (3303)
+[04:52:58] preflight: LEZ finality check waived by request
+[04:52:58]   Maker published offer-e2e-179557877702
+[04:52:59]   Taker took offer-e2e-179557877702: swap 939345d85811 (not_activated)
+[04:52:59]   stopping the Maker Node so it never funds
+[04:52:59]   Taker locked bitcoin: f1a6e7ce0187 (replay=False)
+[04:53:00]   mined 124 blocks past the lock; the Maker cutoff is 100s after the take, the Taker's refund opens 100s after it
+[04:53:00]   [0 s] waiting for the Taker's refund of 939345d85811 to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 3291, tip 3298 (7 unfinalized) [heartbeat]
+[04:53:00]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[04:53:10]   [10 s] waiting for the Taker's refund of 939345d85811 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 3305, tip 3315 (10 unfinalized) [heartbeat]
+[04:53:51]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[04:54:12]   [72 s] waiting for the Taker's refund of 939345d85811 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 3360, tip 3365 (5 unfinalized) [heartbeat]
+[04:54:43]   refund request admitted (attempt 11, state awaiting_second_lock)
+[04:54:53]   [113 s] waiting for the Taker's refund of 939345d85811 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 3396, tip 3399 (3 unfinalized) [heartbeat]
+[04:55:35]   refund request replayed (attempt 16, state refund_in_progress)
+[04:55:45]   Taker refunded; Taker Node balances {'btc_trusted_sat': 524999913900, 'lez_units': 2000000} → {'btc_trusted_sat': 524999909800, 'lez_units': 2000000}
+[04:55:55]   Maker reconciled to refunded
+[04:55:55]   the Bitcoin refund 7a2716985f65 is a script-path spend: three witness items
+[04:55:55] === taker-refund: passed in 178s

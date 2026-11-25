@@ -1,0 +1,31 @@
+[03:28:50] === zec-wrong-inputs (stamp 179557373002)
+[03:28:50] preflight: indexer historical reads
+[03:28:51]   indexer serves historical reads at the tip (12525)
+[03:28:51] preflight: LEZ finality check waived by request
+[03:28:51]   Maker CLI published offer-e2e-zectt-179557373102 on its running Node (no corridor)
+[03:28:51]   rejected as expected: reusing a publish request id for another offer (maker offer request ID conflicts with its durable mutation)
+[03:28:52]   rejected as expected: withdrawing with a stale revision (stale maker offer revision: expected 6, actual 1)
+[03:28:52]   rejected as expected: taking with a mismatched envelope hash (initiation_selection_mismatch)
+[03:28:52]   rejected as expected: taking an off-preset amount (initiation_selection_mismatch)
+[03:28:52]   rejected as expected: taking with a wrong LEZ quote (initiation_selection_mismatch)
+[03:28:52]   rejected as expected: claiming an unknown swap (swap_not_found)
+[03:28:52]   rejected as expected: refunding an unknown swap (swap_not_found)
+[03:28:53]   Taker took offer-e2e-zectt-179557373102: swap zec-685315b1 (not_activated)
+[03:28:53]   rejected as expected: claiming before the Maker funded (taker_action_unavailable)
+[03:28:55]   rejected as expected: taking the consumed lot again (initiation_selection_mismatch)
+[03:28:55]   consumed lot left Delivery and cannot be taken again
+[03:28:55]   take-time agreement: Maker funds f74506b0c6c21ad0…:0, Zcash anchor 867, refund height 883
+[03:28:55]   receipt: swap zec-685315b11f5ebdfb1af11edb050b7603af91eeb02f2d996919cf396d56c0e223, actor config /var/lib/lez/taker/btc/swaps/89e66c56340ddd2b0b86d2cace187cec89ab6fc3b33984deccdfa2869632775f/zec-actor/taker/actor-config.json
+[03:28:56]   [0 s] waiting for the Taker's zec-685315b1 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 866 | LEZ finalized 12512, tip 12516 (4 unfinalized) [heartbeat]
+[03:29:12]   [16 s] waiting for the Taker's zec-685315b1 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 866 | LEZ finalized 12529, tip 12533 (4 unfinalized) [heartbeat]
+[03:29:18]   zebra: mined 1 block(s) → height 867 (mempool had ['874f61794529'])
+[03:29:22]   [26 s] waiting for the Taker's zec-685315b1 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 867 | LEZ finalized 12546, tip 12550 (4 unfinalized) [heartbeat]
+[03:29:22]   zebra: mined 1 block(s) → height 868 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[03:29:22]   Taker claimed Zcash on zec-685315b1 (replay=False)
+[03:29:22]   [0 s] waiting for the Taker's zec-685315b1 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 868 | LEZ finalized 12546, tip 12550 (4 unfinalized) [heartbeat]
+[03:29:22]   zebra: mined 1 block(s) → height 869 (mempool had ['e1f042fa30f4'])
+[03:29:25]   [3 s] waiting for the Taker's zec-685315b1 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 869 | LEZ finalized 12546, tip 12550 (4 unfinalized) [heartbeat]
+[03:29:32]   [9 s] waiting for the Taker's zec-685315b1 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 869 | LEZ finalized 12546, tip 12550 (4 unfinalized) [heartbeat]
+[03:29:32]   [0 s] waiting for the Taker's zec-685315b1 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 12546, tip 12550 (4 unfinalized) [heartbeat]
+[03:29:32]   both Nodes report zec-685315b1 completed
+[03:29:32] === zec-wrong-inputs: passed in 41s

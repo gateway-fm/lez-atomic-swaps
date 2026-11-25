@@ -1,0 +1,54 @@
+{
+  "scenario": "offline-after-claim",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "179557312902",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "ad852756ca5419c631d6f9605b477be932479b893758bac3490d357a3a6d89f3",
+  "at": "claim sent",
+  "cut": {
+    "chat_samples": 7,
+    "chat_connections_seen": 0,
+    "taker_probe_at_end": {
+      "chat": "EACCES",
+      "delivery": "EACCES",
+      "delivery_fds": 0,
+      "uid": 4713
+    }
+  },
+  "killed": {
+    "container": "lez-l2-maker-node",
+    "exit_code": 137,
+    "oom_killed": false,
+    "finished_at": "2026-11-25T02:19:18.731090051Z",
+    "taker_probe_after_restart": {
+      "chat": "EACCES",
+      "delivery": "EACCES",
+      "delivery_fds": 0,
+      "uid": 4713
+    }
+  },
+  "bitcoin_claim": "4f82a33733ec3dd4624757e79baa2808fde1d93a2fa6f9d2098e80bc327c753d",
+  "result": "passed",
+  "seconds": 44
+}

@@ -1,0 +1,71 @@
+{
+  "scenario": "mixed-three-pair",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "1795570164",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swaps": {
+    "Monero": "140c59c068861106ffdcbf75ed025516e406808a68d3e725f05a2280d8aaafae",
+    "Bitcoin": "e240cf18e7396d406a7c5df12e4f2c28126170a827e281e8e26bdc823571e861",
+    "Zcash": "zec-17724008b695ece4d3d33107a8db5ebe1b030e7c7941319fac86180a34e1d63f"
+  },
+  "overlap": [
+    {
+      "when": "all three taken",
+      "taker": {
+        "Monero": "awaiting_first_lock",
+        "Bitcoin": "awaiting_first_lock",
+        "Zcash": "not_activated"
+      },
+      "maker": {
+        "Monero": "offered",
+        "Bitcoin": "leased",
+        "Zcash": "queued"
+      }
+    },
+    {
+      "when": "the Monero claim sent",
+      "taker": {
+        "Monero": "claim_in_progress",
+        "Bitcoin": "claim_available",
+        "Zcash": "refund_available"
+      },
+      "maker": {
+        "Monero": "taker_lock_confirmed",
+        "Bitcoin": "taker_lock_confirmed",
+        "Zcash": "taker_lock_confirmed"
+      }
+    }
+  ],
+  "taker_monero_sweep": {
+    "txid": "06ae70f9e0ae1e6d94d918e64a0bd5ae01bf929d477f6a4f34637d353ea6ff8f",
+    "amount": 998191600000,
+    "height": 451
+  },
+  "lez_transactions": {
+    "maker": 1,
+    "taker": 7
+  },
+  "result": "passed",
+  "seconds": 162
+}

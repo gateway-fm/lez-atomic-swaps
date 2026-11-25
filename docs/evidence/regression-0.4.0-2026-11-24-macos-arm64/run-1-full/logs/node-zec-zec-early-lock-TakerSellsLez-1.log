@@ -1,0 +1,30 @@
+[02:37:18] === zec-early-lock (stamp 1795570638)
+[02:37:18] preflight: indexer historical reads
+[02:37:19]   indexer serves historical reads at the tip (10201)
+[02:37:19] preflight: LEZ finality check waived by request
+[02:37:19]   Maker CLI published offer-e2e-zectt-1795570639 on its running Node (no corridor)
+[02:37:20]   Taker took offer-e2e-zectt-1795570639: swap zec-edd39cd6 (not_activated)
+[02:37:20]   take-time agreement: Maker funds 5f809d9835505f0c…:0, Zcash anchor 646, refund height 662
+[02:37:20]   receipt: swap zec-edd39cd6b6568e65c53fdd35d5e69043cc793e06cd6ed4652d702e507d4c36f1, actor config /var/lib/lez/taker/btc/swaps/d2e4d5cfc721fd2653da1b4637024d285de2d2a5ead15612a1310c250c01341d/zec-actor/taker/actor-config.json
+[02:37:20]   cutting the Maker's indexer forwarder, its only source of LEZ finality; its sequencer forwarder stays
+[02:37:21]   [0 s] waiting for the Taker actor of zec-edd39cd6 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker not_activated | actor at - | maker leased | zebra 645 | LEZ finalized 10192, tip 10199 (7 unfinalized) [heartbeat]
+[02:37:24]   [3 s] waiting for the Taker actor of zec-edd39cd6 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker awaiting_first_lock | actor at offered | maker offered | zebra 645 | LEZ finalized 10192, tip 10199 (7 unfinalized) [heartbeat]
+[02:37:37]   [16 s] waiting for the Taker actor of zec-edd39cd6 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker refund_available | actor at offered | maker offered | zebra 645 | LEZ finalized 10210, tip 10215 (5 unfinalized) [heartbeat]
+[02:37:41]   [19 s] waiting for the Taker actor of zec-edd39cd6 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker refund_available | actor at taker_lock_confirmed | maker offered | zebra 645 | LEZ finalized 10210, tip 10215 (5 unfinalized) [heartbeat]
+[02:37:41]   the Taker's view lists no LEZ lock effect; its actor at taker_lock_confirmed is what says it is in
+[02:37:41]   the Maker cannot read LEZ finality; watching it for 90s
+[02:39:12]   the Maker stayed at offered for 90s and funded nothing: outpoint 5f809d983550:0 unspent, zebra's mempool empty
+[02:39:12]   the Maker can read LEZ finality again; it may now fund Zcash
+[02:39:13]   [0 s] waiting for the Taker's zec-edd39cd6 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 645 | LEZ finalized 10279, tip 10283 (4 unfinalized) [heartbeat]
+[02:39:13]   zebra at 645: not mining, the Maker's Zcash funding is not out yet
+[02:39:16]   zebra: mined 1 block(s) → height 646 (mempool had ['8e5979bc3b29'])
+[02:39:19]   [6 s] waiting for the Taker's zec-edd39cd6 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 646 | LEZ finalized 10288, tip 10300 (12 unfinalized) [heartbeat]
+[02:39:19]   zebra: mined 1 block(s) → height 647 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[02:39:19]   Taker claimed Zcash on zec-edd39cd6 (replay=False)
+[02:39:20]   [0 s] waiting for the Taker's zec-edd39cd6 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 647 | LEZ finalized 10288, tip 10300 (12 unfinalized) [heartbeat]
+[02:39:20]   zebra: mined 1 block(s) → height 648 (mempool had ['f1c6a6afd422'])
+[02:39:26]   [6 s] waiting for the Taker's zec-edd39cd6 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 648 | LEZ finalized 10288, tip 10300 (12 unfinalized) [heartbeat]
+[02:39:29]   [10 s] waiting for the Taker's zec-edd39cd6 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 648 | LEZ finalized 10288, tip 10300 (12 unfinalized) [heartbeat]
+[02:39:30]   [0 s] waiting for the Taker's zec-edd39cd6 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 10288, tip 10300 (12 unfinalized) [heartbeat]
+[02:39:30]   both Nodes report zec-edd39cd6 completed
+[02:39:30] === zec-early-lock: passed in 132s

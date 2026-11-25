@@ -1,0 +1,40 @@
+[00:28:09] === xmr-punish (stamp 179556288902)
+[00:28:09] preflight: indexer historical reads
+[00:28:09]   indexer serves historical reads at the tip (4140)
+[00:28:09] preflight: LEZ finality check waived by request
+[00:28:09]   the Maker's LEZ owner 3A1qGAnzcZ8J… has nonce 1 before the swap
+[00:28:20]   the Maker's Monero wallet holds 2499.243 XMR unlocked
+[00:28:43]   Maker CLI published offer-e2e-xmr-179556288902 on its running Node
+[00:28:56]   Taker took offer-e2e-xmr-179556288902: swap fa223c206693 (not_activated)
+[00:28:56]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[00:28:56]   [0 s] waiting for the Taker's fa223c206693 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 4162, tip 4165 (3 unfinalized) [heartbeat]
+[00:29:00]   [3 s] waiting for the Taker's fa223c206693 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 4162, tip 4165 (3 unfinalized) [heartbeat]
+[00:29:14]   [17 s] waiting for the Taker's fa223c206693 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker taker_lock_confirmed | LEZ finalized 4176, tip 4179 (3 unfinalized) [heartbeat]
+[00:29:17]   [21 s] waiting for the Taker's fa223c206693 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 4176, tip 4179 (3 unfinalized) [heartbeat]
+[00:29:46]   [49 s] waiting for the Taker's fa223c206693 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 4191, tip 4193 (2 unfinalized) [heartbeat]
+[00:29:46]   the Taker has verified the Maker's Monero; stopping the Taker Node: it neither claims nor refunds
+[00:29:46]   [0 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4191, tip 4193 (2 unfinalized) [heartbeat]
+[00:30:47]   [60 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4234, tip 4238 (4 unfinalized) [heartbeat]
+[00:31:47]   [120 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4283, tip 4287 (4 unfinalized) [heartbeat]
+[00:32:50]   [183 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4332, tip 4337 (5 unfinalized) [heartbeat]
+[00:33:50]   [244 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4383, tip 4387 (4 unfinalized) [heartbeat]
+[00:34:53]   [307 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4432, tip 4438 (6 unfinalized) [heartbeat]
+[00:35:53]   [367 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4485, tip 4487 (2 unfinalized) [heartbeat]
+[00:36:56]   [430 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4532, tip 4537 (5 unfinalized) [heartbeat]
+[00:37:59]   [492 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4568, tip 4571 (3 unfinalized) [heartbeat]
+[00:39:02]   [555 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4619, tip 4622 (3 unfinalized) [heartbeat]
+[00:40:05]   [618 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4670, tip 4673 (3 unfinalized) [heartbeat]
+[00:41:08]   [681 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4720, tip 4724 (4 unfinalized) [heartbeat]
+[00:42:11]   [744 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4772, tip 4775 (3 unfinalized) [heartbeat]
+[00:43:13]   [807 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4821, tip 4826 (5 unfinalized) [heartbeat]
+[00:44:16]   [870 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4871, tip 4877 (6 unfinalized) [heartbeat]
+[00:45:19]   [933 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 4925, tip 4928 (3 unfinalized) [heartbeat]
+[00:45:32]   [945 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker maker_recovery_available (schedule leased) | LEZ finalized 4942, tip 4944 (2 unfinalized) [heartbeat]
+[00:45:41]   [955 s] waiting for the Maker's fa223c206693 to reach a terminal state (the punish time, then the Maker's tag 17): maker punished (schedule terminal) | LEZ finalized 4942, tip 4944 (2 unfinalized) [heartbeat]
+[00:45:42]   the Maker punished; its LEZ owner's nonce moved 1 → 2
+[00:45:45]   LEZ moved {'maker': 50000, 'taker': -50000}: the Taker's lot to the Maker
+[00:45:54]   the Maker's Monero wallet received [] during the swap (lot 1 XMR)
+[00:45:57]   the Taker's Monero wallet received [] during the swap (lot 1 XMR)
+[00:45:57]   the Maker's Monero funding 603cc36d795615fe… stays at the shared address: neither party received it
+[00:45:58]   the Taker, back up, reads punished (actor punish_open)
+[00:45:58] === xmr-punish: passed in 1069s

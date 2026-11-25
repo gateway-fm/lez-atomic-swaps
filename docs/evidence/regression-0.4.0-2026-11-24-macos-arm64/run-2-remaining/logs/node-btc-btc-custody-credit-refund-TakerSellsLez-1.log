@@ -1,0 +1,32 @@
+[04:33:13] === btc-custody-credit-refund (stamp 1795577593)
+[04:33:13] preflight: indexer historical reads
+[04:33:13]   indexer serves historical reads at the tip (2372)
+[04:33:13] preflight: LEZ finality check waived by request
+[04:33:13]   custody credit: waiting for the taker's escrow to be funded, then 1 unit(s) from heartbeat-echo-02: /usr/local/bin/lez-v02-custody-credit-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --depositor 4gFvhqLj7a2LpYHSgZuYDXRcaSjtcD1Fvag3fzucmdeB --private-key-file /tmp/custody-credit-probe.key --amount 1 --wait-funded-seconds 3600 --observe-seconds 60
+[04:33:14]   Maker published offer-e2e-1795577593
+[04:33:15]   Taker took offer-e2e-1795577593: swap 5299dad953dd (not_activated)
+[04:33:15]   stopping the Maker Node so it never locks Bitcoin
+[04:33:15]   Taker locked lez: 084a937ffcb0 (replay=False)
+[04:33:15]   mined 124 blocks past the lock; the Maker cutoff is 100s after the take, the Taker's refund opens 245s after it
+[04:33:16]   [0 s] waiting for the Taker's refund of 5299dad953dd to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 2362, tip 2365 (3 unfinalized) [heartbeat]
+[04:33:16]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[04:33:18]   custody credit: 1 unit(s) to 4375ffe6f9f1… in block 2378; custody 1000 → 1001 (lot 1000), escrow Funded
+[04:33:26]   [10 s] waiting for the Taker's refund of 5299dad953dd to land: taker awaiting_first_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 2375, tip 2381 (6 unfinalized) [heartbeat]
+[04:33:36]   [20 s] waiting for the Taker's refund of 5299dad953dd to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 2375, tip 2381 (6 unfinalized) [heartbeat]
+[04:34:07]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[04:34:38]   [82 s] waiting for the Taker's refund of 5299dad953dd to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 2426, tip 2432 (6 unfinalized) [heartbeat]
+[04:34:58]   refund request admitted (attempt 11, state awaiting_second_lock)
+[04:35:09]   [113 s] waiting for the Taker's refund of 5299dad953dd to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 2456, tip 2466 (10 unfinalized) [heartbeat]
+[04:35:52]   refund request replayed (attempt 16, state refund_in_progress)
+[04:36:13]   [177 s] waiting for the Taker's refund of 5299dad953dd to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 2514, tip 2517 (3 unfinalized) [heartbeat]
+[04:36:45]   refund request replayed (attempt 21, state refund_in_progress)
+[04:37:16]   [240 s] waiting for the Taker's refund of 5299dad953dd to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 2563, tip 2568 (5 unfinalized) [heartbeat]
+[04:37:39]   refund request replayed (attempt 26, state refund_in_progress)
+[04:37:50]   Taker refunded; Taker Node balances {'btc_trusted_sat': 524997704600, 'lez_units': 2000001} → {'btc_trusted_sat': 524997704600, 'lez_units': 2000002}
+[04:37:56]   [0 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker offered (schedule backoff) | LEZ finalized 2595, tip 2602 (7 unfinalized) [heartbeat]
+[04:38:07]   [10 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 2595, tip 2602 (7 unfinalized) [heartbeat]
+[04:38:12]   Maker reconciled to refunded
+[04:38:12]   [0 s] waiting for LEZ finality to reach block 2616 (the swap's last LEZ transaction): LEZ finalized 2595, tip 2602 (7 unfinalized) [heartbeat] | LEZ finalized 2595, tip 2602 (7 unfinalized) [heartbeat]
+[04:38:16]   LEZ is final through block 2616 after 4s
+[04:38:16]   settled refunded: LEZ moved {'maker': 0, 'taker': 1} as both Nodes say
+[04:38:16] === btc-custody-credit-refund: passed in 304s

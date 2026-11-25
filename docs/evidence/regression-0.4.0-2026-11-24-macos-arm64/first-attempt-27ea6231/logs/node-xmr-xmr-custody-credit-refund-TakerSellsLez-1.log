@@ -1,0 +1,26 @@
+[21:58:51] === xmr-custody-credit-refund (stamp 1795553931)
+[21:58:51] preflight: indexer historical reads
+[21:58:51]   indexer serves historical reads at the tip (2712)
+[21:58:51] preflight: LEZ finality check waived by request
+[21:58:51]   custody credit: waiting for the taker's escrow to be funded, then 1 unit(s) from heartbeat-echo-02: /usr/local/bin/lez-v02-custody-credit-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --depositor 4gFvhqLj7a2LpYHSgZuYDXRcaSjtcD1Fvag3fzucmdeB --private-key-file /tmp/custody-credit-probe.key --amount 1 --wait-funded-seconds 3600 --observe-seconds 60
+[21:59:02]   the Taker Node refunds by itself: false
+[21:59:25]   the Maker's Monero wallet holds 7.992 XMR unlocked
+[22:00:18]     probe stderr: custody credit probe failed: could not read the sequencer tip: Request timeout
+[22:01:08]   Maker CLI published offer-e2e-xmr-1795553931 on its running Node
+[22:03:09]   take answered dependency-unavailable (initiation_execution_unavailable); retrying in 10 s
+[22:04:02]   Taker took offer-e2e-xmr-1795553931: swap 583ce25569bf (not_activated)
+[22:04:02]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[22:04:07]   [4 s] waiting for the Taker's 583ce25569bf to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker unreachable | LEZ finalized 2748, tip 2750 (2 unfinalized) [heartbeat]
+[22:04:43]   [40 s] waiting for the Taker's 583ce25569bf to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 2750, tip 2754 (4 unfinalized) [heartbeat]
+[22:05:44]   [101 s] waiting for the Taker's 583ce25569bf to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 2761, tip 2766 (5 unfinalized) [heartbeat]
+[22:07:28]   the Taker Node refunds by itself: true
+[22:07:28] FAILED: taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Cannot connect to the Docker daemon at unix://<home>/.docker/run/docker.sock. Is the docker daemon running?"}
+[22:07:28] === xmr-custody-credit-refund: failed in 517s
+[22:08:06]   kept maker-container.log: 18839 lines, 756 Delivery dumps dropped, 6 redacted
+[22:08:06]   kept maker-node.log: 702 lines, 0 Delivery dumps dropped, 0 redacted
+[22:08:06]   kept maker-basecamp.log: 1535 lines, 76 Delivery dumps dropped, 0 redacted
+[22:08:06]   kept maker-health.json: 43 lines, 0 Delivery dumps dropped, 0 redacted
+[22:08:06]   kept taker-container.log: 18804 lines, 728 Delivery dumps dropped, 10 redacted
+[22:08:06]   kept taker-node.log: 385 lines, 0 Delivery dumps dropped, 0 redacted
+[22:08:06]   kept taker-basecamp.log: 1 lines, 0 Delivery dumps dropped, 0 redacted
+[22:08:06]   kept taker-health.json: 114 lines, 0 Delivery dumps dropped, 0 redacted

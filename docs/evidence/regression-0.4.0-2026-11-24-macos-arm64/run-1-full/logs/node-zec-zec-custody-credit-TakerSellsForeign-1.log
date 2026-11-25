@@ -1,0 +1,38 @@
+[03:03:24] === zec-custody-credit (stamp 1795572204)
+[03:03:24] preflight: indexer historical reads
+[03:03:24]   indexer serves historical reads at the tip (11369)
+[03:03:24] preflight: LEZ finality check waived by request
+[03:03:25]   custody credit: waiting for the maker's escrow to be funded, then 1 unit(s) from heartbeat-echo-02: /usr/local/bin/lez-v02-custody-credit-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --depositor 55NmB8JYSArNBaN5VbFZXUHvi1FybcZcgsic5Ezrndac --private-key-file /tmp/custody-credit-probe.key --amount 1 --wait-funded-seconds 3600 --observe-seconds 60
+[03:03:25]   the Maker's key paid the Taker's: b54c9be56fef98d0…
+[03:03:25]   zebra: mined 1 block(s) → height 1085 (the payment to the Taker's key)
+[03:03:25]   zebra: mined 100 block(s) → height 1185 (the Taker's payment matures into a funder output)
+[03:03:26]   Maker CLI published offer-e2e-zectt-1795572204 on its running Node (no corridor)
+[03:03:27]   Taker took offer-e2e-zectt-1795572204: swap zec-9abcffb4 (not_activated)
+[03:03:28]   take-time agreement: Taker funds 3df2fd5e741043a4…:0, Zcash anchor 1186, refund height 1194
+[03:03:28]   receipt: swap zec-9abcffb470e9165c6e16c50ecd448f955aaf2aa27e3faccb93321614fcfd186f, actor config /var/lib/lez/taker/btc/swaps/a0ae86639b426b88dccbbe6bbe2cbe076c8ccd4c103a173a3c8685d7abfae0e5/zec-actor/taker/actor-config.json
+[03:03:28]   [0 s] waiting for the Taker's zec-9abcffb4 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 1185 | LEZ finalized 11369, tip 11377 (8 unfinalized) [heartbeat]
+[03:03:34]   [6 s] waiting for the Taker's zec-9abcffb4 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 1185 | LEZ finalized 11369, tip 11377 (8 unfinalized) [heartbeat]
+[03:03:37]   zebra: mined 1 block(s) → height 1186 (mempool had ['c986e7bbb5b9'])
+[03:03:44]   [16 s] waiting for the Taker's zec-9abcffb4 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker both_legs_locked | zebra 1186 | LEZ finalized 11369, tip 11377 (8 unfinalized) [heartbeat]
+[03:03:45]   custody credit: 1 unit(s) to 421d5006cf93… in block 11391; custody 50000 → 50001 (lot 50000), escrow Funded
+[03:03:50]   [22 s] waiting for the Taker's zec-9abcffb4 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1186 | LEZ finalized 11389, tip 11393 (4 unfinalized) [heartbeat]
+[03:03:50]   zebra: mined 1 block(s) → height 1187 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[03:03:50]   Taker's Zcash funding c986e7bbb5b94685684adfafc9ca84c32c517f9de33a64fbbcb1a7eee236b237 is in zebra block 1186
+[03:03:51]   Taker claimed LEZ (replay=False)
+[03:03:51]   [0 s] waiting for the Taker's zec-9abcffb4 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1187 | LEZ finalized 11389, tip 11393 (4 unfinalized) [heartbeat]
+[03:03:54]   [3 s] waiting for the Taker's zec-9abcffb4 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 1187 | LEZ finalized 11389, tip 11393 (4 unfinalized) [heartbeat]
+[03:03:54]   zebra: mined 1 block(s) → height 1188 (mempool had ['60da4ac8289b'])
+[03:04:01]   [10 s] waiting for the Taker's zec-9abcffb4 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 1188 | LEZ finalized 11389, tip 11393 (4 unfinalized) [heartbeat]
+[03:04:01]   Maker's Zcash claim 60da4ac8289b93b80338fa1bf54e4a0a901c28064dacf24993a5111d0496986d is in zebra block 1188
+[03:04:01]   the Maker's actor submitted ['zcash_followup_claim']
+[03:04:01]   [0 s] waiting for the Taker's zec-9abcffb4 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 11389, tip 11393 (4 unfinalized) [heartbeat]
+[03:04:01]   both Nodes report zec-9abcffb4 completed
+[03:04:01]   restarting the Maker Node after the completed swap (claim-journal revalidation)
+[03:04:08]   Maker restarted and still reports the swap completed
+[03:04:08]   zec-9abcffb4: the Taker re-planned its LEZ lock 0 times
+[03:04:08]   Maker lock attempt count 3 (projected the Taker's lock 1 time(s); 15 supervisor attempts over the swap); Taker LEZ re-plan count 0
+[03:04:09]   [0 s] waiting for LEZ finality to reach block 11408 (the swap's last LEZ transaction): LEZ finalized 11389, tip 11393 (4 unfinalized) [heartbeat] | LEZ finalized 11389, tip 11393 (4 unfinalized) [heartbeat]
+[03:04:11]   [2 s] waiting for LEZ finality to reach block 11408 (the swap's last LEZ transaction): LEZ finalized 11404, tip 11409 (5 unfinalized) [heartbeat] | LEZ finalized 11404, tip 11409 (5 unfinalized) [heartbeat]
+[03:04:31]   LEZ is final through block 11408 after 22s
+[03:04:31]   settled completed: LEZ moved {'maker': -50000, 'taker': 50001} as both Nodes say
+[03:04:31] === zec-custody-credit: passed in 67s

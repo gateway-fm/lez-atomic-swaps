@@ -1,0 +1,13 @@
+node:xmr:xmr-unfunded-punish:TakerSellsLez	1	PASSED	2251	2026-11-24T19:14:20Z	1	0
+node:xmr:xmr-kill-maker:TakerSellsLez	1	PASSED	2495	2026-11-24T19:18:29Z	2	0
+node:xmr:xmr-taker-cheats:TakerSellsLez	1	PASSED	1775	2026-11-24T19:44:19Z	1	0
+node:btc:kill-maker:TakerSellsLez	1	PASSED	1232	2026-11-24T20:05:01Z	1	0
+node:xmr:xmr-kill-taker:TakerSellsLez	1	PASSED	2998	2026-11-24T20:08:48Z	2	0
+node:xmr:xmr-maker-early-punish:TakerSellsLez	1	FAILED	1185	2026-11-24T20:29:31Z	2	0
+node:btc:kill-taker:TakerSellsLez	1	PASSED	1777	2026-11-24T20:34:59Z	1	0
+node:xmr:xmr-punish-replans:TakerSellsLez	1	PASSED	1528	2026-11-24T20:55:25Z	2	0
+node:xmr:xmr-punish:TakerSellsLez	1	PASSED	1367	2026-11-24T20:58:37Z	1	0
+node:xmr:xmr-custody-credit-refund:TakerSellsLez	1	FAILED	556	2026-11-24T21:08:06Z	1	0
+ui:xmr:xmr-taker-refund:TakerSellsLez	1	PASSED	1283	2026-11-24T21:17:08Z	2	0
+node:xmr:xmr-taker-refund-kill:TakerSellsLez	1	FROZEN	0	2026-11-24T21:26:54Z	2	0
+node:xmr:xmr-taker-clock-ahead:TakerSellsLez	1	FROZEN	0	2026-11-24T21:26:54Z	1	0

@@ -1,0 +1,53 @@
+
+[01:59:31] === restart-maker (TakerSellsForeign)
+
+[01:59:31] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[01:59:32] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   bdd3b61ed4b293a5ee50312b8f1be13a453c67a22cf278673946fda90a8c263c awaiting_first_lock 0 -
+
+[01:59:35] Taker desk: lock_btc on bdd3b61ed4b2
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[01:59:37] The maker's Basecamp, with its Node, is restarted now, between the Taker's lock and its claim; swaps survive a restart
+
+[01:59:44] Maker desk shows bdd3b61ed4b2 at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[02:00:27] Taker desk: claim_lez on bdd3b61ed4b2
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[02:00:29] Maker desk shows bdd3b61ed4b2 at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[02:00:51] Taker desk shows bdd3b61ed4b2 at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap bdd3b61ed4b2: runtime/evidence/bdd3b61ed4b293a5ee50312b8f1be13a453c67a22cf278673946fda90a8c263c.json (5 effects, completed 2026-11-25T02:00:44Z)
+
+[02:00:52] === restart-maker (TakerSellsForeign): passed in 81s

@@ -1,0 +1,23 @@
+Full regression of 957c8016 (0.4.0, Milestone 4) on macOS arm64 (Apple silicon, Docker Desktop),
+2026-11-24 21:54Z -> 2026-11-25 04:05Z, UTC
+
+Every test of `deploy/scripts/regress.sh full` (179: `regress.sh list full`) from 957c8016, on
+images built from the same commit with the devnet test hooks (LEZ_TEST_HOOKS=1), Monero regtest
+up (LEZ_MONERO=1), two lanes at a time (LEZ_LANES=2), starting on a fresh chain. One operator ran
+both parties, Maker and Taker, on one host. Escrow ImageID
+ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98. See README.md and PROVENANCE.md.
+
+Result: 179 tests, 179 passed, each on its first try. No test was rerun. 0 frozen tries, 0
+NOT-EXERCISED, 0 timeouts, 0 failures. Two runner invocations: `full` (150 passed, then it
+stopped at a new chain's market bootstrap, the runner's environment missing the workspace) and
+`run` with the 29 remaining (29 passed). 3 chains, 3 timing-profile switches.
+
+By kind: node:btc 56, node:zec 59, node:xmr 22, ui:btc 17, ui:zec 22, ui:xmr 3. Test time summed
+over lanes: 41,460 s; wall time 371 min (287 + 80, and 3 min between them).
+
+First runs on a devnet, both passed on their first try:
+  node:zec:zec-activate-after-expiry:TakerSellsLez              111 s  lane 2
+  node:zec:zec-claim-at-one-confirmation:TakerSellsForeign       44 s  lane 2
+
+first-attempt-27ea6231/: the stopped run at 27ea6231 before this one (9 passed, 2 failed for
+environment reasons, 2 voided by a LEZ freeze, 167 not run). Not counted above.

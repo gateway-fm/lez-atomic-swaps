@@ -1,0 +1,260 @@
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1795574318
+  forgetting swaps that referenced the old chain
+[reset 02:38:41] done: swaps forgotten (open ones archived as .reset-archive/20261125T023839Z); the Nodes stay stopped
+  [time 02:38:41] forget the old chain's swaps (reset-swaps.sh --offline): 2 s (3 s since up.sh started)
+[reset 02:38:44] done: swaps forgotten (open ones archived as .reset-archive/20261125T023842Z); the Nodes stay stopped
+[lanes 02:38:44] lane 2 stopped
+  [time 02:38:46] stop the old chain: 5 s (8 s since up.sh started)
+  [time 02:38:46] move the old chain's state aside: 0 s (8 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795574327 (2026-11-25T02:38:47Z), root dce11019d3f2ec70aa8ae2b4d2cdf2c2664fd0ef595681ef11cb4ce73ceef895
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmSFeUdASGiB6SB1BZpRfE3SERnPiB2hXmd): runtime/zebra/zebrad.toml
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+runtime generated at runtime
+  [time 02:38:48] runtime config: 2 s (10 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 02:38:48] images: 0 s (10 s since up.sh started)
+[3/6] starting chains…
+ Container lez-taker-xmr-wallet Running 
+ Container lez-zebra Running 
+ Container lez-maker-xmr-wallet Running 
+ Container lez-btc-miner Running 
+ Container lez-xmr-funding-wallet Running 
+ Container lez-monerod Running 
+ Container lez-bitcoin-core Running 
+ Container lez-network Starting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 02:38:51] start the chains (compose up): 3 s (13 s since up.sh started)
+  [time 02:38:57] chains healthy: 6 s (19 s since up.sh started)
+  the new LEZ chain finalizes (5 -> 6)
+  [time 02:39:06] the new chain finalizes: 9 s (28 s since up.sh started)
+  [time 02:39:07] indexer check (repair-indexer.sh): 1 s (29 s since up.sh started)
+Regtest wallets ready; Maker 3025.02115 BTC, Taker 5249.977046 BTC spendable.
+  [time 02:39:08] Bitcoin Core wallets (seed-btc-wallets.py): 1 s (30 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+escrow deployer missing under <scratch>/provision/data; run from-scratch.sh --only build
+  the new chain does not finalize; recreating it once more
+  [time 02:39:08] market bootstrap: 0 s (30 s since up.sh started)
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1795574348
+[reset 02:39:10] done: swaps forgotten (open ones archived as .reset-archive/20261125T023908Z); the Nodes stay stopped
+[lanes 02:39:10] lane 2 stopped
+  [time 02:39:13] stop the old chain: 5 s (5 s since up.sh started)
+  [time 02:39:13] move the old chain's state aside: 0 s (5 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795574353 (2026-11-25T02:39:13Z), root 930da17fbbb7f86461c08fb714e12f28b6b2227b94457d063325aceedbb63d8a
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmSFeUdASGiB6SB1BZpRfE3SERnPiB2hXmd): runtime/zebra/zebrad.toml
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+runtime generated at runtime
+  [time 02:39:14] runtime config: 1 s (6 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 02:39:15] images: 1 s (7 s since up.sh started)
+[3/6] starting chains…
+ Container lez-taker-xmr-wallet Running 
+ Container lez-zebra Running 
+ Container lez-maker-xmr-wallet Running 
+ Container lez-bitcoin-core Running 
+ Container lez-btc-miner Running 
+ Container lez-monerod Running 
+ Container lez-xmr-funding-wallet Running 
+ Container lez-network Starting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 02:39:18] start the chains (compose up): 3 s (10 s since up.sh started)
+  [time 02:39:24] chains healthy: 6 s (16 s since up.sh started)
+  the new LEZ chain finalizes (4 -> 5)
+  [time 02:39:32] the new chain finalizes: 8 s (24 s since up.sh started)
+  [time 02:39:33] indexer check (repair-indexer.sh): 1 s (25 s since up.sh started)
+Regtest wallets ready; Maker 3025.02115 BTC, Taker 5249.977046 BTC spendable.
+  [time 02:39:34] Bitcoin Core wallets (seed-btc-wallets.py): 1 s (26 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+escrow deployer missing under <scratch>/provision/data; run from-scratch.sh --only build
+  the new chain does not finalize; recreating it once more
+  [time 02:39:34] market bootstrap: 0 s (26 s since up.sh started)
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1795574374
+[reset 02:39:37] done: swaps forgotten (open ones archived as .reset-archive/20261125T023935Z); the Nodes stay stopped
+[lanes 02:39:37] lane 2 stopped
+  [time 02:39:39] stop the old chain: 5 s (5 s since up.sh started)
+  [time 02:39:39] move the old chain's state aside: 0 s (5 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795574380 (2026-11-25T02:39:40Z), root d9f4034b169e6d6fa1da30d23a990dba1d37a03f9613e8ebbff68093eb91ba4e
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmSFeUdASGiB6SB1BZpRfE3SERnPiB2hXmd): runtime/zebra/zebrad.toml
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+runtime generated at runtime
+  [time 02:39:41] runtime config: 2 s (7 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 02:39:41] images: 0 s (7 s since up.sh started)
+[3/6] starting chains…
+ Container lez-btc-miner Running 
+ Container lez-bitcoin-core Running 
+ Container lez-xmr-funding-wallet Running 
+ Container lez-taker-xmr-wallet Running 
+ Container lez-maker-xmr-wallet Running 
+ Container lez-monerod Running 
+ Container lez-zebra Running 
+ Container lez-network Starting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 02:39:46] start the chains (compose up): 5 s (12 s since up.sh started)
+  [time 02:39:53] chains healthy: 7 s (19 s since up.sh started)
+  the new LEZ chain finalizes (3 -> 5)
+  [time 02:40:01] the new chain finalizes: 8 s (27 s since up.sh started)
+  [time 02:40:02] indexer check (repair-indexer.sh): 1 s (28 s since up.sh started)
+Regtest wallets ready; Maker 3025.02115 BTC, Taker 5249.977046 BTC spendable.
+  [time 02:40:04] Bitcoin Core wallets (seed-btc-wallets.py): 2 s (30 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+escrow deployer missing under <scratch>/provision/data; run from-scratch.sh --only build
+  the new chain does not finalize; recreating it once more
+  [time 02:40:04] market bootstrap: 0 s (30 s since up.sh started)
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1795574404
+[reset 02:40:09] done: swaps forgotten (open ones archived as .reset-archive/20261125T024005Z); the Nodes stay stopped
+[lanes 02:40:09] lane 2 stopped
+  [time 02:40:12] stop the old chain: 8 s (8 s since up.sh started)
+  [time 02:40:12] move the old chain's state aside: 0 s (8 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795574414 (2026-11-25T02:40:14Z), root 15c9e0cd2b83ba566fedc01741da83e29fe1a1e82b83d9850080848ccce965e0
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmSFeUdASGiB6SB1BZpRfE3SERnPiB2hXmd): runtime/zebra/zebrad.toml
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+runtime generated at runtime
+  [time 02:40:15] runtime config: 3 s (11 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 02:40:15] images: 0 s (11 s since up.sh started)
+[3/6] starting chains…
+ Container lez-btc-miner Running 
+ Container lez-maker-xmr-wallet Running 
+ Container lez-zebra Running 
+ Container lez-bitcoin-core Running 
+ Container lez-xmr-funding-wallet Running 
+ Container lez-taker-xmr-wallet Running 
+ Container lez-monerod Running 
+ Container lez-network Starting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 02:40:19] start the chains (compose up): 4 s (15 s since up.sh started)
+  [time 02:40:25] chains healthy: 6 s (21 s since up.sh started)
+  the new LEZ chain finalizes (3 -> 4)
+  [time 02:40:34] the new chain finalizes: 9 s (30 s since up.sh started)
+  [time 02:40:36] indexer check (repair-indexer.sh): 2 s (32 s since up.sh started)
+Regtest wallets ready; Maker 3025.02115 BTC, Taker 5249.977046 BTC spendable.
+  [time 02:40:36] Bitcoin Core wallets (seed-btc-wallets.py): 0 s (32 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+escrow deployer missing under <scratch>/provision/data; run from-scratch.sh --only build
+  the new chain does not finalize; recreating it once more
+  [time 02:40:36] market bootstrap: 0 s (32 s since up.sh started)
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1795574436
+[reset 02:40:40] done: swaps forgotten (open ones archived as .reset-archive/20261125T024037Z); the Nodes stay stopped
+[lanes 02:40:40] lane 2 stopped
+  [time 02:40:43] stop the old chain: 7 s (7 s since up.sh started)
+  [time 02:40:43] move the old chain's state aside: 0 s (7 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795574444 (2026-11-25T02:40:44Z), root c673ce6cbefc861b76f2947b9d8a796eca71f2c5002336d91cd4210dd74c11b9
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmSFeUdASGiB6SB1BZpRfE3SERnPiB2hXmd): runtime/zebra/zebrad.toml
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+runtime generated at runtime
+  [time 02:40:46] runtime config: 3 s (10 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 02:40:46] images: 0 s (10 s since up.sh started)
+[3/6] starting chains…
+ Container lez-taker-xmr-wallet Running 
+ Container lez-maker-xmr-wallet Running 
+ Container lez-bitcoin-core Running 
+ Container lez-xmr-funding-wallet Running 
+ Container lez-monerod Running 
+ Container lez-btc-miner Running 
+ Container lez-zebra Running 
+ Container lez-network Starting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 02:40:50] start the chains (compose up): 4 s (14 s since up.sh started)
+  [time 02:40:56] chains healthy: 6 s (20 s since up.sh started)
+  the new LEZ chain finalizes (3 -> 4)
+  [time 02:41:04] the new chain finalizes: 8 s (28 s since up.sh started)
+  [time 02:41:06] indexer check (repair-indexer.sh): 2 s (30 s since up.sh started)
+Regtest wallets ready; Maker 3025.02115 BTC, Taker 5249.977046 BTC spendable.
+  [time 02:41:06] Bitcoin Core wallets (seed-btc-wallets.py): 0 s (30 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+escrow deployer missing under <scratch>/provision/data; run from-scratch.sh --only build
+  the new chain does not finalize; recreating it once more
+  [time 02:41:06] market bootstrap: 0 s (30 s since up.sh started)
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1795574466
+[reset 02:41:11] done: swaps forgotten (open ones archived as .reset-archive/20261125T024107Z); the Nodes stay stopped
+[lanes 02:41:11] lane 2 stopped
+  [time 02:41:14] stop the old chain: 8 s (8 s since up.sh started)
+  [time 02:41:14] move the old chain's state aside: 0 s (8 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795574475 (2026-11-25T02:41:15Z), root 167f4e26070ede32355411ffa424cecda3419c5a55ab22b8e72ac3453060e35a
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmSFeUdASGiB6SB1BZpRfE3SERnPiB2hXmd): runtime/zebra/zebrad.toml
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+runtime generated at runtime
+  [time 02:41:16] runtime config: 2 s (10 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 02:41:16] images: 0 s (10 s since up.sh started)
+[3/6] starting chains…
+ Container lez-monerod Running 
+ Container lez-bitcoin-core Running 
+ Container lez-btc-miner Running 
+ Container lez-maker-xmr-wallet Running 
+ Container lez-xmr-funding-wallet Running 
+ Container lez-taker-xmr-wallet Running 
+ Container lez-zebra Running 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Starting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 02:41:22] start the chains (compose up): 6 s (16 s since up.sh started)
+  [time 02:41:28] chains healthy: 6 s (22 s since up.sh started)
+  the new LEZ chain finalizes (3 -> 4)
+  [time 02:41:35] the new chain finalizes: 7 s (29 s since up.sh started)
+  [time 02:41:36] indexer check (repair-indexer.sh): 1 s (30 s since up.sh started)
+Regtest wallets ready; Maker 3025.02115 BTC, Taker 5249.977046 BTC spendable.
+  [time 02:41:37] Bitcoin Core wallets (seed-btc-wallets.py): 1 s (31 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+escrow deployer missing under <scratch>/provision/data; run from-scratch.sh --only build
+  [time 02:41:37] market bootstrap: 0 s (31 s since up.sh started)

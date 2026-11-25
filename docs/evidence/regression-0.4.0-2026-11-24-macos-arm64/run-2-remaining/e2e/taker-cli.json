@@ -1,0 +1,90 @@
+{
+  "scenario": "taker-cli",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "179557292202",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "c5a0fe1ff1aae03175250992289788efa5b91a3ae43dc8c9f7f9b5331ec31a8a",
+  "bitcoin_claim": "bb3234d8b368010ec01dcf64e3d7fa8726af9c20d0a483279e9f30345cf681b7",
+  "wrong_owner": [
+    {
+      "socket": "600 lez"
+    },
+    {
+      "command": "health",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "balances",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap offers",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap list",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap take --request-id e2e-other-take-{stamp} --offer-id {offer} --foreign-units 1",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap monitor --swap-id {swap}",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap lock --swap-id {swap}",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap claim --swap-id {swap} --request-id e2e-other-claim-{stamp} --expected-generation 0",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap refund --swap-id {swap} --request-id e2e-other-refund-{stamp} --expected-generation 0",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    }
+  ],
+  "result": "passed",
+  "seconds": 55
+}
