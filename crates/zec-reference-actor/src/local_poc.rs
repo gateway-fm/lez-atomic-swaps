@@ -169,12 +169,16 @@ impl ProvisionSpec {
 }
 
 /// The Zebra a corridor is provisioned against, and its credential.
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum LocalPocZebraRoute {
-    /// The deterministic Regtest fixture: loopback, no credential.
-    #[default]
-    DeterministicLocal,
+    /// The deterministic Regtest chain on loopback; `cookie_file` is its
+    /// Zebra's owner-private `.cookie` when its JSON-RPC requires one (the
+    /// devnet's zebrad_module: `<cacheDir>/.cookie`, new at every start).
+    DeterministicLocal {
+        #[serde(default)]
+        cookie_file: Option<PathBuf>,
+    },
     /// A self-hosted Zcash Testnet Zebra on loopback; `cookie_file` is its
     /// owner-private `.cookie` (`__cookie__:<password>`).
     SelfHostedCookie { cookie_file: PathBuf },
@@ -183,10 +187,16 @@ pub(crate) enum LocalPocZebraRoute {
     TatumTestnetXApiKey { api_key_file: PathBuf },
 }
 
+impl Default for LocalPocZebraRoute {
+    fn default() -> Self {
+        Self::DeterministicLocal { cookie_file: None }
+    }
+}
+
 impl LocalPocZebraRoute {
     const fn credential_file(&self) -> Option<&PathBuf> {
         match self {
-            Self::DeterministicLocal => None,
+            Self::DeterministicLocal { cookie_file } => cookie_file.as_ref(),
             Self::SelfHostedCookie { cookie_file } => Some(cookie_file),
             Self::TatumTestnetXApiKey { api_key_file } => Some(api_key_file),
         }
@@ -194,7 +204,7 @@ impl LocalPocZebraRoute {
 
     pub(crate) const fn network(&self) -> NetworkType {
         match self {
-            Self::DeterministicLocal => NetworkType::Regtest,
+            Self::DeterministicLocal { .. } => NetworkType::Regtest,
             Self::SelfHostedCookie { .. } | Self::TatumTestnetXApiKey { .. } => NetworkType::Test,
         }
     }
@@ -231,14 +241,18 @@ pub(crate) fn connect_zebra(
     credential: Option<&[u8]>,
 ) -> Result<HttpZebraRpc> {
     let config = match (route, credential) {
-        (LocalPocZebraRoute::DeterministicLocal, None) => {
+        (LocalPocZebraRoute::DeterministicLocal { cookie_file: None }, None) => {
             HttpZebraRpcConfig::new(endpoint.as_str())
         }
-        (LocalPocZebraRoute::SelfHostedCookie { .. }, Some(cookie)) => {
-            HttpZebraRpcConfig::new(endpoint.as_str())
-                .with_cookie_credentials(cookie)
-                .context("invalid self-hosted Zebra cookie")?
-        }
+        (
+            LocalPocZebraRoute::DeterministicLocal {
+                cookie_file: Some(_),
+            }
+            | LocalPocZebraRoute::SelfHostedCookie { .. },
+            Some(cookie),
+        ) => HttpZebraRpcConfig::new(endpoint.as_str())
+            .with_cookie_credentials(cookie)
+            .context("invalid Zebra cookie")?,
         (LocalPocZebraRoute::TatumTestnetXApiKey { .. }, Some(api_key)) => {
             HttpZebraRpcConfig::public_https(endpoint.as_str())
                 .context("the provider route accepts only Tatum's Testnet Zebrad origin")?
@@ -485,15 +499,20 @@ pub struct LocalPocTransferSummary {
 #[cfg(feature = "test-payer")]
 pub async fn transfer_local_v0_2_regtest(
     zebra_endpoint: &Url,
+    zebra_cookie_file: Option<&Path>,
     from_key_file: &Path,
     to_key_file: &Path,
     value_zatoshis: u64,
     skip: u32,
 ) -> Result<LocalPocTransferSummary> {
+    let route = LocalPocZebraRoute::DeterministicLocal {
+        cookie_file: zebra_cookie_file.map(Path::to_path_buf),
+    };
+    let secret = read_zebra_credential(&route)?;
     let rpc = connect_zebra(
         zebra_endpoint,
-        &LocalPocZebraRoute::DeterministicLocal,
-        None,
+        &route,
+        secret.as_ref().map(|s| s.as_slice()),
     )?;
     transfer_between_keys(
         &rpc,
@@ -1132,9 +1151,12 @@ pub async fn provision_local_v0_2_corridor_with_material(
     }
     write_private_new(&maker_paths.capability, maker_capability.as_slice())?;
     write_private_new(&taker_paths.capability, taker_capability.as_slice())?;
-    // Each actor reads its own copy of a Testnet route's credential, beside
-    // its keys; the Regtest fixture has none.
-    if let Some(secret) = &zebra_credential {
+    // Each actor reads its own copy of an API key, beside its keys. A cookie
+    // is named where Zebra writes it, since Zebra writes a new one at every
+    // start: a copy would lock the actor out after Zebra's next restart.
+    if let (Some(secret), LocalPocZebraRoute::TatumTestnetXApiKey { .. }) =
+        (&zebra_credential, &spec.zebra_route)
+    {
         write_private_new(&maker_paths.zebra_credential, secret.as_slice())?;
         write_private_new(&taker_paths.zebra_credential, secret.as_slice())?;
     }
@@ -1617,10 +1639,14 @@ pub(crate) fn actor_config_input(
         bridge_runtime: runtime,
         zebra_endpoint: corridor.zebra_endpoint.clone(),
         zebra_route: match corridor.zebra_route {
-            LocalPocZebraRoute::DeterministicLocal => ProvisionedZebraRoute::DeterministicLocal,
-            LocalPocZebraRoute::SelfHostedCookie { .. } => {
+            LocalPocZebraRoute::DeterministicLocal { cookie_file } => {
+                ProvisionedZebraRoute::DeterministicLocal {
+                    cookie_file: cookie_file.clone(),
+                }
+            }
+            LocalPocZebraRoute::SelfHostedCookie { cookie_file } => {
                 ProvisionedZebraRoute::SelfHostedTestnetCookie {
-                    cookie_file: paths.zebra_credential.clone(),
+                    cookie_file: cookie_file.clone(),
                 }
             }
             LocalPocZebraRoute::TatumTestnetXApiKey { .. } => {
@@ -3483,7 +3509,7 @@ mod test_payer_tests {
         let directory = tempfile::tempdir().unwrap();
         let (from, to) = keys(&directory);
         let (url, server) = mainnet_zebra();
-        let error = transfer_local_v0_2_regtest(&url, &from, &to, 100_000_000, 0)
+        let error = transfer_local_v0_2_regtest(&url, None, &from, &to, 100_000_000, 0)
             .await
             .expect_err("a mainnet Zebra must be refused");
         assert!(
@@ -3523,7 +3549,7 @@ mod test_payer_tests {
         let directory = tempfile::tempdir().unwrap();
         let key = private_file(&directory, "same.key", &"01".repeat(32));
         let url = url::Url::parse("http://127.0.0.1:9/").unwrap();
-        let error = transfer_local_v0_2_regtest(&url, &key, &key, 1, 0)
+        let error = transfer_local_v0_2_regtest(&url, None, &key, &key, 1, 0)
             .await
             .expect_err("equal keys");
         assert!(format!("{error:#}").contains("must differ"), "{error:#}");
