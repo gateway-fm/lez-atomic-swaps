@@ -46,13 +46,13 @@ of this repository, and "patches" counts the upstream patches it is built with
          │           │           │                        │           │           │
          │ LEZ       │ BTC RPC   │ ZEC RPC      (the Taker reaches the same three services)
          ▼           ▼           ▼
- ┌─ network ────── BASECAMP ──┐ ┌─ bitcoin-core ─ PLAIN ─┐  ┌─ zebra ──────── PLAIN ─┐
- │ LEZ Network desk (headless)│ │ Bitcoin Core, regtest  │  │ Zebra, regtest         │
- │  blockchain_module  (up,   │ └───────────▲────────────┘  └────────────────────────┘
- │    released, unpatched)    │ ┌─ btc-miner ─── PLAIN ──┐
- │    └ Bedrock node          │ │ mines regtest blocks   │
- │  lez_indexer_module (up +  │ └────────────────────────┘
- │    3 patches)              │
+ ┌─ network ────── BASECAMP ──┐ ┌─ bitcoin-core ─ PLAIN ─┐  ┌─ zebra ───── BASECAMP ─┐
+ │ LEZ Network desk (headless)│ │ Bitcoin Core, regtest  │  │ Zcash Node desk        │
+ │  blockchain_module  (up,   │ └───────────▲────────────┘  │  zebrad_module (up,    │
+ │    released, unpatched)    │ ┌─ btc-miner ─── PLAIN ──┐  │    unpatched, pinned)  │
+ │    └ Bedrock node          │ │ mines regtest blocks   │  │    └ Zebra 7.1.0,      │
+ │  lez_indexer_module (up +  │ └────────────────────────┘  │      regtest + cookie  │
+ │    3 patches)              │                             └────────────────────────┘
  │    └ LEZ indexer + JSON-RPC│
  └─────────────▲──────────────┘
                │ blocks
@@ -61,7 +61,7 @@ of this repository, and "patches" counts the upstream patches it is built with
  └─────────────────────────────┘
 
  BUILD-ONLY / OPTIONAL (Compose, not started by default)
-   basecamp-ui    the image the three Basecamps are built from (scale 0)
+   basecamp-ui    the image the four Basecamps are built from (scale 0)
    heartbeat      keeps LEZ blocks coming on an idle chain (profile)
    btc-explorer, lez-explorer   (profile "explorers")
    tools          one-shot provisioning tools (profile)
@@ -73,14 +73,13 @@ of this repository, and "patches" counts the upstream patches it is built with
 
 | Where it runs | What | Containers |
 |---|---|---|
-| In Basecamp, as Logos modules | the Bedrock node, the LEZ indexer, each role's LEZ wallet, the Node supervisor, each role's Node package, Chat and Delivery | `network`, `maker-node`, `taker-node` |
+| In Basecamp, as Logos modules | the Bedrock node, the LEZ indexer, Zebra, each role's LEZ wallet, the Node supervisor, each role's Node package, Chat and Delivery | `network`, `zebra`, `maker-node`, `taker-node` |
 | In Basecamp, as plain processes | the Rust Node, its actors and sidecars: carried by a Logos package and started by `lez_swap_node`, not Logos modules themselves | `maker-node`, `taker-node` |
-| Plain containers | the LEZ sequencer, Bitcoin Core, the regtest miner, Zebra | `sequencer`, `bitcoin-core`, `btc-miner`, `zebra` |
+| Plain containers | the LEZ sequencer, Bitcoin Core, the regtest miner | `sequencer`, `bitcoin-core`, `btc-miner` |
 
 Why the plain ones are plain: no sequencer module exists at LEZ v0.2.4;
 Bitcoin Core stays bring-your-own (#115) and the upstream bitcoind module is
-not adoptable as it stands; the upstream zebrad module needs changes and has
-no released package; the miner exists only on regtest. On the public-testnet
+not adoptable as it stands; the miner exists only on regtest. On the public-testnet
 route (`compose.testnet.yaml`) there is no local chain at all: the Nodes and
 signers reach the official LEZ sequencer directly.
 
@@ -105,9 +104,14 @@ containers run by default and none of them is an init container:
   (`lez_maker_node` / `lez_taker_node`: the Node, actors, sidecar and the
   launcher `node-entrypoint.sh`). The desk talks only to that
   Node's owner-only Unix socket in the same container.
-- `bitcoin-core`, `btc-miner`, `zebra`: plain containers.
+- `zebra`: one headless Basecamp whose **Zcash Node** desk configures and
+  starts `zebrad_module` (logos-zebrad-module at its pinned commit,
+  unpatched: Zebra 7.1.0 in-process) on Regtest with NU7 from height 1. Its
+  JSON-RPC on `:18232` requires Zebra's cookie, which the Nodes read from the
+  container's volume, mounted read-only (uid 4713, like the Nodes).
+- `bitcoin-core`, `btc-miner`: plain containers.
 
-`basecamp-ui` is the base image of the three Basecamps and runs no container
+`basecamp-ui` is the base image of the four Basecamps and runs no container
 (`scale: 0`). `btc-explorer` and `lez-explorer` (profile `explorers`),
 `heartbeat` (profile `heartbeat`) and `tools` (profile `tools`, one-shot) run
 only on request. The two Nodes meet only at the Maker's Chat socket and the
@@ -160,7 +164,7 @@ flowchart TB
         Sequencer["sequencer :3040 (plain service)"]
         Core["bitcoin-core (regtest, txindex, txospenderindex)"]
         Miner["btc-miner"]
-        Zebra["zebra (Regtest)"]
+        Zebra["zebra: Basecamp, zebrad_module (Regtest, cookie)"]
     end
 
     MakerDesk --> MakerAdapter
@@ -203,7 +207,7 @@ flowchart TB
 
 The ZEC pair adds a per-corridor LEZ sidecar started by `node-entrypoint.sh`
 and the ZEC actors, which reach Zebra on a fourth loopback forwarder
-(`127.0.0.1:18232`); they are left out of the diagram.
+(`127.0.0.1:18232`) with Zebra's cookie; they are left out of the diagram.
 
 | Binary or module | Image | Responsibility | Lifecycle |
 |---|---|---|---|
@@ -222,7 +226,7 @@ and the ZEC actors, which reach Zebra on a fourth loopback forwarder
 | `node-entrypoint.sh` | node images | renders the role's identity, Core cookie and `btc-role.json`, starts the loopback forwarders, waits for the signer socket, execs the Node | each Node start |
 | `sequencer_service`, `r0vm` | lez-services | LEZ devnet sequencer and prover | service |
 | `bitcoind`, `bitcoin-cli` | bitcoin-core | regtest chain; wallets `lez-taker`, `lez-maker`, `lez-miner` | service |
-| `zebrad` | zebra | Zcash Regtest for the ZEC pair | service |
+| Zcash Node desk (`apps/basecamp/zcash`), `zebrad_module` | zebra | Zcash Regtest for the ZEC pair (Zebra 7.1.0 in-process); Restart node, Reset chain | the container's Basecamp; the desk configures and starts the module when the container starts |
 | `lez-wallet-heartbeat` | lez-wallet-module (profile `heartbeat`) | the finality heartbeat, transfers through `lez_core` in a headless logoscore | optional service |
 | `server.js` | lez-explorer (profile `explorers`) | indexer proxy, block and transaction UI, evidence view and hash index | optional service |
 

@@ -411,7 +411,7 @@ for workflow in .github/workflows/*.yml; do
     || fail "$workflow exposes GITHUB_TOKEN to a whole step; pass RZUP_GITHUB_TOKEN to rzup alone"
 done
 require_fixed '          --env NIX_CONFIG' "$ci_workflow"
-[[ "$(rg -Fc -- '-e NIX_CONFIG' deploy/scripts/from-scratch.sh)" == 4 ]] \
+[[ "$(rg -Fc -- '-e NIX_CONFIG' deploy/scripts/from-scratch.sh)" == 5 ]] \
   || fail "every Nix container of from-scratch.sh must receive NIX_CONFIG by name"
 [[ "$(rg -Fc -- '-e LGX_FLAKE -e NIX_CONFIG "$NIX_IMAGE"' .github/workflows/release-packages.yml)" == 2 ]] \
   || fail "the release-packages lgx containers must receive NIX_CONFIG by name"

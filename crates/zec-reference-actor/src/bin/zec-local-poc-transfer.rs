@@ -8,7 +8,8 @@ use zec_reference_actor::{
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 enum ZcashNetwork {
-    /// The deterministic Regtest fixture (loopback, no credential).
+    /// The deterministic Regtest fixture (loopback; its cookie when its
+    /// JSON-RPC requires one).
     Regtest,
     /// Zcash Testnet on NU7 (public-testnet-v2): a self-hosted Zebra with
     /// `--zebra-cookie-file`, or Tatum's gateway with `--zebra-api-key-file`.
@@ -31,7 +32,8 @@ struct Arguments {
     /// The chain the transfer is made on.
     #[arg(long, value_enum, default_value_t = ZcashNetwork::Regtest)]
     zcash_network: ZcashNetwork,
-    /// Owner-private `.cookie` of a self-hosted Testnet Zebra.
+    /// Owner-private `.cookie` of the Zebra: a self-hosted Testnet Zebra's, or
+    /// the devnet's Regtest one where its JSON-RPC requires a cookie.
     #[arg(
         long,
         value_name = "PRIVATE_FILE",
@@ -84,11 +86,12 @@ async fn main() -> anyhow::Result<()> {
     let summary = match arguments.zcash_network {
         ZcashNetwork::Regtest => {
             anyhow::ensure!(
-                arguments.zebra_cookie_file.is_none() && arguments.zebra_api_key_file.is_none(),
-                "the Regtest fixture takes no Zebra credential"
+                arguments.zebra_api_key_file.is_none(),
+                "the Regtest fixture takes no Zebra API key"
             );
             transfer_local_v0_2_regtest(
                 &arguments.zebra_endpoint,
+                arguments.zebra_cookie_file.as_deref(),
                 &arguments.from_zcash_key_file,
                 &arguments.to_zcash_key_file,
                 arguments.value_zatoshis,

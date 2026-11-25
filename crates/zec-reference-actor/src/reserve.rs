@@ -864,7 +864,12 @@ pub fn write_zec_role_template(
         holds_preimage == (template.role == ActorRole::Taker),
         "only the Taker holds the swap's preimage"
     );
-    if let Some(secret) = read_zebra_credential(&config.zebra_route)? {
+    // An API key is copied beside the swap's keys; a cookie is named where
+    // Zebra writes it (actor_config_input), as Zebra writes a new one at every start.
+    if let (Some(secret), LocalPocZebraRoute::TatumTestnetXApiKey { .. }) = (
+        read_zebra_credential(&config.zebra_route)?,
+        &config.zebra_route,
+    ) {
         write_private_new(&paths.zebra_credential, secret.as_slice())?;
     }
     let bridge_endpoint =
@@ -987,6 +992,44 @@ mod tests {
         fs::create_dir(path).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
         fs::canonicalize(path).unwrap()
+    }
+
+    /// The devnet's Regtest Zebra (`zebrad_module`) requires its cookie: the
+    /// role config names the file where Zebra writes it, read at each connect.
+    #[test]
+    fn a_regtest_route_takes_the_zebra_cookie_where_zebra_writes_it() {
+        let directory = tempdir().unwrap();
+        let cookie = directory.path().join(".cookie");
+        fs::write(&cookie, b"__cookie__:first").unwrap();
+        fs::set_permissions(&cookie, fs::Permissions::from_mode(0o600)).unwrap();
+        let path = directory.path().join("zec-role.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1,
+                "profile": "deterministic-local-devnet-v5",
+                "zebra_endpoint": "http://127.0.0.1:18232",
+                "zebra_route": {"kind": "deterministic_local", "cookie_file": cookie},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let config = ZecRoleConfigV1::load(&path).unwrap();
+        assert!(matches!(
+            &config.zebra_route,
+            LocalPocZebraRoute::DeterministicLocal { cookie_file: Some(named) } if named == &cookie
+        ));
+        assert_eq!(config.zebra_route.network(), NetworkType::Regtest);
+        config.connect().unwrap();
+        // A new start writes a new file: the next connect reads it.
+        fs::remove_file(&cookie).unwrap();
+        fs::write(&cookie, b"__cookie__:second").unwrap();
+        fs::set_permissions(&cookie, fs::Permissions::from_mode(0o600)).unwrap();
+        config.connect().unwrap();
+        // A cookie others can read is refused.
+        fs::set_permissions(&cookie, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(config.connect().is_err());
     }
 
     /// A role root the Node hands in, and the key file the role config

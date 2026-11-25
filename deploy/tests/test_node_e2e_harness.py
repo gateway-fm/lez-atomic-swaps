@@ -1562,3 +1562,54 @@ class RuntimePaths(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ZebraCookie(unittest.TestCase):
+    """The devnet's Zebra (zebrad_module) requires its cookie: the harness reads it
+    from the zebra container, keeps it in memory, and reads it again after a 401."""
+
+    def setUp(self):
+        e2e._zebra_devnet_cookie.clear()
+        self.addCleanup(e2e._zebra_devnet_cookie.clear)
+
+    def test_the_cookie_is_read_from_the_container_and_sent_as_basic_auth(self):
+        reads = []
+
+        def run(command, **_):
+            reads.append(command)
+            return subprocess.CompletedProcess(command, 0, '__cookie__:first\n', '')
+
+        clean = {k: v for k, v in os.environ.items() if k not in ('LEZ_ZEBRA_COOKIE_FILE', 'LEZ_ZEBRA_API_KEY_FILE')}
+        with patch.dict(os.environ, clean, clear=True), patch.object(e2e.subprocess, 'run', run):
+            headers = e2e.zebra_headers()
+            e2e.zebra_headers()
+        self.assertEqual(headers['authorization'], 'Basic X19jb29raWVfXzpmaXJzdA==')
+        self.assertEqual(reads, [['docker', 'exec', f'{e2e.PREFIX}-zebra', 'cat', '/var/lib/zebra/regtest/.cookie']])
+
+    def test_a_401_reads_the_new_cookie_once_and_retries(self):
+        import urllib.error
+        cookies = iter(['__cookie__:old', '__cookie__:new'])
+        sent = []
+
+        def run(command, **_):
+            return subprocess.CompletedProcess(command, 0, next(cookies), '')
+
+        class Reply(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        def urlopen(request, timeout):
+            sent.append(request.get_header('Authorization'))
+            if len(sent) == 1:
+                raise urllib.error.HTTPError(request.full_url, 401, 'Unauthorized', {}, None)
+            return Reply(b'{"result": 7}')
+
+        clean = {k: v for k, v in os.environ.items() if k not in ('LEZ_ZEBRA_COOKIE_FILE', 'LEZ_ZEBRA_API_KEY_FILE')}
+        with patch.dict(os.environ, clean, clear=True), patch.object(e2e.subprocess, 'run', run), \
+                patch('urllib.request.urlopen', urlopen):
+            self.assertEqual(e2e.zebra('getblockcount'), 7)
+        self.assertEqual(len(sent), 2)
+        self.assertNotEqual(sent[0], sent[1])

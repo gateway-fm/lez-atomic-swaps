@@ -493,8 +493,12 @@ pub fn validate_maker_manifest_config_bytes(
 /// The Zebra route a provisioned corridor's actors use.
 #[derive(Clone, Debug)]
 pub(crate) enum ProvisionedZebraRoute {
-    /// The deterministic Regtest fixture on loopback, no credential.
-    DeterministicLocal,
+    /// The deterministic Regtest chain on loopback, with its Zebra's live
+    /// `.cookie` when its JSON-RPC requires one.
+    DeterministicLocal {
+        /// Owner-private cookie file the actor reads, where Zebra writes it.
+        cookie_file: Option<PathBuf>,
+    },
     /// A self-hosted public-Testnet Zebra on loopback, cookie-authenticated.
     SelfHostedTestnetCookie {
         /// Owner-private cookie file the actor reads.
@@ -574,7 +578,7 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
     let consensus_branch_id = ConsensusBranchConfig::provisioned(input.zebra_consensus_branch_id)
         .ok_or(ActorConfigError::InvalidConfiguration)?;
     let (route, network) = match input.zebra_route {
-        ProvisionedZebraRoute::DeterministicLocal => {
+        ProvisionedZebraRoute::DeterministicLocal { cookie_file } => {
             // The fixture is pinned to NU6.2 on Zebra 5.2 or NU7 on Zebra 7
             // (zebra-node-adapter ZebraChainIdentity::deterministic_regtest_nu6_2
             // and deterministic_regtest_nu7).
@@ -588,7 +592,7 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
                 ZebraRouteConfig::DeterministicLocal {
                     endpoint: LoopbackHttpEndpoint::new(input.zebra_endpoint.as_str())
                         .map_err(|_| ActorConfigError::InvalidConfiguration)?,
-                    cookie_file: None,
+                    cookie_file,
                 },
                 ZcashNetworkConfig::Regtest,
             )
@@ -1659,7 +1663,7 @@ mod tests {
                 bridge_capability_file: PathBuf::from("/tmp/sidecar.capability"),
                 bridge_runtime: runtime,
                 zebra_endpoint: Url::parse("http://127.0.0.1:19002/").unwrap(),
-                zebra_route: ProvisionedZebraRoute::DeterministicLocal,
+                zebra_route: ProvisionedZebraRoute::DeterministicLocal { cookie_file: None },
                 zebra_consensus_branch_id: branch,
                 zebra_genesis_hash: Hex32::from_bytes([7; 32]),
                 counterparty_scan_blocks: 1_024,

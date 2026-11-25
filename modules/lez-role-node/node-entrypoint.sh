@@ -121,7 +121,7 @@ done
 role_prefix="LEZ_$(tr '[:lower:]' '[:upper:]' <<<"$role")_"
 for name in SIDECAR_PORT_BASE WALLET_SIGNER_SOCKET BTC_WALLET BTC_CLAIM_DESTINATION NODE_LOG_FILE \
     NODE_STATE_DIR NODE_RUN_ROOT ZEC_STATE_DIR ZEC_SIDECAR_DIR NODE_IDENTITY_DIR MARKET_MANIFEST BTC_RPC_COOKIE_FILE DELIVERY_DIR \
-    SEQUENCER_URL INDEXER_URL LEZ_SEQUENCER_ROUTE BITCOIN_CORE_HOST SEQUENCER_HOST INDEXER_HOST ZEBRA_HOST \
+    SEQUENCER_URL INDEXER_URL LEZ_SEQUENCER_ROUTE BITCOIN_CORE_HOST SEQUENCER_HOST INDEXER_HOST ZEBRA_HOST ZEBRA_COOKIE_FILE \
     MONEROD_HOST XMR_WALLET_HOST \
     V02_CHANNEL_ID AUTH_TRANSFER_PROGRAM_ID BTC_NETWORK LEZ_NETWORK \
     BTC_REFUND_CSV_BLOCKS BTC_SECOND_LOCK_REFUND_CSV_BLOCKS BTC_BLOCK_SECONDS_FASTEST BTC_BLOCK_SECONDS_SLOWEST \
@@ -568,8 +568,19 @@ if [[ "$role" == taker && -s "$zec_key_source" ]]; then
   fi
   zec_key_field="$(jq -n --arg key "$zec_role_root/zcash.key" '{zcash_key_file:$key}')"
 fi
-jq -n --arg profile "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" --argjson key "$zec_key_field" '
-  {schema_version:1, profile:$profile, zebra_endpoint:"http://127.0.0.1:18232"} + $key' >"$zec_role_config"
+# The Regtest Zebra's JSON-RPC cookie, where Zebra writes it (the devnet's
+# zebra service: zebrad_module, LEZ_ZEBRA_COOKIE_FILE): the actors read it at
+# each call, since Zebra writes a new one at every start. Unset: a Zebra
+# without cookie authentication.
+zec_cookie_file="${LEZ_ZEBRA_COOKIE_FILE:-}"
+zec_route_field='{}'
+if [[ -n "$zec_cookie_file" ]]; then
+  [[ "$zec_cookie_file" == /* ]] || { echo "$role: LEZ_ZEBRA_COOKIE_FILE must be an absolute path" >&2; exit 1; }
+  zec_route_field="$(jq -n --arg cookie "$zec_cookie_file" '{zebra_route:{kind:"deterministic_local", cookie_file:$cookie}}')"
+fi
+jq -n --arg profile "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" --argjson key "$zec_key_field" \
+  --argjson route "$zec_route_field" '
+  {schema_version:1, profile:$profile, zebra_endpoint:"http://127.0.0.1:18232"} + $route + $key' >"$zec_role_config"
 chmod 0600 "$zec_role_config"
 
 # The Monero role a Node takes swaps under at take time (xmr_reserve_v1,
@@ -629,16 +640,19 @@ fi
 # forward; the Maker then withdraws its offers there and refuses to quote or
 # publish on it, the Taker refuses a new take on it, and both report
 # themselves degraded. Bitcoin is asked with the role's cookie
-# (probe-bitcoin, above), Zcash with the package's health check; both are the
+# (probe-bitcoin, above), Zcash with the package's health check (with Zebra's
+# cookie when LEZ_ZEBRA_COOKIE_FILE names one); both are the
 # package's own files beside the Node. Monero, where the role has its logins,
 # is asked for its one route (TakerSellsLez) with probe-monero, above.
 launcher="$bin/${BASH_SOURCE[0]##*/}"
 jq -n --arg launcher "$launcher" --arg launcher_sha "$(sha256_of "$launcher")" \
   --arg cookie "$btc_state/btc-rpc-cookie" --arg check "$bin/lez-runtime-healthcheck" \
   --arg check_sha "$(sha256_of "$bin/lez-runtime-healthcheck")" \
-  --argjson monero "$monero_ready" --arg monerod_login "$monero_state/monerod.login" '
+  --argjson monero "$monero_ready" --arg monerod_login "$monero_state/monerod.login" \
+  --arg zec_cookie "$zec_cookie_file" '
   [{pair:"Bitcoin", program:$launcher, program_sha256:$launcher_sha, args:["probe-bitcoin", $cookie]},
-   {pair:"Zcash", program:$check, program_sha256:$check_sha, args:["tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]}]
+   {pair:"Zcash", program:$check, program_sha256:$check_sha, args:(["tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]
+      + if $zec_cookie == "" then [] else ["--cookie-file", $zec_cookie] end)}]
   | {schema_version:1, commands:([.[] as $probe | ("TakerSellsForeign", "TakerSellsLez") as $direction
       | {route:{pair:$probe.pair, direction:$direction}} + ($probe | del(.pair)) + {timeout_milliseconds:5000}]
       + if $monero == 1 then [{route:{pair:"Monero", direction:"TakerSellsLez"}, program:$launcher,

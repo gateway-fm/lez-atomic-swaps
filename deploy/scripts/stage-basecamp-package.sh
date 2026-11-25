@@ -2,10 +2,11 @@
 # stage-basecamp-package.sh — install one Logos package into the basecamp-ui
 # image context, laid out as Basecamp's package manager installs it.
 #
-#   scripts/stage-basecamp-package.sh <package.lgx> <maker|taker|network> [variant]
+#   scripts/stage-basecamp-package.sh <package.lgx> <maker|taker|network|zcash> [variant]
 #   scripts/stage-basecamp-package.sh <package.lgx> module [variant]
 #
-# A desk (maker, taker: the role desks; network: the LEZ Network desk) lands in
+# A desk (maker, taker: the role desks; network: the LEZ Network desk; zcash:
+# the Zcash Node desk) lands in
 # its user directory's plugins/<name>/, a runtime module (lez_core,
 # lez_swap_node, chat_module, ...) in the bundle's modules/<name>/: the
 # variant's files, the package's manifest.json and a `variant` file naming the
@@ -29,7 +30,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 source="${1:?package .lgx}"
-kind="${2:?maker, taker, network or module}"
+kind="${2:?maker, taker, network, zcash or module}"
 case "$(uname -m)" in
   x86_64 | amd64) host_variant=linux-amd64 ;;
   *) host_variant=linux-arm64 ;;
@@ -52,9 +53,10 @@ if ! jq -e --arg v "$variant" '.main[$v] != null and .hashes["variants/" + $v] !
 fi
 
 case "$kind" in
-  maker|taker|network)
+  maker|taker|network|zcash)
     plugin="lez_atomic_swap_${kind}"
     [[ "$kind" == network ]] && plugin=lez_network
+    [[ "$kind" == zcash ]] && plugin=lez_zcash_node
     [[ "$name" == "$plugin" ]] || { echo "$source is $name, not the $kind desk ($plugin)" >&2; exit 65; }
     [[ "$(jq -r .type "$manifest")" == ui_qml ]] || { echo "$source ($name) is not a ui_qml package" >&2; exit 65; }
     user="images/basecamp-ui/assets/${kind}-user"
@@ -65,7 +67,7 @@ case "$kind" in
   module)
     dest="images/basecamp-ui/assets/bundle/modules/$name"
     ;;
-  *) echo "kind must be maker, taker, network or module" >&2; exit 64 ;;
+  *) echo "kind must be maker, taker, network, zcash or module" >&2; exit 64 ;;
 esac
 rm -rf "$dest"
 mkdir -p "$dest"

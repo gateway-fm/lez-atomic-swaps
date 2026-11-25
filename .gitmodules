@@ -10,3 +10,7 @@
 	path = third_party/logos-execution-zone-module
 	url = https://github.com/logos-blockchain/logos-execution-zone-module.git
 	shallow = true
+[submodule "third_party/logos-zebrad-module"]
+	path = third_party/logos-zebrad-module
+	url = https://github.com/logos-co/logos-zebrad-module.git
+	shallow = true

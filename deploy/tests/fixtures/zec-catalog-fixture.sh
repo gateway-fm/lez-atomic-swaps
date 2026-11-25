@@ -24,8 +24,8 @@
 #      cannot authenticate. In TakerSellsForeign the Taker funds Zcash: the
 #      Maker pays the Taker's key once and 100 blocks make that output mature.
 #   1. preconditions: Nodes and zebra up, LEZ finalising, >= 10 mature coinbase
-#      outputs on zebra (mined to the Maker's minted Zcash key, the miner_address
-#      gen-config.sh renders into runtime/zebra/zebrad.toml; never another address);
+#      outputs on zebra (mined to the Maker's minted Zcash key, the minerAddress
+#      gen-config.sh renders into runtime/zebra/zebrad-module.json; never another address);
 #   2. spec from runtime/lez/<role>/identity.json, runtime.env and the market
 #      bootstrap manifest (the same facts the entrypoints render for BTC);
 #   3. provision the corridor into a staging volume, as the Node uid, at the
@@ -278,8 +278,22 @@ if "error" in reply:
     sys.stderr.write(json.dumps(reply["error"])[:400]+"\n"); sys.exit(1)
 json.dump(reply["result"], sys.stdout)' <<<"$reply" || fail "$1 $2 answered an error"
 }
+# The Regtest Zebra's JSON-RPC cookie (the zebra service: zebrad_module), new
+# at every start, so read at each call: from LEZ_ZEBRA_COOKIE_FILE where the
+# chains are another host's or the Nodes native, else from the zebra
+# container. It reaches curl on its standard input, never a command line or a
+# log. Empty: a Zebra without cookie authentication.
+ZEBRA_CONTAINER="$LEZ_CONTAINER_PREFIX-zebra"
+ZEBRA_COOKIE=/var/lib/zebra/regtest/.cookie   # as the zebra service and the Nodes see it
+zebra_cookie() {
+  if [[ -n "${LEZ_ZEBRA_COOKIE_FILE:-}" ]]; then cat -- "$LEZ_ZEBRA_COOKIE_FILE"
+  else docker exec "$ZEBRA_CONTAINER" cat "$ZEBRA_COOKIE" 2>/dev/null || true
+  fi
+}
 zebra() { # zebra <method> <params-json>
-  curl -sS --max-time 30 -H 'content-type: application/json' \
+  local cookie; cookie="$(zebra_cookie)"
+  { [[ -z "$cookie" ]] || printf 'user = "%s"\n' "$cookie"; } |
+  curl -sS --max-time 30 -K - -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":${2:-[]}}" "$ZEBRA_URL" |
     python3 -c 'import json,sys
 reply=json.load(sys.stdin)
@@ -512,13 +526,14 @@ print(info["blocks"])')" || blocked "the Zebra at $LEZ_ZEBRA_URL is not Zcash Te
   # after this tip.
   if [[ "$DIRECTION" == TakerSellsForeign ]]; then pay_taker=1; scan_from="$testnet_tip"; fi
 else
-# The devnet's Zebra is Zebra 7 on Regtest with NU7 from height 1, the branch
-# the -v5 to -v8 profiles sign for. One from before (the 5.2.0 image, or a config
-# rendered from the NU6.2 template) says NU6.2 (5437f330) for its next block;
-# its chain cannot carry an NU7 corridor and Zebra 7 cannot read its state
-# (it starts an empty chain beside it). Such a Zebra is recreated here with a
-# new data volume, once, rather than failing in the provisioner's branch
-# check; only a Zebra serving the Regtest genesis is ever touched.
+# The devnet's Zebra is zebrad_module (Zebra 7.1.0) on Regtest with NU7 from
+# height 1, the branch the -v5 to -v8 profiles sign for (gen-config.sh's
+# activationHeights). A chain from before (Zebra 5.2.0, or the NU6.2
+# settings) says NU6.2 (5437f330) for its next block and cannot carry an NU7
+# corridor. Such a chain is reset here, once, rather than failing in the
+# provisioner's branch check: the Zcash Node desk's Reset chain stops the
+# node, deletes its chain and starts a new one with the settings it was
+# given; only a Zebra serving the Regtest genesis is ever touched.
 zebra_next_branch() {
   zebra getblockchaininfo | python3 -c 'import json,sys; print(json.load(sys.stdin)["consensus"]["nextblock"])'
 }
@@ -527,20 +542,21 @@ zebra_next_branch() {
 next_branch="$(zebra_next_branch)" || fail "zebra RPC unavailable at $ZEBRA_URL"
 # Regtest coinbases halve every 816 blocks: past 1500 (node-e2e.py
 # ZEBRA_WORN_HEIGHT) the Maker's key is mined too little to fund a lot, so a
-# worn Zebra is recreated the same way, unless a live corridor runs on it (--add).
+# worn chain is reset the same way, unless a live corridor runs on it (--add).
 worn=0; (( ADD == 0 && $(zebra getblockcount) >= 1500 )) && worn=1
 if [[ "$next_branch" != "$NU7_BRANCH" || "$worn" == 1 ]]; then
-  log "  zebra's next block is on branch $next_branch (NU7 is $NU7_BRANCH), worn=$worn: recreating it on Zebra 7 with a new data volume"
-  # The rendered config keeps its miner address; only the activation changes.
-  host_sed_inplace 's/^"NU6\.2" = 1$/"NU7" = 1/' "$LANE/zebra/zebrad.toml"
-  grep -qx '"NU7" = 1' "$LANE/zebra/zebrad.toml" ||
-    fail "$LANE/zebra/zebrad.toml does not activate NU7: rerun scripts/gen-config.sh"
-  "${compose[@]}" rm -sf zebra >/dev/null 2>&1 || true
-  docker volume rm "$VOLUME_PREFIX-zebra-data" >/dev/null 2>&1 || true
-  compose_up zebra
-  for _ in $(seq 1 30); do next_branch="$(zebra_next_branch 2>/dev/null)" && break; sleep 2; done
+  [[ "${LEZ_CHAINS_RPC_ONLY:-}" != 1 ]] ||
+    fail "zebra's next block is on branch $next_branch (NU7 is $NU7_BRANCH), worn=$worn: reset that host's Zcash chain (its Zcash Node desk's Reset chain)"
+  log "  zebra's next block is on branch $next_branch (NU7 is $NU7_BRANCH), worn=$worn: resetting its chain (Zcash Node desk)"
+  docker exec "$ZEBRA_CONTAINER" node /opt/lez-zcash-reset-chain.mjs >/dev/null 2>&1 ||
+    fail "the Zcash Node desk in $ZEBRA_CONTAINER did not reset the chain"
+  next_branch=""
+  for _ in $(seq 1 60); do
+    next_branch="$(zebra_next_branch 2>/dev/null)" && (( $(zebra getblockcount) < 1500 )) && break
+    next_branch=""; sleep 2
+  done
   [[ "$next_branch" == "$NU7_BRANCH" ]] ||
-    fail "the recreated zebra is on branch ${next_branch:-unknown}, not NU7: rebuild its image (docker compose build zebra)"
+    fail "the reset zebra is on branch ${next_branch:-unknown}, not NU7: check runtime/zebra/zebrad-module.json (scripts/gen-config.sh)"
 fi
 zebra_height="$(zebra getblockcount)" || fail "zebra RPC unavailable at $ZEBRA_URL"
 target=$(( MATURITY + MIN_MATURE_OUTPUTS ))
@@ -565,12 +581,17 @@ TAKER_POOL_AHEAD=4
 scan_from=0; pay_taker=0
 if [[ "$DIRECTION" == TakerSellsForeign ]]; then
   payments="$SWAPS"; (( ADD == 1 )) && payments=2
-  scan_from="$(python3 - "$TAKER_POOL" "$ZEBRA_URL" "$payments" <<'PY'
-import json, pathlib, sys, urllib.request
+  # (Zebra's cookie, when it has one, reaches the reader on descriptor 3.)
+  scan_from="$(python3 - "$TAKER_POOL" "$ZEBRA_URL" "$payments" 3< <(zebra_cookie) <<'PY'
+import base64, json, os, pathlib, sys, urllib.request
 pool, url, needed = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+cookie = os.fdopen(3).read().strip()
+headers = {"content-type": "application/json"}
+if cookie:
+    headers["authorization"] = "Basic " + base64.b64encode(cookie.encode()).decode()
 def zebra(method, params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
-    with urllib.request.urlopen(urllib.request.Request(url, body, {"content-type": "application/json"}), timeout=30) as r:
+    with urllib.request.urlopen(urllib.request.Request(url, body, headers), timeout=30) as r:
         return json.load(r).get("result")
 kept = []
 for line in (pool.read_text().splitlines() if pool.exists() else []):
@@ -611,6 +632,15 @@ discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
 # Testnet: the route (its credential as the provisioner and the actors see it,
 # copied into the staging volume in step 3) and the lane's principal.
 spec_extra='{}'
+# Regtest: the zebra service's cookie, where the provisioner (on the zebra
+# volume, zec_tool) and the actors (the Nodes mount it) read it; for native
+# Nodes and another host's chains, LEZ_ZEBRA_COOKIE_FILE.
+REGTEST_COOKIE="${LEZ_ZEBRA_COOKIE_FILE:-$ZEBRA_COOKIE}"
+regtest_cookie=()
+if [[ "$ZCASH_NETWORK" != test && -n "$(zebra_cookie)" ]]; then
+  regtest_cookie=(--zebra-cookie-file "$REGTEST_COOKIE")
+  spec_extra="$(python3 -c 'import json,sys; print(json.dumps({"zebra_route": {"kind": "deterministic_local", "cookie_file": sys.argv[1]}}))' "$REGTEST_COOKIE")"
+fi
 if [[ "$ZCASH_NETWORK" == test ]]; then
   spec_extra="$(python3 -c 'import json,sys
 url,kind,field,path,principal=sys.argv[1:]
@@ -661,8 +691,12 @@ done
 zec_tool() { # zec_tool <tool> <args...>
   local tool="$1"; shift
   if [[ -n "$NATIVE" ]]; then "$TOOLS/$tool" "$@"; return; fi
+  # (Regtest: the zebra service's volume, read-only, for its cookie.)
+  local zebra_volume=()
+  [[ "$ZCASH_NETWORK" == test || -n "${LEZ_ZEBRA_COOKIE_FILE:-}" ]] ||
+    zebra_volume=(-v "$VOLUME_PREFIX-zebra-module-data:/var/lib/zebra:ro")
   docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
-    --entrypoint "$tool" "$TAKER_IMAGE" "$@"
+    ${zebra_volume[@]+"${zebra_volume[@]}"} --entrypoint "$tool" "$TAKER_IMAGE" "$@"
 }
 if [[ -n "$NATIVE" ]]; then
   log "3/8 provision (native: $ZEC_ROOT)"
@@ -753,17 +787,22 @@ elif [[ "$DIRECTION" == TakerSellsForeign ]]; then
   log "  TakerSellsForeign: paying the Taker's key $TAKER_FUNDING_ZATOSHIS zatoshis from the Maker's, $payments time(s), then 100 blocks"
   for (( p = 0; p < payments; p++ )); do
     zec_tool zec-local-poc-transfer \
-      --zebra-endpoint http://127.0.0.1:18232 --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" \
+      --zebra-endpoint http://127.0.0.1:18232 ${regtest_cookie[@]+"${regtest_cookie[@]}"} \
+      --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" \
       --to-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" --value-zatoshis "$TAKER_FUNDING_ZATOSHIS" </dev/null >"$out/taker-funding-$p.json" ||
       fail "zec-local-poc-transfer failed (see above)"
     log "  transfer $(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["transaction_id"][:16] + "… to " + s["to_address"])' "$out/taker-funding-$p.json")"
     zebra generate "[1]" >/dev/null || fail "zebra generate failed"
     # the pool line: the payment's output to the Taker and its height
-    python3 - "$out/taker-funding-$p.json" "$ZEBRA_URL" >>"$TAKER_POOL" <<'PY' || fail "recording the Taker's payment failed"
-import json, sys, urllib.request
+    python3 - "$out/taker-funding-$p.json" "$ZEBRA_URL" >>"$TAKER_POOL" 3< <(zebra_cookie) <<'PY' || fail "recording the Taker's payment failed"
+import base64, json, os, sys, urllib.request
 paid = json.load(open(sys.argv[1]))
+cookie = os.fdopen(3).read().strip()
+headers = {"content-type": "application/json"}
+if cookie:
+    headers["authorization"] = "Basic " + base64.b64encode(cookie.encode()).decode()
 body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getrawtransaction", "params": [paid["transaction_id"], 1]}).encode()
-with urllib.request.urlopen(urllib.request.Request(sys.argv[2], body, {"content-type": "application/json"}), timeout=30) as r:
+with urllib.request.urlopen(urllib.request.Request(sys.argv[2], body, headers), timeout=30) as r:
     tx = json.load(r)["result"]
 vout = next(o["n"] for o in tx["vout"] if paid["to_address"] in (o.get("scriptPubKey") or {}).get("addresses", []))
 print(paid["transaction_id"], vout, tx["height"])

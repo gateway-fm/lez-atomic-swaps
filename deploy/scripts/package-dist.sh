@@ -52,4 +52,4 @@ tar -C "$stage" -czf "$archive" "$name"
 (cd "$out" && shasum -a 256 "$name.tar.gz" >"$name.tar.gz.sha256")
 echo "bundle: $archive"
 echo "  $(cat "$out/$name.tar.gz.sha256")"
-echo "  images: ${prefix}-{bitcoin-core,zebra,btc-miner,btc-explorer,monerod,services,explorer,maker-node,taker-node,basecamp-ui,network-module,wallet-module}:${tag}"
+echo "  images: ${prefix}-{bitcoin-core,zebra-module,btc-miner,btc-explorer,monerod,services,explorer,maker-node,taker-node,basecamp-ui,network-module,wallet-module}:${tag}"

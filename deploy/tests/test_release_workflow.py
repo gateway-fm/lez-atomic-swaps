@@ -43,7 +43,7 @@ class ReleaseWorkflow(unittest.TestCase):
     def test_rust_job_uploads_what_the_contexts_copy(self):
         collect = WORKFLOW.split('name: node-payloads')[0].rsplit('- name: Collect payloads', 1)[1]
         roles = set(re.search(r'for role in ([a-z -]+); do', collect).group(1).split())
-        for context in ('maker-node', 'taker-node', 'lez-services', 'zebra'):
+        for context in ('maker-node', 'taker-node', 'lez-services', 'zebra-module'):
             self.assertIn(context, roles, context)
         # the published Taker image carries zec-local-poc-identity and the
         # test-only payer zec-local-poc-transfer (feature test-payer), and none

@@ -1,7 +1,8 @@
 # The Basecamp every Basecamp container of the stack is built on (compose.yaml
 # basecamp-ui, a build-only service): the parties' (maker-node, taker-node:
-# one role's desk each, on VNC) and the LEZ network's (bedrock, indexer: the
-# LEZ Network desk). Nothing runs this image on its own.
+# one role's desk each, on VNC), the LEZ network's (bedrock, indexer: the
+# LEZ Network desk) and the Zcash node's (zebra: the Zcash Node desk). Nothing
+# runs this image on its own.
 FROM debian:trixie-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -19,6 +20,7 @@ COPY assets/bundle /opt/basecamp
 COPY assets/maker-user /var/lez-assets/maker-user
 COPY assets/taker-user /var/lez-assets/taker-user
 COPY assets/network-user /var/lez-assets/network-user
+COPY assets/zcash-user /var/lez-assets/zcash-user
 COPY assets/qt-mcp /opt/qt-mcp
 COPY entrypoint.sh /entrypoint.sh
 COPY open-desks.mjs /opt/lez-open-desks.mjs

@@ -20,6 +20,7 @@
         cp ${commonSource}/lez_role_signer.h src/lez_role_signer.h
         cp ${commonSource}/lez_role_node.h src/lez_role_node.h
         cp ${commonSource}/lez_network_host.h src/lez_network_host.h
+        cp ${commonSource}/lez_zcash_host.h src/lez_zcash_host.h
       '';
       nixpkgsFor = system: logos-module-builder.inputs.nixpkgs.legacyPackages.${system};
       withKit = system: role: import ./common/package-source.nix {
@@ -44,6 +45,9 @@
       # The LEZ Network desk: hosts the LEZ network node and/or indexer in a
       # Basecamp (deploy: the bedrock and indexer services).
       networkFor = system: packageFor system "network";
+      # The Zcash Node desk: hosts a Zcash node (zebrad_module) in a Basecamp
+      # (deploy: the zebra service, the devnet's shared Regtest chain).
+      zcashFor = system: packageFor system "zcash";
       # Qt Remote Objects creates local sockets below TMPDIR. Nix's default
       # per-build directory can exceed Linux's AF_UNIX path limit before the
       # module-specific socket name is appended, so keep the official test
@@ -64,7 +68,7 @@
       # and Basecamp install; `-lgx` and `-install` are the builder's
       # development builds (variant `<platform>-dev`, libraries from
       # /nix/store), which logosctl refuses.
-      packages = builtins.listToAttrs (map (system: let maker = makerFor system; taker = takerFor system; network = networkFor system; in {
+      packages = builtins.listToAttrs (map (system: let maker = makerFor system; taker = takerFor system; network = networkFor system; zcash = zcashFor system; in {
         name = system;
         value = {
           lez-maker-ui = maker.packages.${system}.default;
@@ -81,6 +85,10 @@
           lez-network-ui-lgx = network.packages.${system}.lgx;
           lez-network-ui-lgx-portable = network.packages.${system}.lgx-portable;
           lez-network-ui-install = network.packages.${system}.install;
+          lez-zcash-ui = zcash.packages.${system}.default;
+          lez-zcash-ui-lgx = zcash.packages.${system}.lgx;
+          lez-zcash-ui-lgx-portable = zcash.packages.${system}.lgx-portable;
+          lez-zcash-ui-install = zcash.packages.${system}.install;
           default = maker.packages.${system}.default;
         };
       }) systems);

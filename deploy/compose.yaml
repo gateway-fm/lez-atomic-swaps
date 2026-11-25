@@ -99,20 +99,29 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  # Zcash Regtest for the LEZ <-> ZEC pair, alongside bitcoin-core for BTC.
-  # Same digest-pinned upstream build as the isolated lane in tests/e2e/zebra.
-  # Its data volume takes its owner (65532) from the image's /var/lib/zebra.
+  # Zcash Regtest for the LEZ <-> ZEC pair, alongside bitcoin-core for BTC: a
+  # Basecamp (images/zebra-module: the basecamp-ui image's Basecamp) hosting
+  # zebrad_module, Zebra 7.1.0 as a Logos module. Its Zcash Node desk, opened
+  # when the container starts, configures the module from the settings
+  # gen-config.sh renders (every upgrade through NU7 at height 1, the Maker's
+  # minted Zcash key as the miner address, the JSON-RPC on :18232) and starts
+  # it. The JSON-RPC requires Zebra's cookie, which Zebra writes owner-only to
+  # /var/lib/zebra/regtest/.cookie, new at every start: the container runs as
+  # the Nodes' user and the Nodes mount this volume read-only to read it. The
+  # volume holds the chain and the Basecamp user directory; it takes its owner
+  # (4713) from the image's /var/lib/zebra. A regtest node saves each block as
+  # it accepts it, so a stop or a kill loses none.
   zebra:
-    build: ./images/zebra
-    image: ${LEZ_IMAGE_PREFIX:-lez}-zebra:${LEZ_IMAGE_TAG:-local}
+    build:
+      context: ./images/zebra-module
+      additional_contexts:
+        basecamp: service:basecamp-ui
+    image: ${LEZ_IMAGE_PREFIX:-lez}-zebra-module:${LEZ_IMAGE_TAG:-local}
     container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-zebra
-    command:
-      - "--config"
-      - "/run-config/zebrad.toml"
-      - "start"
     environment:
       HOME: /tmp
-      ZEBRA_RPC__COOKIE_DIR: /tmp
+      LEZ_ZEBRA_NETWORK: regtest
+      LEZ_ZEBRA_CONFIG: /run-config/zebrad-module.json
     labels:
       org.logos-co.atomic-swaps.run: market-zec-0001
       org.logos-co.atomic-swaps.scope: zebra-regtest-e2e
@@ -120,24 +129,31 @@ services:
     ports:
       - "127.0.0.1:${LEZ_ZEBRA_PORT:-18232}:18232"
     volumes:
-      # Rendered by scripts/gen-config.sh from assets/zebra/zebrad.toml: the
-      # miner_address is the Maker's minted Zcash key (runtime/lez/maker/zcash.key).
-      - ./${LEZ_LANE_RUNTIME:-runtime}/zebra/zebrad.toml:/run-config/zebrad.toml:ro
-      - zebra_data:/var/lib/zebra
+      # Rendered by scripts/gen-config.sh from assets/zebra/zebrad-module.json:
+      # minerAddress is the Maker's minted Zcash key (runtime/lez/maker/zcash.key).
+      - ./${LEZ_LANE_RUNTIME:-runtime}/zebra/zebrad-module.json:/run-config/zebrad-module.json:ro
+      - zebra_module_data:/var/lib/zebra
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
     healthcheck:
-      test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]
+      test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:18232", "getblockchaininfo", "[]",
+             "--cookie-file", "/var/lib/zebra/regtest/.cookie"]
       interval: 15s
       timeout: 10s
       retries: 120
       start_period: 180s
+      start_interval: 2s
     networks: [chains]
-    user: "65532:65532"
+    user: "4713:4713"
+    init: true
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    stop_grace_period: 15s
+    pids_limit: 1024
+    cpus: 2.0
+    mem_limit: 3g
+    stop_grace_period: 30s
+    logging: *default-logging
 
   # Monero regtest for the LEZ <-> XMR pair, in the profile "monero", off by
   # default (LEZ_MONERO=1, which gen-config.sh keeps in runtime.env; up.sh and
@@ -425,6 +441,9 @@ services:
         condition: service_healthy
       network:
         condition: service_healthy
+      # started first, so its image gives the shared volume its owner
+      zebra:
+        condition: service_started
     environment:
       BASECAMP_ROLE: maker
       VNC_PASSWORD: ${VNC_PASSWORD:-lezswap}
@@ -464,6 +483,9 @@ services:
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
       # The ZEC profile take-time swaps are agreed under (zec-role.json).
       LEZ_ZEC_PROFILE: ${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}
+      # The zebra service's JSON-RPC cookie, read where Zebra writes it (the
+      # chain's volume, below): the Zcash actors and the route health send it.
+      LEZ_ZEBRA_COOKIE_FILE: /var/lib/zebra/regtest/.cookie
       # The Monero windows take-time swaps are agreed under (xmr-role.json, only
       # where the role has Monero logins: LEZ_MONERO=1).
       LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS: ${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:-}
@@ -494,6 +516,8 @@ services:
       - maker_socket:/run/lez/maker
       # The Maker half of the prepared ZEC corridor (tests/fixtures/zec-catalog-fixture.sh).
       - zec_maker:/var/lib/lez/zec
+      # The zebra service's volume, read-only: its cookie (LEZ_ZEBRA_COOKIE_FILE).
+      - zebra_module_data:/var/lib/zebra:ro
       - delivery_dir:/delivery
       # The identity's public half; the key stays with Basecamp's wallet.
       - ./${LEZ_LANE_RUNTIME:-runtime}/lez/maker/identity.json:/run-lez-identity/identity.json:ro
@@ -579,6 +603,9 @@ services:
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
       # The ZEC profile take-time swaps are agreed under (zec-role.json).
       LEZ_ZEC_PROFILE: ${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}
+      # The zebra service's JSON-RPC cookie, read where Zebra writes it (the
+      # chain's volume, below): the Zcash actors and the route health send it.
+      LEZ_ZEBRA_COOKIE_FILE: /var/lib/zebra/regtest/.cookie
       # The Monero windows take-time swaps are agreed under (xmr-role.json, only
       # where the role has Monero logins: LEZ_MONERO=1).
       LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS: ${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:-}
@@ -601,6 +628,8 @@ services:
       - taker_state:/var/lib/lez/taker
       # The Taker half of the prepared ZEC corridor plus its catalog.
       - zec_taker:/var/lib/lez/zec
+      # The zebra service's volume, read-only: its cookie (LEZ_ZEBRA_COOKIE_FILE).
+      - zebra_module_data:/var/lib/zebra:ro
       - delivery_dir:/delivery:ro
       # the Maker's Chat socket (the Node's own sockets stay in the image's /run/lez/taker)
       - maker_socket:/run/lez/maker
@@ -741,8 +770,8 @@ networks:
 volumes:
   bitcoin_core_data:
     name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-bitcoin-core-data
-  zebra_data:
-    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-zebra-data
+  zebra_module_data:
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-zebra-module-data
   monerod_data:
     name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-monerod-data
   xmr_funding_wallet_data:

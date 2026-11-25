@@ -34,14 +34,17 @@ OURS = {
     'lez_atomic_swap_maker': 'apps/basecamp/maker/metadata.json',
     'lez_atomic_swap_taker': 'apps/basecamp/taker/metadata.json',
     'lez_network': 'apps/basecamp/network/metadata.json',
+    'lez_zcash_node': 'apps/basecamp/zcash/metadata.json',
     'lez_swap_node': 'modules/lez-swap-node/metadata.json',
     'lez_maker_node': 'modules/lez-maker-node/metadata.json',
     'lez_taker_node': 'modules/lez-taker-node/metadata.json',
 }
-# Patched upstream modules: the version is the one their contracts name.
+# Patched upstream modules, and zebrad_module (an unreleased commit that kept
+# its last release's version): the version is the one their contracts name.
 PATCHED = {
     'lez_core': 'apps/basecamp/common/deps/lez_core.lidl',
     'lez_indexer_module': 'apps/basecamp/common/deps/lez_indexer_module.lidl',
+    'zebrad_module': 'apps/basecamp/common/deps/zebrad_module.lidl',
 }
 BLOCKCHAIN_VERSION = re.search(
     r'^readonly BLOCKCHAIN_MODULE_VERSION=(\S+)$',
@@ -164,6 +167,7 @@ class PinnedDependencies(unittest.TestCase):
         required = {d['name']: d['version'] for n in OURS for d in pinned[n]['dependencies']}
         self.assertEqual(required['lez_core'], '0.4.1-sign.4')
         self.assertEqual(required['lez_indexer_module'], '1.1.1-rpc.4')
+        self.assertEqual(required['zebrad_module'], '0.2.0')
         for name in PATCHED:
             self.assertNotRegex(required[name], r'^[~^<>=*]', name)
 
