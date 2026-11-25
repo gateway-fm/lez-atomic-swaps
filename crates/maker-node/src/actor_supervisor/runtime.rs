@@ -309,9 +309,12 @@ pub fn supervise_one_due_maker_actor_until(
 
 /// Recovers and runs at most one abandoned durable actor lease.
 ///
-/// A lease is eligible only when this process can acquire its exact per-swap
-/// kernel lock, proving that neither the old coordinator nor any actor child
-/// still owns the inherited descriptor. The owner/generation transfer is one
+/// A lease is eligible only when another owner holds it and this process can
+/// acquire its exact per-swap kernel lock, proving that neither the old
+/// coordinator nor any actor child still owns the inherited descriptor. A
+/// lease of `owner` itself belongs to a live worker of this supervisor: it is
+/// leased before its worker takes the lock, and in between the lock is free
+/// without the lease being abandoned. The owner/generation transfer is one
 /// durable compare-and-swap and the lock remains held through execution and
 /// resolution, so the row is never exposed as queued or unowned in between.
 ///
@@ -357,6 +360,10 @@ pub fn supervise_one_abandoned_maker_actor_until(
     for lease in store.list_leased_maker_actors()? {
         if cancellation.is_cancelled() || config.effect_cutoff_reached() {
             return Ok(None);
+        }
+        // Another worker of this supervisor claimed it and is about to lock it.
+        if lease.owner() == owner {
+            continue;
         }
         let held_lock = match ActorHeldLock::acquire(lease.record()) {
             Ok(lock) => lock,
