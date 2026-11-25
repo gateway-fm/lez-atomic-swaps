@@ -56,11 +56,14 @@ flowchart LR
   stops at NU6.3.
 - Zebra is the consensus oracle and broadcaster. librustzcash construction or
   parser success alone is not consensus evidence.
-- The isolated regtest harness (`tests/e2e/zebra/Dockerfile`) and the devnet's
-  zebra (`deploy/images/zebra`) copy `zebrad` out of `zfnd/zebra:7.0.0` at a
-  fixed digest and activate every upgrade through NU7 at height 1, so the
-  Regtest matrix signs for the same branch (`77190ad9`) as public Testnet
-  (profiles `deterministic-local-v2`, `deterministic-local-devnet-v5`/`-v6`).
+- The isolated regtest harness (`tests/e2e/zebra/Dockerfile`) copies `zebrad`
+  out of `zfnd/zebra:7.1.0` at a fixed digest; the devnet's zebra runs Zebra
+  7.1.0 as a Logos module (`zebrad_module`, `deploy/images/zebra-module`). Both
+  activate every upgrade through NU7 at height 1, so the Regtest matrix signs
+  for the same branch (`77190ad9`) as public Testnet (profiles
+  `deterministic-local-v2`, `deterministic-local-devnet-v5`/`-v6`). Zebra 7.1.0
+  changes none of the JSON-RPC methods the swap engine calls; a request with a
+  wrong cookie gets HTTP 401 there, an empty reply on 7.0.0.
 - Tatum documents a dedicated Zebrad JSON-RPC endpoint at
   `https://zcash-testnet-zebrad.gateway.tatum.io`, API-key authentication, a
   free Testnet key, and a separately monitored Testnet Zebrad status component.
@@ -102,10 +105,13 @@ flowchart LR
 - Caller-selected unused loopback RPC and P2P ports. Do not assume the example
   ports are free and do not overlap repository Regtest/Docker runs.
 
-Two ways to get the pinned `zebrad`. We walked the first on 2026-11-11; the
-second is written from Zebra's documentation and was not run by us.
+Three ways to run a pinned Zebra. We walked the first on 2026-11-11 with
+7.0.0; the image pinned below is now 7.1.0, which we have not synced on
+Testnet. The second is written from Zebra's documentation and was not run by
+us. The third is the Logos module the devnet hosts its regtest chain in; we
+have run it on regtest only.
 
-**The pinned image** (what `deploy/images/zebra` also copies `zebrad` from):
+**The pinned image** (what `tests/e2e/zebra` also copies `zebrad` from):
 
 ```sh
 install -d -m 700 "$RUN_DIR/state" "$RUN_DIR/cookie"   # RUN_DIR as below
@@ -114,23 +120,43 @@ docker run -d --name zec-testnet-zebra --restart unless-stopped \
   -v "$RUN_DIR/state:/state" -v "$RUN_DIR/cookie:/cookie" \
   -v "$RUN_DIR/zebrad.toml:/etc/zebrad.toml:ro" \
   --entrypoint zebrad \
-  docker.io/zfnd/zebra@sha256:a70d2be8ffef3a4b6e37355724e36a0e6c1838e46baa28bfb216739f00cf2d34 \
+  docker.io/zfnd/zebra@sha256:4f9536c8061e407f9f2ec81b7e0dd2f1762f81deec316abb1530dca8796a33ba \
   -c /etc/zebrad.toml start
 ```
 
 In the container the configuration below uses `/state` and `/cookie` for the
 two directories and `0.0.0.0` for the two listen addresses; only the RPC port
 is published, and only on the host's loopback. The image runs as root: the
-cookie file it writes is then root-owned, so read it with `sudo` or copy it
-out to an owner-only file. (The digest is the multi-arch index of
-`zfnd/zebra:7.0.0`: linux/amd64 and linux/arm64. We ran amd64.)
+cookie file it writes is then root-owned. The actors read the cookie file at
+each call and require it to be owned by their own user, and Zebra writes a new
+cookie at every start: run the container as the Nodes' user
+(`--user <uid>:<gid>`, the two directories owned by it), or copy the cookie
+out to an owner-only file again after every Zebra start. (The digest is the
+multi-arch index of `zfnd/zebra:7.1.0`: linux/amd64 and linux/arm64.)
 
 **A source build**, if a verified binary is not used:
 
 ```sh
 cargo install --locked --git https://github.com/ZcashFoundation/zebra \
-  --tag v7.0.0 zebrad   # the release Tatum's gateway runs; any later release that keeps NU7's Testnet activation
+  --tag v7.1.0 zebrad   # any release that keeps NU7's Testnet activation
 ```
+
+**The Logos module** (`zebrad_module`, logos-zebrad-module at the commit
+`deploy/scripts/from-scratch.sh` pins as `ZEBRAD_MODULE_COMMIT`; it has no
+upstream release yet, so build it with `from-scratch.sh --only
+build:zebrad-module`). In a party's own Basecamp the module runs Zebra
+in-process; open its JSON-RPC on loopback and start it on Testnet:
+
+```sh
+logosctl call zebrad_module configure testnet 'json:{"exposeJsonRpc":"127.0.0.1:18232"}'
+logosctl call zebrad_module start testnet
+logosctl call zebrad_module status
+```
+
+The cookie is `<cacheDir>/.cookie` (`logosctl call zebrad_module getConfig
+testnet` names `cacheDir`), owner-only and new at every start; a Node run by
+the same Basecamp runs as its user, so the route can name that file directly
+(the public lane's `LEZ_ZEC_SELF_HOSTED_COOKIE_FILE`, `--zebra-cookie-file`).
 
 Generate a configuration into a run-specific directory:
 
