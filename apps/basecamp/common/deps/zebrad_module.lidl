@@ -1,0 +1,14 @@
+; zebrad_module contract — the subset the Zcash Node desk calls to host a Zcash
+; node (Zebra) in Basecamp: logos-zebrad-module at the commit
+; deploy/scripts/from-scratch.sh pins (ZEBRAD_MODULE_COMMIT). Supplied as a
+; dependency_override (zcash/metadata.json). Hand-maintained from the contract
+; the module's build derives (assets/lidl/zebrad_module.lidl in its package).
+module zebrad_module {
+  version "0.2.0"
+
+  method configure(network: tstr, config: {tstr: any}) -> result
+  method getConfig(network: tstr) -> {tstr: any}
+  method start(network: tstr) -> result
+  method stop() -> result
+  method status() -> {tstr: any}
+}
