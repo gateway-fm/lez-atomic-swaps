@@ -9,8 +9,9 @@ It uses Taproot/MuSig2 adaptor signatures on Bitcoin, witnessed escrow on LEZ,
 signed offer discovery over Logos Delivery, and private negotiation over Logos
 Chat.
 
-The same desks and Nodes also swap Zcash and LEZ (Milestone 2, submitted as
-release [v0.3.4](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.4)):
+The same desks and Nodes also swap Zcash and LEZ (Milestone 2, accepted at
+release [v0.3.6](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.6)
+on 2026-11-24, [rfp#122](https://github.com/logos-co/rfp/issues/122#issuecomment-7136329275)):
 a BIP-199 hash-time-locked contract on Zcash's transparent pool against the
 same LEZ escrow, on Zebra 7 regtest and the private LEZ devnet. The SDK and
 its lifecycle are in [`docs/sdk-lez-zec.md`](docs/sdk-lez-zec.md), node setup

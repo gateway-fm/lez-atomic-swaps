@@ -42,7 +42,7 @@ path = "src/bin/zec-local-poc-identity.rs"
 [[bin]]
 name = "zec-local-poc-transfer"
 path = "src/bin/zec-local-poc-transfer.rs"
-required-features = ["dealer-fixture"]
+required-features = ["test-payer"]
 
 [lints]
 workspace = true
@@ -52,7 +52,13 @@ test-crash-hooks = []
 # The devnet's dealer test fixture (deploy/tests/fixtures/zec-catalog-fixture.sh):
 # the zec-local-poc tools but -identity, and the code that holds both parties'
 # keys. Never in a product build (the Nodes, the actors, the role packages).
-dealer-fixture = []
+dealer-fixture = ["test-payer"]
+# The test payer alone (zec-local-poc-transfer): one transparent Regtest or
+# Testnet payment between two owner-private keys, with which the harness funds
+# the Taker's key. None of the dealer's code; a release build may carry it. It
+# is built in a cargo invocation of its own (from-scratch.sh), so no Node or
+# actor binary links it.
+test-payer = []
 
 [dependencies]
 anyhow = "1.0.102"

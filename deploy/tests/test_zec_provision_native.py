@@ -20,7 +20,7 @@ class NativeProvision(unittest.TestCase):
         (deploy / 'scripts').mkdir(parents=True)
         (deploy / 'runtime').mkdir()
         (deploy / 'runtime' / 'runtime.env').write_text('LEZ_V02_CHANNEL_ID=' + 'e' * 64 + '\n')
-        for script in ('lane.sh', 'host.sh'):
+        for script in ('lane.sh', 'host.sh', 'release-env.sh'):
             shutil.copy(SCRIPTS / script, deploy / 'scripts')
         (deploy / 'tests' / 'fixtures').mkdir(parents=True)
         shutil.copy(FIXTURE, deploy / 'tests' / 'fixtures')

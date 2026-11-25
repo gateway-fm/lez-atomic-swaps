@@ -368,7 +368,13 @@ surface. If you are embedding the protocol in your own binary, this crate is.
 
 ## Scope
 
-This document describes the ZEC/LEZ pair at the M2 tag, `v0.3.0`. Conditional atomicity holds as the M6 service certificates state it:
+This document describes the ZEC/LEZ pair on `main` (version 0.4.0), where a
+ZEC swap is agreed at take time. Logos accepted Milestone 2 at
+[`v0.3.6`](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.6)
+(`f6d5866a`) on 2026-11-24 ([acceptance comment](https://github.com/logos-co/rfp/issues/122#issuecomment-7136329275)); in 0.3.x one operator
+prepares each ZEC swap (the prepared setup [above](#directions)),
+and the public-testnet parts of deliverables 1 and 2 are deferred to the LEZ
+0.4 port (#107). Conditional atomicity holds as the M6 service certificates state it:
 under canonical local-chain observations, secret-gated claiming, durable
 one-winner authorization, and actor/sidecar at-most-once journals; it is not a
 distributed atomic commit and not a future-reorg proof. `lez-btc-swap-sdk` and

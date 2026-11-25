@@ -34,7 +34,7 @@ Upstream: [logos-co/rfp#122](https://github.com/logos-co/rfp/issues/122)
 | LEZ/ZEC SDK with full lifecycle coverage | [`lez-zec-swap-sdk` with `lez-swap-sdk-core`](../docs/sdk-lez-zec.md): each stage mapped to its public API and the test that drives it; [crate README](../crates/zec-swap-sdk/README.md); [`examples/full-lifecycle.rs`](../crates/zec-swap-sdk/examples/full-lifecycle.rs) runs offline | Included |
 | Zcash node setup documentation | [`docs/zcash-testnet-setup.md`](../docs/zcash-testnet-setup.md): self-hosted Zebra and the public Zebrad provider, wallet creation, funding, the directions each route serves; the Docker devnet route in [`deploy/README.md`](../deploy/README.md) | Included; no fresh-machine run recorded |
 | Privacy posture | [`docs/sdk-lez-zec.md#privacy-posture`](../docs/sdk-lez-zec.md#privacy-posture); the Taker desk shows the Node's shield-after-swap guidance on a completed ZEC row | Included |
-| ZEC demo set per D1 | `zec-happy`, `zec-maker-refund`, `zec-concurrent` in both directions and `zec-stale-window` selling ZEC, in [`docs/evidence/regression-2026-11-12/videos/`](../docs/evidence/regression-2026-11-12/videos/) (seven recordings; the full set is attached to the v0.3.0 release); each a by-product of a desk journey that passed while being recorded | Included |
+| ZEC demo set per D1 | `zec-happy`, `zec-maker-refund`, `zec-concurrent` in both directions and `zec-stale-window` selling ZEC, in [`docs/evidence/regression-0.3.4-2026-11-19-macos-arm64/videos/`](../docs/evidence/regression-0.3.4-2026-11-19-macos-arm64/videos/) (seven recordings of the 0.3.4 candidate `3b73e65b`; the full set is attached to the v0.3.4 release; v0.3.6 has the same desks); each a by-product of a desk journey that passed while being recorded | Included |
 
 Additional functional cases in this pack, all in one run on one set of images
 ([`PROVENANCE.md`](../docs/evidence/regression-m2-2026-11-11/PROVENANCE.md)), with
@@ -69,8 +69,13 @@ Later full runs of the same suite with the #103 scenarios added (97 tests):
 [`regression-0.3.5-2026-11-23-macos-arm64`](../docs/evidence/regression-0.3.5-2026-11-23-macos-arm64/RESULTS.txt)
 (Apple silicon, `14b05e56`, the 0.3.5 candidate with the fixes for #185, #186 and #187, 106 of 106); and the 93 tests on Apple silicon,
 [`regression-m2-2026-11-12-macos-arm64`](../docs/evidence/regression-m2-2026-11-12-macos-arm64/RESULTS.txt)
-(`af3ac978`, 93 of 93). Each set's `PROVENANCE.md` names its commits. The
-release record is the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
+(`af3ac978`, 93 of 93). Each set's `PROVENANCE.md` names its commits. Logos
+accepted M2 at [v0.3.6](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.6)
+(`f6d5866a`, the swap code of v0.3.5) on 2026-11-24
+([acceptance comment](https://github.com/logos-co/rfp/issues/122#issuecomment-7136329275)); its release page is the release record. The
+public-testnet parts of the first two deliverables are deferred to the LEZ 0.4
+port (#107). The pages of v0.3.0 to v0.3.5 are kept as records and name the
+release that superseded each.
 
 
 ## M4 — XMR/LEZ leg

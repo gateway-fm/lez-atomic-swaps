@@ -17,7 +17,12 @@ enum ZcashNetwork {
 
 #[derive(Clone, Parser)]
 #[command(
-    about = "Move Regtest or Testnet ZEC between two owner-private keys with one plain transparent transaction"
+    about = "TEST-ONLY: move Regtest or Testnet ZEC between two owner-private keys with one plain transparent transaction",
+    long_about = "TEST-ONLY, for the devnet and Zcash Testnet runs (feature test-payer): move Regtest or \
+Testnet ZEC between two owner-private keys with one plain transparent transaction. The devnet harness \
+uses it to fund the Taker's Zcash key before a swap in which the Taker sells ZEC. It pays on the \
+deterministic Regtest fixture or Zcash Testnet only: there is no mainnet network, and a Zebra that \
+reports another chain is refused before anything is signed. It is no part of a Node or its packages."
 )]
 struct Arguments {
     /// Zebra RPC endpoint: loopback, or Tatum's Testnet origin.
@@ -113,4 +118,108 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory as _, Parser as _};
+
+    use super::Arguments;
+
+    const KEYS: [&str; 4] = [
+        "--from-zcash-key-file",
+        "/k/from",
+        "--to-zcash-key-file",
+        "/k/to",
+    ];
+
+    fn parse(extra: &[&str]) -> Result<Arguments, clap::Error> {
+        let mut argv = vec![
+            "zec-local-poc-transfer",
+            "--zebra-endpoint",
+            "http://127.0.0.1:18232/",
+        ];
+        argv.extend(KEYS);
+        argv.extend(extra);
+        Arguments::try_parse_from(argv)
+    }
+
+    #[test]
+    fn help_says_it_is_a_test_tool_for_regtest_and_testnet_only() {
+        let help = Arguments::command().render_long_help().to_string();
+        assert!(help.contains("TEST-ONLY"), "{help}");
+        assert!(help.contains("no mainnet network"), "{help}");
+        let networks = help.split("--zcash-network").nth(1).unwrap();
+        let networks = networks.split("--zebra-cookie-file").next().unwrap();
+        assert!(
+            networks.contains("- regtest:") && networks.contains("- test:"),
+            "{networks}"
+        );
+        assert!(!networks.contains("main"), "{networks}");
+    }
+
+    #[test]
+    fn regtest_is_the_default_and_testnet_is_the_other_network() {
+        let arguments = parse(&["--value-zatoshis", "100020000"]).unwrap();
+        assert!(matches!(
+            arguments.zcash_network,
+            super::ZcashNetwork::Regtest
+        ));
+        assert_eq!(arguments.value_zatoshis, 100_020_000);
+        let arguments = parse(&["--value-zatoshis", "1", "--zcash-network", "test"]).unwrap();
+        assert!(matches!(arguments.zcash_network, super::ZcashNetwork::Test));
+    }
+
+    #[test]
+    fn mainnet_is_not_a_network_it_takes() {
+        for network in ["main", "mainnet"] {
+            let error = parse(&["--value-zatoshis", "1", "--zcash-network", network]).unwrap_err();
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::InvalidValue,
+                "{network}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_both_keys_and_the_endpoint_are_required() {
+        assert!(parse(&[]).is_err());
+        let error = Arguments::try_parse_from([
+            "zec-local-poc-transfer",
+            "--zebra-endpoint",
+            "http://127.0.0.1:18232/",
+            "--value-zatoshis",
+            "1",
+        ])
+        .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(parse(&["--value-zatoshis", "-1"]).is_err());
+    }
+
+    #[test]
+    fn one_credential_at_most_and_the_debug_form_redacts_them() {
+        let error = parse(&[
+            "--value-zatoshis",
+            "1",
+            "--zebra-cookie-file",
+            "/c",
+            "--zebra-api-key-file",
+            "/a",
+        ])
+        .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        let shown = format!(
+            "{:?}",
+            parse(&["--value-zatoshis", "1", "--zebra-cookie-file", "/c"]).unwrap()
+        );
+        assert!(
+            !shown.contains("/k/from") && !shown.contains("/c\""),
+            "{shown}"
+        );
+        assert!(shown.contains("[REDACTED]"), "{shown}");
+    }
 }

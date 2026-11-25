@@ -30,7 +30,9 @@ name: release-packages
 #             once (pin-package-dependencies.sh, so every variant carries the
 #             same requirements), verifies it, and writes what the catalog's
 #             _logos-release.yml publishes for a module: <name>-<version>.lgx
-#             and a sidecar.json beside it (artifact catalog-packages)
+#             and a sidecar.json beside it (artifact catalog-packages on a
+#             run on a tag; a branch run's is catalog-packages-test-<commit>,
+#             so its version-named packages never pass for a release's, #191)
 #
 # Manual dispatch only. It publishes nothing (no release, no catalog upload)
 # and leaves release-images.yml, which builds the images and the linux-arm64
@@ -324,7 +326,7 @@ jobs:
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: catalog-packages
+          name: ${{ github.ref_type == 'tag' && 'catalog-packages' || format('catalog-packages-test-{0}', github.sha) }}
           path: catalog
           retention-days: 30
           if-no-files-found: error
