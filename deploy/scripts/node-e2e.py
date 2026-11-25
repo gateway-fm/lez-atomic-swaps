@@ -3317,24 +3317,54 @@ def scenario_tampered_config(stamp: str) -> dict:
 ZEC_CORRIDOR: dict = {}
 
 
-def zebra_headers() -> dict:
+# The devnet's Zebra (the zebra service: zebrad_module) writes its JSON-RPC
+# cookie there, owner-only, new at every start; the harness reads it from the
+# container, keeps it in memory only, and reads it again after a 401.
+ZEBRA_DEVNET_COOKIE = "/var/lib/zebra/regtest/.cookie"
+_zebra_devnet_cookie: list[str] = []
+
+
+def zebra_devnet_cookie(refresh: bool = False) -> str:
+    if refresh or not _zebra_devnet_cookie:
+        read = subprocess.run(["docker", "exec", f"{PREFIX}-zebra", "cat", ZEBRA_DEVNET_COOKIE],
+                              capture_output=True, text=True, check=False)
+        _zebra_devnet_cookie[:] = [read.stdout.strip() if read.returncode == 0 else ""]
+    return _zebra_devnet_cookie[0]
+
+
+def zebra_headers(refresh: bool = False) -> dict:
+    import base64
     headers = {"content-type": "application/json"}
     if os.environ.get("LEZ_ZEBRA_API_KEY_FILE"):
         headers["x-api-key"] = configured_file("LEZ_ZEBRA_API_KEY_FILE").read_text().strip()
-    elif os.environ.get("LEZ_ZEBRA_COOKIE_FILE"):
-        import base64
+        return headers
+    if os.environ.get("LEZ_ZEBRA_COOKIE_FILE"):
         cookie = configured_file("LEZ_ZEBRA_COOKIE_FILE").read_text().strip()
+    elif ZEC_PUBLIC:
+        cookie = ""
+    else:
+        cookie = zebra_devnet_cookie(refresh)
+    if cookie:
         headers["authorization"] = "Basic " + base64.b64encode(cookie.encode()).decode()
     return headers
 
 
 def zebra(method: str, params: list | None = None) -> object:
+    import urllib.error
     import urllib.request
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}).encode()
-    request = urllib.request.Request(ZEBRA_URL, data=body, headers=zebra_headers())
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            reply = json.load(response)
+        try:
+            request = urllib.request.Request(ZEBRA_URL, data=body, headers=zebra_headers())
+            with urllib.request.urlopen(request, timeout=30) as response:
+                reply = json.load(response)
+        except urllib.error.HTTPError as error:
+            # Zebra restarted since the cookie was read: read it again, once.
+            if error.code != 401:
+                raise
+            request = urllib.request.Request(ZEBRA_URL, data=body, headers=zebra_headers(refresh=True))
+            with urllib.request.urlopen(request, timeout=30) as response:
+                reply = json.load(response)
     except OSError as error:
         raise Failure(f"zebra {method} unreachable: {error}") from error
     if reply.get("error"):
@@ -4231,7 +4261,11 @@ def zec_dynamic_fund_taker() -> None:
     subprocess.run(["docker", "exec", "-i", container, "sh", "-c", "umask 077; cat >/tmp/zec-payer.key"],
                    input=key, capture_output=True, check=True)
     try:
-        paid = subprocess.run(["docker", "exec", container, "zec-local-poc-transfer",
+        # The container's LEZ_ZEBRA_COOKIE_FILE (compose.yaml): the zebra
+        # service's cookie, which the payer sends like the Taker's actors.
+        paid = subprocess.run(["docker", "exec", container, "sh", "-c",
+                               'exec zec-local-poc-transfer ${LEZ_ZEBRA_COOKIE_FILE:+--zebra-cookie-file '
+                               '"$LEZ_ZEBRA_COOKIE_FILE"} "$@"', "zec-local-poc-transfer",
                                "--zebra-endpoint", "http://127.0.0.1:18232",
                                "--from-zcash-key-file", "/tmp/zec-payer.key",
                                "--to-zcash-key-file", "/var/lib/lez/zec/zcash.key",
@@ -4323,13 +4357,15 @@ def zec_dynamic_publish(stamp: str, offers: list[tuple[str, str]], offer_ttl_sec
 # Regtest coinbases halve every 816 blocks (2.08, 1.04, 0.52 ZEC …) and a lane's
 # Zebra outlives the LEZ chains: past this height the Maker's key is no longer
 # mined outputs a 1 ZEC lot can be funded from, nor the dealer's 2 ZEC payment
-# to the Taker. Such a Zebra is renewed: a new data volume, the same genesis.
+# to the Taker. Such a chain is reset: the same genesis, a new chain.
 ZEBRA_WORN_HEIGHT = 1500
 
 
 def zec_renew_worn_zebra() -> None:
-    """Between tests (never beside a live swap): a lane's worn Zebra recreated
-    empty and mined past coinbase maturity, as zec-catalog-fixture.sh does."""
+    """Between tests (never beside a live swap): a lane's worn Zcash chain reset
+    by its Zcash Node desk (Reset chain: zebrad_module stopped, its chain
+    deleted, started again) and mined past coinbase maturity, as
+    zec-catalog-fixture.sh does."""
     if ZEC_PUBLIC:
         return
     height = int(zebra("getblockcount"))
@@ -4339,22 +4375,19 @@ def zec_renew_worn_zebra() -> None:
             zebra_mine(110 - height, "coinbase maturity on a new chain")
         return
     container = f"{PREFIX}-zebra"
-    volume = subprocess.run(["docker", "inspect", "-f", '{{range .Mounts}}{{if eq .Destination "/var/lib/zebra"}}'
-                             '{{.Name}}{{end}}{{end}}', container], capture_output=True, text=True, check=True).stdout.strip()
-    log(f"  zebra at {height} is worn (coinbases halve every 816 blocks): renewing {container} with a new volume")
-    compose = ["docker", "compose", *os.environ.get("LEZ_STACK_COMPOSE_ARGS", "--env-file runtime/runtime.env").split()]
-    subprocess.run([*compose, "rm", "-sf", "zebra"], cwd=DEPLOY_ROOT, check=True, capture_output=True)
-    subprocess.run(["docker", "volume", "rm", volume], check=True, capture_output=True)
-    subprocess.run([*compose, "up", "-d", "--no-deps", "--no-build", "zebra"], cwd=DEPLOY_ROOT, check=True, capture_output=True)
+    log(f"  zebra at {height} is worn (coinbases halve every 816 blocks): resetting {container}'s chain")
+    subprocess.run(["docker", "exec", container, "node", "/opt/lez-zcash-reset-chain.mjs"],
+                   check=True, capture_output=True, stdin=subprocess.DEVNULL)
     deadline = time.time() + 120
     while True:
         try:
-            zebra("getblockcount")
-            break
+            if int(zebra("getblockcount")) < ZEBRA_WORN_HEIGHT:
+                break
         except Failure:
-            if time.time() > deadline:
-                raise
-            time.sleep(2)
+            pass
+        if time.time() > deadline:
+            raise Failure(f"{container}'s chain was not reset within 120 s")
+        time.sleep(2)
     zebra_mine(110, "coinbase maturity on the renewed chain")
 
 
