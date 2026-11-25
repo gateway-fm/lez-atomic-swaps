@@ -4,16 +4,46 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
+    sync::{PoisonError, RwLock},
     time::Duration,
 };
 
-use lez_maker_node::{PriceSource as _, PriceSourceError, ProcessLogosPriceSource};
+use lez_maker_node::{PriceQuoteV1, PriceSource as _, PriceSourceError, ProcessLogosPriceSource};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_store::{LocalPriceV1, MakerRouteV1};
 use sha2::{Digest as _, Sha256};
 use tempfile::{TempDir, tempdir};
 
 const NOW: u64 = 1_700_000_000;
+
+/// Keeps a worker script from being executed while another test of this
+/// binary may still hold it open for writing.
+///
+/// Linux refuses to `execve` a file that any process has open for writing
+/// (`ETXTBSY`), and a child that another test thread forks while a script's
+/// write handle is open keeps a copy of that handle until the child reaches
+/// `exec` (close-on-exec closes it only then). The worker then fails to start
+/// and the quote reads `InvalidSource`. Files are written under the write
+/// side and quotes, which start the worker, run under the read side: no
+/// child of this process is between `fork` and `exec` while a file is being
+/// written, and none can copy a write handle that is already closed.
+static WRITE_OR_EXEC: RwLock<()> = RwLock::new(());
+
+fn quote(
+    source: &ProcessLogosPriceSource,
+    route: MakerRouteV1,
+    now: u64,
+) -> Result<PriceQuoteV1, PriceSourceError> {
+    let _exec = WRITE_OR_EXEC.read().unwrap_or_else(PoisonError::into_inner);
+    source.quote(route, now)
+}
+
+fn write_file(path: &Path, bytes: &[u8]) {
+    let _write = WRITE_OR_EXEC
+        .write()
+        .unwrap_or_else(PoisonError::into_inner);
+    fs::write(path, bytes).unwrap();
+}
 
 #[test]
 fn exact_secure_worker_quote_is_copied_into_the_domain() {
@@ -32,7 +62,7 @@ fn exact_secure_worker_quote_is_copied_into_the_domain() {
     .unwrap();
     let route = route();
 
-    let quote = source.quote(route, NOW).unwrap();
+    let quote = quote(&source, route, NOW).unwrap();
 
     assert_eq!(quote.price(), &LocalPriceV1::new(route, 5, 2).unwrap());
     assert_eq!(quote.source_revision(), 7);
@@ -57,7 +87,7 @@ fn observation_older_than_the_parent_max_age_is_refused() {
     .unwrap();
 
     assert!(matches!(
-        source.quote(route(), NOW),
+        quote(&source, route(), NOW),
         Err(PriceSourceError::InvalidSource)
     ));
 }
@@ -79,7 +109,7 @@ fn typed_unavailability_is_not_substituted_with_a_local_or_zero_quote() {
     .unwrap();
 
     assert!(matches!(
-        source.quote(route(), NOW),
+        quote(&source, route(), NOW),
         Err(PriceSourceError::UnavailableQuote)
     ));
 }
@@ -104,7 +134,7 @@ fn worker_abort_timeout_and_oversized_output_fail_closed() {
     ] {
         let worker = worker_script(run.path(), name, body);
         let source = source(&worker, &module, Duration::from_millis(timeout)).unwrap();
-        let result = source.quote(route(), NOW);
+        let result = quote(&source, route(), NOW);
         if expected_timeout {
             assert!(
                 matches!(result, Err(PriceSourceError::SourceTimeout)),
@@ -131,9 +161,9 @@ fn mutated_writable_hardlinked_and_wrong_hash_modules_fail_before_quote() {
         Duration::from_millis(WORKER_TIMEOUT_MILLISECONDS),
     )
     .unwrap();
-    fs::write(&mutable, b"module-v2").unwrap();
+    write_file(&mutable, b"module-v2");
     assert!(matches!(
-        mutated_source.quote(route(), NOW),
+        quote(&mutated_source, route(), NOW),
         Err(PriceSourceError::InvalidSource)
     ));
 
@@ -202,7 +232,7 @@ fn sha256(path: &Path) -> [u8; 32] {
 
 fn secure_file(root: &Path, name: &str, bytes: &[u8], mode: u32) -> PathBuf {
     let path = root.join(name);
-    fs::write(&path, bytes).unwrap();
+    write_file(&path, bytes);
     fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
     path
 }
