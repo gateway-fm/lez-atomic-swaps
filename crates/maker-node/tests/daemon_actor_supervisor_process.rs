@@ -104,17 +104,13 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
         Duration::from_secs(10),
         "daemon readiness",
     );
-    wait_for_file(
+    let actor_pid = wait_for_recorded_actor(
         &mut daemon,
+        &database,
+        swap_id,
         &actor_pid_file,
-        Duration::from_secs(5),
         "actor process identity",
     );
-    let actor_pid: u32 = fs::read_to_string(&actor_pid_file)
-        .expect("read actor PID")
-        .trim()
-        .parse()
-        .expect("numeric actor PID");
 
     let running = SqliteSwapStore::open(&database)
         .expect("open independent observer connection")
@@ -286,7 +282,7 @@ fn a_restarted_node_recovers_the_lease_its_killed_predecessor_held() {
     fs::remove_file(&ready).ok();
 
     let mut restarted = TestDaemon::spawn(&database, &socket, &ready);
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let recovered = loop {
         let record = SqliteSwapStore::open(&database)
             .expect("open observer after restart")
@@ -472,17 +468,13 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
         Duration::from_secs(10),
         "three-pair daemon readiness",
     );
-    wait_for_file(
+    let child_pid = wait_for_recorded_actor(
         &mut daemon,
+        &database,
+        &xmr_id,
         &xmr_pid_file,
-        Duration::from_secs(5),
         "xmr-unavailable actor identity",
     );
-    let child_pid: u32 = fs::read_to_string(&xmr_pid_file)
-        .expect("read xmr-unavailable actor PID")
-        .trim()
-        .parse()
-        .expect("numeric xmr-unavailable actor PID");
 
     let leased = SqliteSwapStore::open(&database)
         .expect("open observer while xmr-unavailable actor is running")
@@ -1015,6 +1007,50 @@ fn wait_for_file(daemon: &mut TestDaemon, path: &Path, timeout: Duration, descri
     loop {
         if path.exists() {
             return;
+        }
+        if let Some(status) = daemon.child_mut().try_wait().expect("poll maker daemon") {
+            panic!("maker daemon exited before {description}: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {description}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Waits until the actor wrote its PID and the supervisor recorded that same
+/// child in the actor's row; returns the PID.
+///
+/// The actor writes its PID file as soon as it runs, which can be before the
+/// supervisor, after `spawn` returns, records the child's identity, and a read
+/// can meet the file half written. Both are polled, up to a bound a loaded
+/// machine does not reach (the actor of a three-worker daemon took longer
+/// than 5 s to start under load).
+fn wait_for_recorded_actor(
+    daemon: &mut TestDaemon,
+    database: &Path,
+    swap_id: &str,
+    pid_file: &Path,
+    description: &str,
+) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let pid = fs::read_to_string(pid_file)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok());
+        if let Some(pid) = pid {
+            let recorded = SqliteSwapStore::open(database)
+                .expect("open actor identity observer")
+                .list_maker_actor_processes()
+                .expect("inspect actor identity")
+                .into_iter()
+                .find(|record| record.swap_id().as_str() == swap_id)
+                .and_then(|record| record.child_identity())
+                .map(|identity| identity.0);
+            if recorded == Some(pid) {
+                return pid;
+            }
         }
         if let Some(status) = daemon.child_mut().try_wait().expect("poll maker daemon") {
             panic!("maker daemon exited before {description}: {status}");
