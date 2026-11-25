@@ -174,7 +174,7 @@ impl ProvisionSpec {
 pub(crate) enum LocalPocZebraRoute {
     /// The deterministic Regtest chain on loopback; `cookie_file` is its
     /// Zebra's owner-private `.cookie` when its JSON-RPC requires one (the
-    /// devnet's zebrad_module: `<cacheDir>/.cookie`, new at every start).
+    /// devnet's `zebrad_module`: `<cacheDir>/.cookie`, new at every start).
     DeterministicLocal {
         #[serde(default)]
         cookie_file: Option<PathBuf>,

@@ -994,7 +994,7 @@ mod tests {
         fs::canonicalize(path).unwrap()
     }
 
-    /// The devnet's Regtest Zebra (zebrad_module) requires its cookie: the
+    /// The devnet's Regtest Zebra (`zebrad_module`) requires its cookie: the
     /// role config names the file where Zebra writes it, read at each connect.
     #[test]
     fn a_regtest_route_takes_the_zebra_cookie_where_zebra_writes_it() {
