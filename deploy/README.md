@@ -872,8 +872,8 @@ run two at once (`ui:xmr:xmr-concurrent`), and show a punishment
 (`ui:xmr:xmr-punish`: the Taker's Basecamp, its Node with it, down from the
 Maker's funding through the refund window, as in `node:xmr:xmr-punish`; the
 Maker desk opened shortly before the punish time watches its row reach
-"Punished", and the Taker desk, back up, shows the swap punished). The first
-three were recorded in `docs/evidence/regression-m4-desks-2026-11-20/videos/`. Not on the devnet yet: there is no macOS
+"Punished", and the Taker desk, back up, shows the swap punished). All four
+are recorded in `docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/` (the videos outside git). Not on the devnet yet: there is no macOS
 package for it. The Maker's systemd unit takes a Monero role from an optional
 drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with
 stub programs, not run in the VM; the Taker unit has none.
