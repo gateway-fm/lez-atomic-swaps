@@ -97,7 +97,7 @@ pub(crate) fn fresh_claim_preimage() -> anyhow::Result<Zeroizing<[u8; 32]>> {
 }
 #[cfg(feature = "dealer-fixture")]
 const LEZ_NATIVE_AMOUNT: u128 = 50_000;
-#[cfg(feature = "dealer-fixture")]
+#[cfg(feature = "test-payer")]
 const ZCASH_PRINCIPAL_ZATOSHIS: u64 = 100_000_000;
 pub(crate) const FUNDING_FEE_ZATOSHIS: u64 = 10_000;
 pub(crate) const MINIMUM_CHANGE_ZATOSHIS: u64 = 1_000;
@@ -456,7 +456,7 @@ pub fn zcash_identity_from_key_file(path: &Path) -> Result<LocalPocZcashIdentity
 
 /// What one Regtest transfer between the roles' keys produced.
 #[derive(Clone, Debug, Serialize)]
-#[cfg(feature = "dealer-fixture")]
+#[cfg(feature = "test-payer")]
 pub struct LocalPocTransferSummary {
     /// The transfer's transaction id as the RPC displays it.
     pub transaction_id: String,
@@ -482,7 +482,7 @@ pub struct LocalPocTransferSummary {
 ///
 /// Fails closed for unsafe key files, equal keys, a non-Regtest Zebra, a
 /// missing mature output, an unaffordable value, or a rejected broadcast.
-#[cfg(feature = "dealer-fixture")]
+#[cfg(feature = "test-payer")]
 pub async fn transfer_local_v0_2_regtest(
     zebra_endpoint: &Url,
     from_key_file: &Path,
@@ -519,7 +519,7 @@ pub async fn transfer_local_v0_2_regtest(
 /// The credential of a Zcash Testnet route (the self-hosted Zebra's cookie
 /// file or the Tatum API key file), owner-private.
 #[derive(Clone)]
-#[cfg(feature = "dealer-fixture")]
+#[cfg(feature = "test-payer")]
 pub enum TestnetZebraCredential {
     /// A self-hosted Testnet Zebra on loopback and its `.cookie` file.
     SelfHostedCookie(PathBuf),
@@ -527,7 +527,7 @@ pub enum TestnetZebraCredential {
     TatumApiKey(PathBuf),
 }
 
-#[cfg(feature = "dealer-fixture")]
+#[cfg(feature = "test-payer")]
 impl std::fmt::Debug for TestnetZebraCredential {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -537,7 +537,7 @@ impl std::fmt::Debug for TestnetZebraCredential {
     }
 }
 
-#[cfg(feature = "dealer-fixture")]
+#[cfg(feature = "test-payer")]
 impl TestnetZebraCredential {
     fn route(&self) -> LocalPocZebraRoute {
         match self {
@@ -562,7 +562,7 @@ impl TestnetZebraCredential {
 ///
 /// As [`transfer_local_v0_2_regtest`], for a Zebra that is not Testnet on NU7,
 /// an unsafe credential, or no such output.
-#[cfg(feature = "dealer-fixture")]
+#[cfg(feature = "test-payer")]
 pub async fn transfer_v0_2_testnet(
     zebra_endpoint: &Url,
     credential: &TestnetZebraCredential,
@@ -597,7 +597,7 @@ pub async fn transfer_v0_2_testnet(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(feature = "dealer-fixture")]
+#[cfg(feature = "test-payer")]
 async fn transfer_between_keys(
     rpc: &HttpZebraRpc,
     chain: &FundingChain,
@@ -3394,5 +3394,138 @@ pub(crate) mod testnet_provision_tests {
         assert_eq!(raw["zebra"]["identity"]["network"], "test");
         assert_eq!(raw["zebra"]["identity"]["consensus_branch_id"], "77190ad9");
         assert_eq!(raw["zebra"]["counterparty_scan_blocks"], 3_701);
+    }
+}
+
+// The test payer's imports (feature test-payer); dealer-fixture, which enables
+// it, imports the same with its own above.
+#[cfg(all(feature = "test-payer", not(feature = "dealer-fixture")))]
+use lez_zec_swap_sdk::{
+    TransparentFundingRequest, TransparentUtxo, build_transparent_transfer_transaction,
+};
+
+/// The test payer refuses a Zebra that is not the chain it pays on: a mainnet
+/// Zebra is refused before anything is signed or sent.
+#[cfg(all(test, feature = "test-payer"))]
+mod test_payer_tests {
+    use std::{
+        io::{BufRead as _, BufReader, Read as _, Write as _},
+        net::TcpListener,
+        os::unix::fs::PermissionsExt as _,
+        path::PathBuf,
+    };
+
+    use super::{TestnetZebraCredential, transfer_local_v0_2_regtest, transfer_v0_2_testnet};
+
+    /// A Zebra on loopback that answers one JSON-RPC call as a mainnet node
+    /// answers `getblockchaininfo`, and reports the methods it was asked.
+    fn mainnet_zebra() -> (url::Url, std::thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = url::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let server = std::thread::spawn(move || {
+            let mut methods = Vec::new();
+            if let Ok((stream, _)) = listener.accept() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0_u8; length];
+                reader.read_exact(&mut body).unwrap();
+                let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                methods.push(request["method"].as_str().unwrap_or_default().to_owned());
+                let answer = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {
+                        "chain": "main",
+                        "blocks": 3_000_000,
+                        "bestblockhash": "11".repeat(32),
+                        "consensus": {"chaintip": "77190ad9", "nextblock": "77190ad9"},
+                    },
+                })
+                .to_string();
+                let mut stream = stream;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                    answer.len()
+                )
+                .unwrap();
+            }
+            methods
+        });
+        (url, server)
+    }
+
+    fn private_file(directory: &tempfile::TempDir, name: &str, contents: &str) -> PathBuf {
+        let path = directory.path().join(name);
+        std::fs::write(&path, contents).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        path
+    }
+
+    fn keys(directory: &tempfile::TempDir) -> (PathBuf, PathBuf) {
+        (
+            private_file(directory, "from.key", &"01".repeat(32)),
+            private_file(directory, "to.key", &"02".repeat(32)),
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_regtest_payment_refuses_a_mainnet_zebra_before_it_signs() {
+        let directory = tempfile::tempdir().unwrap();
+        let (from, to) = keys(&directory);
+        let (url, server) = mainnet_zebra();
+        let error = transfer_local_v0_2_regtest(&url, &from, &to, 100_000_000, 0)
+            .await
+            .expect_err("a mainnet Zebra must be refused");
+        assert!(
+            format!("{error:#}").contains("Zebra is not the deterministic Regtest fixture"),
+            "{error:#}"
+        );
+        // It asked which chain this is and nothing else: no output read, nothing sent.
+        assert_eq!(server.join().unwrap(), ["getblockchaininfo"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_testnet_payment_refuses_a_mainnet_zebra_before_it_signs() {
+        let directory = tempfile::tempdir().unwrap();
+        let (from, to) = keys(&directory);
+        let cookie = private_file(&directory, ".cookie", "__cookie__:secret\n");
+        let (url, server) = mainnet_zebra();
+        let error = transfer_v0_2_testnet(
+            &url,
+            &TestnetZebraCredential::SelfHostedCookie(cookie),
+            &from,
+            &to,
+            100_000_000,
+            0,
+            1,
+        )
+        .await
+        .expect_err("a mainnet Zebra must be refused");
+        assert!(
+            format!("{error:#}").contains("Zebra is not Zcash Testnet"),
+            "{error:#}"
+        );
+        assert_eq!(server.join().unwrap(), ["getblockchaininfo"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn equal_keys_are_refused_before_any_call() {
+        let directory = tempfile::tempdir().unwrap();
+        let key = private_file(&directory, "same.key", &"01".repeat(32));
+        let url = url::Url::parse("http://127.0.0.1:9/").unwrap();
+        let error = transfer_local_v0_2_regtest(&url, &key, &key, 1, 0)
+            .await
+            .expect_err("equal keys");
+        assert!(format!("{error:#}").contains("must differ"), "{error:#}");
     }
 }

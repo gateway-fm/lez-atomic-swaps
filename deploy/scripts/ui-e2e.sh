@@ -216,14 +216,24 @@ join_video() {
   local list="$videos/$direction-$scenario.txt" out="$videos/$direction-$scenario.mp4" seg
   : > "$list"
   for seg in "${segments[@]}"; do [[ -s "$videos/$seg.mp4" ]] && printf "file '%s'\n" "$seg.mp4" >> "$list"; done
-  # ffmpeg from the Maker's image, in a throwaway container of it.
-  docker compose "${stack_compose[@]}" run --rm -T --no-deps -v "$videos:/recordings" -w /recordings \
-    --entrypoint ffmpeg maker-node -hide_banner -loglevel error -y -f concat -safe 0 -i "$direction-$scenario.txt" \
-      -c:v libx264 -preset veryfast -crf 24 -pix_fmt yuv420p -r "${RECORD_FPS:-6}" -fps_mode cfr -an "$direction-$scenario.mp4" </dev/null >/dev/null 2>&1 \
-    && log "video: $LEZ_LANE_RUNTIME/evidence/videos/$direction-$scenario.mp4" \
-    || log "video join failed for $direction-$scenario"
-  for seg in "${segments[@]}"; do rm -f "$videos/$seg.mp4" "$videos/$seg.events" "$videos/$seg.srt" "$videos/$seg.raw.mp4"; done
-  rm -f "$list"
+  # ffmpeg from the Maker's image (the one its Basecamp runs), in a throwaway
+  # container of it. `docker run`, not `docker compose run maker-node`: the
+  # role images are built on another service (service:basecamp-ui), and for
+  # those compose builds before it runs, which a release bundle (no images/)
+  # cannot do (#190).
+  local image error
+  image="$(docker inspect -f '{{.Config.Image}}' "$maker_node" 2>/dev/null)" ||
+    image="${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}"
+  if error="$(docker run --rm --network none -v "$videos:/recordings" -w /recordings \
+      --entrypoint ffmpeg "$image" -hide_banner -loglevel error -y -f concat -safe 0 -i "$direction-$scenario.txt" \
+      -c:v libx264 -preset veryfast -crf 24 -pix_fmt yuv420p -r "${RECORD_FPS:-6}" -fps_mode cfr -an "$direction-$scenario.mp4" </dev/null 2>&1)"; then
+    log "video: $LEZ_LANE_RUNTIME/evidence/videos/$direction-$scenario.mp4"
+    for seg in "${segments[@]}"; do rm -f "$videos/$seg.mp4" "$videos/$seg.events" "$videos/$seg.srt" "$videos/$seg.raw.mp4"; done
+    rm -f "$list"
+  else
+    # The segments and their list stay, so the recording can be joined again by hand.
+    log "video join failed for $direction-$scenario in $image; its segments are kept in $LEZ_LANE_RUNTIME/evidence/videos ($direction-$scenario.txt lists them): ${error:-no output}"
+  fi
 }
 taker_swaps() { # the Taker Node's own view: "<swap_id> <state> <generation> <action>"
   local reply
@@ -951,7 +961,7 @@ chat_log() { # both Basecamps' Chat module lines (UTC): conversations, every mes
   docker exec "$taker_node" tail -n 15 /run/lez/taker/node.log 2>/dev/null | cut -c1-400 | sed 's/^/   /'
 }
 transport() { # transport <logos|local>: both Basecamps recreated on that transport, the Maker's first (as up.sh)
-  local args=("${stack_compose[@]}")
+  local args=("${stack_compose[@]}") output
   if [[ "$1" == logos ]]; then
     [[ " ${args[*]} " == *" -f "* ]] || args+=(-f compose.yaml)
     args+=(-f compose.logos.yaml)
@@ -967,8 +977,8 @@ transport() { # transport <logos|local>: both Basecamps recreated on that transp
     mkdir -p "$logos_dir"
   fi
   log "both Basecamps recreated on the $1 transport"
-  docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps maker-node </dev/null >/dev/null 2>&1 ||
-    fail "recreating the Maker's Basecamp on the $1 transport"
+  output="$(docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps maker-node </dev/null 2>&1)" ||
+    fail "recreating the Maker's Basecamp on the $1 transport: $(tail -n 5 <<<"$output")"
   if [[ "$1" == logos ]]; then
     # The Taker's Delivery node dials the Maker's: its libp2p address, by the
     # Maker container's IP on the Docker network (the Delivery node's own DNS
@@ -984,8 +994,8 @@ transport() { # transport <logos|local>: both Basecamps recreated on that transp
     export LEZ_MAKER_DELIVERY_PEER
     log "the Taker's Delivery node dials the Maker's at $LEZ_MAKER_DELIVERY_PEER"
   fi
-  docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps taker-node </dev/null >/dev/null 2>&1 ||
-    fail "recreating the Taker's Basecamp on the $1 transport"
+  output="$(docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps taker-node </dev/null 2>&1)" ||
+    fail "recreating the Taker's Basecamp on the $1 transport: $(tail -n 5 <<<"$output")"
   wait_healthy "$maker_node"; wait_healthy "$taker_node"; wait_desk maker; wait_desk taker
   [[ "$1" == logos ]] || logos_on=0
 }

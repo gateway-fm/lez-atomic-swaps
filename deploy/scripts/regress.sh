@@ -61,6 +61,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 # shellcheck source=host.sh
 source scripts/host.sh
 host_require_bash51 && host_require_timeout || exit
+# A release bundle (release.env beside compose.yaml): every command below runs
+# on the images and the escrow program its release.env names (release-env.sh
+# exports them), and builds nothing. The stack is already up from start.sh, so
+# the images are present: a profile switch or a new chain uses them as they are
+# rather than pulling again (LEZ_IMAGES=pull still asks for that).
+[[ ! -f release.env || -n "${LEZ_IMAGES:-}" ]] || export LEZ_IMAGES=present
+# shellcheck source=release-env.sh
+source scripts/release-env.sh
 # The stack this directory runs (scripts/lane.sh): its LEZ network's container
 # and its indexer on the host. The scripts each test runs take the rest of its
 # names from lane.sh themselves.
@@ -141,10 +149,44 @@ tier_tests() { # tier_tests <tier>
   esac
 }
 
+# A release bundle runs release images, which carry no devnet test hooks, no
+# dealer test fixture and none of the repository's sources. The tests that need
+# one of them (node-e2e.py release-unavailable names each, as a pattern of test
+# ids, and why) are left out of a bundle's run with a line that says so, as the
+# Monero tests are on a stack without Monero (deploy/README.md, "Prebuilt
+# images"). A checkout runs every test.
+release_unavailable=()
+if [[ "${LEZ_RELEASE_BUNDLE:-0}" == 1 ]]; then
+  release_unavailable_list="$(python3 scripts/node-e2e.py release-unavailable)" ||
+    { echo "node-e2e.py release-unavailable failed" >&2; exit 1; }
+  [[ -z "$release_unavailable_list" ]] || mapfile -t release_unavailable <<<"$release_unavailable_list"
+  unset release_unavailable_list
+fi
+leave_out_release_unavailable() { # leave_out_release_unavailable <say>: drops them from tests, telling <say> of each
+  (( ${#release_unavailable[@]} > 0 )) || return 0
+  local t entry pattern reason kept=()
+  for t in "${tests[@]}"; do
+    reason=""
+    for entry in "${release_unavailable[@]}"; do
+      pattern="${entry%%$'\t'*}"
+      # shellcheck disable=SC2053  # the pattern is a glob on purpose
+      if [[ "$t" == $pattern ]]; then reason="${entry#*$'\t'}"; break; fi
+    done
+    if [[ -n "$reason" ]]; then "$1" "=== $t: not run on release images ($reason)"; else kept+=("$t"); fi
+  done
+  tests=(${kept[@]+"${kept[@]}"})
+}
+say_on_stderr() { echo "$*" >&2; }
+
 mode="${1:-}"; shift || true
 case "$mode" in
   smoke|refunds|full) mapfile -t tests < <(tier_tests "$mode") ;;
-  list) tier_tests "${1:-full}"; exit ;;
+  list)
+    tier_tests "${1:-full}" >/dev/null || exit
+    mapfile -t tests < <(tier_tests "${1:-full}")
+    leave_out_release_unavailable say_on_stderr
+    printf '%s\n' ${tests[@]+"${tests[@]}"}
+    exit ;;
   run) tests=("$@"); [[ ${#tests[@]} -gt 0 ]] || { echo "run needs at least one test" >&2; exit 64; } ;;
   *) sed -n 2,42p "${BASH_SOURCE[0]}"; exit 64 ;;
 esac
@@ -642,9 +684,14 @@ if [[ "${LEZ_MONERO:-0}" != 1 ]]; then
   done
   tests=(${kept[@]+"${kept[@]}"})
 fi
+leave_out_release_unavailable log
 [[ "${LEZ_TIMING_PROFILE:-local}" =~ ^(fast|refund)$ ]] || { echo "the regression needs the fast or the refund timing profile: LEZ_TIMING_PROFILE=fast scripts/up.sh" >&2; exit 1; }
 began="$(date +%s)"; failed=()
-log "regression ${mode}: ${#tests[@]} tests at $(git rev-parse --short HEAD 2>/dev/null || echo '?') (tree dirty: $(git status --short 2>/dev/null | wc -l)), results in $out"
+if [[ "${LEZ_RELEASE_BUNDLE:-0}" == 1 ]]; then
+  log "regression ${mode}: ${#tests[@]} tests on the release images ${LEZ_IMAGE_PREFIX:-?}-*:${LEZ_IMAGE_TAG:-?} of $(printf '%.12s' "${LEZ_RELEASE_COMMIT:-?}") (release.env), results in $out"
+else
+  log "regression ${mode}: ${#tests[@]} tests at $(git rev-parse --short HEAD 2>/dev/null || echo '?') (tree dirty: $(git status --short 2>/dev/null | wc -l)), results in $out"
+fi
 log "profile $LEZ_TIMING_PROFILE: a Bitcoin block every ${MINE_INTERVAL:-?} s; Maker cutoff ${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS} s, refunds at ${LEZ_BTC_EARLIER_REFUND_SECONDS} and ${LEZ_BTC_LATER_REFUND_SECONDS} s"
 if (( lane_count > 1 )); then
   trap 'kill $(jobs -p) 2>/dev/null' EXIT

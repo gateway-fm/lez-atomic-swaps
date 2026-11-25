@@ -15,12 +15,44 @@ said).
 
 M2 is [rfp#122](https://github.com/logos-co/rfp/issues/122). Its six official
 deliverables, each mapped to the artefact that answers it, the proof the
-reviewer can run, and where it stands at release v0.3.0.
+reviewer can run, and where it stands at release v0.3.6, at which Logos
+accepted M2.
 
-## State at release v0.3.0 (2026-11-12)
+## State at release v0.3.6 (accepted 2026-11-24)
 
 Read this first; the tables below were written on 2026-11-03 for the Docker
 stack and are kept as the record of that submission shape.
+
+- **Accepted.** Logos accepted M2 at
+  [v0.3.6](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.6)
+  (`f6d5866a`) on 2026-11-24 ([acceptance comment](https://github.com/logos-co/rfp/issues/122#issuecomment-7136329275)). v0.3.6 has the
+  swap code of v0.3.5, which is v0.3.4 plus the fixes of 0.3.5 below; v0.3.6
+  itself changes only builds, CI and versions (PR #189). Its regression
+  record is the 106 tests at `14b05e56`, 106 of 106, each on its first try
+  (`docs/evidence/regression-0.3.5-2026-11-23-macos-arm64/`). The release
+  workflow's run on the tag (45273181615) built and pushed every image, ran
+  the bundle's `start.sh` to the end on a fresh Linux arm64 runner and
+  attached the bundle.
+- **What the acceptance left to later releases.** The public-testnet parts
+  of deliverables 1 and 2, the escrow on the LEZ testnet and the
+  Zcash-testnet tests in CI, are deferred to the LEZ 0.4 port (#107), not
+  waived. In 0.3.x one operator prepares each ZEC swap: the preparation
+  creates the secret and signs for both parties, so the Taker trusts that
+  operator. Version 0.4.0 composes a ZEC agreement at take time
+  (`zec_reserve_v1`, [`docs/sdk-lez-zec.md`](sdk-lez-zec.md)): the Taker's
+  Node creates the secret and each Node signs with its own Zcash key; the
+  prepared catalog stays as the catalog tests' fixture. The acceptance also
+  records the deviation from RFP Functionality 4 when the Taker sells LEZ
+  ([ADR 0216](architecture/0216-zec-taker-reveals-first-in-both-directions.md),
+  [`submission/LIMITATIONS.md`](../submission/LIMITATIONS.md)).
+- **The fresh-machine walk of the Zcash guide (U10)** is not recorded. The
+  self-hosted route of [`docs/zcash-testnet-setup.md`](zcash-testnet-setup.md)
+  was walked on 2026-11-11 from empty Docker volumes on a development host:
+  Zebra 7.0.0 from its pinned image and the guide's configuration, synced
+  to the Testnet tip, a transparent key funded with 0.1 TAZ from a faucet,
+  the route preflight passed on NU7. The guide's status line and the U10
+  row record that walk; no log of it is committed, and no walk on a machine
+  with nothing installed is recorded.
 
 - **The stack moved.** PR #120 runs the stack as Logos modules (issue #115):
   one network Basecamp, each role's Node in a Logos package inside the role's
@@ -103,13 +135,17 @@ stack and are kept as the record of that submission shape.
   fixes are on `main` since PR #127 (`b6b1c273`), and the runs that show
   them are in `docs/evidence/macos-arm64-release-gates-2026-11-11/`.
 - **CI** is green on `b4e17cf0`: `ci` and `public-readiness` both passed.
-- **The release** is `v0.3.0`, on `14ebc3e5`. The release workflow ran on
-  the tag (run 43213032884): every image built and pushed, the bundle's
-  `start.sh` run to the end by its smoke job on a fresh Linux arm64 runner,
-  the bundle attached. A rehearsal on `b6b1c273` (run 43189324839) had
-  failed in that smoke job on a `start.sh` that tried to build an image from
-  a folder the bundle does not ship, fixed in PR #136.
-- **Still open for the submission:** the rfp#122 comment; the fresh-machine walk of the Zcash guide (U10).
+- **The first M2 release** was `v0.3.0`, on `14ebc3e5`. The release workflow
+  ran on the tag (run 43213032884): every image built and pushed, the
+  bundle's `start.sh` run to the end by its smoke job on a fresh Linux arm64
+  runner, the bundle attached. A rehearsal on `b6b1c273` (run 43189324839)
+  had failed in that smoke job on a `start.sh` that tried to build an image
+  from a folder the bundle does not ship, fixed in PR #136. v0.3.0's release
+  page now marks it superseded; v0.3.4 replaced it and v0.3.6 replaced
+  v0.3.4.
+- **The rfp#122 submission comment** was posted on 2026-11-12 and updated
+  to each later release, last to v0.3.6 on 2026-11-23; the acceptance
+  answers it.
 
 ## The six deliverables
 
@@ -167,16 +203,17 @@ State on 2026-11-03: items 1 to 6 done (4, the CI gate, on 2026-11-03); 7 done i
    reconciliation's "what bringing ZEC back would take" is now done or
    scoped — update it rather than leave it contradicting the tree.
 8. **No tag until everything is done and the evidence is in** (owner,
-   2026-10-28). The release is `0.3.0`. The M2 work reached `main` through
-   PRs #119, #120, #124, #131, #126 and #127; the release notes are on
-   the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
+   2026-10-28). The first release was `0.3.0`; the M2 work reached `main`
+   through PRs #119, #120, #124, #131, #126 and #127, and its release notes
+   are on the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
+   M2 was accepted at [`v0.3.6`](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.6).
 9. The rfp#122 comment, in the shape of the accepted rfp#123 one: point at
    the tag, map the six deliverables to links, state the direction and
    desk-lock scope in the body, do not tick Logos's boxes.
 
 ## Sequencing against the rfp#122 note — decided, then superseded
 
-Superseded on 2026-11-11 (see "State at release v0.3.0" above): M2's
+Superseded on 2026-11-11 (see "State at release v0.3.6" above): M2's
 evidence is produced on the modules stack of #115, as the rfp#122 note
 asked. The decision of 2026-10-28 is kept below as the record.
 

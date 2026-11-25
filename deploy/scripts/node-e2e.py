@@ -151,6 +151,7 @@ import argparse
 import base64
 import contextlib
 import datetime
+import fnmatch
 import hashlib
 import io
 import json
@@ -168,6 +169,36 @@ import urllib.request
 
 DEPLOY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNTIME = DEPLOY_ROOT / "runtime"
+
+
+def release_env(deploy_root: pathlib.Path) -> dict:
+    """A release bundle's release.env (scripts/package-dist.sh), beside its
+    compose.yaml: the published images, the escrow program and the release
+    commit. Empty in a checkout, which has none."""
+    path = deploy_root / "release.env"
+    if not (path.is_file() and (deploy_root / "compose.yaml").is_file()):
+        return {}
+    keys = ("LEZ_IMAGE_PREFIX", "LEZ_IMAGE_TAG", "LEZ_ESCROW_PROGRAM_ID", "LEZ_RELEASE_COMMIT")
+    found: dict = {}
+    for line in path.read_text().splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key in keys and value.strip() and key not in found:
+            found[key] = value.strip()
+    return found
+
+
+# In a release bundle every name its release.env gives and the environment does
+# not is taken from it, as scripts/release-env.sh does for the shell scripts: the
+# compose commands this runs resolve the release's images, the custody-credit
+# scenarios its escrow program, and gen-config.sh and the other scripts it starts
+# inherit both (#190). The stack is up from start.sh, so its images are present.
+RELEASE_ENV = release_env(DEPLOY_ROOT)
+RELEASE_BUNDLE = (DEPLOY_ROOT / "release.env").is_file() and (DEPLOY_ROOT / "compose.yaml").is_file()
+if RELEASE_BUNDLE:
+    for _key, _value in RELEASE_ENV.items():
+        os.environ.setdefault(_key, _value)
+    os.environ.setdefault("LEZ_IMAGES", "present")
+    os.environ["LEZ_RELEASE_BUNDLE"] = "1"
 # A regression lane (scripts/lane.sh) is one Maker/Taker pair with its own
 # Bitcoin Core, miner and Zebra on the shared LEZ network. Unset, these name
 # lane 1, the stack itself: lez-* containers, runtime/, zebra on :18232.
@@ -242,7 +273,47 @@ NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "of
                   "xmr-taker-refund", "xmr-taker-refund-kill", "xmr-taker-clock-ahead", "xmr-punish-replans",
                   "xmr-maker-claim-without-authorization", "xmr-maker-early-punish", "xmr-unfunded-punish",
                   "xmr-taker-cheats"}
-HEALTH = {"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
+# What a release bundle cannot run: release images carry no devnet test hooks
+# (LEZ_TEST_HOOKS=1 is refused under LEZ_RELEASE_BUILD), the release Taker image
+# none of the Zcash dealer test fixture's tools (feature dealer-fixture, which a
+# release build does not compile; it does carry the test payer
+# zec-local-poc-transfer, feature test-payer), and a bundle neither tests/ nor
+# the repository's sources (package-dist.sh). Each entry is a pattern of regress.sh
+# test ids (<node|ui>:<pair>:<scenario>:<direction>) and why. In a bundle
+# regress.sh leaves these out, saying so, and run() refuses them by name;
+# deploy/README.md ("Prebuilt images") lists the same set.
+RELEASE_HOOKS = "needs the devnet test hooks (LEZ_TEST_HOOKS=1), which no release image carries"
+RELEASE_DEALER = ("needs the Zcash dealer test fixture (tests/fixtures/zec-catalog-fixture.sh and the "
+                  "dealer tools of the devnet's Taker image), which a release bundle does not carry")
+RELEASE_UNAVAILABLE = (
+    ("node:xmr:xmr-taker-clock-ahead:*", RELEASE_HOOKS),
+    ("node:xmr:xmr-punish-replans:*", RELEASE_HOOKS),
+    ("node:xmr:xmr-taker-cheats:*", RELEASE_HOOKS),
+    ("node:xmr:xmr-kill-maker:*", RELEASE_HOOKS + " (its claim kill points hold the claim in the Maker's sidecar)"),
+    ("node:zec:zec-kill-maker-claim:*", RELEASE_HOOKS),
+    ("node:zec:zec-activate-after-expiry:*", RELEASE_HOOKS),
+    ("node:zec:zec-regenerated-catalog:*", RELEASE_DEALER),
+    ("node:zec:zec-tampered-catalog:*", RELEASE_DEALER),
+    ("node:zec:zec-maker-early-claim:*", RELEASE_DEALER),
+    ("node:btc:maker-price-module:*", "compiles the repository's TEST price module (crates/logos-price-c-api), "
+                                      "which a release bundle does not carry"),
+)
+
+
+def release_unavailable_entries() -> list:
+    """RELEASE_UNAVAILABLE, and every Zcash test when the agreements are the dealer's."""
+    entries = list(RELEASE_UNAVAILABLE)
+    if os.environ.get("LEZ_ZEC_AGREEMENT", "take-time") == "dealer":
+        entries.append(("*:zec:*:*", "LEZ_ZEC_AGREEMENT=dealer " + RELEASE_DEALER))
+    return entries
+
+
+def release_unavailable(test_id: str) -> str | None:
+    """Why a release bundle cannot run this regress.sh test, None when it can."""
+    return next((why for pattern, why in release_unavailable_entries() if fnmatch.fnmatchcase(test_id, pattern)), None)
+
+
+HEALTH ={"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
 MINER = f"{PREFIX}-btc-miner"
 # The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
 MAKER_WALLET = os.environ.get("LEZ_LANE_MAKER_WALLET", "maker-munich-01")
@@ -4149,6 +4220,13 @@ def zec_dynamic_fund_taker() -> None:
     blocks make the payment a funder output (local_poc.rs: every Regtest
     candidate waits out coinbase maturity)."""
     container = NODES["taker"][0]
+    # The test payer (feature test-payer) is in every Taker image, a release
+    # one too: an image without it is older than that, or built by hand.
+    if subprocess.run(["docker", "exec", container, "sh", "-c", "command -v zec-local-poc-transfer"],
+                      capture_output=True, check=False, stdin=subprocess.DEVNULL).returncode != 0:
+        raise Failure(f"{container} has no zec-local-poc-transfer, the test payer every Taker image carries "
+                      "(from-scratch.sh, release-images.yml): selling ZEC the harness cannot pay the Taker's "
+                      "Zcash key; rebuild or pull the Taker image")
     key = (LANE_RUNTIME / "lez" / "maker" / "zcash.key").read_bytes()
     subprocess.run(["docker", "exec", "-i", container, "sh", "-c", "umask 077; cat >/tmp/zec-payer.key"],
                    input=key, capture_output=True, check=True)
@@ -8733,14 +8811,16 @@ CUSTODY_CREDIT: dict = {}  # the running credit: depositor role, units, thread, 
 
 def escrow_program_id() -> str:
     """The pinned escrow program the stack deployed: LEZ_ESCROW_PROGRAM_ID as
-    start.sh exports it, else the provisional verifier's pin, as start.sh reads it."""
-    pinned = os.environ.get("LEZ_ESCROW_PROGRAM_ID", "")
-    if not pinned:
-        verifier = (DEPLOY_ROOT.parent / "scripts" / "verify-lez-v02-provisional.sh").read_text()
-        found = re.search(r'^\s*expected_image_id="([0-9a-f]{64})"', verifier, re.MULTILINE)
+    start.sh exports it or a bundle's release.env names it (taken at import),
+    else, in a checkout, the provisional verifier's pin, as start.sh reads it."""
+    pinned = os.environ.get("LEZ_ESCROW_PROGRAM_ID", "") or RELEASE_ENV.get("LEZ_ESCROW_PROGRAM_ID", "")
+    verifier = DEPLOY_ROOT.parent / "scripts" / "verify-lez-v02-provisional.sh"
+    if not pinned and not RELEASE_BUNDLE and verifier.is_file():
+        found = re.search(r'^\s*expected_image_id="([0-9a-f]{64})"', verifier.read_text(), re.MULTILINE)
         pinned = found.group(1) if found else ""
     if not re.fullmatch(r"[0-9a-f]{64}", pinned):
-        raise Failure("no pinned escrow program id (LEZ_ESCROW_PROGRAM_ID or scripts/verify-lez-v02-provisional.sh)")
+        where = "release.env" if RELEASE_BUNDLE else "scripts/verify-lez-v02-provisional.sh"
+        raise Failure(f"no pinned escrow program id (LEZ_ESCROW_PROGRAM_ID or {where})")
     return pinned
 
 
@@ -9228,6 +9308,11 @@ def run(name: str) -> bool:
         if NATIVE_RUN_ROOT and name in NATIVE_REFUSED:
             raise Failure(f"{name} cuts a loopback forward or the Chat socket inside a Node container; "
                           f"native Nodes (LEZ_E2E_NATIVE_RUN_ROOT) have none: not run")
+        pair = {"Bitcoin": "btc", "Zcash": "zec", "Monero": "xmr"}[ROUTE["pair"]]
+        why = release_unavailable(f"node:{pair}:{name}:{ROUTE['direction']}") if RELEASE_BUNDLE else None
+        if why:
+            raise Failure(f"{name} {ROUTE['direction']} is not run on release images: it {why} "
+                          "(deploy/README.md, \"Prebuilt images\"; a devnet from from-scratch.sh runs it)")
         if NATIVE_RUN_ROOT:
             LOG_CLOCK.start()
         for role in ("maker", "taker"):
@@ -9253,7 +9338,7 @@ def run(name: str) -> bool:
 def main() -> int:
     global MANUAL_DRIVE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "xmr-fund", "node-logs", "withdraw-offers", "all"])
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "xmr-fund", "node-logs", "withdraw-offers", "release-unavailable", "all"])
     parser.add_argument("--out", help="node-logs: the directory both Nodes' logs and health answers are saved in")
     parser.add_argument("--swap-id", action="append", default=[],
                         help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
@@ -9273,6 +9358,12 @@ def main() -> int:
                              "Monero the xmr-* scenarios, the Taker selling LEZ")
     args = parser.parse_args()
     global REVERSE, FOREIGN_UNITS, LEZ_UNITS
+    if args.scenario == "release-unavailable":
+        # What a release bundle cannot run (regress.sh leaves it out there):
+        # one "<test id pattern>\t<why>" per line.
+        for pattern, why in release_unavailable_entries():
+            print(f"{pattern}\t{why}")
+        return 0
     if args.scenario == "node-logs":
         if not args.out:
             parser.error("node-logs needs --out")

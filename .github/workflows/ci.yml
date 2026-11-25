@@ -317,6 +317,14 @@ jobs:
         run: |
           cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings
           cargo test --locked -p zec-reference-actor --features dealer-fixture
+      # The test payer alone (feature test-payer, zec-local-poc-transfer), as a
+      # release build makes it: under LEZ_RELEASE_BUILD, without the dealer.
+      - name: Lint and test the ZEC test payer as a release build makes it
+        env:
+          LEZ_RELEASE_BUILD: "1"
+        run: |
+          cargo clippy --locked -p zec-reference-actor --features test-payer --all-targets -- -D warnings
+          cargo test --locked -p zec-reference-actor --features test-payer
       - name: Lint the pair features the default build leaves out
         run: cargo clippy --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
       - name: Verify M3 official cryptographic vectors

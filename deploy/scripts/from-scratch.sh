@@ -356,16 +356,20 @@ phase_rust() {
     -e "LEZ_NODE_HOOKS_FEATURE=$hooks" ${release_build_env[@]+"${release_build_env[@]}"} "$RUST_IMAGE" bash -c '
       set -euo pipefail
       cargo build --locked --bins --features "lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr$LEZ_NODE_HOOKS_FEATURE" -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
-      # the dealer test fixture tools, alone: built with the others, feature
-      # unification would put the dealer into the Node and actor binaries.
-      # Never in a release build (LEZ_RELEASE_BUILD), where they do not compile.
+      # the test-only Zcash payer (feature test-payer: the harness pays the
+      # Taker its Regtest funding), alone, in every build, a release one too:
+      # built with the others, feature unification would put it into the
+      # zec-reference-actor library the Nodes and actors link.
+      cargo build --locked -p zec-reference-actor --features test-payer --bin zec-local-poc-transfer 2>&1 | tail -3
+      # the dealer test fixture tools, alone, for the same reason. Never in a
+      # release build (LEZ_RELEASE_BUILD), where they do not compile.
       if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then
         cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
-          --bin zec-local-poc-chat-finalize --bin zec-local-poc-transfer 2>&1 | tail -3
+          --bin zec-local-poc-chat-finalize 2>&1 | tail -3
       fi
       for b in '"${bins[*]}"'; do
         case "$b" in
-          taker-node/zec-local-poc-identity) ;;
+          taker-node/zec-local-poc-identity|taker-node/zec-local-poc-transfer) ;;
           taker-node/zec-local-poc-*) [[ -z "${LEZ_RELEASE_BUILD:-}" ]] || continue ;;
         esac
         install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"

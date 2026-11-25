@@ -53,9 +53,45 @@ tagged commit has finished, green `ci.yml` and `public-readiness.yml` runs
 (its first job, `scripts/check-release-ci.sh`, fails otherwise), from the very phases
 `from-scratch.sh` runs below, on GitHub's arm64 runners; the bundle is
 attached to that release only after a fresh runner has started the stack from
-it (ADR 0215). Publish the release with its notes first; the assets follow
+it (ADR 0215). Only a run on a tag publishes images under that tag's name: a
+manual dispatch on a branch publishes under `sha-<commit>`, or under an
+`image_tag` input of the form `sha-…` or `branch-…`, and is refused any
+release-shaped tag or the name of an existing tag (`scripts/release-image-tag.sh`). Publish the release with its notes first; the assets follow
 about 2.5 hours later. `scripts/package-dist.sh <prefix> <tag>` produces the bundle
 locally from a committed tree.
+
+**The regression from a bundle.** `scripts/regress.sh` runs in an unpacked
+bundle as in a checkout, once `start.sh` has brought the stack up on a
+timing profile the regression takes (`LEZ_TIMING_PROFILE=fast ./scripts/start.sh`,
+then `./scripts/regress.sh full`). Every command it starts takes the images,
+their tag and the escrow program from `release.env`, uses the images start.sh
+pulled and builds nothing. Release images carry no devnet test hooks and none
+of the Zcash dealer test fixture's tools, and a bundle carries neither
+`tests/` nor the repository's sources, so these tests do not run from a
+bundle:
+
+- they need the devnet test hooks (`LEZ_TEST_HOOKS=1`):
+  `node:xmr:xmr-taker-clock-ahead`, `node:xmr:xmr-punish-replans`,
+  `node:xmr:xmr-taker-cheats`, `node:xmr:xmr-kill-maker` (its claim kill
+  points hold the claim in the Maker's sidecar), `node:zec:zec-kill-maker-claim`
+  and `node:zec:zec-activate-after-expiry`;
+- they need the Zcash dealer test fixture: `node:zec:zec-regenerated-catalog`
+  and `node:zec:zec-tampered-catalog` in both directions, and
+  `node:zec:zec-maker-early-claim`;
+- it compiles the repository's TEST price module: `node:btc:maker-price-module`.
+
+The Zcash tests selling ZEC run from a bundle: the harness pays the Taker's
+Zcash key from the Maker's with `zec-local-poc-transfer`, the one test-only
+tool the Taker Node image carries beside the Node package (feature
+`test-payer`: one plain transparent payment on the Regtest fixture or Zcash
+Testnet, never mainnet; no role package carries it).
+
+`regress.sh` leaves each of them out with a line that names the reason, as it
+leaves out the Monero tests on a stack without Monero; `node-e2e.py` refuses
+one by name. `python3 scripts/node-e2e.py release-unavailable` prints the set,
+and `./scripts/regress.sh list full` prints the tests a bundle runs and names
+the others on stderr. A devnet built with
+`LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh` runs every test.
 
 Upgrading from one release to the next is not supported before 1.0.0. Drain
 the old release first: withdraw every offer, let each open swap reach
@@ -1015,7 +1051,7 @@ the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ uni
 | `zebra` | `images/zebra` | Zebra 7.0.0 on Regtest, NU7 from height 1 (digest-pinned upstream build in a distroless runtime), the ZEC pair's chain |
 | `lez-explorer` (profile `explorers`) | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
 | `maker-node` | `images/maker-node` | the Maker's own Basecamp (the `basecamp-ui` image) on VNC `127.0.0.1:5901` with the Maker's Node package `lez_maker_node` installed in its user modules directory (`/var/lez/basecamp-maker-user/modules/lez_maker_node`; built by `scripts/package-role-node.sh`): the canonical Node, CLI, `lez-btc-maker-actor`, `lez-zec-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap), the health probe and the launcher `node-entrypoint.sh`, stripped; `/usr/local/bin/<tool>` link into the package. Nothing of the Node is copied into the image on its own. Its LEZ Maker desk opens at start, hosts the Maker's LEZ signer (`lez_core`), asks the package for its launcher (`LEZ_MAKER_NODE_LAUNCHER=package`) and has `lez_swap_node` launch and supervise the Node from it; the UI tests drive the same desk (`ui-tests/`, mounted). The launcher forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints. The image owns its state directories (a new named volume takes the image directory's owner and mode), so no init container runs |
-| `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, with the Taker's package `lez_taker_node`: canonical Node, CLI, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar, the health probe and the launcher; same loopback forwarders as the Maker. Beside the package: `zec-local-poc-identity` (gen-config.sh derives zebra's miner address with it) and, in the devnet's image only, the dealer test fixture's tools (`zec-local-poc-provision`, `-chat-draft`, `-chat-finalize`, `-transfer`: `executables.json` class `fixture`, cargo feature `dealer-fixture`), run by the catalog tests' `tests/fixtures/zec-catalog-fixture.sh` and to fund the devnet Taker's Zcash key; the published image does not carry them |
+| `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, with the Taker's package `lez_taker_node`: canonical Node, CLI, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar, the health probe and the launcher; same loopback forwarders as the Maker. Beside the package: `zec-local-poc-identity` (gen-config.sh derives zebra's miner address with it), the test-only payer `zec-local-poc-transfer` (cargo feature `test-payer`; the harness funds the Taker's Zcash key with it; in the published image too) and, in the devnet's image only, the dealer test fixture's tools (`zec-local-poc-provision`, `-chat-draft`, `-chat-finalize`: `executables.json` class `fixture`, cargo feature `dealer-fixture`), run by the catalog tests' `tests/fixtures/zec-catalog-fixture.sh`; the published image does not carry them. No role package carries any of them |
 | `heartbeat` (profile `heartbeat`) | `images/lez-wallet-module` | the LEZ finality heartbeat (above); `up.sh` starts it when `LEZ_HEARTBEAT_SECONDS` is not `0` |
 | `tools` (profile `tools`) | `images/lez-wallet-module` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault claims through the LEZ wallet module (`lez-wallet-vault-claim`) and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
 | `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `network`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + the release packages installed (desks, runtime modules) + qt-mcp; Xvfb/fluxbox/x11vnc |
@@ -1070,6 +1106,7 @@ running for weeks needs its old `basecamp_*.log` files removed from outside.
 compose.yaml               the stack (image names: ${LEZ_IMAGE_PREFIX}-<service>:${LEZ_IMAGE_TAG})
 scripts/start.sh           prebuilt path: pull the release images, identities, stack, bootstrap, desk suites
 scripts/package-dist.sh    assemble the release bundle (deploy/ from git archive + release.env)
+scripts/release-env.sh     sourced: a bundle's release.env (images, tag, escrow program) for every script
 scripts/from-scratch.sh    everything from an empty host (prerequisites, sources, payloads, runner, stack)
 scripts/up.sh              one-command bring-up (+ desk verification); LEZ_IMAGES=pull skips the build
 scripts/swap-through-ui.sh one complete swap driven through the two desks

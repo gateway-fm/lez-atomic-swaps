@@ -9,7 +9,8 @@
 # when that run has finished green.
 #
 # Gated: a release event and any run on a tag ref. A workflow_dispatch on a
-# branch is a test build and passes through, saying so.
+# branch is a test build and passes through, saying so; what it may publish
+# under is scripts/release-image-tag.sh's rule (never a release's name, #191).
 #
 # Environment: GH_TOKEN (the workflow's GITHUB_TOKEN, permission actions:
 # read), GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_EVENT_NAME, GITHUB_REF_TYPE,

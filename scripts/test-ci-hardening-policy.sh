@@ -124,6 +124,66 @@ for workflow in .github/workflows/release-images.yml .github/workflows/release-p
 done
 require_fixed 'readonly gated_workflows=(ci.yml public-readiness.yml)' scripts/check-release-ci.sh
 
+# Image tags (issue #191): only a run on a tag publishes under a release's
+# name, and only under its own. The ci-gate job refuses any other tag before a
+# build, the plan job decides the tag every push uses with the same script,
+# and the free-text dispatch input never reaches a push as given.
+readonly images_workflow=.github/workflows/release-images.yml
+readonly image_tag_script=scripts/release-image-tag.sh
+[[ -x "$image_tag_script" ]] || fail "$image_tag_script must exist and be executable"
+images_gate="$(awk '/^  ci-gate:$/ { on = 1 } /^  plan:$/ { on = 0 } on' "$images_workflow")"
+images_plan="$(awk '/^  plan:$/ { on = 1 } /^  rust:$/ { on = 0 } on' "$images_workflow")"
+rg -Fq 'run: ./scripts/release-image-tag.sh' <<<"$images_gate" \
+  || fail "the ci-gate job of $images_workflow must refuse a release's image tag on a branch"
+rg -Fq 'IMAGE_TAG_INPUT: ${{ inputs.image_tag }}' <<<"$images_gate" \
+  || fail "the ci-gate job of $images_workflow must check the dispatch's image_tag"
+rg -Fq 'tag="$(./scripts/release-image-tag.sh)"' <<<"$images_plan" \
+  || fail "the plan job of $images_workflow must take its tag from $image_tag_script"
+[[ "$(rg -c 'inputs\.image_tag' "$images_workflow")" == 2 ]] \
+  || fail "$images_workflow uses the image_tag input outside the two $image_tag_script steps"
+require_fixed "readonly release_shaped='^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.+-]*)?\$'" "$image_tag_script"
+require_fixed "readonly namespaced='^(sha|branch)-[A-Za-z0-9][A-Za-z0-9_.-]*\$'" "$image_tag_script"
+require_fixed "name: \${{ github.ref_type == 'tag' && 'catalog-packages' || format('catalog-packages-test-{0}', github.sha) }}" \
+  .github/workflows/release-packages.yml
+# The release Taker image carries the test payer and no dealer tool (#190),
+# and the smoke job runs a short regression from the bundle after start.sh.
+require_fixed 'cp deploy/images/taker-node/zec-local-poc-identity deploy/images/taker-node/zec-local-poc-transfer _out/images/taker-node/' "$images_workflow"
+! rg -q 'zec-local-poc-(provision|chat-draft|chat-finalize)|zec-local-poc-\*' "$images_workflow" \
+  || fail "$images_workflow ships a dealer test fixture tool"
+images_smoke="$(awk '/^  smoke:$/ { on = 1 } /^  publish:$/ { on = 0 } on' "$images_workflow")"
+for required in './scripts/start.sh' 'LEZ_TIMING_PROFILE=fast SKIP_UI_VERIFY=1 LEZ_NO_BANNER=1 bash scripts/up.sh' \
+  'bash scripts/regress.sh run' 'node:zec:zec-happy:TakerSellsLez node:zec:zec-happy:TakerSellsForeign' \
+  'node:btc:regenerated-config:TakerSellsForeign node:btc:btc-custody-credit:TakerSellsForeign' \
+  'name: bundle-regression-logs'; do
+  rg -Fq -- "$required" <<<"$images_smoke" || fail "the smoke job of $images_workflow is missing: $required"
+done
+[[ "$(rg -n 'bash scripts/regress.sh run' <<<"$images_smoke" | cut -d: -f1)" -gt "$(rg -n './scripts/start.sh' <<<"$images_smoke" | cut -d: -f1)" ]] \
+  || fail "the smoke job of $images_workflow must run the short regression after start.sh"
+# and the rule holds when run: a fake gh knows the tags v0.3.6 and v0.4.0
+image_tag_bin="$(mktemp -d)"
+trap 'rm -rf "$image_tag_bin"' EXIT
+cat >"$image_tag_bin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$2" in
+  */git/ref/tags/v0.3.6|*/git/ref/tags/v0.4.0) echo "refs/tags/${2##*/git/ref/tags/}" ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$image_tag_bin/gh"
+image_tag() { # image_tag <ref type> <ref name> <input>: the tag, or nothing when refused
+  PATH="$image_tag_bin:$PATH" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_TYPE="$1" GITHUB_REF_NAME="$2" \
+    GITHUB_SHA=957c80160000000000000000000000000000beef GITHUB_REPOSITORY=gateway-fm/lez-atomic-swaps \
+    IMAGE_TAG_INPUT="$3" "$image_tag_script" 2>/dev/null || true
+}
+[[ "$(image_tag tag v0.4.0 '')" == v0.4.0 ]] || fail "$image_tag_script: a run on v0.4.0 must publish under v0.4.0"
+[[ "$(image_tag branch main '')" == sha-957c80160000 ]] || fail "$image_tag_script: a branch must default to sha-<12>"
+[[ "$(image_tag branch main branch-rehearsal)" == branch-rehearsal ]] || fail "$image_tag_script: a branch- tag must pass"
+for refused in "branch main v0.3.4" "branch main v0.4.0" "branch main v9.9.9" "branch main latest" "tag v0.4.0 v0.3.6"; do
+  read -r ref_type ref_name input <<<"$refused"
+  [[ -z "$(image_tag "$ref_type" "$ref_name" "$input")" ]] \
+    || fail "$image_tag_script lets a dispatch on $ref_type $ref_name publish under $input"
+done
+
 require_fixed 'tags: ["m*-complete*"]' "$ci_workflow"
 require_fixed './scripts/run-ci-quality-gates.sh' "$ci_workflow"
 require_fixed 'run: ./scripts/check-all.sh --fast --rust-only' "$ci_workflow"
@@ -166,6 +226,10 @@ require_fixed 'cargo run --locked -p lez-xmr-swap-sdk --example full-lifecycle' 
 require_fixed 'cargo run --locked -p xmr-reference-actor --example full-lifecycle' "$ci_workflow"
 require_fixed 'cargo test --locked --manifest-path compat/lez-v0.2-provisional/Cargo.toml -p lez-zec-escrow-v02 --lib' "$ci_workflow"
 require_fixed 'cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings' "$ci_workflow"
+# The test payer the release Taker image carries is linted and tested under
+# the release mark, without the dealer fixture (#190).
+require_fixed 'cargo clippy --locked -p zec-reference-actor --features test-payer --all-targets -- -D warnings' "$ci_workflow"
+require_fixed 'cargo test --locked -p zec-reference-actor --features test-payer' "$ci_workflow"
 require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 
 # Build caches (actions/cache restore and save, never the combined action,

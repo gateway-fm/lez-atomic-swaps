@@ -78,6 +78,18 @@ checkpoint; they do not widen the current claim.
   spends. Fee starvation, deep reorganization, and action at arbitrary deadline
   boundaries are not closed production claims.
 
+## M2 boundary
+
+- **RFP-003 Functionality 4, when the Taker sells LEZ.** F4 asks that the
+  LEZ claim and refund precede the ZEC ones and that the ZEC refund outlive
+  the LEZ refund. `TakerSellsForeign` follows it. `TakerSellsLez` does not:
+  there the Taker holds the preimage and claims the Maker-funded ZEC first,
+  and the Maker's Zcash refund matures before the Taker's LEZ refund. The
+  contracted order would let the Maker claim the Taker's LEZ without funding
+  Zcash ([ADR 0216](../docs/architecture/0216-zec-taker-reveals-first-in-both-directions.md),
+  "Deviation from RFP-003 F4"; traceability row F4). The M2 acceptance
+  records this order and leaves the RFP wording open.
+
 ## M4 boundary
 
 The XMR/LEZ pair (version 0.4.0). Each limit below is open unless it says
