@@ -4,8 +4,9 @@ This is the reviewer entry point for Gateway's LEZ ⇄ Bitcoin vertical slice.
 It packages the M1 protocol foundation, the M3 Bitcoin implementation evidence,
 and the M6 product surface without claiming unrelated milestone completion.
 
-Milestone 2 (ZEC/LEZ) is submitted as release
-[v0.3.4](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.4).
+Milestone 2 (ZEC/LEZ) was accepted at release
+[v0.3.6](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.6)
+on 2026-11-24 ([acceptance comment](https://github.com/logos-co/rfp/issues/122#issuecomment-7136329275)).
 Its deliverables are mapped in
 [the M2 section of the milestone map](MILESTONES.md#m2--zeclez-leg), and the
 module topology it runs on is traced in
