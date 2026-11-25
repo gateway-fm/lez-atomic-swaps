@@ -44,7 +44,11 @@
 #                  LEZ, the Maker desk shows its Monero refund sweep; both show refunded
 #   xmr-concurrent --pair Monero: two Monero offers from the Maker desk's form taken from
 #                  the Taker desk one after the other, both claimed, both completed
-#   all           every scenario in sequence (stops at the first failure)
+#   xmr-punish     --pair Monero: the Maker funds, the Taker's Basecamp is stopped and stays
+#                  down through the refund window; from the punish time the Maker Node takes
+#                  the Taker's LEZ, the Maker desk shows it punished, and the Taker desk, back
+#                  up, shows it punished
+#   all          every scenario in sequence (stops at the first failure)
 #
 # With LEZ_UI_NATIVE_RUN_ROOT set, both desks are in one Basecamp on this
 # host (its QML inspector at QML_INSPECTOR_HOST/QML_INSPECTOR_PORT, the
@@ -1087,6 +1091,40 @@ scenario_xmr_taker_refund() {
   taker_own_refund true
   export_evidence "$swap"
 }
+# The Maker funds the Monero and the Taker neither claims nor refunds: once
+# the Taker desk has shown the claim ready, the Taker's Basecamp (desk, signer
+# and Node) is stopped, as node-e2e.py xmr-punish stops the Taker Node, and
+# stays down through the refund window [R, P). From the punish time P the
+# Maker Node takes the Taker's LEZ (tag 17) on its own; the Maker desk is
+# opened shortly before P (RECORD_PUNISH_LEAD, 90 s) and watches its row go
+# from funded through "Punish available" to "Punished". The Taker's Basecamp is started again and its desk
+# shows the swap punished. The wait up to P is the host's, so the recording
+# holds no idle minutes. The Monero stays at the shared address (ADR 0217).
+scenario_xmr_punish() {
+  local swap maker_pid taken_at
+  require_fast
+  xmr_publish
+  taken_at="$(date -u +%s)"
+  take swap
+  note "The Taker Node locks its LEZ on its own and the Maker Node funds Monero; the Taker will neither claim nor refund"
+  xmr_maker_funded_bg maker_pid "$swap"
+  step "Taker desk shows ${swap:0:12} claimable (not pressed)" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=claim_ready \
+    "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Your Monero claim is ready"
+  wait "$maker_pid" || fail "Maker desk: Monero funded"
+  log "stopping the Taker's Basecamp (desk, signer and Node): it neither claims nor refunds through the refund window"
+  stop_node "$taker_node" || fail "stopping $taker_node"
+  wait_until_unix "$(( taken_at + LEZ_XMR_PUNISH_SECONDS - ${RECORD_PUNISH_LEAD:-90} ))" \
+    "(the Taker's Basecamp down through the refund time, ${LEZ_XMR_REFUND_SECONDS} s after the take, up to shortly before the punish time, ${LEZ_XMR_PUNISH_SECONDS} s)"
+  note "The Taker's Node has been down since the Monero was funded: it never claimed and sent no refund in its refund window (from ${LEZ_XMR_REFUND_SECONDS} s after the take). From the punish time (${LEZ_XMR_PUNISH_SECONDS} s) the Maker Node takes the Taker's LEZ on its own; its Monero stays at the shared address"
+  step "Maker desk shows ${swap:0:12} punished" maker INTERACTIVE_ACTION=wait \
+    INTERACTIVE_STATE=punished "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Punished"
+  log "starting the Taker's Basecamp again, past the punish time"
+  start_node "$taker_node"
+  note "The Taker's Basecamp is back past the punish time: its refund window is closed and the Maker has taken its LEZ"
+  step "Taker desk shows ${swap:0:12} punished" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=punished \
+    "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Punished"
+  export_evidence "$swap"
+}
 # Two Monero swaps at once: both offers from the Maker desk's form, both taken
 # from the Taker desk one after the other (the second while the first's LEZ
 # lock and Monero funding run), both claimed, both completed on both desks.
@@ -1194,6 +1232,7 @@ run_one() {
     xmr-happy) [[ "$pair" == Monero ]] || fail "xmr-happy needs --pair Monero"; scenario_xmr_happy ;;
     xmr-taker-refund) [[ "$pair" == Monero ]] || fail "xmr-taker-refund needs --pair Monero"; scenario_xmr_taker_refund ;;
     xmr-concurrent) [[ "$pair" == Monero ]] || fail "xmr-concurrent needs --pair Monero"; scenario_xmr_concurrent ;;
+    xmr-punish) [[ "$pair" == Monero ]] || fail "xmr-punish needs --pair Monero"; scenario_xmr_punish ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video

@@ -133,8 +133,9 @@ tier_tests() { # tier_tests <tier>
         xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock mixed-three-pair \
         xmr-taker-clock-ahead xmr-punish-replans xmr-maker-claim-without-authorization xmr-maker-early-punish \
         xmr-unfunded-punish xmr-taker-cheats xmr-shared-address-dust; do echo "node:xmr:$s:TakerSellsLez"; done
-      # Monero offers from the Maker desk's form, taken on the Taker desk: claimed, refunded, two at once
-      for s in xmr-happy xmr-taker-refund xmr-concurrent; do echo "ui:xmr:$s:TakerSellsLez"; done
+      # Monero offers from the Maker desk's form, taken on the Taker desk: claimed, refunded, two at once,
+      # punished (the Taker's Basecamp down through [R, P))
+      for s in xmr-happy xmr-taker-refund xmr-concurrent xmr-punish; do echo "ui:xmr:$s:TakerSellsLez"; done
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
     *) echo "unknown tier: $1 (smoke, refunds, full)" >&2; return 64 ;;
   esac
@@ -372,7 +373,7 @@ expected_seconds() { # expected_seconds <test>
       node:xmr:xmr-kill-*) seconds=2700 ;;
       node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
       # waits for the agreement's punish time P (+1000 s on fast), or its refund time R (+720 s)
-      node:xmr:xmr-punish:*) seconds=1340 ;;
+      node:xmr:xmr-punish:*|ui:xmr:xmr-punish:*) seconds=1340 ;;
       # P, then six taken nonces, each a Maker drive or two
       node:xmr:xmr-punish-replans:*) seconds=2100 ;;
       node:xmr:xmr-maker-early-punish:*) seconds=1400 ;;

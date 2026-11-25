@@ -323,7 +323,7 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 179)
+        self.assertEqual(len(full), 180)
 
     def test_full_has_the_maker_claim_kill_selling_lez_only(self):
         full = self.tier('full')
@@ -371,6 +371,14 @@ class Tiers(unittest.TestCase):
                          'xmr-maker-early-punish', 'xmr-unfunded-punish', 'xmr-taker-cheats',
                          'xmr-shared-address-dust'):
             self.assertIn(f'node:xmr:{scenario}:TakerSellsLez', full)
+
+    def test_full_has_the_four_monero_desk_journeys_selling_lez_only(self):
+        full = self.tier('full')
+        self.assertEqual([test for test in full if test.startswith('ui:xmr:')],
+                         [f'ui:xmr:{scenario}:TakerSellsLez'
+                          for scenario in ('xmr-happy', 'xmr-taker-refund', 'xmr-concurrent', 'xmr-punish')])
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if test.startswith('ui:xmr:')], tier)
 
     def test_smoke_is_unchanged(self):
         self.assertEqual(self.tier('smoke'), [

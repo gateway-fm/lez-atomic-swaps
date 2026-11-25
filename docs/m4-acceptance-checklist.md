@@ -17,7 +17,7 @@ with provenance; and no claim Logos has not made ("accepted", "audited",
 A devnet scenario is named by its `regress.sh` test id
 (`deploy/scripts/regress.sh list full`), run by `deploy/scripts/node-e2e.py`
 (`node:`) or `deploy/scripts/ui-e2e.sh` (`ui:`) on the Docker devnet with
-Monero regtest up (`LEZ_MONERO=1`). The full tier holds 179 tests, 25 of them
+Monero regtest up (`LEZ_MONERO=1`). The full tier holds 180 tests, 26 of them
 Monero. The last full run is at `27526e2f`
 ([regression-0.4.0-2026-11-23-macos-arm64](evidence/regression-0.4.0-2026-11-23-macos-arm64/)):
 176 of 176, each on its first try, among them all 25 Monero tests,
