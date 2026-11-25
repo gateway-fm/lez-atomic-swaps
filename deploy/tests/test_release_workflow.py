@@ -336,3 +336,98 @@ class NoTestHooksInARelease(unittest.TestCase):
                 if 'test-hooks' in line and not line.lstrip().startswith('#'):
                     # Only the three crates' own definitions of the feature.
                     self.assertRegex(line, r'^test-hooks = \[("pair-xmr")?\]$', manifest)
+
+
+class ReleaseImageTag(unittest.TestCase):
+    """Only a run on a tag publishes under a release's name (issue #191).
+
+    release-images.yml took a free-text image_tag on dispatch and used it as
+    given, and check-release-ci.sh passes a branch dispatch, so a branch run
+    with image_tag v0.3.4 would have pushed its images under the release's tag.
+    scripts/release-image-tag.sh decides the tag; gh is a fake that knows the
+    tags v0.3.6 and v0.4.0.
+    """
+
+    SCRIPT = ROOT / 'scripts/release-image-tag.sh'
+    SHA = '957c8016' + '0' * 32
+    FAKE_GH = '''#!/usr/bin/env bash
+case "$2" in
+  */git/ref/tags/v0.3.6|*/git/ref/tags/v0.4.0|*/git/ref/tags/sha-taken) echo "refs/tags/${2##*/git/ref/tags/}" ;;
+  */git/ref/tags/sha-broken) echo "HTTP 500: server error" >&2; exit 1 ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+'''
+
+    def plan(self, ref_type, ref_name, image_tag='', event='workflow_dispatch'):
+        import os
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            gh = pathlib.Path(tmp) / 'gh'
+            gh.write_text(self.FAKE_GH)
+            gh.chmod(0o755)
+            env = {'PATH': f'{tmp}:{os.environ["PATH"]}', 'GITHUB_EVENT_NAME': event, 'GITHUB_REF_TYPE': ref_type,
+                   'GITHUB_REF_NAME': ref_name, 'GITHUB_SHA': self.SHA, 'GITHUB_REPOSITORY': 'gateway-fm/lez-atomic-swaps',
+                   'IMAGE_TAG_INPUT': image_tag}
+            run = subprocess.run(['bash', str(self.SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
+        return run.returncode, run.stdout.strip(), run.stderr
+
+    def test_a_release_publishes_under_its_tag(self):
+        self.assertEqual(self.plan('tag', 'v0.4.0', event='release')[:2], (0, 'v0.4.0'))
+        self.assertEqual(self.plan('tag', 'v0.4.0')[:2], (0, 'v0.4.0'))
+        self.assertEqual(self.plan('tag', 'v0.4.0', 'v0.4.0')[:2], (0, 'v0.4.0'))
+
+    def test_a_run_on_a_tag_publishes_under_no_other_name(self):
+        code, _, err = self.plan('tag', 'v0.4.0', 'v0.3.6')
+        self.assertEqual(code, 1)
+        self.assertIn('publishes under v0.4.0 only', err)
+
+    def test_a_branch_publishes_under_its_commit_by_default(self):
+        self.assertEqual(self.plan('branch', 'main')[:2], (0, 'sha-957c80160000'))
+
+    def test_a_branch_takes_a_namespaced_tag(self):
+        self.assertEqual(self.plan('branch', 'fix/x', 'branch-fix-x')[:2], (0, 'branch-fix-x'))
+        self.assertEqual(self.plan('branch', 'fix/x', 'sha-rehearsal.2')[:2], (0, 'sha-rehearsal.2'))
+
+    def test_a_branch_never_publishes_under_a_release_name(self):
+        for image_tag in ('v0.3.4', 'v0.4.0', 'v1.0.0-rc1', 'v0.3.6+build'):
+            code, out, err = self.plan('branch', 'main', image_tag)
+            self.assertEqual((code, out), (1, ''), image_tag)
+            self.assertIn("is a release's name: only a run on the tag", err, image_tag)
+
+    def test_a_branch_tag_must_be_namespaced(self):
+        for image_tag in ('latest', 'm4-complete', 'v0', 'local', 'shax'):
+            code, _, err = self.plan('branch', 'main', image_tag)
+            self.assertEqual(code, 1, image_tag)
+            self.assertIn('namespaced tag', err, image_tag)
+
+    def test_a_branch_never_publishes_under_an_existing_tag(self):
+        code, _, err = self.plan('branch', 'main', 'sha-taken')
+        self.assertEqual(code, 1)
+        self.assertIn('is the name of a tag of this repository', err)
+        # the lookup fails closed
+        code, _, err = self.plan('branch', 'main', 'sha-broken')
+        self.assertEqual(code, 1)
+        self.assertIn('cannot tell whether the tag sha-broken exists', err)
+
+    def test_a_release_event_off_a_tag_is_refused(self):
+        self.assertEqual(self.plan('branch', 'main', event='release')[0], 1)
+
+    def test_the_workflow_decides_the_tag_with_the_script_before_any_build(self):
+        gate = WORKFLOW[WORKFLOW.index('  ci-gate:'):WORKFLOW.index('  plan:')]
+        self.assertIn('run: ./scripts/release-image-tag.sh', gate)
+        self.assertIn('IMAGE_TAG_INPUT: ${{ inputs.image_tag }}', gate)
+        plan = WORKFLOW[WORKFLOW.index('  plan:'):WORKFLOW.index('  rust:')]
+        self.assertIn('tag="$(./scripts/release-image-tag.sh)"', plan)
+        self.assertNotIn('INPUT_TAG', plan.replace('IMAGE_TAG_INPUT', ''))
+        # every job that pushes takes the plan's tag
+        for job in re.split(r'\n(?=  [a-z][a-z0-9-]*:\n)', WORKFLOW):
+            if 'docker push' in job:
+                self.assertRegex(job, r'needs: \[plan[,\]]')
+                self.assertIn('LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}', job)
+
+    def test_a_branch_run_of_the_packages_is_named_as_a_test_build(self):
+        packages = (ROOT / '.github/workflows/release-packages.yml').read_text()
+        self.assertIn("name: ${{ github.ref_type == 'tag' && 'catalog-packages' || "
+                      "format('catalog-packages-test-{0}', github.sha) }}", packages)
+        self.assertEqual(packages.count('name: catalog-packages'), 0)

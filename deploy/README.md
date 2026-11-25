@@ -53,7 +53,10 @@ tagged commit has finished, green `ci.yml` and `public-readiness.yml` runs
 (its first job, `scripts/check-release-ci.sh`, fails otherwise), from the very phases
 `from-scratch.sh` runs below, on GitHub's arm64 runners; the bundle is
 attached to that release only after a fresh runner has started the stack from
-it (ADR 0215). Publish the release with its notes first; the assets follow
+it (ADR 0215). Only a run on a tag publishes images under that tag's name: a
+manual dispatch on a branch publishes under `sha-<commit>`, or under an
+`image_tag` input of the form `sha-…` or `branch-…`, and is refused any
+release-shaped tag or the name of an existing tag (`scripts/release-image-tag.sh`). Publish the release with its notes first; the assets follow
 about 2.5 hours later. `scripts/package-dist.sh <prefix> <tag>` produces the bundle
 locally from a committed tree.
 

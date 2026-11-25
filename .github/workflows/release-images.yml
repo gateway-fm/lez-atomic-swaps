@@ -11,6 +11,8 @@ name: release-images
 #   ci-gate       first: a release (or a run on a tag) needs finished, green
 #                 ci.yml and public-readiness.yml runs on its commit
 #                 (scripts/check-release-ci.sh); a branch dispatch is not gated
+#                 on CI, but its image tag is: only a run on a tag publishes
+#                 under that tag's name (scripts/release-image-tag.sh, #191)
 #   rust          Node binaries, Bitcoin actors, the LEZ sidecar and identity tool
 #   lez-services  the sequencer from the pinned logos-execution-zone
 #   lez-modules   the LEZ indexer and wallet as Logos modules (lgx, Nix, from the
@@ -38,7 +40,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: image tag to publish (blank = the git tag, or sha-<short> for a branch)
+        description: image tag to publish (blank = the git tag, or sha-<12> for a branch; a branch takes only sha-<...> or branch-<...>)
         type: string
         default: ""
       run_smoke:
@@ -80,27 +82,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/check-release-ci.sh
+      # Before any build: a dispatch on a branch never publishes under a
+      # release's name (v<semver>, or any tag of this repository), and a run
+      # on a tag only under its own (#191).
+      - name: Refuse an image tag only a release may use
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: ./scripts/release-image-tag.sh
 
   plan:
     name: image tag
     needs: ci-gate
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     outputs:
       image_tag: ${{ steps.plan.outputs.image_tag }}
       is_release: ${{ steps.plan.outputs.is_release }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - id: plan
         env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
           REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
-          INPUT_TAG: ${{ inputs.image_tag }}
-          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ -n "$INPUT_TAG" ]]; then tag="$INPUT_TAG"
-          elif [[ "$REF_TYPE" == tag ]]; then tag="$REF_NAME"
-          else tag="sha-${SHA:0:12}"; fi
-          [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo "invalid image tag: $tag" >&2; exit 1; }
+          # the tag every push of this run uses (scripts/release-image-tag.sh)
+          tag="$(./scripts/release-image-tag.sh)"
           echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
           if [[ "$REF_TYPE" == tag ]]; then echo "is_release=true" >> "$GITHUB_OUTPUT"; else echo "is_release=false" >> "$GITHUB_OUTPUT"; fi
           echo "publishing ${tag}"

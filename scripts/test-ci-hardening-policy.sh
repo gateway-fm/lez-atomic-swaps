@@ -124,6 +124,52 @@ for workflow in .github/workflows/release-images.yml .github/workflows/release-p
 done
 require_fixed 'readonly gated_workflows=(ci.yml public-readiness.yml)' scripts/check-release-ci.sh
 
+# Image tags (issue #191): only a run on a tag publishes under a release's
+# name, and only under its own. The ci-gate job refuses any other tag before a
+# build, the plan job decides the tag every push uses with the same script,
+# and the free-text dispatch input never reaches a push as given.
+readonly images_workflow=.github/workflows/release-images.yml
+readonly image_tag_script=scripts/release-image-tag.sh
+[[ -x "$image_tag_script" ]] || fail "$image_tag_script must exist and be executable"
+images_gate="$(awk '/^  ci-gate:$/ { on = 1 } /^  plan:$/ { on = 0 } on' "$images_workflow")"
+images_plan="$(awk '/^  plan:$/ { on = 1 } /^  rust:$/ { on = 0 } on' "$images_workflow")"
+rg -Fq 'run: ./scripts/release-image-tag.sh' <<<"$images_gate" \
+  || fail "the ci-gate job of $images_workflow must refuse a release's image tag on a branch"
+rg -Fq 'IMAGE_TAG_INPUT: ${{ inputs.image_tag }}' <<<"$images_gate" \
+  || fail "the ci-gate job of $images_workflow must check the dispatch's image_tag"
+rg -Fq 'tag="$(./scripts/release-image-tag.sh)"' <<<"$images_plan" \
+  || fail "the plan job of $images_workflow must take its tag from $image_tag_script"
+[[ "$(rg -c 'inputs\.image_tag' "$images_workflow")" == 2 ]] \
+  || fail "$images_workflow uses the image_tag input outside the two $image_tag_script steps"
+require_fixed "readonly release_shaped='^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.+-]*)?\$'" "$image_tag_script"
+require_fixed "readonly namespaced='^(sha|branch)-[A-Za-z0-9][A-Za-z0-9_.-]*\$'" "$image_tag_script"
+require_fixed "name: \${{ github.ref_type == 'tag' && 'catalog-packages' || format('catalog-packages-test-{0}', github.sha) }}" \
+  .github/workflows/release-packages.yml
+# and the rule holds when run: a fake gh knows the tags v0.3.6 and v0.4.0
+image_tag_bin="$(mktemp -d)"
+trap 'rm -rf "$image_tag_bin"' EXIT
+cat >"$image_tag_bin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$2" in
+  */git/ref/tags/v0.3.6|*/git/ref/tags/v0.4.0) echo "refs/tags/${2##*/git/ref/tags/}" ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$image_tag_bin/gh"
+image_tag() { # image_tag <ref type> <ref name> <input>: the tag, or nothing when refused
+  PATH="$image_tag_bin:$PATH" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_TYPE="$1" GITHUB_REF_NAME="$2" \
+    GITHUB_SHA=957c80160000000000000000000000000000beef GITHUB_REPOSITORY=gateway-fm/lez-atomic-swaps \
+    IMAGE_TAG_INPUT="$3" "$image_tag_script" 2>/dev/null || true
+}
+[[ "$(image_tag tag v0.4.0 '')" == v0.4.0 ]] || fail "$image_tag_script: a run on v0.4.0 must publish under v0.4.0"
+[[ "$(image_tag branch main '')" == sha-957c80160000 ]] || fail "$image_tag_script: a branch must default to sha-<12>"
+[[ "$(image_tag branch main branch-rehearsal)" == branch-rehearsal ]] || fail "$image_tag_script: a branch- tag must pass"
+for refused in "branch main v0.3.4" "branch main v0.4.0" "branch main v9.9.9" "branch main latest" "tag v0.4.0 v0.3.6"; do
+  read -r ref_type ref_name input <<<"$refused"
+  [[ -z "$(image_tag "$ref_type" "$ref_name" "$input")" ]] \
+    || fail "$image_tag_script lets a dispatch on $ref_type $ref_name publish under $input"
+done
+
 require_fixed 'tags: ["m*-complete*"]' "$ci_workflow"
 require_fixed './scripts/run-ci-quality-gates.sh' "$ci_workflow"
 require_fixed 'run: ./scripts/check-all.sh --fast --rust-only' "$ci_workflow"
