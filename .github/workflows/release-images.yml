@@ -25,7 +25,8 @@ name: release-images
 #   basecamp-ui   the Nix-built Basecamp bundle and both role packages, and the
 #                 Basecamp images on it (each party's, the LEZ network's)
 #   images        stages the payloads, builds and pushes the remaining images
-#   smoke         pulls the published images and runs the bundle's start.sh
+#   smoke         pulls the published images, runs the bundle's start.sh and a
+#                 short regression from the bundle (scripts/regress.sh run)
 #   publish       attaches the bundle to the release (release event only)
 # A cold run takes about 2.5 hours; the escrow guest build is the long pole.
 # Packages are created private on first push: make them public once in the
@@ -557,7 +558,7 @@ jobs:
     needs: [plan, images, basecamp-ui]
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_smoke }}
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+    timeout-minutes: 135
     permissions:
       contents: read
       packages: read
@@ -586,6 +587,30 @@ jobs:
           tar -xzf "$RUNNER_TEMP/dist/lez-swap-stack-${LEZ_IMAGE_TAG}-arm64.tar.gz" -C "$RUNNER_TEMP/stack"
           cd "$RUNNER_TEMP/stack/lez-swap-stack-${LEZ_IMAGE_TAG}-arm64"
           ./scripts/start.sh
+      # The regression's entry points from the bundle alone (#190): the
+      # images, tag and escrow program from release.env, nothing built. One
+      # Zcash swap each way (the Taker's key paid by zec-local-poc-transfer
+      # selling ZEC), a Taker Node restarted on a regenerated configuration,
+      # and a stranger's credit to a funded escrow's custody.
+      - name: A short regression from the bundle
+        timeout-minutes: 45
+        env:
+          LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/stack/lez-swap-stack-${LEZ_IMAGE_TAG}-arm64"
+          LEZ_TIMING_PROFILE=fast SKIP_UI_VERIFY=1 LEZ_NO_BANNER=1 bash scripts/up.sh
+          LEZ_REGRESS_OUT="$RUNNER_TEMP/regress" bash scripts/regress.sh run \
+            node:zec:zec-happy:TakerSellsLez node:zec:zec-happy:TakerSellsForeign \
+            node:btc:regenerated-config:TakerSellsForeign node:btc:btc-custody-credit:TakerSellsForeign
+      - name: Keep the short regression's logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle-regression-logs
+          path: ${{ runner.temp }}/regress
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Stack logs
         if: failure()
         env:
