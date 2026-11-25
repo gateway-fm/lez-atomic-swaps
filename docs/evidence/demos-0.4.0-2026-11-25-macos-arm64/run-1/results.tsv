@@ -1,0 +1,4 @@
+ui:xmr:xmr-taker-refund:TakerSellsLez	1	PASSED	965	2026-11-25T04:43:08Z	2	0
+ui:xmr:xmr-punish:TakerSellsLez	1	PASSED	1106	2026-11-25T04:45:30Z	1	0
+ui:xmr:xmr-happy:TakerSellsLez	1	PASSED	208	2026-11-25T04:46:43Z	2	0
+ui:xmr:xmr-concurrent:TakerSellsLez	1	PASSED	296	2026-11-25T04:50:33Z	1	0

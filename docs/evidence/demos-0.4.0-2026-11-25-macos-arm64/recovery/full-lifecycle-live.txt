@@ -1,0 +1,56 @@
+$ cargo run --locked -p xmr-reference-actor --example full-lifecycle
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running `target/debug/examples/full-lifecycle`
+Monero leg: LIVE Regtest; monerod http://127.0.0.1:18081 (genesis 418015bb9ae982a1…, tip 620), funding wallet-rpc http://127.0.0.1:18083 (49EENnnjntwLbJgg…)
+
+[swap 1 claim |             ] == begin ==
+[swap 1 claim |             ] Taker: material from the seeded stream; DLEQ proved and verified, spend share 2b7aac6c11133711…
+[swap 1 claim |             ] Maker: material from the seeded stream; DLEQ proved and verified, spend share 9c0021868a2d180f…
+[swap 1 claim |             ] R1 xmr_reserve_v1: Maker composed and signed Stage A 9c8e0ec3914dafe0… (114562 B unsigned)
+[swap 1 claim |             ] R2 xmr_chat_agreement_v1: Taker recomposed Stage A byte for byte and countersigned; shared 2-of-2 Monero address 47f6YpQT9uEJK7Jn…
+[swap 1 claim |             ] R3 xmr_ceremony_commit_v1: nonce commitments of both sessions exchanged
+[swap 1 claim |             ] R4 xmr_ceremony_nonce_v1: nonces opened, Maker partials verified; both Taker presignatures aggregated
+[swap 1 claim |             ] R5 xmr_ceremony_partial_v1: Stage B 606bad8b922e6b4c… validated and signed by the Maker; refund presignature converged
+[swap 1 claim |             ] R6 xmr_chat_activate_v1: Stage B 875 B activated by both; the Taker's claim partial stayed in its journal (Maker claim seat at PartialPersisted)
+[swap 1 claim | LEZ +    30 s] tag 13 + fund: LEZ 500 locked, escrow Funded
+[swap 1 claim | LEZ +    30 s] Maker: LEZ lock 9bfac410f6dd204d… matches Stage B and is final before C (+320 s)
+[swap 1 claim | LEZ +    60 s] Maker: funded 200000000000 piconero to the shared address in 84b715fedeb35d718d6d432791b957897dd1ff702046a8da269c27232f8fe1a5, mined to height 630
+[swap 1 claim | LEZ +    90 s] Taker: view-only wallet sees the exact output: block 0eb68d6d0aac9863… at height 621, 10 confirmations
+[swap 1 claim | LEZ +   400 s] escrow refused tag 14 with another partial: the claim partial does not open the stored commitment
+[swap 1 claim | LEZ +   400 s] tag 14: Taker published its claim partial, escrow XmrClaimAuthorized
+[swap 1 claim | LEZ +   450 s] tag 15: Maker completed the claim signature with its share; LEZ 500 to the Maker, escrow Claimed
+[swap 1 claim | LEZ +   750 s] escrow refused tag 16 after the claim: the escrow is Claimed
+[swap 1 claim |             ] Taker (journal): Maker's share extracted from tag 15; spend key rebuilt, opens 9f3c088d2fe61567…
+[swap 1 claim |             ] Taker: restarted with its session state lost: no journal, no session keys, no parsed stages; kept its share, the view key, Stage A (114690 B) and Stage B (875 B)
+[swap 1 claim |             ] Taker (recovered): claim presignature re-aggregated from Stage B and the tag-14 partial; Maker's share extracted from tag 15, checked against its DLEQ proof; spend key opens 9f3c088d2fe61567…
+[swap 1 claim |             ] swept the shared output with the rebuilt key: tx b9b3f2e488fb17b702fef49226bf2d12c91487a7115be6e0aac5cc520d7febf6 received 198190400000 piconero (fee 1809600000), mined to height 640
+[swap 1 claim |             ] == end ==
+
+[swap 2 refund |             ] == begin ==
+[swap 2 refund |             ] Taker: material from the seeded stream; DLEQ proved and verified, spend share e2a202bf7a5b4e57…
+[swap 2 refund |             ] Maker: material from the seeded stream; DLEQ proved and verified, spend share 2a96b9070da896f7…
+[swap 2 refund |             ] R1 xmr_reserve_v1: Maker composed and signed Stage A 3fc314cb78eea808… (114562 B unsigned)
+[swap 2 refund |             ] R2 xmr_chat_agreement_v1: Taker recomposed Stage A byte for byte and countersigned; shared 2-of-2 Monero address 45dtc4UrgT3MuDdP…
+[swap 2 refund |             ] R3 xmr_ceremony_commit_v1: nonce commitments of both sessions exchanged
+[swap 2 refund |             ] R4 xmr_ceremony_nonce_v1: nonces opened, Maker partials verified; both Taker presignatures aggregated
+[swap 2 refund |             ] R5 xmr_ceremony_partial_v1: Stage B 447ab2084f3d5b64… validated and signed by the Maker; refund presignature converged
+[swap 2 refund |             ] R6 xmr_chat_activate_v1: Stage B 875 B activated by both; the Taker's claim partial stayed in its journal (Maker claim seat at PartialPersisted)
+[swap 2 refund | LEZ +    30 s] tag 13 + fund: LEZ 250 locked, escrow Funded
+[swap 2 refund | LEZ +    30 s] Maker: LEZ lock 9fe013f43877462a… matches Stage B and is final before C (+320 s)
+[swap 2 refund | LEZ +    60 s] Maker: funded 100000000000 piconero to the shared address in f467a3e6680f7437686e7a6a80e5fe270909160928c2ad9be542b4305f6c1ef0, mined to height 650
+[swap 2 refund | LEZ +    90 s] Taker: view-only wallet sees the exact output: block f6d5010236c8c8dc… at height 641, 10 confirmations
+[swap 2 refund | LEZ +   700 s] escrow refused tag 16 before R: tag 16 is valid only in [R, P)
+[swap 2 refund | LEZ +   700 s] escrow refused tag 17 before P: tag 17 is valid only from P
+[swap 2 refund | LEZ +   750 s] tag 16: Taker completed the refund signature with its share; LEZ 250 back to the Taker, escrow Refunded
+[swap 2 refund | LEZ +  1010 s] escrow refused tag 17 after the refund: the escrow is Refunded
+[swap 2 refund |             ] Maker (journal): Taker's share extracted from tag 16; spend key rebuilt, opens 69e8be1ddc73da7c…
+[swap 2 refund |             ] Maker: restarted with its session state lost: no journal, no session keys, no parsed stages; kept its share, the view key, Stage A (114690 B) and Stage B (875 B)
+[swap 2 refund |             ] Maker (recovered): Taker's share extracted from tag 16 with Stage B's refund presignature, checked against its DLEQ proof; spend key opens 69e8be1ddc73da7c…
+[swap 2 refund |             ] swept the shared output with the rebuilt key: tx 282df4a5382f8522c4a36f01ec2342c91d5a06a313c87e8f82a83344edd49045 received 98190400000 piconero (fee 1809600000), mined to height 660
+[swap 2 refund |             ] == end ==
+
+swap 1 claim: Completed (escrow Claimed); Monero swept by the Taker with the recovered key: tx b9b3f2e488fb17b702fef49226bf2d12c91487a7115be6e0aac5cc520d7febf6 received 198190400000 piconero (fee 1809600000), mined to height 640
+swap 2 refund: Refunded (escrow Refunded); Monero swept back by the Maker with the recovered key: tx 282df4a5382f8522c4a36f01ec2342c91d5a06a313c87e8f82a83344edd49045 received 98190400000 piconero (fee 1809600000), mined to height 660
+private_key_bytes_printed=false
+$ echo $?
+0
