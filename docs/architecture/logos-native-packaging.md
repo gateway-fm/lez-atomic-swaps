@@ -743,7 +743,9 @@ linux-amd64 and linux-arm64); the official `delivery_module` 0.2.1 they take
 has darwin-arm64 too. `lez_network` and
 `lez_indexer_module` stay Linux-only: the LEZ network operator's desk is not
 installed in a party's Basecamp, and its indexer module has not been built or
-run on macOS.
+run on macOS. The devnet's Zcash Node desk (`lez_zcash_node`) and `zebrad_module` are not
+in the catalog at all: they host the devnet's shared Regtest chain in its own
+Basecamp, linux-arm64 only; a party on public Testnet runs its own Zebra.
 
 - **Build.** `deploy/scripts/build-darwin-packages.sh --out <dir>` on an
   Apple-silicon Mac builds those six darwin-arm64 variants from the checkout:

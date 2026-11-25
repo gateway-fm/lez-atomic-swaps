@@ -45,6 +45,7 @@ nix build --no-update-lock-file .#lez-taker-ui -o result-lez-taker-ui
 nix build --no-update-lock-file .#lez-maker-ui-lgx-portable -o result-lez-maker-ui-lgx-portable
 nix build --no-update-lock-file .#lez-taker-ui-lgx-portable -o result-lez-taker-ui-lgx-portable
 nix build --no-update-lock-file .#lez-network-ui-lgx-portable -o result-lez-network-ui-lgx-portable
+nix build --no-update-lock-file .#lez-zcash-ui-lgx-portable -o result-lez-zcash-ui-lgx-portable
 nix build --no-update-lock-file .#lez-maker-ui-lgx -o result-lez-maker-ui-lgx
 nix build --no-update-lock-file .#lez-taker-ui-lgx -o result-lez-taker-ui-lgx
 nix build --no-update-lock-file .#lez-maker-ui-install -o result-lez-maker-ui-install
@@ -63,6 +64,8 @@ development builds: variant `<platform>-dev`, libraries from `/nix/store`;
 logosctl refuses them. `lez-network-ui-lgx-portable` is the LEZ network's
 operator package (the LEZ Network desk, depending on `blockchain_module` and
 `lez_indexer_module`); a trader on the public testnet does not need it.
+`lez-zcash-ui-lgx-portable` is the devnet's Zcash Node desk, depending on
+`zebrad_module`; it is in the devnet's images only, not in the catalog.
 Do not put both roles into one evidence directory: separate user directories
 make role discovery, socket authority, and cleanup auditable.
 
@@ -144,6 +147,16 @@ package `lez_network`) asks Basecamp's `blockchain_module` and
 (`common/lez_network_host.h`), and rebuilds the indexer's database on
 **Re-index** (`deploy/scripts/repair-indexer.sh`). It is not a role package:
 a Maker or a Taker does not install it.
+
+The devnet's Zcash Regtest chain runs in a fourth Basecamp, `lez-zebra`
+(`deploy/images/zebra-module`). Its **Zcash Node** desk (`zcash/`, package
+`lez_zcash_node`) configures Basecamp's `zebrad_module` (logos-zebrad-module,
+Zebra in-process) from the settings file `LEZ_ZEBRA_CONFIG` names, for the
+network `LEZ_ZEBRA_NETWORK` names, and starts it (`common/lez_zcash_host.h`).
+**Restart node** stops and starts the node; on Regtest **Reset chain**
+deletes the chain and starts a new one with the same settings. The module's
+JSON-RPC keeps Zebra's cookie authentication (`<cacheDir>/.cookie`, new at
+every start).
 
 ## Install a desk from the module catalog
 
