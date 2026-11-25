@@ -276,8 +276,9 @@ NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "of
 # What a release bundle cannot run: release images carry no devnet test hooks
 # (LEZ_TEST_HOOKS=1 is refused under LEZ_RELEASE_BUILD), the release Taker image
 # none of the Zcash dealer test fixture's tools (feature dealer-fixture, which a
-# release build does not compile), and a bundle neither tests/ nor the
-# repository's sources (package-dist.sh). Each entry is a pattern of regress.sh
+# release build does not compile; it does carry the test payer
+# zec-local-poc-transfer, feature test-payer), and a bundle neither tests/ nor
+# the repository's sources (package-dist.sh). Each entry is a pattern of regress.sh
 # test ids (<node|ui>:<pair>:<scenario>:<direction>) and why. In a bundle
 # regress.sh leaves these out, saying so, and run() refuses them by name;
 # deploy/README.md ("Prebuilt images") lists the same set.
@@ -296,11 +297,6 @@ RELEASE_UNAVAILABLE = (
     ("node:zec:zec-maker-early-claim:*", RELEASE_DEALER),
     ("node:btc:maker-price-module:*", "compiles the repository's TEST price module (crates/logos-price-c-api), "
                                       "which a release bundle does not carry"),
-    # Selling ZEC the Taker funds the Zcash leg from its own key, which the
-    # harness pays from the Maker's (zec_dynamic_fund_taker) with
-    # zec-local-poc-transfer, a dealer-fixture tool.
-    ("*:zec:*:TakerSellsForeign", "the Taker's Zcash key is paid with zec-local-poc-transfer, a dealer test "
-                                  "fixture tool the release Taker image does not carry"),
 )
 
 
@@ -4224,13 +4220,13 @@ def zec_dynamic_fund_taker() -> None:
     blocks make the payment a funder output (local_poc.rs: every Regtest
     candidate waits out coinbase maturity)."""
     container = NODES["taker"][0]
-    # A release Taker image has no dealer-fixture tools: say so rather than
-    # fail on a missing executable (RELEASE_UNAVAILABLE, "*:zec:*:TakerSellsForeign").
+    # The test payer (feature test-payer) is in every Taker image, a release
+    # one too: an image without it is older than that, or built by hand.
     if subprocess.run(["docker", "exec", container, "sh", "-c", "command -v zec-local-poc-transfer"],
                       capture_output=True, check=False, stdin=subprocess.DEVNULL).returncode != 0:
-        raise Failure(f"{container} has no zec-local-poc-transfer (a dealer test fixture tool, built only for a "
-                      "devnet): selling ZEC the harness cannot pay the Taker's Zcash key, so this does not run "
-                      "on release images")
+        raise Failure(f"{container} has no zec-local-poc-transfer, the test payer every Taker image carries "
+                      "(from-scratch.sh, release-images.yml): selling ZEC the harness cannot pay the Taker's "
+                      "Zcash key; rebuild or pull the Taker image")
     key = (LANE_RUNTIME / "lez" / "maker" / "zcash.key").read_bytes()
     subprocess.run(["docker", "exec", "-i", container, "sh", "-c", "umask 077; cat >/tmp/zec-payer.key"],
                    input=key, capture_output=True, check=True)

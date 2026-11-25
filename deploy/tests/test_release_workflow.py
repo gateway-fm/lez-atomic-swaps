@@ -45,11 +45,15 @@ class ReleaseWorkflow(unittest.TestCase):
         roles = set(re.search(r'for role in ([a-z -]+); do', collect).group(1).split())
         for context in ('maker-node', 'taker-node', 'lez-services', 'zebra'):
             self.assertIn(context, roles, context)
-        # the published Taker image carries zec-local-poc-identity and none of
-        # the dealer test fixture's tools
-        self.assertIn('zec-local-poc-identity', collect)
+        # the published Taker image carries zec-local-poc-identity and the
+        # test-only payer zec-local-poc-transfer (feature test-payer), and none
+        # of the dealer test fixture's tools
+        self.assertIn('cp deploy/images/taker-node/zec-local-poc-identity '
+                      'deploy/images/taker-node/zec-local-poc-transfer _out/images/taker-node/', collect)
+        self.assertIn('install -m 0755 _in/node/images/taker-node/zec-local-poc-identity '
+                      '_in/node/images/taker-node/zec-local-poc-transfer deploy/images/taker-node/', WORKFLOW)
         self.assertNotIn('zec-local-poc-*', WORKFLOW)
-        for tool in ('provision', 'chat-draft', 'chat-finalize', 'transfer'):
+        for tool in ('provision', 'chat-draft', 'chat-finalize'):
             self.assertNotIn(f'zec-local-poc-{tool}', WORKFLOW, tool)
         self.assertIn('source-tree.txt', collect)
         # the Maker's Monero effect tools and both roles' Stage-A planner, which
@@ -155,86 +159,6 @@ class PackagesWorkflow(unittest.TestCase):
 
 
 class NoTestHooksInARelease(unittest.TestCase):
-    """The devnet's test hooks (feature test-hooks of the LEZ sidecar: the
-    claim holds of zec-kill-maker-claim) never reach a release: the devnet
-    build enables them only on LEZ_TEST_HOOKS=1, nothing on the release path
-    names them or sets that variable, the release path marks itself
-    LEZ_RELEASE_BUILD, and under that mark from-scratch.sh refuses
-    LEZ_TEST_HOOKS=1 and the hooks do not compile."""
-
-    RELEASE_WORKFLOWS = ('.github/workflows/release-images.yml', '.github/workflows/release-packages.yml')
-    PACKAGERS = ('deploy/scripts/package-role-node.sh', 'deploy/scripts/package-role-node-darwin.sh',
-                 'deploy/scripts/build-darwin-packages.sh', 'deploy/scripts/package-dist.sh',
-                 'deploy/scripts/stage-basecamp-package.sh', 'deploy/scripts/pin-package-dependencies.sh')
-    FROM_SCRATCH = ROOT / 'deploy/scripts/from-scratch.sh'
-
-    def test_the_release_path_never_names_the_hooks(self):
-        for path in self.RELEASE_WORKFLOWS + self.PACKAGERS:
-            text = (ROOT / path).read_text()
-            for word in ('test-hooks', 'test_hooks', 'LEZ_TEST_HOOKS', '--all-features'):
-                self.assertNotIn(word, text, f'{path} names {word}')
-
-    def test_the_release_workflows_mark_their_builds(self):
-        for path in self.RELEASE_WORKFLOWS:
-            text = (ROOT / path).read_text()
-            top = text.split('\njobs:\n', 1)[0]
-            self.assertRegex(top, r'\nenv:\n(  .*\n)*  LEZ_RELEASE_BUILD: "1"\n', path)
-            # The builds they run are from-scratch.sh's phases, under that mark.
-            self.assertIn('deploy/scripts/from-scratch.sh', text)
-
-    def test_the_darwin_packager_marks_each_cargo_build(self):
-        text = (ROOT / 'deploy/scripts/package-role-node-darwin.sh').read_text()
-        builds = re.findall(r'.*cargo (?:\+\S+ )?build.*', text)
-        self.assertEqual(len(builds), 2)
-        for line in builds:
-            self.assertIn('LEZ_RELEASE_BUILD=1 ', line)
-
-    def test_from_scratch_builds_the_hooks_only_on_request(self):
-        text = self.FROM_SCRATCH.read_text()
-        for line in text.splitlines():
-            if 'test-hooks' in line and not line.lstrip().startswith('#'):
-                self.assertRegex(line, r'\[\[ "\$\{LEZ_TEST_HOOKS:-0\}" != 1 \]\] \|\| ', line)
-        self.assertIn('hooks="--features test-hooks"', text)
-        # The release mark reaches the sidecar's build container.
-        self.assertEqual(text.count('${release_build_env[@]+"${release_build_env[@]}"}'), 1)
-
-    def test_from_scratch_refuses_the_hooks_in_a_release_build(self):
-        import os
-        import subprocess
-        import tempfile
-        with tempfile.TemporaryDirectory() as workspace:
-            for env, message in ((dict(LEZ_TEST_HOOKS='1', LEZ_RELEASE_BUILD='1'), 'no release build'),
-                                 (dict(LEZ_TEST_HOOKS='yes'), 'LEZ_TEST_HOOKS is 0 or 1')):
-                result = subprocess.run([str(self.FROM_SCRATCH), '--workspace', workspace, '--only', 'none'],
-                                        env={**os.environ, **env}, capture_output=True, text=True, timeout=60)
-                self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn(message, result.stderr)
-
-    def test_the_hooks_do_not_compile_in_a_release_build(self):
-        guard = 'option_env!("LEZ_RELEASE_BUILD").is_none()'
-        self.assertIn('#[cfg(feature = "test-hooks")]\nmod test_hooks;',
-                      (ROOT / 'compat/lez-v0_2-sidecar/src/lib.rs').read_text())
-        self.assertIn(guard, (ROOT / 'compat/lez-v0_2-sidecar/src/test_hooks.rs').read_text())
-
-    def test_no_default_or_dependent_feature_turns_the_hooks_on(self):
-        for manifest in sorted(ROOT.glob('**/Cargo.toml')):
-            parts = manifest.relative_to(ROOT).parts
-            if 'target' in parts or 'node_modules' in parts:
-                continue
-            text = manifest.read_text()
-            default = re.search(r'^default = \[(.*?)\]', text, re.M | re.S)
-            self.assertFalse(default and 'test-hooks' in default.group(1), manifest)
-            for line in text.splitlines():
-                if 'test-hooks' in line and not line.lstrip().startswith('#'):
-                    # Only the sidecar's own definition of the feature.
-                    self.assertEqual(line, 'test-hooks = []', manifest)
-
-
-if __name__ == '__main__':
-    unittest.main()
-
-
-class NoTestHooksInARelease(unittest.TestCase):
     """The devnet's test hooks (feature test-hooks of the Taker Node, the Maker
     Node and the LEZ sidecar: a skewed clock, a cheating Taker, a held Zcash
     activation, a punish nonce thief) never
@@ -327,7 +251,8 @@ class NoTestHooksInARelease(unittest.TestCase):
 
     def test_no_default_or_dependent_feature_turns_the_hooks_on(self):
         for manifest in sorted(ROOT.glob('**/Cargo.toml')):
-            if 'target' in manifest.relative_to(ROOT).parts:
+            parts = manifest.relative_to(ROOT).parts
+            if 'target' in parts or 'node_modules' in parts:
                 continue
             text = manifest.read_text()
             default = re.search(r'^default = \[(.*?)\]', text, re.M | re.S)
@@ -337,6 +262,51 @@ class NoTestHooksInARelease(unittest.TestCase):
                     # Only the three crates' own definitions of the feature.
                     self.assertRegex(line, r'^test-hooks = \[("pair-xmr")?\]$', manifest)
 
+
+class TestPayerInTheTakerImage(unittest.TestCase):
+    """The Taker Node image, a release one too, carries the test payer
+    zec-local-poc-transfer (feature test-payer of zec-reference-actor), with
+    which the harness funds the Taker's Zcash key; no role package does.
+
+    It is built in a cargo invocation of its own, so the feature never reaches
+    the zec-reference-actor library the Nodes and actors link, and the dealer
+    fixture, which enables it, still never builds in a release."""
+
+    FROM_SCRATCH = (ROOT / 'deploy/scripts/from-scratch.sh').read_text()
+    MANIFEST = (ROOT / 'crates/zec-reference-actor/Cargo.toml').read_text()
+
+    def test_the_payer_is_its_own_feature_and_needs_no_dealer(self):
+        self.assertIn('dealer-fixture = ["test-payer"]\n', self.MANIFEST)
+        self.assertIn('test-payer = []\n', self.MANIFEST)
+        payer = self.MANIFEST.split('name = "zec-local-poc-transfer"', 1)[1].split('[[bin]]', 1)[0]
+        self.assertIn('required-features = ["test-payer"]', payer)
+        # no Node, actor or other dependent asks for it
+        for manifest in sorted(ROOT.glob('crates/*/Cargo.toml')):
+            if manifest.parent.name != 'zec-reference-actor':
+                self.assertNotIn('test-payer', manifest.read_text(), manifest)
+        # and a release build does not refuse it as it refuses the dealer
+        lib = (ROOT / 'crates/zec-reference-actor/src/lib.rs').read_text()
+        self.assertNotRegex(lib, r'#\[cfg\(feature = "test-payer"\)\]\nconst _: \(\) = assert!')
+
+    def test_from_scratch_builds_the_payer_alone_in_every_build(self):
+        payer = 'cargo build --locked -p zec-reference-actor --features test-payer --bin zec-local-poc-transfer'
+        self.assertEqual(self.FROM_SCRATCH.count(payer), 1)
+        products = self.FROM_SCRATCH.index('cargo build --locked --bins --features "lez-maker-node/pair-zec')
+        guard = self.FROM_SCRATCH.index('if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then', products)
+        at = self.FROM_SCRATCH.index(payer)
+        self.assertLess(products, at)
+        self.assertLess(at, guard)  # before the release-only guard: in every build
+        dealer = self.FROM_SCRATCH[guard:self.FROM_SCRATCH.index('\n      fi\n', guard)]
+        self.assertNotIn('zec-local-poc-transfer', dealer)
+        self.assertIn('taker-node/zec-local-poc-identity|taker-node/zec-local-poc-transfer) ;;', self.FROM_SCRATCH)
+        # the Taker image's context copies every zec-local-poc tool it is given
+        self.assertIn('COPY zec-local-poc-* /payload/', (ROOT / 'deploy/images/taker-node/Dockerfile').read_text())
+
+    def test_no_role_package_carries_it(self):
+        for packager in ('deploy/scripts/package-role-node.sh', 'deploy/scripts/package-role-node-darwin.sh',
+                         'deploy/scripts/build-darwin-packages.sh', 'deploy/role-symmetry.json'):
+            self.assertNotIn('zec-local-poc', (ROOT / packager).read_text(), packager)
+        self.assertNotIn('zec-local-poc', (ROOT / '.github/workflows/release-packages.yml').read_text())
 
 class ReleaseImageTag(unittest.TestCase):
     """Only a run on a tag publishes under a release's name (issue #191).
@@ -431,3 +401,7 @@ esac
         self.assertIn("name: ${{ github.ref_type == 'tag' && 'catalog-packages' || "
                       "format('catalog-packages-test-{0}', github.sha) }}", packages)
         self.assertEqual(packages.count('name: catalog-packages'), 0)
+
+
+if __name__ == '__main__':
+    unittest.main()

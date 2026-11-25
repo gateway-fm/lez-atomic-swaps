@@ -368,7 +368,8 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         self.assertLessEqual(hooked - {'xmr-kill-taker'}, named)
         self.assertLessEqual(harness.ZEC_CATALOG_SCENARIOS | harness.ZEC_DEALER_LAYOUT_SCENARIOS, named)
         self.assertIn('maker-price-module', named)
-        self.assertIn('*:zec:*:TakerSellsForeign', patterns)
+        # selling ZEC runs from a bundle: the Taker image carries the test payer
+        self.assertFalse([p for p in patterns if p.endswith(':TakerSellsForeign')], patterns)
         for _, why in entries:
             self.assertTrue(why.strip())
         # the README names the same set
@@ -377,8 +378,9 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         for pattern in patterns:
             if pattern.split(':')[2] != '*':
                 self.assertIn(pattern.removesuffix(':*'), section, pattern)
-        self.assertIn('node:zec:*:TakerSellsForeign', section)
-        self.assertIn('ui:zec:*:TakerSellsForeign', section)
+        self.assertNotIn('node:zec:*:TakerSellsForeign', section)
+        self.assertIn('The Zcash tests selling ZEC run from a bundle', section)
+        self.assertIn('`zec-local-poc-transfer`', section)
 
     def test_dealer_agreements_make_every_zcash_test_unavailable(self):
         patterns = [p for p, _ in self.release_unavailable(self.tree, LEZ_ZEC_AGREEMENT='dealer')]
@@ -398,19 +400,21 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         for test in ('node:zec:zec-kill-maker-claim:TakerSellsLez', 'node:zec:zec-activate-after-expiry:TakerSellsLez',
                      'node:xmr:xmr-taker-cheats:TakerSellsLez', 'node:xmr:xmr-kill-maker:TakerSellsLez',
                      'node:zec:zec-regenerated-catalog:TakerSellsLez', 'node:zec:zec-maker-early-claim:TakerSellsLez',
-                     'node:btc:maker-price-module:TakerSellsForeign', 'node:zec:zec-happy:TakerSellsForeign',
-                     'ui:zec:zec-happy:TakerSellsForeign'):
+                     'node:btc:maker-price-module:TakerSellsForeign'):
             self.assertIn(test, left_out)
             line = next(line for line in said if f'=== {test}: ' in line)
             self.assertIn('not run on release images (', line)
         self.assertEqual(len(said), len(left_out))
+        # six need the hooks, five the dealer fixture (the two catalog tests in
+        # both directions and zec-maker-early-claim), one the repository
+        self.assertEqual(len(left_out), 12, left_out)
         for test in ('node:zec:zec-happy:TakerSellsLez', 'node:btc:btc-custody-credit:TakerSellsForeign',
                      'node:zec:zec-custody-credit:TakerSellsLez', 'node:btc:regenerated-config:TakerSellsForeign',
-                     'node:xmr:xmr-kill-taker:TakerSellsLez', 'ui:btc:happy:TakerSellsLez'):
+                     'node:xmr:xmr-kill-taker:TakerSellsLez', 'ui:btc:happy:TakerSellsLez',
+                     'node:zec:zec-happy:TakerSellsForeign', 'ui:zec:zec-happy:TakerSellsForeign',
+                     'node:zec:zec-custody-credit:TakerSellsForeign', 'node:zec:zec-claim-at-one-confirmation:TakerSellsForeign'):
             self.assertIn(test, kept)
-        self.assertEqual(self.regress_list(self.tree, 'smoke')[0],
-                         [t for t in self.regress_list(DEPLOY, 'smoke')[0] if not t.startswith(('node:zec', 'ui:zec')) or
-                          not t.endswith('TakerSellsForeign')])
+        self.assertEqual(self.regress_list(self.tree, 'smoke')[0], self.regress_list(DEPLOY, 'smoke')[0])
 
     def test_the_harness_refuses_one_by_name_before_it_reaches_a_node(self):
         self.docker_log.unlink(missing_ok=True)

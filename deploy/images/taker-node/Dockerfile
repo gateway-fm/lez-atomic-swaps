@@ -8,11 +8,12 @@
 # CLI, its actors, the LEZ sidecar and the launcher; this image installs it,
 # and compose.yaml configures it. Only the Taker's executables are here
 # (deploy/role-symmetry.json). The zec-local-poc tools are not part of the
-# package: whichever the context holds are copied. The devnet's context
-# (from-scratch.sh) holds the dealer test fixture's (feature dealer-fixture,
-# run by tests/fixtures/zec-catalog-fixture.sh and node-e2e.py) and -identity
-# (gen-config.sh: zebra's miner address); the published image's context only
-# -identity (release-images.yml).
+# package: whichever the context holds are copied. Every context holds
+# -identity (gen-config.sh: zebra's miner address) and the test-only payer
+# -transfer (feature test-payer: node-e2e.py funds the Taker's Zcash key with
+# it); the devnet's (from-scratch.sh) also the dealer test fixture's (feature
+# dealer-fixture, run by tests/fixtures/zec-catalog-fixture.sh), the published
+# image's (release-images.yml) not.
 #
 # The staged tools are debug builds; their debug sections are most of the
 # bytes. Strip them here so the image ships only what runs.

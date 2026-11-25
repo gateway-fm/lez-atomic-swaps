@@ -256,6 +256,17 @@ impl fmt::Debug for ActorCli {
     }
 }
 
+// The test payer (feature test-payer): one plain transparent payment between
+// two owner-private keys on the Regtest fixture or Zcash Testnet, with which
+// the harness funds the Taker's key (zec-local-poc-transfer). It holds one
+// party's key at a time and none of the dealer's code, so a release build may
+// carry it. dealer-fixture enables it and re-exports the same items above.
+#[cfg(all(feature = "test-payer", not(feature = "dealer-fixture")))]
+pub use local_poc::{
+    LocalPocTransferSummary, TestnetZebraCredential, transfer_local_v0_2_regtest,
+    transfer_v0_2_testnet,
+};
+
 #[cfg(test)]
 mod role_entrypoint_tests {
     use super::{ActorRole, entrypoint_role_matches};

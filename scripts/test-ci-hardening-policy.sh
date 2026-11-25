@@ -145,6 +145,10 @@ require_fixed "readonly release_shaped='^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z
 require_fixed "readonly namespaced='^(sha|branch)-[A-Za-z0-9][A-Za-z0-9_.-]*\$'" "$image_tag_script"
 require_fixed "name: \${{ github.ref_type == 'tag' && 'catalog-packages' || format('catalog-packages-test-{0}', github.sha) }}" \
   .github/workflows/release-packages.yml
+# The release Taker image carries the test payer and no dealer tool (#190).
+require_fixed 'cp deploy/images/taker-node/zec-local-poc-identity deploy/images/taker-node/zec-local-poc-transfer _out/images/taker-node/' "$images_workflow"
+! rg -q 'zec-local-poc-(provision|chat-draft|chat-finalize)|zec-local-poc-\*' "$images_workflow" \
+  || fail "$images_workflow ships a dealer test fixture tool"
 # and the rule holds when run: a fake gh knows the tags v0.3.6 and v0.4.0
 image_tag_bin="$(mktemp -d)"
 trap 'rm -rf "$image_tag_bin"' EXIT
@@ -212,6 +216,10 @@ require_fixed 'cargo run --locked -p lez-xmr-swap-sdk --example full-lifecycle' 
 require_fixed 'cargo run --locked -p xmr-reference-actor --example full-lifecycle' "$ci_workflow"
 require_fixed 'cargo test --locked --manifest-path compat/lez-v0.2-provisional/Cargo.toml -p lez-zec-escrow-v02 --lib' "$ci_workflow"
 require_fixed 'cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings' "$ci_workflow"
+# The test payer the release Taker image carries is linted and tested under
+# the release mark, without the dealer fixture (#190).
+require_fixed 'cargo clippy --locked -p zec-reference-actor --features test-payer --all-targets -- -D warnings' "$ci_workflow"
+require_fixed 'cargo test --locked -p zec-reference-actor --features test-payer' "$ci_workflow"
 require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 
 # Build caches (actions/cache restore and save, never the combined action,
