@@ -121,8 +121,8 @@ balances() {
     lez="$(curl -fsS http://127.0.0.1:8779/ -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccount\",\"params\":[\"$account\"]}" \
       | jq .result.balance)"
-    zat="$(python3 -I - "$payload/stack/$role/zcash.key" <<'PY'
-import hashlib, json, sys, urllib.request
+    zat="$(python3 -I - "$payload/stack/$role/zcash.key" "$payload/stack/zebra-cookie" <<'PY'
+import base64, hashlib, json, sys, urllib.request
 # The role's transparent Zcash address (regtest P2PKH, prefix 1d25) and Zebra's balance of it.
 P = 2**256 - 2**32 - 977
 G = (0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
@@ -144,7 +144,9 @@ raw = payload + hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
 alphabet, n, text = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz", int.from_bytes(raw, "big"), ""
 while n: n, r = divmod(n, 58); text = alphabet[r] + text
 body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getaddressbalance", "params": [{"addresses": [text]}]})
-request = urllib.request.Request("http://127.0.0.1:18232/", body.encode(), {"content-type": "application/json"})
+cookie = open(sys.argv[2]).read().strip()
+request = urllib.request.Request("http://127.0.0.1:18232/", body.encode(), {"content-type": "application/json",
+                                 "authorization": "Basic " + base64.b64encode(cookie.encode()).decode()})
 print(text, json.load(urllib.request.urlopen(request, timeout=30))["result"]["balance"])
 PY
 )"
@@ -165,6 +167,10 @@ if [[ -n "$stack" ]]; then
       | sed -n 's/^LEZ_BTC_WALLET=//p' >"$payload/stack/$role/wallet"
   done
   cp "$stack/runtime/market-bootstrap.env" "$stack/runtime/secrets/btc-rpc-cookie" "$payload/stack/"
+  # The devnet Zebra's JSON-RPC cookie (zebrad_module writes it owner-only in
+  # its volume, new at every start): copied once for this run, which does not
+  # restart Zebra, owner-only, and deleted with the work directory.
+  (umask 077; docker exec lez-zebra cat /var/lib/zebra/regtest/.cookie >"$payload/stack/zebra-cookie")
   echo "$swap_pair" >"$payload/stack/pair"
   stack_containers=(lez-bitcoin-core lez-sequencer lez-network lez-zebra)
   # The Maker's Monero logins (gen-config.sh, LEZ_MONERO=1): monerod's and its wallet-rpc's.
@@ -417,10 +423,14 @@ for role in maker taker; do
   run systemd-creds encrypt --name=lez-signer.key "/payload/stack/$role/lez-signer.key" \
     "/etc/lez/$role/credentials/lez-signer.key.cred"
   run install -o lez-swap -g lez-swap -m 0400 /payload/stack/btc-rpc-cookie "/etc/lez/$role/btc-rpc-cookie"
+  # Zebra's cookie for the Zcash actors and route health (LEZ_ZEBRA_COOKIE_FILE):
+  # owner-only and owned by the Node's user, as they require.
+  run install -o lez-swap -g lez-swap -m 0600 /payload/stack/zebra-cookie "/etc/lez/$role/zebra-cookie"
   sed -e "s#^LEZ_BTC_WALLET=.*#LEZ_BTC_WALLET=$(cat "/payload/stack/$role/wallet")#" \
     -e '/^LEZ_V02_CHANNEL_ID=/d' "/etc/lez/$role/env.example" >"/etc/lez/$role/env"
   # The devnet's channel and timing profile (its runtime.env), as the lane's containers get them.
   cat /payload/stack/profile.env >>"/etc/lez/$role/env"
+  echo "LEZ_ZEBRA_COOKIE_FILE=/etc/lez/$role/zebra-cookie" >>"/etc/lez/$role/env"
   run cat "/etc/lez/$role/env"
 done
 run find /etc/lez -ls
@@ -568,7 +578,7 @@ echo "swap: $swap_id"
 # Zebra has no miner: one block at a time, only for a transaction in its mempool or for the
 # Maker's Zcash funding to reach the two confirmations its pre-reveal gate wants
 # (node-e2e.py's zec_mining_policy), at most twelve blocks in all.
-zebra() { curl -fsS http://127.0.0.1:18232/ -H 'content-type: application/json' \
+zebra() { curl -fsS --user "$(cat /payload/stack/zebra-cookie)" http://127.0.0.1:18232/ -H 'content-type: application/json' \
   --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":${2:-[]}}" | jq -c .result; }
 mined=0
 # The first transaction Zebra's mempool holds after the take is the Maker's Zcash funding.
