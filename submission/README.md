@@ -59,10 +59,11 @@ earlier run `m5arm-0820121736` and its separate record:
 ## Claim boundary
 
 This is evidence from Bitcoin Core 31.1 regtest, Zebra 7.0.0 regtest (M2),
-Monero 0.18.5.1 regtest (M4) and a private LEZ v0.2 devnet.
+Zebra 7.1.0 regtest as `zebrad_module` (M4's regression), Monero 0.18.5.1
+regtest and Stagenet (M4) and a private LEZ v0.2 devnet.
 It is submitted for review; the public milestone issues remain open and their
 checkboxes remain unchecked. The pack does not claim public-network deployment
-(no Monero stagenet, testnet or mainnet swap has run), production custody, a
+(no Monero testnet or mainnet swap has run), production custody, a
 formal cryptographic audit, complete M5 operations, or M7 mainnet readiness.
 
 The historical milestone checkpoints are recorded by commit identity. The
