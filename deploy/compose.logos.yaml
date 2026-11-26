@@ -35,6 +35,7 @@ services:
     volumes: !override
       - taker_state:/var/lib/lez/taker
       - zec_taker:/var/lib/lez/zec
+      - zebra_module_data:/var/lib/zebra:ro
       - ./${LEZ_LANE_RUNTIME:-runtime}/lez/taker/identity.json:/run-lez-identity/identity.json:ro
       - ./${LEZ_LANE_RUNTIME:-runtime}/lez/taker:/run-lez-identity/taker:ro
       - taker_wallet:/run/lez-wallet/taker

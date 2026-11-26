@@ -95,5 +95,39 @@ class ImageContexts(unittest.TestCase):
         self.assertFalse(admitted(rules, 'lez-v02-bridge-poc'))
 
 
+def service_volumes(text, service):
+    """The `volumes:` entries of one Compose service, comments left out."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line == f'  {service}:')
+    body = []
+    for line in lines[start + 1:]:
+        if line and not line.startswith('    ') and line.strip():
+            break
+        body.append(line)
+    at = next(i for i, line in enumerate(body) if line.strip().startswith('volumes:'))
+    entries = []
+    for line in body[at + 1:]:
+        stripped = line.strip()
+        if stripped.startswith('#') or not stripped:
+            continue
+        if not stripped.startswith('- '):
+            break
+        entries.append(stripped[2:])
+    return entries
+
+
+class LogosOverlayVolumes(unittest.TestCase):
+    """compose.logos.yaml replaces the Taker Node's whole volume list; it must
+    stay compose.yaml's list without the two local-transport mounts."""
+
+    def test_the_taker_keeps_every_mount_but_the_local_transports(self):
+        base = service_volumes((ROOT / 'deploy/compose.yaml').read_text(), 'taker-node')
+        overlay = service_volumes((ROOT / 'deploy/compose.logos.yaml').read_text(), 'taker-node')
+        local_transport = {'delivery_dir:/delivery:ro', 'maker_socket:/run/lez/maker'}
+        self.assertTrue(local_transport <= set(base), base)
+        self.assertEqual(overlay, [entry for entry in base if entry not in local_transport])
+        self.assertIn('zebra_module_data:/var/lib/zebra:ro', overlay)
+
+
 if __name__ == '__main__':
     unittest.main()
