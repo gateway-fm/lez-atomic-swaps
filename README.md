@@ -48,7 +48,7 @@ and each deliverable with its proof in
 | Product capability | Current implementation |
 |---|---|
 | Native BTC ↔ LEZ settlement | Bitcoin Core regtest plus a private LEZ v0.2 devnet; no wrapped asset |
-| Native ZEC ↔ LEZ settlement | Zebra 7.0.0 regtest (NU7) plus the same LEZ devnet; a BIP-199 HTLC on Zcash's transparent pool |
+| Native ZEC ↔ LEZ settlement | Zebra 7.1.0 regtest (NU7), run as `zebrad_module` in a Basecamp, plus the same LEZ devnet; a BIP-199 HTLC on Zcash's transparent pool |
 | Native XMR ↔ LEZ settlement | Monero 0.18.5.1 regtest plus the same LEZ devnet; the Taker sells LEZ only; Monero is off unless the stack starts with `LEZ_MONERO=1` |
 | Maker liquidity | Wallet-owned offers, inventory, withdrawal, active swaps, and history |
 | Taker flow | Authenticated discovery, offer acceptance, progress, and role-owned actions |

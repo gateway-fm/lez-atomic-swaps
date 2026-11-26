@@ -133,7 +133,8 @@ jobs:
         env:
           NIX_CONFIG: access-tokens = github.com=${{ github.token }}
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only nix
-      # The sidecar beside the Node binaries, as the stage phase puts it there.
+      # The sidecar and the Monero Stage-A planner beside the Node binaries,
+      # as the stage phase puts them there (package-role-node.sh needs both).
       - name: Package lez_maker_node and lez_taker_node
         env:
           LEZ_NIX_VOLUME: lez-nix-store-arm
@@ -141,7 +142,7 @@ jobs:
           set -euo pipefail
           p="$LEZ_WORKSPACE/provision/data"
           for role in maker taker; do
-            install -m 0755 "$p/sidecar/lez-v02-bridge-poc" "deploy/images/$role-node/"
+            install -m 0755 "$p/sidecar/lez-v02-bridge-poc" "$p/sidecar/lez-v02-xmr-stage-a-plan" "deploy/images/$role-node/"
             cp "$p/sidecar/source-commit.txt" "deploy/images/$role-node/sidecar-source.txt"
             cp "$p/sidecar/source-tree.txt" "deploy/images/$role-node/sidecar-tree.txt"
             deploy/scripts/package-role-node.sh "$role" "$p/lez_${role}_node/lez_${role}_node-plugin.lgx" \

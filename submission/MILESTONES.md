@@ -95,15 +95,26 @@ Each deliverable with its proof and its limits:
 | LEZ/XMR SDK with full lifecycle coverage, including the spend-key-share recovery path under partial information loss | [`lez-xmr-swap-sdk`](../docs/sdk-lez-xmr.md), each area mapped to its public API and tests; [crate README](../crates/xmr-swap-sdk/README.md); [`examples/full-lifecycle.rs`](../crates/xmr-swap-sdk/examples/full-lifecycle.rs) runs offline: a completed, a refunded, a refunded-after-authorisation and a punished swap for both roles, each spend-key recovery made by a role that has lost its adaptor journal, the outcomes asserted by `tests/full_lifecycle.rs`; [`examples/full-lifecycle.rs`](../crates/xmr-reference-actor/examples/full-lifecycle.rs) in `xmr-reference-actor`, the layer the Nodes run: a completed and a refunded swap, each recovering role rebuilding the spend key after losing its session state, Monero regtest live | Included; both examples model the LEZ escrow in memory and CI runs both, the actor layer's without its Monero leg; that example's one recorded run with the Monero leg live, on Monero Stagenet, completed the claim swap and stopped the refund swap at its funding ([Stagenet guide](../docs/monero-stagenet-guide.md#the-sdk-examples-run-of-2026-11-21)) |
 | DLEQ test-vector conformance against `comit-network/cross-curve-dleq` | [Erratum GW-M4-001](../docs/proposal-acceptance-errata.md): COMIT publishes no vectors and proves differently; the generators and the keys of a scalar are checked against COMIT's crate instead; self-generated vectors in [`tests/cross_curve_vectors.rs`](../crates/xmr-swap-sdk/tests/cross_curve_vectors.rs) | **Qualified deviation**, as GW-M3-001 was for M3; no Logos decision |
 | `monerod` + `monero-wallet-rpc` stagenet setup documentation per U9 | [`docs/monero-stagenet-guide.md`](../docs/monero-stagenet-guide.md): the pinned release verified, a self-hosted pruned `monerod` synced to the tip and public nodes, a `monero-wallet-rpc` per role, faucet coins, the windows sized for 2-minute blocks, the devnet stack with both Nodes on Stagenet, what a Node checks of a daemon it does not run, the SDK example; every command run on 2026-11-21 to 26 | Included. On 2026-11-26, with Nodes built from `f259e791` reading only the operator's own `monerod` synchronized at the Stagenet tip, the Maker and Taker Nodes completed swap `b5fc18b7…`, refunded `3d4c2915…` by the Taker Node's own refund at R and punished `9d17b588…` ([evidence](../docs/evidence/stagenet-0.4.0-2026-11-26/)), with LEZ on the devnet; on 2026-11-21 and 22 they had done the same through public Stagenet nodes ([evidence](../docs/evidence/stagenet-0.4.0-2026-11-22/)) |
-| XMR demo set per D1 | `TakerSellsLez-xmr-happy.mp4`, `TakerSellsLez-xmr-taker-refund.mp4`, `TakerSellsLez-xmr-concurrent.mp4` in [`docs/evidence/regression-m4-desks-2026-11-20/videos/`](../docs/evidence/regression-m4-desks-2026-11-20/videos/), each a by-product of a desk journey that passed while being recorded | Included; regtest, the one direction |
+| XMR demo set per D1 | `TakerSellsLez-xmr-happy.mp4`, `TakerSellsLez-xmr-taker-refund.mp4`, `TakerSellsLez-xmr-concurrent.mp4`, `TakerSellsLez-xmr-punish.mp4` and `xmr-recovery-full-lifecycle-live.mp4`, indexed in [`docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/`](../docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/README.md) (kept outside git, SHA-256 in the set): the four desk videos each a by-product of a desk journey that passed while recorded on the images of `957c8016`, the fifth the terminal of `xmr-reference-actor`'s full-lifecycle example rebuilding the spend key after each role deletes its adaptor journal | Included; regtest, the one direction |
 | Self-hosted stagenet `monerod` running in CI | The `monero-stagenet` job of [`ci.yml`](../.github/workflows/ci.yml): [`scripts/run-monero-stagenet-ci.sh`](../scripts/run-monero-stagenet-ci.sh) starts the verified `monerod --stagenet` and `monero-wallet-rpc --stagenet` and runs [`tests/stagenet_daemon.rs`](../crates/xmr-monero-adapter/tests/stagenet_daemon.rs) against them, then a bounded sync from public peers | Included; a 1,000-block prefix of the chain, no coins and no swap in CI |
 
 The regression evidence set is
-[`regression-0.4.0-2026-11-23-macos-arm64`](../docs/evidence/regression-0.4.0-2026-11-23-macos-arm64/README.md):
-the full tier at `27526e2f`, 176 of 176, each on its first try, all 25 Monero
-tests among them; an Apple-silicon Mac (linux/arm64 images), three lanes, 263
-minutes, one operator running both parties on one host. The set before it,
-[`regression-0.4.0-2026-11-22-macos-arm64`](../docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/README.md),
+[`regression-0.4.0-2026-11-25-macos-arm64-zebra-module`](../docs/evidence/regression-0.4.0-2026-11-25-macos-arm64-zebra-module/README.md):
+the full tier at `23e54486`, with the devnet's Zcash Regtest chain run by the
+upstream `zebrad_module` (Zebra 7.1.0) in a Basecamp, 177 of 180 passed, each
+on its first try, all 26 Monero tests among them; an Apple-silicon Mac
+(linux/arm64 images), four lanes, 195 minutes, one operator running both
+parties on one host. The three failures are the three Logos-transport tests,
+whose overlay dropped the Taker's Zebra cookie mount; at `f259e791`, which
+fixes the overlay, they passed on their first try. The set before it,
+[`regression-0.4.0-2026-11-24-macos-arm64`](../docs/evidence/regression-0.4.0-2026-11-24-macos-arm64/README.md),
+is the full tier at `957c8016`, 179 of 179, each on its first try, all 25
+Monero tests then in the tier among them, with Zebra 7.0.0 as a plain
+container. Before it,
+[`regression-0.4.0-2026-11-23-macos-arm64`](../docs/evidence/regression-0.4.0-2026-11-23-macos-arm64/README.md)
+is the full tier at `27526e2f`, 176 of 176, each on its first try, on three
+lanes in 263 minutes. Before that,
+[`regression-0.4.0-2026-11-22-macos-arm64`](../docs/evidence/regression-0.4.0-2026-11-22-macos-arm64/README.md)
 is the full tier at `7b4e46da`, 175 of 175, 174 on their first try and
 `ui:btc:logos-happy:TakerSellsForeign` on its second rerun; the one before that,
 [`regression-m4-2026-11-21`](../docs/evidence/regression-m4-2026-11-21/README.md),

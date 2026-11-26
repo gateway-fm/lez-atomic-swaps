@@ -152,6 +152,20 @@ class PackagesWorkflow(unittest.TestCase):
             self.assertIn('chat_module', loop.split(), loop)
         self.assertIn('requires a chat_module other than $chat', merge)
 
+    def test_the_role_packages_get_every_sidecar_binary_they_carry(self):
+        """package-role-node.sh refuses a context that lacks a binary it
+        packages. The Node binaries come from the rust phase; the sidecar's
+        (lez-v02-*) are staged by the workflow's own step, which must install
+        each one the packager lists for both roles."""
+        packager = (ROOT / 'deploy/scripts/package-role-node.sh').read_text()
+        common = re.search(r'^bins\+=\(([^)]*)\)', packager, re.M).group(1).split()
+        sidecar = [b for b in common if b.startswith('lez-v02-')]
+        self.assertIn('lez-v02-xmr-stage-a-plan', sidecar)
+        step = self.PACKAGES.split('- name: Package lez_maker_node and lez_taker_node', 1)[1].split('- name:', 1)[0]
+        install = next(line for line in step.splitlines() if 'install -m 0755' in line)
+        for binary in sidecar:
+            self.assertIn(f'"$p/sidecar/{binary}"', install)
+
     def test_actions_are_pinned_by_commit(self):
         for ref in re.findall(r'uses: (\S+)', self.PACKAGES):
             self.assertRegex(ref, r'@[0-9a-f]{40}$', ref)
