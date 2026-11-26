@@ -1,0 +1,30 @@
+[02:22:59] === zec-balance-refusal (stamp 179565617902)
+[02:22:59] preflight: indexer historical reads
+[02:22:59]   indexer serves historical reads at the tip (35)
+[02:22:59] preflight: LEZ finality check waived by request
+[02:22:59]   Maker LEZ account holds 0, below the 50000 lot
+[02:22:59]   the Maker's key paid the Taker's: 5dd27a89ed6963e1…
+[02:23:00]   zebra: mined 1 block(s) → height 1121 (the payment to the Taker's key)
+[02:23:00]   zebra: mined 100 block(s) → height 1221 (the Taker's payment matures into a funder output)
+[02:23:00]   Maker CLI published offer-e2e-zectt-179565617902 on its running Node (no corridor)
+[02:23:03]   Taker took offer-e2e-zectt-179565617902: swap zec-fe480765 (not_activated)
+[02:23:03]   take-time agreement: Taker funds 5f33c8eb957fe301…:0, Zcash anchor 1222, refund height 1230
+[02:23:03]   receipt: swap zec-fe480765d3b2847f59afe1c6ee475b805b59ea33ab5eb4800669033bcac63a96, actor config /var/lib/lez/taker/btc/swaps/980bb33b7c34b24dea0cfea4b813d4fbd2f50f2e0f3451c5f72b0f4409b9d99f/zec-actor/taker/actor-config.json
+[02:23:03]   [0 s] waiting for the Maker's balance refusal: maker zec-fe480765: schedule leased, reason None, class None, phase leased | LEZ finalized 35, tip 46 (11 unfinalized) [heartbeat]
+[02:23:13]   [10 s] waiting for the Maker's balance refusal: maker zec-fe480765: schedule leased, reason None, class None, phase offered | LEZ finalized 35, tip 46 (11 unfinalized) [heartbeat]
+[02:23:14]   zebra: mined 1 block(s) → height 1222 (mempool had ['ed7edab9f870'])
+[02:23:24]   [20 s] waiting for the Maker's balance refusal: maker zec-fe480765: schedule backoff, reason lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient, phase taker_lock_confirmed | LEZ finalized 45, tip 63 (18 unfinalized) [heartbeat]
+[02:24:09]   45 s later the Maker's row still names the refusal (the supervisor backs off, nothing locked)
+[02:24:09]   funding the Maker's account: scripts/bootstrap-market.sh claims the deferred vault
+[02:24:22]   Maker LEZ account holds 2000000 (vault claim 25dacea12a9e80e1…)
+[02:24:23]   [0 s] waiting for the Taker's zec-fe480765 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker both_legs_locked | zebra 1222 | LEZ finalized 106, tip 114 (8 unfinalized) [heartbeat]
+[02:24:23]   zebra: mined 1 block(s) → height 1223 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[02:24:32]   [9 s] waiting for the Taker's zec-fe480765 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1223 | LEZ finalized 106, tip 114 (8 unfinalized) [heartbeat]
+[02:24:32]   Taker claimed LEZ on zec-fe480765 (replay=False)
+[02:24:33]   [0 s] waiting for the Taker's zec-fe480765 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1223 | LEZ finalized 106, tip 114 (8 unfinalized) [heartbeat]
+[02:24:36]   [3 s] waiting for the Taker's zec-fe480765 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 1223 | LEZ finalized 106, tip 114 (8 unfinalized) [heartbeat]
+[02:24:36]   zebra: mined 1 block(s) → height 1224 (mempool had ['84ebb5addf94'])
+[02:24:42]   [9 s] waiting for the Taker's zec-fe480765 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 1224 | LEZ finalized 128, tip 131 (3 unfinalized) [heartbeat]
+[02:24:42]   [0 s] waiting for the Taker's zec-fe480765 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 128, tip 131 (3 unfinalized) [heartbeat]
+[02:24:43]   both Nodes report zec-fe480765 completed
+[02:24:43] === zec-balance-refusal: passed in 104s

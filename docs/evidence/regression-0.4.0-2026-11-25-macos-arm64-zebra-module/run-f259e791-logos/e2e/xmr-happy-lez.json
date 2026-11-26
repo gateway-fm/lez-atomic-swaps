@@ -1,0 +1,64 @@
+{
+  "scenario": "xmr-happy",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "179565120503",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "cda1531601fb0b548fa736b43cdb09a1110663771bf522a56d7d24e1b69b8c37",
+  "offer_id": "offer-e2e-xmr-179565120503",
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "lez_before": {
+    "maker": 2200000,
+    "taker": 1800000
+  },
+  "lez_deltas": {
+    "maker": 50000,
+    "taker": -50000
+  },
+  "outcome": "completed",
+  "taker_monero_before": {
+    "address": "41uraiiM3MCaM5dbEq46WgDpAm8diqiwZjV4Si3z4tDtZXNDRWkwtHS5bpVw67W8e9atvCPhCboYY8nYZEH6JbnX18vf8N8",
+    "balance_piconero": 2469037146114414,
+    "daemon_height": 280,
+    "state": "available",
+    "unlocked_piconero": 1800832814764482
+  },
+  "taker_monero_after": {
+    "address": "41uraiiM3MCaM5dbEq46WgDpAm8diqiwZjV4Si3z4tDtZXNDRWkwtHS5bpVw67W8e9atvCPhCboYY8nYZEH6JbnX18vf8N8",
+    "balance_piconero": 2821682951356226,
+    "daemon_height": 300,
+    "state": "available",
+    "unlocked_piconero": 2153524231377052
+  },
+  "taker_monero_sweep": {
+    "txid": "6770668cdbfdee7cb306e2f052115e207532395d606d0a07dfef13a4ca643f8c",
+    "amount": 998191600000,
+    "height": 291
+  },
+  "result": "passed",
+  "seconds": 192
+}

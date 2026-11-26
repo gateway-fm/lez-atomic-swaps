@@ -1,0 +1,70 @@
+[00:43:36] === taker-cli-refund (stamp 1795650216)
+[00:43:36] preflight: indexer historical reads
+[00:43:36]   indexer serves historical reads at the tip (4404)
+[00:43:36] preflight: LEZ finality check waived by request
+[00:43:36]   Maker published offer-e2e-1795650216
+[00:43:39]   lez-taker-cli swap take: exit 0 after 2 s
+[00:43:39]   Taker took offer-e2e-1795650216: swap a13799dd28df (not_activated)
+[00:43:39]   stopping the Maker Node so it never funds
+[00:43:39]   lez-taker-cli swap lock: exit 0 after 0 s
+[00:43:39]   Taker locked bitcoin: ebf72401421d (replay=False)
+[00:43:39]   mined 421 blocks past the lock; the Maker cutoff is 240s after the take, the Taker's refund opens 240s after it
+[00:43:39]   [0 s] waiting for the Taker's refund of a13799dd28df to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 4394, tip 4399 (5 unfinalized) [heartbeat]
+[00:43:40]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:43:40]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[00:43:50]   [10 s] waiting for the Taker's refund of a13799dd28df to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 4412, tip 4416 (4 unfinalized) [heartbeat]
+[00:43:50]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:44:00]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:44:10]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:44:21]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:44:31]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:44:31]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[00:44:41]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:44:51]   [72 s] waiting for the Taker's refund of a13799dd28df to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 4463, tip 4467 (4 unfinalized) [heartbeat]
+[00:44:51]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:45:02]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:45:12]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:45:22]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:45:22]   refund not yet accepted (attempt 11: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[00:45:33]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:45:43]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:45:53]   [133 s] waiting for the Taker's refund of a13799dd28df to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 4510, tip 4518 (8 unfinalized) [heartbeat]
+[00:45:53]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:46:03]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:46:14]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:46:14]   refund not yet accepted (attempt 16: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[00:46:24]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:46:34]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:46:45]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:46:55]   [195 s] waiting for the Taker's refund of a13799dd28df to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 4565, tip 4569 (4 unfinalized) [heartbeat]
+[00:46:55]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:47:05]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:47:05]   refund not yet accepted (attempt 21: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[00:47:16]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:47:26]   lez-taker-cli swap refund: exit 2 after 0 s: local RPC error -32016: Taker action unavailable {"category":"taker_action_unavailable"}
+[00:47:36]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:47:36]   refund request admitted (attempt 24, state awaiting_second_lock)
+[00:47:47]   [247 s] waiting for the Taker's refund of a13799dd28df to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 4599, tip 4602 (3 unfinalized) [heartbeat]
+[00:47:47]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:47:58]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:47:58]   refund request replayed (attempt 26, state refund_in_progress)
+[00:48:08]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:48:19]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:48:29]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:48:40]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:48:50]   [310 s] waiting for the Taker's refund of a13799dd28df to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 4646, tip 4652 (6 unfinalized) [heartbeat]
+[00:48:50]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:48:50]   refund request replayed (attempt 31, state refund_in_progress)
+[00:49:01]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:49:12]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:49:22]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:49:33]   lez-taker-cli swap refund: exit 0 after 0 s
+[00:49:43]   lez-taker-cli swap refund: exit 0 after 1 s
+[00:49:43]   refund request replayed (attempt 36, state refund_in_progress)
+[00:49:53]   [374 s] waiting for the Taker's refund of a13799dd28df to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 4698, tip 4702 (4 unfinalized) [heartbeat]
+[00:49:54]   lez-taker-cli swap refund: exit 0 after 1 s
+[00:50:06]   lez-taker-cli swap refund: exit 0 after 1 s
+[00:50:16]   Taker refunded; Taker Node balances {'btc_trusted_sat': 525000999000, 'lez_units': 1949001} → {'btc_trusted_sat': 525000994900, 'lez_units': 1949001}
+[00:50:23]   Maker reconciled to refunded
+[00:50:23]   the Bitcoin refund 4d6650241ec9 is a script-path spend: three witness items
+[00:50:23] === taker-cli-refund: passed in 407s

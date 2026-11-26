@@ -1,0 +1,121 @@
+[23:35:49] === kill-maker (stamp 179564614903)
+[23:35:49] preflight: indexer historical reads
+[23:35:49]   indexer serves historical reads at the tip (1308)
+[23:35:49] preflight: LEZ finality check waived by request
+[23:35:50]   Maker published offer-e2e-179564614903-k0
+[23:35:51]   Taker took offer-e2e-179564614903-k0: swap ddebda4ee34a (not_activated)
+[23:35:52]   kill point 'taken': taker awaiting_first_lock (effects []), maker leased
+[23:35:52]   killing lez-l3-maker-node with SIGKILL
+[23:35:52]   lez-l3-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:35:59]   Taker locked lez: 08347809cc51 (replay=False)
+[23:35:59]   [0 s] waiting for the Taker's ddebda4ee34a to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker offered | LEZ finalized 1314, tip 1320 (6 unfinalized) [heartbeat]
+[23:36:10]   [10 s] waiting for the Taker's ddebda4ee34a to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 1314, tip 1320 (6 unfinalized) [heartbeat]
+[23:36:16]   [16 s] waiting for the Taker's ddebda4ee34a to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 1314, tip 1320 (6 unfinalized) [heartbeat]
+[23:36:16]   Taker claimed Bitcoin (replay=False)
+[23:36:16]   [0 s] waiting for the Taker's ddebda4ee34a to reach completed/refunded (killed at taken): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 1314, tip 1320 (6 unfinalized) [heartbeat]
+[23:36:35]   [19 s] waiting for the Taker's ddebda4ee34a to reach completed/refunded (killed at taken): taker completed (gen 4) | maker completed | LEZ finalized 1330, tip 1336 (6 unfinalized) [heartbeat]
+[23:36:36]   [0 s] waiting for the Maker's ddebda4ee34a to reach a terminal state (killed at taken): maker completed (schedule terminal) | LEZ finalized 1330, tip 1336 (6 unfinalized) [heartbeat]
+[23:36:36]   balances: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[23:36:36]   settled completed: both Nodes and both chains agree
+[23:36:37]   Maker published offer-e2e-179564614903-k1
+[23:36:39]   Taker took offer-e2e-179564614903-k1: swap 8802a854aca9 (not_activated)
+[23:36:39]   Taker locked lez: 23482e38395a (replay=False)
+[23:36:39]   kill point 'first lock sent': taker awaiting_first_lock (effects []), maker leased
+[23:36:39]   killing lez-l3-maker-node with SIGKILL
+[23:36:39]   lez-l3-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:36:46]   [0 s] waiting for the Taker's 8802a854aca9 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker offered | LEZ finalized 1342, tip 1353 (11 unfinalized) [heartbeat]
+[23:36:52]   [6 s] waiting for the Taker's 8802a854aca9 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 1342, tip 1353 (11 unfinalized) [heartbeat]
+[23:36:59]   [12 s] waiting for the Taker's 8802a854aca9 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 1342, tip 1353 (11 unfinalized) [heartbeat]
+[23:36:59]   Taker claimed Bitcoin (replay=False)
+[23:36:59]   [0 s] waiting for the Taker's 8802a854aca9 to reach completed/refunded (killed at first lock sent): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 1342, tip 1353 (11 unfinalized) [heartbeat]
+[23:37:15]   [16 s] waiting for the Taker's 8802a854aca9 to reach completed/refunded (killed at first lock sent): taker completed (gen 4) | maker completed | LEZ finalized 1367, tip 1370 (3 unfinalized) [heartbeat]
+[23:37:15]   [0 s] waiting for the Maker's 8802a854aca9 to reach a terminal state (killed at first lock sent): maker completed (schedule terminal) | LEZ finalized 1367, tip 1370 (3 unfinalized) [heartbeat]
+[23:37:16]   balances: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[23:37:16]   settled completed: both Nodes and both chains agree
+[23:37:16]   Maker published offer-e2e-179564614903-k2
+[23:37:18]   Taker took offer-e2e-179564614903-k2: swap 04ba93b62429 (not_activated)
+[23:37:18]   Taker locked lez: a79ef2057c13 (replay=False)
+[23:37:18]   [0 s] waiting for the Taker's 04ba93b62429 to reach awaiting_second_lock/claim_available (kill point first lock final): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 1367, tip 1370 (3 unfinalized) [heartbeat]
+[23:37:28]   [9 s] waiting for the Taker's 04ba93b62429 to reach awaiting_second_lock/claim_available (kill point first lock final): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 1382, tip 1387 (5 unfinalized) [heartbeat]
+[23:37:28]   kill point 'first lock final': taker awaiting_second_lock (effects ['taker_lock']), maker taker_lock_confirmed
+[23:37:28]   killing lez-l3-maker-node with SIGKILL
+[23:37:28]   lez-l3-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:37:35]   [0 s] waiting for the Taker's 04ba93b62429 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 1382, tip 1387 (5 unfinalized) [heartbeat]
+[23:37:48]   [12 s] waiting for the Taker's 04ba93b62429 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 1399, tip 1403 (4 unfinalized) [heartbeat]
+[23:37:48]   Taker claimed Bitcoin (replay=False)
+[23:37:48]   [0 s] waiting for the Taker's 04ba93b62429 to reach completed/refunded (killed at first lock final): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 1399, tip 1403 (4 unfinalized) [heartbeat]
+[23:38:02]   [14 s] waiting for the Taker's 04ba93b62429 to reach completed/refunded (killed at first lock final): taker completed (gen 4) | maker completed | LEZ finalized 1399, tip 1403 (4 unfinalized) [heartbeat]
+[23:38:03]   [0 s] waiting for the Maker's 04ba93b62429 to reach a terminal state (killed at first lock final): maker completed (schedule terminal) | LEZ finalized 1399, tip 1403 (4 unfinalized) [heartbeat]
+[23:38:03]   balances: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[23:38:03]   settled completed: both Nodes and both chains agree
+[23:38:04]   Maker published offer-e2e-179564614903-k3
+[23:38:05]   Taker took offer-e2e-179564614903-k3: swap c4ab0a8af0c8 (not_activated)
+[23:38:05]   Taker locked lez: 25c6270b7c77 (replay=False)
+[23:38:05]   [0 s] waiting for the Taker's c4ab0a8af0c8 to reach claim_available (kill point both legs locked): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 1399, tip 1403 (4 unfinalized) [heartbeat]
+[23:38:13]   [7 s] waiting for the Taker's c4ab0a8af0c8 to reach claim_available (kill point both legs locked): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 1412, tip 1420 (8 unfinalized) [heartbeat]
+[23:38:19]   [13 s] waiting for the Taker's c4ab0a8af0c8 to reach claim_available (kill point both legs locked): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 1412, tip 1420 (8 unfinalized) [heartbeat]
+[23:38:20]   kill point 'both legs locked': taker claim_available (effects ['taker_lock', 'maker_lock']), maker taker_lock_confirmed
+[23:38:20]   killing lez-l3-maker-node with SIGKILL
+[23:38:20]   lez-l3-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:38:27]   [0 s] waiting for the Taker's c4ab0a8af0c8 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 1412, tip 1420 (8 unfinalized) [heartbeat]
+[23:38:27]   Taker claimed Bitcoin (replay=False)
+[23:38:27]   [0 s] waiting for the Taker's c4ab0a8af0c8 to reach completed/refunded (killed at both legs locked): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 1412, tip 1420 (8 unfinalized) [heartbeat]
+[23:38:46]   [18 s] waiting for the Taker's c4ab0a8af0c8 to reach completed/refunded (killed at both legs locked): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 1431, tip 1437 (6 unfinalized) [heartbeat]
+[23:38:46]   [0 s] waiting for the Maker's c4ab0a8af0c8 to reach a terminal state (killed at both legs locked): maker claim_evidence_available (schedule leased) | LEZ finalized 1431, tip 1437 (6 unfinalized) [heartbeat]
+[23:38:49]   [3 s] waiting for the Maker's c4ab0a8af0c8 to reach a terminal state (killed at both legs locked): maker completed (schedule terminal) | LEZ finalized 1448, tip 1453 (5 unfinalized) [heartbeat]
+[23:38:50]   balances: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[23:38:50]   settled completed: both Nodes and both chains agree
+[23:38:51]   Maker published offer-e2e-179564614903-k4
+[23:38:54]   Taker took offer-e2e-179564614903-k4: swap 8cc8b718e27f (not_activated)
+[23:38:54]   Taker locked lez: 98204dddce3b (replay=False)
+[23:38:54]   [0 s] waiting for the Taker's 8cc8b718e27f to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 1448, tip 1453 (5 unfinalized) [heartbeat]
+[23:39:07]   [12 s] waiting for the Taker's 8cc8b718e27f to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 1448, tip 1453 (5 unfinalized) [heartbeat]
+[23:39:10]   [15 s] waiting for the Taker's 8cc8b718e27f to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 1462, tip 1469 (7 unfinalized) [heartbeat]
+[23:39:10]   Taker claimed Bitcoin (replay=False)
+[23:39:10]   kill point 'claim sent': taker claim_in_progress (effects ['taker_lock', 'maker_lock', 'revealing_claim']), maker both_legs_locked
+[23:39:10]   killing lez-l3-maker-node with SIGKILL
+[23:39:11]   lez-l3-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:39:17]   [0 s] waiting for the Taker's 8cc8b718e27f to reach completed/refunded (killed at claim sent): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 1462, tip 1469 (7 unfinalized) [heartbeat]
+[23:39:27]   [9 s] waiting for the Taker's 8cc8b718e27f to reach completed/refunded (killed at claim sent): taker completed (gen 4) | maker completed | LEZ finalized 1462, tip 1469 (7 unfinalized) [heartbeat]
+[23:39:27]   [0 s] waiting for the Maker's 8cc8b718e27f to reach a terminal state (killed at claim sent): maker completed (schedule terminal) | LEZ finalized 1462, tip 1469 (7 unfinalized) [heartbeat]
+[23:39:28]   balances: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[23:39:28]   settled completed: both Nodes and both chains agree
+[23:39:28]   Maker published offer-e2e-179564614903
+[23:39:31]   Taker took offer-e2e-179564614903: swap de8ee2a94bb1 (not_activated)
+[23:39:31]   Taker locked lez: 13a7c51f14ce (replay=False)
+[23:39:31]   [0 s] waiting for the Taker's de8ee2a94bb1 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 1482, tip 1485 (3 unfinalized) [heartbeat]
+[23:39:40]   [9 s] waiting for the Taker's de8ee2a94bb1 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 1482, tip 1485 (3 unfinalized) [heartbeat]
+[23:39:44]   [12 s] waiting for the Taker's de8ee2a94bb1 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 1482, tip 1485 (3 unfinalized) [heartbeat]
+[23:39:44]   kill point 'both legs locked, refund times running': taker claim_available (effects ['taker_lock', 'maker_lock']), maker both_legs_locked
+[23:39:44]   killing lez-l3-maker-node with SIGKILL
+[23:39:45]   lez-l3-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:39:51]   Maker locked; the Taker never claims. Waiting for the Maker's refund deadline (420s after the take)
+[23:39:51]   waiting 426s for the Maker's refund deadline
+[23:39:51]   [0 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 1482, tip 1485 (3 unfinalized) [heartbeat]
+[23:40:51]   [60 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 1530, tip 1534 (4 unfinalized) [heartbeat]
+[23:41:51]   [120 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 1578, tip 1584 (6 unfinalized) [heartbeat]
+[23:42:51]   [180 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 1626, tip 1634 (8 unfinalized) [heartbeat]
+[23:43:51]   [240 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 1680, tip 1685 (5 unfinalized) [heartbeat]
+[23:44:51]   [300 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 1731, tip 1736 (5 unfinalized) [heartbeat]
+[23:45:51]   [360 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 1767, tip 1770 (3 unfinalized) [heartbeat]
+[23:46:51]   [420 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 1815, tip 1820 (5 unfinalized) [heartbeat]
+[23:46:58]   Maker refund queued: {"schema_version": 1, "swap_id": "de8ee2a94bb10a8ee2f7f63690d50ac1a428ca47fe1d63e2e1d26cabcf40917c", "action": "refund", "requested_after_generation": 224, "was
+[23:46:58]   waiting 419s for the Taker's LEZ refund time
+[23:46:58]   [0 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 1833, tip 1837 (4 unfinalized) [heartbeat]
+[23:47:58]   [60 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 1880, tip 1885 (5 unfinalized) [heartbeat]
+[23:48:58]   [120 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 1914, tip 1917 (3 unfinalized) [heartbeat]
+[23:49:58]   [180 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 1963, tip 1966 (3 unfinalized) [heartbeat]
+[23:50:58]   [240 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 2010, tip 2015 (5 unfinalized) [heartbeat]
+[23:51:58]   [300 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 2053, tip 2063 (10 unfinalized) [heartbeat]
+[23:52:58]   [360 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 2105, tip 2110 (5 unfinalized) [heartbeat]
+[23:53:58]   [0 s] waiting for the Taker's refund of de8ee2a94bb1 to land: taker refund_available (refund admitted) | maker maker_leg_refunded | LEZ finalized 2149, tip 2155 (6 unfinalized) [heartbeat]
+[23:53:59]   refund request admitted (attempt 1, state refund_available)
+[23:54:00]   kill point 'refund admitted': taker refund_in_progress (effects ['taker_lock', 'maker_lock', 'maker_refund', 'taker_refund']), maker maker_leg_refunded
+[23:54:00]   killing lez-l3-maker-node with SIGKILL
+[23:54:00]   lez-l3-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[23:54:17]   both legs refunded
+[23:54:18]   the Bitcoin refund 78bd640be1a1 is a script-path spend: three witness items
+[23:54:18]   [0 s] waiting for the Maker's de8ee2a94bb1 to reach a terminal state (after the refund kills): maker refunded (schedule terminal) | LEZ finalized 2165, tip 2170 (5 unfinalized) [heartbeat]
+[23:54:18]   balances: maker BTC -4100 sat, LEZ +0; taker BTC +0 sat, LEZ +0
+[23:54:18]   settled refunded: both Nodes and both chains agree
+[23:54:18] === kill-maker: passed in 1110s

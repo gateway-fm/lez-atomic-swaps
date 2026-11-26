@@ -1,0 +1,20 @@
+[01:03:23] === early-lock (stamp 179565140303)
+[01:03:23] preflight: indexer historical reads
+[01:03:23]   indexer serves historical reads at the tip (5312)
+[01:03:23] preflight: LEZ finality check waived by request
+[01:03:23]   Maker published offer-e2e-179565140303
+[01:03:26]   Taker took offer-e2e-179565140303: swap 34cea0d5e1d4 (not_activated)
+[01:03:26]   stopping the miner so the Taker's lock stays unconfirmed
+[01:03:29]   Taker locked bitcoin: 13b810dd329e (replay=False)
+[01:03:29]   the Taker's lock 13b810dd329e is in the mempool with 0 of 1 required confirmations; watching the Maker for 90s
+[01:05:03]   [0 s] waiting for LEZ finality to reach block 5386 (everything submitted during the hold): LEZ finalized 5380, tip 5386 (6 unfinalized) [heartbeat] | LEZ finalized 5380, tip 5386 (6 unfinalized) [heartbeat]
+[01:05:17]   the Maker stayed at offered for 90s with the lock unconfirmed; its LEZ account still holds 2250000 | LEZ finalized 5395, tip 5402 (7 unfinalized) [heartbeat]
+[01:05:17]   the Taker's lock is confirmed; the Maker may now lock
+[01:05:18]   [0 s] waiting for the Maker's own lock record for 34cea0d5e1d4: maker taker_lock_confirmed, no maker_lock effect | LEZ finalized 5395, tip 5402 (7 unfinalized) [heartbeat]
+[01:05:50]   [0 s] waiting for the Taker's 34cea0d5e1d4 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 5412, tip 5418 (6 unfinalized) [heartbeat]
+[01:05:51]   Taker claimed LEZ (replay=False)
+[01:05:51]   [0 s] waiting for the Taker's 34cea0d5e1d4 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 5412, tip 5418 (6 unfinalized) [heartbeat]
+[01:06:04]   [12 s] waiting for the Taker's 34cea0d5e1d4 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 5430, tip 5434 (4 unfinalized) [heartbeat]
+[01:06:04]   both Nodes report 34cea0d5e1d4 completed
+[01:06:04]   the Bitcoin claim a9539993f726 is a Taproot key-path spend: one 64-byte signature, no script
+[01:06:04] === early-lock: passed in 161s

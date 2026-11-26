@@ -1,0 +1,149 @@
+{
+  "scenario": "maker-cli",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "1795652813",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "997c65bd29ce17cfc773d19cc91540fd555402820e97347fd04a1dde610d4a26",
+  "offer_id": "offer-e2e-cli-1795652813",
+  "history": [
+    {
+      "direction": "TakerSellsForeign",
+      "highest_alert_severity": null,
+      "id": "997c65bd29ce17cfc773d19cc91540fd555402820e97347fd04a1dde610d4a26",
+      "pair": "Bitcoin",
+      "pending_alerts": 0,
+      "phase": "Completed",
+      "requires_attention": false
+    }
+  ],
+  "wrong_owner": [
+    {
+      "socket": "600 lez"
+    },
+    {
+      "command": "pairs",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "prices",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "health",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "quote --pair bitcoin",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "offers",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "history",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "configure-pair --request-id e2e-other-pair-{stamp} --pair bitcoin --enabled false --minimum-foreign-units 1 --maximum-foreign-units 1 --offer-ttl-seconds 60",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "set-local-price --request-id e2e-other-price-{stamp} --pair bitcoin --lez-units-per-lot 1 --foreign-units-per-lot 1",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "publish-offer --request-id e2e-other-publish-{stamp} --offer-id offer-e2e-other-{stamp} --pair bitcoin",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "withdraw-offer --request-id e2e-other-withdraw-{stamp} --offer-id {offer} --expected-revision 1",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "create-swap --id e2e-other-swap-{stamp} --pair bitcoin --confirmations 1 --maker-refund-basis block-height --maker-refund-at 100 --taker-refund-at 200 --earlier-refund-latest 100 --later-refund-earliest 200 --required-margin 1",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "status --id {swap}",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "alerts --id {swap}",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "acknowledge-alert --id {swap} --alert 1",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "monitor --id {swap}",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "claim --id {swap} --request-id e2e-other-claim-{stamp} --expected-generation 0",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    },
+    {
+      "command": "refund --id {swap} --request-id e2e-other-refund-{stamp} --expected-generation 0",
+      "exit": 1,
+      "refused_at_socket": true,
+      "stderr": "Error: connect local RPC socket /run/lez/maker/node.sock\n\nCaused by:\n    Permission denied (os error 13)"
+    }
+  ],
+  "result": "passed",
+  "seconds": 53
+}

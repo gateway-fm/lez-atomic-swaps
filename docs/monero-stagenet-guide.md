@@ -10,32 +10,32 @@ deliverable "`monerod` + `monero-wallet-rpc` stagenet setup documentation"
 
 What has run on Stagenet, and what has not:
 
-- **Run on Stagenet.** Every command below but the removal at the end, on an
-  Apple-silicon Mac with Docker Desktop, on 2026-11-21: the release
-  verification, the image, a pruned self-hosted `monerod` syncing from
-  public peers, a `monero-wallet-rpc` per role on public nodes, wallets
-  funded from a public faucet, and the devnet stack with both Nodes on
-  Stagenet. On 2026-11-22 Nodes built from `f059d3fa` (the code of
-  `7b4e46da`), under the windows below (C, R, P = +10 min, +2 h, +4 h), completed a swap there (the
-  Maker's funding verified at ten confirmations, the Maker's LEZ claim, the
-  Taker's sweep at ten confirmations, 60 minutes from the take), refunded
-  one by the Taker Node's own refund at R (the Maker's Monero swept back),
-  refunded one the Maker could not fund, and punished one whose Taker Node
-  was stopped through [R, P) ([the run](#the-node-driven-run-of-2026-11-22),
-  [its evidence](evidence/stagenet-0.4.0-2026-11-22/)); the changes made
-  after `7b4e46da` (the Logos Chat resend, the ZEC second-lock lookup, the sidecar's re-decision of interrupted submissions and `url` 2.5.9) were not run on
-  Stagenet. A first run on
-  2026-11-21 had done the same under an earlier 30-minute P − R
+- **Run on Stagenet, through the self-hosted node.** On an Apple-silicon Mac
+  with Docker Desktop, on 2026-11-24 to 26: the release verification, the
+  image, the pruned self-hosted `monerod` of route 1 synced to the Stagenet
+  tip (about 19 hours, 6.4 GiB), a `monero-wallet-rpc` per role on it, and
+  the devnet stack with both Nodes on it, built from `f259e791` without the
+  devnet test hooks. Under the windows below (C, R, P = +10 min, +2 h,
+  +4 h) the Nodes completed a swap (34 minutes from the take), refunded one
+  by the Taker Node's own refund at R (the Maker's Monero swept back) and
+  punished one whose Taker Node was stopped through [R, P), every Monero
+  read and transaction of theirs going through that node
+  ([the run](#the-node-driven-run-of-2026-11-26-on-the-self-hosted-node),
+  [its evidence](evidence/stagenet-0.4.0-2026-11-26/)).
+- **Run on Stagenet, through public nodes.** On 2026-11-21: route 2, wallets
+  funded from a public faucet, and the devnet stack with both Nodes on public
+  nodes. On 2026-11-22 Nodes built from `f059d3fa` completed, refunded and
+  punished a swap there under the same windows, and refunded one the Maker
+  could not fund ([that run](#the-node-driven-run-of-2026-11-22)); a first
+  run on 2026-11-21 had done the same under an earlier 30-minute P − R
   ([that run](#the-node-driven-run-of-2026-11-21)). The SDK example ran the
   Monero leg of a completed swap alone, with the LEZ escrow modelled
   ([its run](#the-sdk-examples-run-of-2026-11-21)). CI starts the same
-  `monerod` on Stagenet in every run ([below](#in-ci)).
-- **Not run.** A swap through the self-hosted route: the self-hosted
-  `monerod` did not reach the Stagenet tip during the session, so both
-  Nodes read public nodes, whose answers they check but cannot prove
-  ([what a Node verifies](#a-daemon-the-node-does-not-run)). LEZ was the
-  devnet's, not LEZ testnet, and one operator ran both Nodes on one host. No
-  Monero testnet or mainnet run exists.
+  `monerod` on Stagenet in every run, without syncing it to the tip
+  ([below](#in-ci)).
+- **Not run.** LEZ was the devnet's, not LEZ testnet, and one operator ran
+  both Nodes, and the one `monerod` both read, on one host. No Monero testnet
+  or mainnet run exists.
 
 ## The pinned release
 
@@ -61,14 +61,16 @@ curl -fsSLO https://downloads.getmonero.org/cli/monero-linux-armv8-v0.18.5.1.tar
 mkdir -m 700 gnupg
 LC_ALL=C gpg --homedir gnupg --import "$REPO/tests/e2e/monero/release/binaryfate-v0.18.5.1.asc"
 LC_ALL=C gpg --homedir gnupg --verify "$REPO/tests/e2e/monero/release/hashes-v0.18.5.1.txt"
-grep armv8 "$REPO/tests/e2e/monero/release/hashes-v0.18.5.1.txt"
+grep linux-armv8 "$REPO/tests/e2e/monero/release/hashes-v0.18.5.1.txt"
 shasum -a 256 monero-linux-armv8-v0.18.5.1.tar.bz2
 ```
 
 `gpg` prints `Good signature from "binaryFate <binaryfate@getmonero.org>"`
-with the primary key fingerprint above (and a warning that the key is not
-certified, which only says that you have not signed it yourself). The archive's
-SHA-256 must equal the line `grep` prints. On x86_64 replace `armv8` by `x64`.
+and the key fingerprint above (GnuPG 2.4 labels it `Primary key
+fingerprint:`, 2.5 prints it alone on the next line), with a warning that the
+key is not certified, which only says that you have not signed it yourself.
+The archive's SHA-256 must equal the line `grep` prints. On x86_64 replace
+`linux-armv8` by `linux-x64`.
 `scripts/verify-monero-release.sh` does all of this for the archive of the
 host's architecture (`MONERO_ARCH`, by default `uname -m`), and also checks
 the source tag on GitHub, the archive's members and the binaries'
@@ -97,8 +99,13 @@ login. The login sits in a config file, not on the command line, so that
 `docker inspect` does not show it:
 
 ```sh
+umask 077
 openssl rand -hex 24 > daemon.pass
 openssl rand -hex 24 > wallet-rpc.pass
+printf 'daemon:%s\n' "$(cat daemon.pass)" > daemon.login
+printf 'operator:%s\n' "$(cat wallet-rpc.pass)" > wallet.login
+printf 'digest\nuser = "daemon:%s"\nheader = "content-type: application/json"\n' "$(cat daemon.pass)" > daemon.curlrc
+printf 'digest\nuser = "operator:%s"\nheader = "content-type: application/json"\n' "$(cat wallet-rpc.pass)" > wallet.curlrc
 cat > monerod.conf <<EOF
 stagenet=1
 data-dir=/var/lib/monero
@@ -120,8 +127,8 @@ chmod 644 monerod.conf
 docker network create lez-m4-stagenet-net
 docker run -d --name lez-m4-stagenet-monerod --network lez-m4-stagenet-net --network-alias monerod \
   -v lez-m4-stagenet:/var/lib/monero -v "$PWD/monerod.conf:/run-config/monerod.conf:ro" \
-  -p 127.0.0.1:38081:38081 --cpus 2 --memory 3g --read-only --tmpfs /tmp \
-  --cap-drop ALL --security-opt no-new-privileges:true \
+  -p 127.0.0.1:38081:38081 --cpus 3 --memory 3g --read-only --tmpfs /tmp \
+  --cap-drop ALL --security-opt no-new-privileges:true --restart unless-stopped \
   --entrypoint /usr/local/bin/monerod lez-m4-stagenet-monero:0.18.5.1 \
   --config-file=/run-config/monerod.conf --non-interactive
 ```
@@ -131,10 +138,13 @@ no peer in two minutes from its built-in seeds; with them it had four within
 a minute. The peers are untrusted: `monerod` checks every block against the
 Stagenet genesis, the consensus rules and its checkpoints. The
 `chmod 644` lets the container's user 65532 read the file; keep the directory
-holding it private.
+holding it private (`umask 077` above makes the login files `0600`).
+`--restart unless-stopped` lets the sync go on after a restart of Docker or
+of the host; it resumes from the database. On Docker Desktop the daemon logs
+`The blockchain is on a rotating drive`: the virtual disk says so of itself,
+and the warning changes nothing.
 
-Check it (`daemon.curlrc` holds `digest`, `user = "daemon:<password>"` and
-`header = "content-type: application/json"`):
+Check it:
 
 ```sh
 curl -s -K daemon.curlrc http://127.0.0.1:38081/json_rpc \
@@ -148,21 +158,42 @@ curl -s -K daemon.curlrc http://127.0.0.1:38081/json_rpc \
 Stagenet genesis that `lez_xmr_monero_adapter::MONERO_STAGENET_GENESIS_HASH`
 pins. Without the login the daemon answers HTTP 401.
 
-**How long it takes.** Stagenet's tip was at height 2,255,230 on 2026-11-21.
-With two CPUs the node synced about 125,000 blocks in its first 29 minutes
-(252 MB of database); the measured rate fell from about 6,000 blocks a minute
-at the start to about 1,300 as the blocks grew, so a full sync takes many
-hours to more than a day on such a host. The public Stagenet nodes reported a
-database of 16 GB unpruned; a pruned one keeps roughly a third. Until the node
-reaches the tip, a wallet on it sees nothing newer than its height. After six
-hours on 2026-11-21 it stood at height 647,823 of 2,255,424 with 2.7 GB of
-database; the session then stopped it and removed its volume, as the host's
-Docker disk ran full. A Node on this route waits for the tip: its topology
-check refuses a daemon still syncing (`DaemonNotSynchronized`).
+To keep a record of whom the node served, and which transactions reached it
+(for a run's evidence), raise the log of its RPC server and its pool while it
+runs; `log-level=0` logs neither:
 
-A wallet-rpc on the self-hosted node (`wallet-rpc.pass` holds the wallet-rpc
-login's password; `wallet.curlrc` is `daemon.curlrc` with
-`user = "operator:<that password>"`):
+```sh
+curl -s -K daemon.curlrc http://127.0.0.1:38081/set_log_categories \
+  -d '{"categories":"*:WARNING,global:INFO,daemon.rpc:INFO,net.http:DEBUG,txpool:DEBUG"}'
+```
+
+Each request then logs `HTTP [<client IP>] POST /json_rpc` and `calling RPC
+method <method>` (or `calling /<path>`), with the caller's address on the
+Docker network, and each transaction the pool takes logs its id; `docker logs
+--timestamps lez-m4-stagenet-monerod` keeps them, and so does `bitmonero.log`
+in the data directory. `set_log_level` with `{"level":0}` turns it back.
+
+**How long it takes, and how much disk.** A full sync checks every block's
+proof of work and transactions, and takes the CPUs it is given: the peers
+were never the limit (thousands of downloaded spans waited for
+verification). On 2026-11-24 and 25 the node above, on an Apple-silicon Mac
+whose Docker also ran other stacks, reached the tip, height 2,258,356, in
+about 19 hours of running: 3 CPUs for its first ten hours, at 700 to 4,800
+blocks a minute depending on the host's other load, then 6 CPUs. Its pruned
+database was then 6.4 GiB on disk; reserve at least 10 GB of Docker disk for
+it. (A restricted public node reports its `database_size` rounded up to a
+multiple of 5 GiB, so its 16.1e9 bytes say little about an unpruned
+database.) Until the node reaches the tip, a wallet on it sees nothing newer
+than its height. `get_info` then reads `synchronized: true` and
+`target_height: 0`; compare its top block hash with a public node's at the
+same height (`get_block_header_by_height`). A Node on this route waits for
+the tip: its topology check refuses a daemon still syncing
+(`DaemonNotSynchronized`). An earlier attempt, on 2026-11-21, ran six hours
+on 2 CPUs, reached height 647,823 of 2,255,424 and was stopped and removed
+when the host's Docker disk ran full.
+
+A wallet-rpc on the self-hosted node, behind the wallet-rpc login made
+above:
 
 ```sh
 cat > wallet-self.conf <<EOF
@@ -194,9 +225,8 @@ curl -s -K wallet.curlrc http://127.0.0.1:38084/json_rpc \
 `trusted-daemon=1` is right only for a daemon you run yourself.
 
 The SDK and the adapter on this route: the Stagenet tests CI runs, pointed at
-the node and the wallet-rpc (`daemon.login` and `wallet.login` hold
-`user:password`; they use the wallet `self-hosted` as the role wallet), from
-`$REPO`:
+the node and the wallet-rpc (`daemon.login` and `wallet.login`, made above;
+they use the wallet `self-hosted` as the role wallet), from `$REPO`:
 
 ```sh
 MONERO_STAGENET_DAEMON_URL=http://127.0.0.1:38081/ MONERO_STAGENET_DAEMON_LOGIN_FILE="$WORK/daemon.login" \
@@ -418,7 +448,35 @@ wallets, under a lock no other process holds. The role wallets are named
 after the roles (`maker`, `taker`) and have no password, as on regtest. The
 Maker's wallet must hold unlocked Stagenet coins, one output of at least the
 lot and its fee per swap in flight: a funding's change is locked for ten
-blocks. Route 2's wallet-rpc serves the Maker; a second one serves the
+blocks.
+
+On the self-hosted route both wallet-rpcs read the operator's `monerod`:
+`wallet-maker.conf` and `wallet-taker.conf` are `wallet-self.conf`, each with
+its role's own login (`maker-wallet-rpc.pass`, `taker-wallet-rpc.pass`), the
+same `daemon-address=monerod:38081`, `daemon-login` and `trusted-daemon=1`.
+Each mounts its role's wallet volume, and a wallet volume is mounted by one
+wallet-rpc at a time:
+
+```sh
+for role in maker taker; do
+  openssl rand -hex 24 > $role-wallet-rpc.pass
+  printf 'operator:%s\n' "$(cat $role-wallet-rpc.pass)" > $role-wallet-rpc.login
+  printf 'digest\nuser = "operator:%s"\nheader = "content-type: application/json"\n' "$(cat $role-wallet-rpc.pass)" > $role-wallet.curlrc
+  sed "s/^rpc-login=.*/rpc-login=operator:$(cat $role-wallet-rpc.pass)/" wallet-self.conf > wallet-$role.conf
+  chmod 644 wallet-$role.conf
+done
+docker run -d --name lez-m4-stagenet-wallet-maker --network lez-m4-stagenet-net \
+  -v lez-m4-stagenet-wallet:/var/lib/monero-wallet -v "$PWD/wallet-maker.conf:/run-config/wallet.conf:ro" \
+  -p 127.0.0.1:38083:38083 --cpus 1 --memory 1g --read-only --tmpfs /tmp \
+  --cap-drop ALL --security-opt no-new-privileges:true --restart unless-stopped \
+  --entrypoint /usr/local/bin/monero-wallet-rpc lez-m4-stagenet-monero:0.18.5.1 \
+  --config-file=/run-config/wallet.conf
+```
+
+and the same for the Taker, `lez-m4-stagenet-wallet-taker` on the volume
+`lez-m4-stagenet-wallet-taker` and `127.0.0.1:38085`.
+
+On route 2, route 2's wallet-rpc serves the Maker; a second one serves the
 Taker (`wallet-taker.conf` is `wallet-self.conf` with the Taker's login and a
 public node as `daemon-address`, `untrusted-daemon=1` instead of
 `trusted-daemon=1`, and no `daemon-login`):
@@ -449,7 +507,12 @@ curl -s -K wallet.curlrc http://127.0.0.1:38083/json_rpc -d "$(jq -cn --arg a "$
 ### Each role's daemon
 
 Each Node reads its monerod over its loopback 18081, which the launcher
-forwards to `host:port` (`LEZ_MONEROD_HOST`). A public Stagenet node limits
+forwards to `host:port` (`LEZ_MONEROD_HOST`). On the self-hosted route that is
+the operator's `monerod` on its Docker network (`LEZ_XMR_STAGENET_MONEROD`,
+[the stack](#the-stack)), and `logins/monerod.login` holds its Digest login
+(`daemon.login` above); nothing stands between the Nodes and it.
+
+On route 2, through public nodes: a public Stagenet node limits
 the RPC connections of one address: on 2026-11-21 of six concurrent
 requests `stagenet.xmr-tw.org` answered one, `node.monerodevs.org` and
 `node2.monerodevs.org` three or four, and the Node's tools open several
@@ -488,8 +551,6 @@ and the same, `taker-forward.cfg` with `node.monerodevs.org:38089`, as
 `lez-m4-stagenet-remote-node-taker` on `127.0.0.1:38090`. The forwarder
 carries reads only: the transfers go through each role's wallet-rpc, which
 reaches its own node (`set_daemon` moves it when that node stops answering).
-With a self-hosted monerod at the tip, both Nodes point at it instead and no
-forwarder is needed.
 
 ### The stack
 
@@ -498,8 +559,33 @@ The devnet's stack with its Nodes on Stagenet
 `logins/` holds `monerod.login`, `maker-wallet-rpc.login` and
 `taker-wallet-rpc.login` (`user:password`; a public node takes any), which
 `gen-config.sh` copies beside the roles' identities, so no login is on a
-command line. From `$REPO/deploy`, as a second stack beside a devnet that
-may already run:
+command line.
+
+The images: the stack's own, built from the checkout without the devnet test
+hooks (`LEZ_TEST_HOOKS` unset; the regression's images carry them), under an
+image prefix of their own so that the devnet's stay as they are. From
+`$REPO`, with the devnet's workspace (`$WORKSPACE`, `from-scratch.sh`) and
+the stack's variables below exported:
+
+```sh
+git submodule update --init --recursive
+unset LEZ_TEST_HOOKS; export LEZ_MONERO=1
+for phase in nix rust build stage; do bash deploy/scripts/from-scratch.sh --workspace "$WORKSPACE" --only $phase; done
+(cd deploy && bash scripts/gen-config.sh runtime && set -a && . runtime/runtime.env && set +a && docker compose build)
+for role in maker taker; do docker run --rm --entrypoint cat lez-m4-stagenet-$role-node:local /usr/local/share/lez/build-source.txt; done
+```
+
+Both images name the checkout's commit, and their Node binaries and sidecar
+hold no `LEZ_TEST_HOOKS` or `test_hooks` string
+(`grep -c -a -E 'LEZ_TEST_HOOKS|test_hooks|test-hooks'` over
+`/var/lez/basecamp-<role>-user/modules/lez_<role>_node/bin/*` gives 0; it
+gives 1 or 2 on the devnet's images built with `LEZ_TEST_HOOKS=1`). The
+first `gen-config.sh`, before the network image exists, warns that the new
+chain keeps the upstream genesis time; `up.sh --fresh-lez` below runs it again
+with the image.
+
+Then, from `$REPO/deploy`, as a second stack beside a devnet that may
+already run, on the self-hosted route:
 
 ```sh
 export LEZ_STACK_PREFIX=lez-m4-stagenet-dev LEZ_STACK_PORT_OFFSET=3000
@@ -507,22 +593,21 @@ export LEZ_MARKET_ROOT="$WORK/market" LEZ_WALLET_IDENTITIES="$WORK/market/identi
 export LEZ_PROVISION="$PROVISION" LEZ_WORKSPACE="$WORKSPACE" LEZ_TIMING_PROFILE=fast SKIP_UI_VERIFY=1
 export LEZ_MONERO=1 LEZ_MONERO_NETWORK=stagenet LEZ_XMR_STAGENET_LOGINS="$WORK/logins"
 export LEZ_XMR_STAGENET_NETWORK=lez-m4-stagenet-net
-export LEZ_XMR_STAGENET_MAKER_MONEROD=lez-m4-stagenet-remote-node:38089
-export LEZ_XMR_STAGENET_TAKER_MONEROD=lez-m4-stagenet-remote-node-taker:38089
-export LEZ_XMR_STAGENET_MAKER_WALLET=lez-m4-stagenet-wallet-rpc:38083
+export LEZ_XMR_STAGENET_MONEROD=lez-m4-stagenet-monerod:38081
+export LEZ_XMR_STAGENET_MAKER_WALLET=lez-m4-stagenet-wallet-maker:38083
 export LEZ_XMR_STAGENET_TAKER_WALLET=lez-m4-stagenet-wallet-taker:38083
 export LEZ_IMAGE_PREFIX=lez-m4-stagenet LEZ_IMAGE_TAG=local
 bash scripts/up.sh --fresh-lez
 ```
 
-`$WORK/market` holds a copy of the first stack's `identities/`;
-`$PROVISION` and `$WORKSPACE` are the devnet's provision directory and
-workspace (`from-scratch.sh`). The stack's images are named
-`lez-m4-stagenet-*:local`: the chains' are tags of the devnet's, the two
-role images were the devnet's with this tree's Node binaries
-(`from-scratch.sh --only rust`), its sidecar and Stage-A planner and its
-launcher put in place, and `build-source.txt` naming the commit. Both Nodes
-then read `profile: public-stagenet` and the windows 600, 7200 and 14400 s
+On route 2 the two daemons are the forwarders instead
+(`LEZ_XMR_STAGENET_MAKER_MONEROD=lez-m4-stagenet-remote-node:38089`,
+`LEZ_XMR_STAGENET_TAKER_MONEROD=lez-m4-stagenet-remote-node-taker:38089`) and
+the Maker's wallet-rpc is route 2's (`lez-m4-stagenet-wallet-rpc:38083`).
+`$WORK/market` is a market root of the stack's own, holding a copy of the
+first stack's `identities/` (a market root belongs to one stack, and
+`gen-config.sh` refuses another's); `$PROVISION` and `$WORKSPACE` are the
+devnet's provision directory and workspace. Both Nodes then read `profile: public-stagenet` and the windows 600, 7200 and 14400 s
 in their `xmr-role.json` (600, 7200 and 9000 s in the first run, under the
 earlier draft), and `maker_health` shows the Monero route
 available once its probe reads the daemon's `get_info`.
@@ -598,6 +683,63 @@ the Monero side of a completed swap (TM-0034). The Monero transfers pay the
 wallet-rpc's default fee, and a new output is locked for ten blocks: the
 Maker's change and the Taker's swept Monero are spendable twenty minutes or
 so after they confirm (TM-0035).
+
+## The Node-driven run of 2026-11-26, on the self-hosted node
+
+On the same Mac, both Nodes built from `f259e791` without the devnet test
+hooks (`build-source.txt` in both images; no `LEZ_TEST_HOOKS` or
+`test_hooks` string in their binaries), on a fresh LEZ chain, under the
+windows C, R, P = +10 min, +2 h, +4 h, with the Taker Node's own refund on.
+Both Nodes and both wallet-rpcs read the operator's own `monerod`, the one of
+[route 1](#route-1-a-self-hosted-monerod), synchronized at the Stagenet tip
+(its top block hash the same as three public nodes' at the start and at the
+end of the run); no public node, and no forwarder to one, was configured.
+Each swap moved 0.003 XMR for 50,000 LEZ units. Times are UTC; Monero times
+are block timestamps. The
+[evidence set](evidence/stagenet-0.4.0-2026-11-26/) holds the per-swap table,
+the node's own log of the swaps' transactions and of the callers it served,
+the Nodes' daemon addresses as Docker ran them, and the Maker Node's log.
+
+The names were `lez-stagenet040-*` rather than the guide's
+`lez-m4-stagenet-*`, which an earlier run's volumes on the host still held.
+The Maker's role wallet was topped up with 0.1 XMR from the XMR-TW faucet
+before the run (the funding wallet of 2026-11-21 could not be opened: its
+password file was lost), and the swaps were taken one after another, each
+once the Maker had an unlocked output for it.
+
+- **A, completed** (`b5fc18b7…`, taken 01:55:27): the Taker's LEZ lock final
+  at 01:55:33; the Maker's funding
+  `3ff40f7986894e068304c38eed5447ec984afc1599b7fcbfb1a91743d918ab2d`
+  (block 2,258,583, 01:58:36), which the node logged entering its pool at
+  01:56:31; `claim_available` at 02:08:59, the owner's claim at 02:09:02;
+  tag 14 final at 02:09:43, the Maker's tag 15 at 02:10:42; the Taker's
+  sweep `5b182e8c75c68fc937db3f99677c795a6c7f6bc9ea16a8a2dc3d8a88874306bf`
+  (block 2,258,594, 02:13:19, 0.00296962 XMR); both Nodes `completed` at
+  02:29:39, 34 minutes after the take.
+- **B, refunded by the Taker Node itself** (`3d4c2915…`, taken 02:00:36, R
+  04:00:26): funded in
+  `a722e1e43be96cd83888fbbbe4d2c3107d4349ca9e3b1d2ed401688bc215fe13`
+  (block 2,258,588, 02:03:51), not claimed. With no owner's command the
+  Taker Node's tag 16 was final at 04:00:32, 6 seconds after R; the Maker
+  swept its Monero back in
+  `7dcb913175f2e3f6c3c99446f11581f2dba0ac831a5dbbde4b772057de2f0f0a`
+  (block 2,258,649, 04:09:30, 0.00296956 XMR) and read `refunded` at
+  04:21:23, the sweep at ten confirmations.
+- **C, punished** (`9d17b588…`, taken 02:20:26, R 04:20:17, P 06:20:17):
+  funded in `2bc4938409ff547c3d210465a63ab3cd03c81e10b1462f2a56e45f1b217991b7`
+  (block 2,258,599, 02:22:11). The Taker Node was stopped from 04:10:10 to
+  06:26:16; the Maker's tag 17 was final at 06:20:32, 15 seconds after P,
+  and the Taker Node read `punished` after its restart. The 0.003 XMR stays at
+  the shared address, which neither role can spend.
+
+What the node shows of them: each funding and sweep reached it from the
+sending role's wallet-rpc (`POST /sendrawtransaction` from that wallet-rpc's
+address on the Docker network, then `Transaction added to pool: txid <…>` in
+its log), each was mined in a block it had verified, at the height it gives
+for it, and each Node's launcher forwarded the Node's loopback Monero ports to
+it and to the role's wallet-rpc; no other daemon was configured anywhere in
+the stack. Its top block hash matched three public nodes' at the start
+(height 2,258,580) and at the end of the run (height 2,258,725).
 
 ## The Node-driven run of 2026-11-22
 
@@ -890,15 +1032,17 @@ Stagenet keys; delete them with the volumes.
 
 ## Known limits
 
-- The Stagenet runs read public nodes as their daemons, through
-  forwarders; a Node checks their network, sync and tip age and each output
-  by its view key, not that their chain is the heaviest (TM-0033). The
-  self-hosted node was not at the tip during the session, so no funds moved
-  on that route.
+- A Node checks its daemon's network, sync and tip age and each output by
+  its view key, not that the daemon's chain is the heaviest (TM-0033). The
+  run of 2026-11-26 read the operator's own synchronized `monerod`, whose
+  peers were public Stagenet nodes; the runs of 2026-11-21 and 22 read public
+  nodes as their daemons, through forwarders. One `monerod` served both
+  roles in the run of 2026-11-26; two parties run two.
 - Ten confirmations is a constant of the agreement: a reorganisation deeper
   than that after the Taker's authorisation takes the Monero side (TM-0034).
 - P − R is two hours on Stagenet: a Taker Node down for longer from R loses
-  its LEZ (TM-0031), as swap C2 of the run of 2026-11-22 shows.
+  its LEZ (TM-0031), as swap C2 of the run of 2026-11-22 and swap C of the run
+  of 2026-11-26 show.
 - The role wallets have no password; the Maker's needs one unlocked output
   per swap in flight; fees are the wallet-rpc's default (TM-0035).
 - A Maker Node pins each swap's actor program: a swap taken under one build
@@ -908,6 +1052,7 @@ Stagenet keys; delete them with the volumes.
 - `VIEW_ONLY_SPEND_RESIDUAL`: a view-only wallet cannot prove that an output
   is still unspent; the swap relies on a fresh shared address per swap.
 - CI's Stagenet job depends on public peers and syncs a bounded prefix of the
-  chain, not the tip.
+  chain, not the tip; the node that reached the tip ran on an operator's
+  host, not in CI.
 - 0.18.5.1 is the pinned release; Stagenet's next hard fork would need the
   release that follows it.

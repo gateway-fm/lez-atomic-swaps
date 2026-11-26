@@ -8,7 +8,7 @@
 #
 # PHASE is one of the phases below, or one build step on its own
 # (`--only build:rapidsnark`, `build:lez-services`, `build:r0vm`,
-# `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:wallet-module`, `build:swap-node-module`,
+# `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:wallet-module`, `build:zebrad-module`, `build:swap-node-module`,
 # `build:role-node-modules`, `build:regenesis`, `build:identities`); that is how the
 # release workflow spreads the cold build over several runners.
 #
@@ -221,8 +221,10 @@ phase_sources() {
 # `access-tokens = github.com=<the job token>` so github: fetches are not
 # rate limited; it never appears on a command line or in the store.
 nix_build() { # nix_build <output-link-name> <flake-ref> [extra nix args...]
-  local name="$1" ref="$2"; shift 2
-  docker run --rm -v lez-nix-store-arm:/nix -v "$REPO_ROOT:/workspace:ro" \
+  local name="$1" ref="$2" cpus=(); shift 2
+  # LEZ_BUILD_CPUS caps the build container's CPUs, as for build:zebrad-module.
+  [[ -z "${LEZ_BUILD_CPUS:-}" ]] || cpus=(--cpus "$LEZ_BUILD_CPUS")
+  docker run --rm "${cpus[@]}" -v lez-nix-store-arm:/nix -v "$REPO_ROOT:/workspace:ro" \
     -v "$BASECAMP_SRC:/src/basecamp:ro" -v "$ASSETS/.nix-out:/out" \
     -e NIX_CURL_FLAGS='--user-agent lez-from-scratch/1.0' -e NIX_CONFIG "$NIX_IMAGE" bash -c '
       set -e
@@ -280,8 +282,9 @@ phase_nix() {
   # another and Basecamp silently drops the role modules.
   sources="$(git -C "$REPO_ROOT" rev-parse "HEAD:apps/basecamp" 2>/dev/null || echo none)-$(git -C "$REPO_ROOT" diff HEAD -- apps/basecamp | sha256sum | cut -c1-12)-$(uname -m)"
   # maker and taker: the role desks; network: the LEZ Network desk, which hosts
-  # the LEZ network node and indexer in their Basecamps.
-  for role in maker taker network; do
+  # the LEZ network node and indexer in their Basecamps; zcash: the Zcash Node
+  # desk, which hosts the devnet's Zcash node (zebrad_module) in its Basecamp.
+  for role in maker taker network zcash; do
     if ! ls "$ASSETS/.nix-out/$role-lgx-portable"/*.lgx >/dev/null 2>&1 \
        || [[ "$(cat "$ASSETS/.nix-out/$role-lgx-portable/.sources" 2>/dev/null)" != "$sources" ]]; then
       log "building the $role package (lgx-portable)"
@@ -336,7 +339,7 @@ phase_rust() {
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
     taker-node/zec-local-poc-provision taker-node/zec-local-poc-chat-draft taker-node/zec-local-poc-chat-finalize
     taker-node/zec-local-poc-identity taker-node/zec-local-poc-transfer
-    zebra/lez-runtime-healthcheck
+    zebra-module/lez-runtime-healthcheck
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to
   # a different checkout. Its dependency/target cache still makes reruns cheap.
@@ -550,6 +553,54 @@ build_indexer_module() {
 build_wallet_module() {
   build_logos_module lez_core third_party/logos-execution-zone-module "$LEZ_WALLET_MODULE_COMMIT" logos-execution-zone-module
 }
+# The Zcash node as a Logos module: logos-zebrad-module (zebrad_module, Zebra
+# 7.1.0 in-process through logos-zebra-nix's libzebrad_c), unpatched, at its
+# pinned commit, built by its own flake as a portable lgx (variant
+# linux-arm64 or linux-amd64: this host's). Upstream publishes no release of
+# it, so the package must match the sha256 our build of that commit gave on
+# the host's architecture. Only linux-arm64 is pinned (the devnet's hosts); on
+# another architecture the build stops after printing the sha256 it got.
+# A cold build compiles Zebra (16 min on 4 cores of an M-series Mac).
+# LEZ_BUILD_CPUS caps the build container's CPUs; the container is named
+# <LEZ_BUILD_CONTAINER_PREFIX>-zebrad-module (default lez-build).
+readonly ZEBRAD_MODULE_COMMIT=ab43ad345ea9d89ceb08750f46621389262eb508
+readonly ZEBRAD_MODULE_SHA256_AARCH64=59047d1e8c0141d2e36a83144f59cd2d121355b031816df58293f66ebcea486c
+zebrad_module_pin() {
+  case "$(uname -m)" in
+    aarch64|arm64) echo "$ZEBRAD_MODULE_SHA256_AARCH64" ;;
+    *) echo unpinned ;;
+  esac
+}
+build_zebrad_module() {
+  local out="$PROVISION/zebrad_module" want got cpus=()
+  submodule_at third_party/logos-zebrad-module "$ZEBRAD_MODULE_COMMIT"
+  want="$(zebrad_module_pin)"
+  got="$(sha256sum "$out/zebrad_module.lgx" 2>/dev/null | cut -c1-64 || true)"
+  if [[ "$got" == "$want" && "$(cat "$out/source.stamp" 2>/dev/null)" == "$ZEBRAD_MODULE_COMMIT-$(uname -m)" ]]; then
+    return 0
+  fi
+  [[ -z "${LEZ_BUILD_CPUS:-}" ]] || cpus=(--cpus "$LEZ_BUILD_CPUS")
+  log "building zebrad_module (logos-zebrad-module ${ZEBRAD_MODULE_COMMIT:0:7}) as a portable lgx in nix (Zebra from source when cold)"
+  docker run --rm --name "${LEZ_BUILD_CONTAINER_PREFIX:-lez-build}-zebrad-module" "${cpus[@]}" \
+    --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" -e NIX_CONFIG \
+    -v "$REPO_ROOT/third_party/logos-zebrad-module:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
+      echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
+      rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod --exclude=.git -cf - . | tar -C /tmp/src/mod -xf -
+      for attempt in 1 2 3; do
+        if nix build -L --no-update-lock-file path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx >/tmp/nix-build.log 2>&1; then
+          tail -3 /tmp/nix-build.log
+        else
+          echo \"--- nix build of zebrad_module, attempt \$attempt, failed; the end of its log: ---\"; tail -200 /tmp/nix-build.log
+        fi
+        [ -e /tmp/lgx ] && break
+      done
+      mkdir -p /provision/zebrad_module; cp -L /tmp/lgx/*.lgx /provision/zebrad_module/zebrad_module.lgx
+      printf '%s\\n' '$ZEBRAD_MODULE_COMMIT-$(uname -m)' > /provision/zebrad_module/source.stamp"
+  got="$(sha256sum "$out/zebrad_module.lgx" | cut -c1-64)"
+  [[ "$got" == "$want" ]] ||
+    fail "zebrad_module.lgx (sha256 $got) does not match its pin for $(uname -m) ($want)"
+  log "zebrad_module.lgx sha256 $got"
+}
 # lez_swap_node, the module that launches and supervises a role's Node inside
 # Basecamp: an in-repo module (modules/lez-swap-node), no LEZ sources.
 build_swap_node_module() {
@@ -725,6 +776,7 @@ phase_build() {
   build_step_wanted sidecar && build_sidecar
   build_step_wanted indexer-module && build_indexer_module
   build_step_wanted wallet-module && build_wallet_module
+  build_step_wanted zebrad-module && build_zebrad_module
   build_step_wanted swap-node-module && build_swap_node_module
   build_step_wanted role-node-modules && build_role_node_modules
   build_step_wanted regenesis && build_regenesis
@@ -785,7 +837,8 @@ phase_stage() {
   # (images/basecamp-ui/assets/packages/, packages.tsv lists them), then
   # installed from those files: the runtime modules into the bundle (each desk
   # hosts its role's LEZ signer in lez_core and has lez_swap_node run its Node;
-  # the LEZ Network desk starts blockchain_module and lez_indexer_module), the
+  # the LEZ Network desk starts blockchain_module and lez_indexer_module, the
+  # Zcash Node desk zebrad_module), the
   # desks into their user directories, each role's Node package into its
   # image context. Skipped where the bundle is staged elsewhere, and in the
   # API-only evidence mode, which builds no Nix packages.
@@ -803,22 +856,23 @@ phase_stage() {
       mv "$chain_lgx.part" "$chain_lgx"
     fi
     local release="$ASSETS/packages" pkgs=() lgx name
-    for name in maker taker network chat_module delivery_module; do
+    for name in maker taker network zcash chat_module delivery_module; do
       lgx="$(ls "$ASSETS/.nix-out/$name-lgx-portable"/*.lgx 2>/dev/null | head -1)"
       [[ -n "$lgx" ]] || fail "no $name release package in $ASSETS/.nix-out/$name-lgx-portable; run from-scratch.sh --only nix first"
       pkgs+=("$lgx")
     done
     pkgs+=("$PROVISION/lez_core/lez_core.lgx" "$PROVISION/lez_swap_node/lez_swap_node.lgx"
-      "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$chain_lgx"
+      "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$chain_lgx" "$PROVISION/zebrad_module/zebrad_module.lgx"
       "$DEPLOY_ROOT/images/maker-node/lez_maker_node.lgx" "$DEPLOY_ROOT/images/taker-node/lez_taker_node.lgx")
     rm -rf "$release"
     bash "$DEPLOY_ROOT/scripts/pin-package-dependencies.sh" --out "$release" "${pkgs[@]}"
-    for name in lez_core lez_swap_node blockchain_module lez_indexer_module chat_module delivery_module; do
+    for name in lez_core lez_swap_node blockchain_module lez_indexer_module zebrad_module chat_module delivery_module; do
       bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/$name.lgx" module
     done
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_atomic_swap_maker.lgx" maker
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_atomic_swap_taker.lgx" taker
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_network.lgx" network
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_zcash_node.lgx" zcash
     for role in maker taker; do
       install -m 0644 "$release/lez_${role}_node.lgx" "$DEPLOY_ROOT/images/$role-node/lez_${role}_node.lgx"
     done
@@ -900,7 +954,7 @@ phase_swap() {
 
 case "$ONLY" in
   ""|host|sources|nix|rust|build|stage|stack|swap) ;;
-  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module|build:swap-node-module|build:role-node-modules|build:regenesis) ;;
+  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module|build:zebrad-module|build:swap-node-module|build:role-node-modules|build:regenesis) ;;
   *) echo "unknown phase: $ONLY" >&2; exit 64 ;;
 esac
 for p in host sources nix rust build stage stack; do

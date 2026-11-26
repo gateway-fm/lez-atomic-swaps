@@ -2,7 +2,7 @@
 
 One compose project: the LEZ v0.2 devnet (one Basecamp hosting the LEZ node and
 the indexer as Logos modules, plus the sequencer) + Bitcoin Core regtest +
-Zebra regtest + each party's own Basecamp, holding that party's desk, its LEZ
+Zebra regtest (a Basecamp hosting Zebra as a Logos module) + each party's own Basecamp, holding that party's desk, its LEZ
 signer and its canonical Node (drivable over VNC and by automated end-to-end
 tests). Block explorers for both chains are an optional profile. All native to
 the host, started with one command.
@@ -666,7 +666,7 @@ name both pinned archives. Its Dockerfile is the isolated lane's
 `images/monerod/`: Compose's bake builder refuses a Dockerfile outside
 `deploy/`. Monero's binaries are under the BSD 3-clause licence
 (the archive's `LICENSE`); the image carries the licence label, as the Bitcoin
-Core and Zebra images do.
+Core image does.
 
 **What runs per lane.** `monerod` (`--regtest --offline`, fixed difficulty: no
 peers, no miner; blocks are generated on demand) and three `monero-wallet-rpc`:
@@ -1048,13 +1048,13 @@ the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ uni
 | `btc-explorer` (profile `explorers`) | `images/btc-explorer` | btc-rpc-explorer 3.5.1 from its GitHub tag commit (npm stops at 3.4.0) on Node 24, patched for an exhausted regtest halving schedule (post-era subsidy is 0 and the homepage halving card is skipped; upstream 500s the homepage) |
 | `network` | `images/lez-network-module` | the LEZ v0.2 network in one headless Basecamp (the `basecamp-ui` image plus the indexer's r0vm): its LEZ Network desk starts `blockchain_module` 0.2.4 (the devnet's block producer; HTTP API on `:18080`, alias `bedrock`, state in `runtime/bedrock`) and `lez_indexer_module` (`indexer_service`'s JSON-RPC on `:8779`, alias `indexer`, published on loopback; the Basecamp user directory with its database in `runtime/indexer`). The desk's Re-index rebuilds the indexer's database while the node keeps running (`repair-indexer.sh`). Runs as the host user |
 | `sequencer` | `images/lez-services` | `sequencer_service` from the pinned `logos-execution-zone` v0.2.4, native rebuild + arm64 r0vm; a plain service (there is no sequencer module); runs as the host user, state in `runtime/sequencer` |
-| `zebra` | `images/zebra` | Zebra 7.0.0 on Regtest, NU7 from height 1 (digest-pinned upstream build in a distroless runtime), the ZEC pair's chain |
+| `zebra` | `images/zebra-module` | the ZEC pair's chain: Zebra 7.1.0 on Regtest, every upgrade through NU7 at height 1, in one headless Basecamp (the `basecamp-ui` image) hosting `zebrad_module` (logos-zebrad-module at its pinned commit, built by `from-scratch.sh --only build:zebrad-module` and checked against its sha256). Its Zcash Node desk configures the module from `runtime/zebra/zebrad-module.json` (`gen-config.sh`: the Maker's minted Zcash key as the miner address, the JSON-RPC on `:18232`, published on loopback) and starts it. The JSON-RPC requires Zebra's cookie, written owner-only to `/var/lib/zebra/regtest/.cookie` in its volume and new at every start: the container runs as the Nodes' uid 4713, both Nodes mount the volume read-only and their Zcash actors, the route health and the test payer read the cookie there (`LEZ_ZEBRA_COOKIE_FILE`); the harness and `zec-catalog-fixture.sh` read it with `docker exec` and keep it in memory. Each block is saved as it is accepted, so a stop or a kill loses none. The desk's Restart node stops and starts the node; its Reset chain deletes the Regtest chain and starts a new one (`zec-catalog-fixture.sh` and `node-e2e.py` press it for a worn chain or one on another consensus branch) |
 | `lez-explorer` (profile `explorers`) | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
 | `maker-node` | `images/maker-node` | the Maker's own Basecamp (the `basecamp-ui` image) on VNC `127.0.0.1:5901` with the Maker's Node package `lez_maker_node` installed in its user modules directory (`/var/lez/basecamp-maker-user/modules/lez_maker_node`; built by `scripts/package-role-node.sh`): the canonical Node, CLI, `lez-btc-maker-actor`, `lez-zec-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap), the health probe and the launcher `node-entrypoint.sh`, stripped; `/usr/local/bin/<tool>` link into the package. Nothing of the Node is copied into the image on its own. Its LEZ Maker desk opens at start, hosts the Maker's LEZ signer (`lez_core`), asks the package for its launcher (`LEZ_MAKER_NODE_LAUNCHER=package`) and has `lez_swap_node` launch and supervise the Node from it; the UI tests drive the same desk (`ui-tests/`, mounted). The launcher forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints. The image owns its state directories (a new named volume takes the image directory's owner and mode), so no init container runs |
 | `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, with the Taker's package `lez_taker_node`: canonical Node, CLI, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar, the health probe and the launcher; same loopback forwarders as the Maker. Beside the package: `zec-local-poc-identity` (gen-config.sh derives zebra's miner address with it), the test-only payer `zec-local-poc-transfer` (cargo feature `test-payer`; the harness funds the Taker's Zcash key with it; in the published image too) and, in the devnet's image only, the dealer test fixture's tools (`zec-local-poc-provision`, `-chat-draft`, `-chat-finalize`: `executables.json` class `fixture`, cargo feature `dealer-fixture`), run by the catalog tests' `tests/fixtures/zec-catalog-fixture.sh`; the published image does not carry them. No role package carries any of them |
 | `heartbeat` (profile `heartbeat`) | `images/lez-wallet-module` | the LEZ finality heartbeat (above); `up.sh` starts it when `LEZ_HEARTBEAT_SECONDS` is not `0` |
 | `tools` (profile `tools`) | `images/lez-wallet-module` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault claims through the LEZ wallet module (`lez-wallet-vault-claim`) and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
-| `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `network`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + the release packages installed (desks, runtime modules) + qt-mcp; Xvfb/fluxbox/x11vnc |
+| `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `network`, `zebra`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + the release packages installed (desks, runtime modules) + qt-mcp; Xvfb/fluxbox/x11vnc |
 
 Each desk reaches its own Node over the Node's owner socket inside the same
 container; the desks read their market from the Nodes
@@ -1064,8 +1064,9 @@ claim, and the Maker's automatic progress. The C++ backends enforce
 The only socket two containers share is the Maker's Chat socket
 (`maker_socket`, mounted in the Taker's Basecamp for its Node).
 
-The Bitcoin Core and Zebra data volumes take their owner (the images' nonroot
-uid) from the images' own data directories on their first mount, and the LEZ
+The Bitcoin Core and Zebra data volumes take their owner (Core's nonroot uid,
+and the Nodes' 4713 for Zebra's) from the images' own data directories on their
+first mount (Compose starts `zebra` before the Nodes, which mount its volume too), and the LEZ
 services' bind-mounted state belongs to the host user they run as, so no init
 container chowns either.
 
@@ -1158,7 +1159,7 @@ inputs into its state volume — the
 LEZ identity (`runtime/lez/<role>`, the Maker is wallet `maker-munich-01`, the
 Taker `taker-zurich-01`; beside it `zcash.key`, the role's Zcash key that
 `gen-config.sh` mints once — the Maker's is also its Delivery signing key and
-the address zebra mines to, rendered into `runtime/zebra/zebrad.toml`; the
+the address zebra mines to, rendered into `runtime/zebra/zebrad-module.json`; the
 Taker's funds Zcash when it sells it), the Bitcoin RPC cookie and, once
 `market-bootstrap.sh` has recorded the escrow deployment in
 `runner-work/market/market-bootstrap.env`, the `btc-role.json` that names the

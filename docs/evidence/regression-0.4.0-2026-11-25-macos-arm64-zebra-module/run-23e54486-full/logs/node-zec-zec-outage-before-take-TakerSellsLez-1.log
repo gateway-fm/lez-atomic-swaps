@@ -1,0 +1,30 @@
+[01:24:48] === zec-outage-before-take (stamp 1795652688)
+[01:24:48] preflight: indexer historical reads
+[01:24:49]   indexer serves historical reads at the tip (6268)
+[01:24:49] preflight: LEZ finality check waived by request
+[01:24:49]   Maker CLI published offer-e2e-zectt-1795652689 on its running Node (no corridor)
+[01:24:49]   cutting Logos Chat and Delivery before the take
+[01:24:50]   the Taker's side (uid 4713) is refused: connect EACCES, list Delivery EACCES, 0 descriptors into it
+[01:24:50]   both Nodes report chat and delivery unavailable, and degraded; the Maker holds no Chat connection
+[01:24:50]   the Taker refused the take: Taker dependency unavailable (authenticated_delivery_unavailable)
+[01:24:51]   no swap on either Node: none in the Taker's list for offer-e2e-zectt-1795652689, the Maker's offer record unchanged (active, revision 1) and its history too
+[01:24:55]   the cut held: 2 samples of the Maker's Chat socket, none with a connection; the Taker's side still refused
+[01:24:55]   both dependencies are back and neither Node is degraded
+[01:24:56]   restored, the same request e2e-take-1795652688 took offer-e2e-zectt-1795652689: swap zec-c0079a3e (not_activated, replay=False)
+[01:24:56]   take-time agreement: Maker funds 6b63214c2f659f10…:0, Zcash anchor 764, refund height 780
+[01:24:57]   receipt: swap zec-c0079a3ef9cd7da4d765aba7130deda6e7e1f672d9385832ad26545edad52523, actor config /var/lib/lez/taker/btc/swaps/a45bf15895e0e7993a23474939f24e7e2af05bc245a85a01cc4d79ca37755bd1/zec-actor/taker/actor-config.json
+[01:24:57]   [0 s] waiting for the Taker's zec-c0079a3e to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 763 | LEZ finalized 6268, tip 6271 (3 unfinalized) [heartbeat]
+[01:25:03]   [6 s] waiting for the Taker's zec-c0079a3e to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 763 | LEZ finalized 6268, tip 6271 (3 unfinalized) [heartbeat]
+[01:25:19]   [22 s] waiting for the Taker's zec-c0079a3e to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 763 | LEZ finalized 6282, tip 6286 (4 unfinalized) [heartbeat]
+[01:25:23]   zebra at 763: not mining, the Maker's Zcash funding is not out yet
+[01:25:26]   zebra: mined 1 block(s) → height 764 (mempool had ['d6419ee29de0'])
+[01:25:29]   [32 s] waiting for the Taker's zec-c0079a3e to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 764 | LEZ finalized 6282, tip 6286 (4 unfinalized) [heartbeat]
+[01:25:29]   zebra: mined 1 block(s) → height 765 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[01:25:29]   Taker claimed Zcash on zec-c0079a3e (replay=False)
+[01:25:29]   [0 s] waiting for the Taker's zec-c0079a3e to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 765 | LEZ finalized 6282, tip 6286 (4 unfinalized) [heartbeat]
+[01:25:29]   zebra: mined 1 block(s) → height 766 (mempool had ['4569c5a638ce'])
+[01:25:36]   [6 s] waiting for the Taker's zec-c0079a3e to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 766 | LEZ finalized 6296, tip 6302 (6 unfinalized) [heartbeat]
+[01:25:39]   [9 s] waiting for the Taker's zec-c0079a3e to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 766 | LEZ finalized 6296, tip 6302 (6 unfinalized) [heartbeat]
+[01:25:39]   [0 s] waiting for the Taker's zec-c0079a3e to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 6296, tip 6302 (6 unfinalized) [heartbeat]
+[01:25:40]   both Nodes report zec-c0079a3e completed
+[01:25:40] === zec-outage-before-take: passed in 52s

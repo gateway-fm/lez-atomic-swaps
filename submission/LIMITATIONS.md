@@ -100,14 +100,12 @@ Scope:
 
 - Monero 0.18.5.1 **regtest** on the private LEZ devnet for the regression
   and the recordings. On public Monero **Stagenet** Nodes built from
-  `f059d3fa` (the code of `7b4e46da`) completed a swap, refunded one by the Taker Node's own refund at R,
-  refunded one the Maker could not fund and punished one, once, on
-  2026-11-22, under the `PublicStagenet` windows (+10 min, +2 h, +4 h),
-  with LEZ on the devnet, public Stagenet nodes as daemons, and one operator
-  on one host ([Stagenet guide](../docs/monero-stagenet-guide.md#the-node-driven-run-of-2026-11-22),
-  [evidence](../docs/evidence/stagenet-0.4.0-2026-11-22/)). The changes made
-  after `7b4e46da` (the Logos Chat resend, the ZEC second-lock lookup, the sidecar's re-decision of interrupted submissions and `url` 2.5.9) were not
-  run on Stagenet.
+  `f259e791` completed a swap, refunded one by the Taker Node's own refund at
+  R and punished one, once, on 2026-11-26, under the `PublicStagenet` windows
+  (+10 min, +2 h, +4 h), with LEZ on the devnet, the operator's own
+  `monerod` synchronized at the Stagenet tip as both roles' daemon, and one
+  operator on one host ([Stagenet guide](../docs/monero-stagenet-guide.md#the-node-driven-run-of-2026-11-26-on-the-self-hosted-node),
+  [evidence](../docs/evidence/stagenet-0.4.0-2026-11-26/)).
   No Monero testnet or mainnet swap has run; the LEZ testnet waits for the
   LEZ 0.4 port (#107). LEZ v0.2.4 pins RISC Zero 3.0, which is yanked
   (GHSA-g6qg-9j8p-7j87); its `cargo-deny` exemption is an accepted risk on
@@ -198,8 +196,9 @@ The Taker Node:
 On Monero Stagenet (the [Stagenet guide](../docs/monero-stagenet-guide.md#a-daemon-the-node-does-not-run)
 and TM-0033 to TM-0036):
 
-- The recorded run read public Stagenet nodes, behind a forwarder, as both
-  roles' daemons; the self-hosted node was not at the tip. Each Node
+- The run of 2026-11-26 read the operator's own `monerod`, at the tip, as
+  both roles' daemon (one daemon for two roles; two parties run two); its
+  peers, and the earlier runs' daemons, were public Stagenet nodes. Each Node
   verifies its daemon's network, sync and tip age before the decisions that
   rest on it (the Maker's funding receipt; the Taker's record of the
   funding, its tag 14 and its claim sweep), and each output by its view
@@ -217,7 +216,7 @@ and TM-0033 to TM-0036):
   that finds none ends the swap `expired`. Fees are the wallet-rpc's default.
 - A Maker Node pins each swap's actor program: a swap taken under one build
   does not run under another, so a fix of the Maker's actor does not reach
-  swaps in flight (three swaps of the run stayed unfinished on the Maker
+  swaps in flight (three swaps of the run of 2026-11-21 stayed unfinished on the Maker
   side that way, their Monero at their shared addresses).
 - The restore height of the Maker's wallets comes from block timestamps
   (the last block six hours before C); a chain whose timestamps lie by more

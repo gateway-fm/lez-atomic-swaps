@@ -481,7 +481,7 @@ class BundleHarnessBuildsNothing(unittest.TestCase):
         compose = (DEPLOY / 'compose.yaml').read_text()
         services = re.split(r'\n(?=  [a-z][a-z0-9-]*:\n)', compose)
         on_another = {s.split(':', 1)[0].strip() for s in services if 'service:basecamp-ui' in s}
-        self.assertEqual(on_another, {'network', 'maker-node', 'taker-node'})
+        self.assertEqual(on_another, {'network', 'zebra', 'maker-node', 'taker-node'})
         for path in bundle_harness_files():
             for line in self.commands(path):
                 match = re.search(r'compose\b.*\brun\b(.*)', line)

@@ -211,13 +211,16 @@ role_files() {
     zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || exit 1
     rm -f "$maker_zcash_private"
     trap - EXIT
-    sed "s|^miner_address = .*|miner_address = \"$zebra_miner_address\"|" "$DEPLOY_ROOT/assets/zebra/zebrad.toml" >"$dir/zebra/zebrad.toml"
-    echo "zebra mines to the Maker's Zcash key ($zebra_miner_address): $label/zebra/zebrad.toml"
+    sed "s|__LEZ_MAKER_ZCASH_ADDRESS__|$zebra_miner_address|" "$DEPLOY_ROOT/assets/zebra/zebrad-module.json" >"$dir/zebra/zebrad-module.json"
+    echo "zebra mines to the Maker's Zcash key ($zebra_miner_address): $label/zebra/zebrad-module.json"
   else
-    cp "$DEPLOY_ROOT/assets/zebra/zebrad.toml" "$dir/zebra/zebrad.toml"
+    cp "$DEPLOY_ROOT/assets/zebra/zebrad-module.json" "$dir/zebra/zebrad-module.json"
     echo "warning: zec-local-poc-identity unavailable (stage it with from-scratch.sh --only rust or build the Taker image); zebra keeps the template miner address and the ZEC lane cannot run" >&2
   fi
-  chmod 0644 "$dir/zebra/zebrad.toml"
+  # The settings the zebra service's Zcash Node desk hands zebrad_module
+  # (compose.yaml: LEZ_ZEBRA_CONFIG); an earlier stack's zebrad.toml goes.
+  rm -f "$dir/zebra/zebrad.toml"
+  chmod 0644 "$dir/zebra/zebrad-module.json"
   # Monero (LEZ_MONERO=1): the lane's monerod and its funding, Maker and Taker
   # wallet-rpc each take a Digest RPC login, minted once under <dir>/monero and
   # kept across reruns, and their configs carry them (0644 like bitcoin.conf:

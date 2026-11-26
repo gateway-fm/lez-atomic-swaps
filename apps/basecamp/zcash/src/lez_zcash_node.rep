@@ -1,0 +1,6 @@
+class LezZcashNode
+{
+    SLOT(QString status())
+    SLOT(QString restartNode())
+    SLOT(QString resetChain())
+}

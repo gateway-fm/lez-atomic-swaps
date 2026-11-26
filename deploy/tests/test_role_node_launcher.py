@@ -159,6 +159,35 @@ class Launcher(unittest.TestCase):
         self.assertEqual(role['actor']['program'], str(self.payload / 'lez-btc-maker-actor'))
         self.assertEqual((root / 'delivery/maker-delivery-identity.pub').read_text(), MAKER_KEY + '\n')
 
+    def test_the_zebra_cookie_reaches_the_zcash_role_and_its_route_health(self):
+        # The devnet's Zebra (zebrad_module) requires its cookie: the launcher
+        # names the file where Zebra writes it, never its contents; unset, the
+        # Zcash role and route health stay without one.
+        self.host('Linux', setpriv=True)
+        for cookie in ('/var/lib/zebra/regtest/.cookie', None):
+            root = self.tmp / ('cookie' if cookie else 'plain')
+            self.inputs(root / 'identity', root / 'market/market-bootstrap.env', root / 'config/btc-rpc-cookie')
+            env = dict(
+                LEZ_NODE_STATE_DIR=str(root / 'state'), LEZ_NODE_RUN_ROOT=str(root / 'run'),
+                LEZ_ZEC_STATE_DIR=str(root / 'zec'), LEZ_NODE_IDENTITY_DIR=str(root / 'identity'),
+                LEZ_MARKET_MANIFEST=str(root / 'market/market-bootstrap.env'),
+                LEZ_BTC_RPC_COOKIE_FILE=str(root / 'config/btc-rpc-cookie'), LEZ_DELIVERY_DIR=str(root / 'delivery'))
+            if cookie:
+                env['LEZ_ZEBRA_COOKIE_FILE'] = cookie
+            self.run_launcher(shutil.which('bash'), 'maker', **env)
+            zec = json.loads((root / 'zec/zec-role.json').read_text())
+            health = json.loads((root / 'state/route-health.json').read_text())
+            zcash = [c['args'] for c in health['commands'] if c['route']['pair'] == 'Zcash']
+            self.assertEqual(len(zcash), 2)
+            if cookie:
+                self.assertEqual(zec['zebra_route'], {'kind': 'deterministic_local', 'cookie_file': cookie})
+                for args in zcash:
+                    self.assertEqual(args[-2:], ['--cookie-file', cookie])
+            else:
+                self.assertNotIn('zebra_route', zec)
+                for args in zcash:
+                    self.assertEqual(args, ['tcp', '127.0.0.1:18232', 'getblockchaininfo', '[]'])
+
     def test_no_rpc_login_reaches_a_command_line(self):
         # A recording curl: each call's arguments and the config it reads on
         # its standard input (-K -), then the answers of the plain fake.

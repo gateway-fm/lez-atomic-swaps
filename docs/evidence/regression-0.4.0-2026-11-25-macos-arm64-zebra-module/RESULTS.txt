@@ -1,0 +1,25 @@
+Full regression of 23e54486 (0.4.0 with Zebra 7.1.0 as zebrad_module in a Basecamp) on macOS arm64
+(Apple silicon, Docker Desktop), 2026-11-25 22:10Z -> 2026-11-26 01:30Z, UTC
+
+Every test of `deploy/scripts/regress.sh full` (180: `regress.sh list full`) on images built from
+23e54486 with the devnet test hooks (LEZ_TEST_HOOKS=1), Monero regtest up (LEZ_MONERO=1), four lanes
+at a time (LEZ_LANES=4), starting on a fresh chain. One operator ran both parties, Maker and Taker,
+on one host. Escrow ImageID ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98.
+See README.md and PROVENANCE.md.
+
+Result on 23e54486: 177 of 180 passed, each on its first try, in 195 min. 0 frozen tries, 0
+NOT-EXERCISED, 0 timeouts. The 3 failures are the three Logos-transport tests: the overlay
+compose.logos.yaml dropped the Taker's Zebra cookie mount.
+
+On f259e791 (23e54486 plus the overlay fix and its test, nothing else): those three, run again in
+a separate invocation, passed on their first try.
+
+  ui:btc:logos-happy:TakerSellsForeign    23e54486 FAILED 132 s   f259e791 PASSED 82 s
+  ui:zec:logos-happy:TakerSellsForeign    23e54486 FAILED  32 s   f259e791 PASSED 88 s
+  ui:zec:logos-happy:TakerSellsLez        23e54486 FAILED 130 s   f259e791 PASSED 90 s
+
+By kind: node:btc 56, node:zec 59, node:xmr 22, ui:btc 17, ui:zec 22, ui:xmr 4. Test time summed
+over lanes in the full invocation: 43,272 s.
+
+first-attempt-83b89df4/: the stopped run at 83b89df4 before this one (33 passed, 1 failed on the
+pair-isolation rule that 23e54486 fixes, 146 not run). Not counted above.

@@ -1,0 +1,26 @@
+[02:15:30] === taker-refund-offline (stamp 179565573003)
+[02:15:30] preflight: indexer historical reads
+[02:15:30]   indexer serves historical reads at the tip (8604)
+[02:15:30] preflight: LEZ finality check waived by request
+[02:15:30]   Maker published offer-e2e-179565573003
+[02:15:32]   Taker took offer-e2e-179565573003: swap ea8371487062 (not_activated)
+[02:15:32]   cutting Logos Chat and Delivery before the Maker stops and the Taker locks
+[02:15:32]   the Taker's side (uid 4713) is refused: connect EACCES, list Delivery EACCES, 0 descriptors into it
+[02:15:33]   both Nodes report chat and delivery unavailable, and degraded; the Maker holds no Chat connection
+[02:15:33]   stopping the Maker Node so it never funds
+[02:15:33]   Taker locked bitcoin: b72d6550d5a3 (replay=False)
+[02:15:33]   mined 124 blocks past the lock; the Maker cutoff is 100s after the take, the Taker's refund opens 100s after it
+[02:15:34]   [0 s] waiting for the Taker's refund of ea8371487062 to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 8604, tip 8613 (9 unfinalized) [heartbeat]
+[02:15:34]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[02:15:44]   [10 s] waiting for the Taker's refund of ea8371487062 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 8604, tip 8613 (9 unfinalized) [heartbeat]
+[02:16:25]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[02:16:46]   [72 s] waiting for the Taker's refund of ea8371487062 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 8659, tip 8663 (4 unfinalized) [heartbeat]
+[02:17:17]   refund request admitted (attempt 11, state awaiting_second_lock)
+[02:17:27]   [113 s] waiting for the Taker's refund of ea8371487062 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 8694, tip 8697 (3 unfinalized) [heartbeat]
+[02:18:09]   refund request replayed (attempt 16, state refund_in_progress)
+[02:18:19]   Taker refunded; Taker Node balances {'btc_trusted_sat': 524996734300, 'lez_units': 2203000} → {'btc_trusted_sat': 524996730200, 'lez_units': 2203000}
+[02:18:19]   the Taker's side is still refused: connect EACCES, list Delivery EACCES
+[02:18:26]   both dependencies are back and neither Node is degraded
+[02:18:26]   Maker reconciled to refunded
+[02:18:27]   the Bitcoin refund e654ce5b026f is a script-path spend: three witness items
+[02:18:27] === taker-refund-offline: passed in 177s

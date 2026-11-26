@@ -707,6 +707,101 @@ fn pair_rejects_cross_actor_paths_or_config_aliases_but_shares_agreement() {
     }
 }
 
+#[test]
+fn pair_may_share_its_one_zebra_node_cookie_but_nothing_role_private() {
+    // Both roles name the one node's live cookie (the devnet's zebrad_module,
+    // or one operator's self-hosted Testnet Zebra): one pair, as the dealer
+    // fixture provisions it.
+    for (kind, network) in [
+        ("deterministic_local", "regtest"),
+        ("self_hosted_cookie", "test"),
+    ] {
+        let fixture = PairFixture::new();
+        private_bytes(&fixture.path("node-cookie"), COOKIE);
+        for config in [&fixture.maker_config, &fixture.taker_config] {
+            edit(config, |value| {
+                value["zebra"]["route"] = json!({
+                    "kind": kind,
+                    "endpoint": "http://127.0.0.1:19101",
+                    "cookie_file": fixture.path("node-cookie")
+                });
+                value["zebra"]["identity"]["network"] = json!(network);
+            });
+        }
+        let (maker, taker) = (fixture.load("maker"), fixture.load("taker"));
+        validate_actor_pair(&maker, &taker).expect("one node's cookie is shared by both roles");
+        assert!(
+            maker
+                .load_drive_material()
+                .unwrap()
+                .zebra_cookie()
+                .is_some()
+        );
+
+        // A role-private file is still never shared.
+        set(
+            &fixture.taker_config,
+            "/zcash_key_file",
+            path_value(&fixture.path("maker-zcash-key")),
+        );
+        assert!(validate_actor_pair(&fixture.load("maker"), &fixture.load("taker")).is_err());
+    }
+
+    // One role's cookie may be none of the other role's files.
+    for target in [
+        "maker-claim-key",
+        "maker-zcash-key",
+        "maker-capability",
+        "maker-config",
+        "agreement",
+    ] {
+        let fixture = PairFixture::new();
+        set(
+            &fixture.taker_config,
+            "/zebra/route/cookie_file",
+            path_value(&fixture.path(target)),
+        );
+        let result = ActorConfig::load_private(&fixture.taker_config)
+            .and_then(|taker| validate_actor_pair(&fixture.load("maker"), &taker));
+        assert!(result.is_err(), "a cookie at {target} must fail");
+    }
+
+    // Zebra writes a new cookie at every start: an actor loaded before the
+    // restart reads the new one at the same path, and refuses anything there
+    // that is not an owner-private regular file.
+    let fixture = PairFixture::new();
+    let maker = fixture.load("maker");
+    let cookie = fixture.path("maker-cookie");
+    fs::remove_file(&cookie).unwrap();
+    private_bytes(&cookie, b"__cookie__:after-restart\n");
+    assert_eq!(
+        maker.load_drive_material().unwrap().zebra_cookie(),
+        Some(&b"__cookie__:after-restart"[..])
+    );
+    fs::remove_file(&cookie).unwrap();
+    assert!(
+        maker.load_drive_material().is_err(),
+        "no cookie while Zebra is stopped"
+    );
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(fixture.path("maker-claim-key"), &cookie).unwrap();
+        assert!(
+            maker.load_drive_material().is_err(),
+            "a symlinked cookie is refused"
+        );
+    }
+
+    // Within one config the cookie stays apart from the role's own files.
+    let fixture = PairFixture::new();
+    set(
+        &fixture.maker_config,
+        "/zebra/route/cookie_file",
+        path_value(&fixture.path("maker-claim-key")),
+    );
+    assert!(ActorConfig::load_private(&fixture.maker_config).is_err());
+}
+
 #[cfg(unix)]
 #[test]
 fn inode_identity_rejects_hard_link_aliases_within_config_and_across_actors() {
@@ -827,7 +922,6 @@ fn every_command_reopens_material_and_rejects_replacement() {
     for (name, replacement, material) in [
         ("maker-claim-key", vec![2; 32], Material::Status),
         ("maker-capability", CAPABILITY.to_vec(), Material::Activate),
-        ("maker-cookie", COOKIE.to_vec(), Material::Drive),
     ] {
         let fixture = PairFixture::new();
         let config = fixture.load("maker");
@@ -839,11 +933,6 @@ fn every_command_reopens_material_and_rejects_replacement() {
     for (name, replacement, material) in [
         ("maker-claim-key", vec![3; 32], Material::Status),
         ("maker-capability", rotated_capability(), Material::Activate),
-        (
-            "maker-cookie",
-            b"actor:rotated-cookie\n".to_vec(),
-            Material::Drive,
-        ),
     ] {
         let fixture = PairFixture::new();
         let config = fixture.load("maker");
@@ -851,6 +940,23 @@ fn every_command_reopens_material_and_rejects_replacement() {
         assert!(
             material.load(&config).is_err(),
             "same-inode rewrite of {name} must fail"
+        );
+    }
+
+    // The Zebra node's cookie is the one exception: Zebra writes a new one at
+    // every start, in place or as a new file, and the actor reads the current one.
+    for replace in [true, false] {
+        let fixture = PairFixture::new();
+        let config = fixture.load("maker");
+        Material::Drive.load(&config).expect("initial material");
+        if replace {
+            replace_inode(&fixture.path("maker-cookie"), b"actor:new-cookie\n");
+        } else {
+            private_bytes(&fixture.path("maker-cookie"), b"actor:new-cookie\n");
+        }
+        assert_eq!(
+            config.load_drive_material().unwrap().zebra_cookie(),
+            Some(&b"actor:new-cookie"[..])
         );
     }
 }

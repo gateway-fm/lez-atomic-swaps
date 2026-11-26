@@ -104,17 +104,13 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
         Duration::from_secs(10),
         "daemon readiness",
     );
-    wait_for_file(
+    let actor_pid = wait_for_recorded_actor(
         &mut daemon,
+        &database,
+        swap_id,
         &actor_pid_file,
-        Duration::from_secs(5),
         "actor process identity",
     );
-    let actor_pid: u32 = fs::read_to_string(&actor_pid_file)
-        .expect("read actor PID")
-        .trim()
-        .parse()
-        .expect("numeric actor PID");
 
     let running = SqliteSwapStore::open(&database)
         .expect("open independent observer connection")
@@ -173,6 +169,156 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
     );
     assert!(!socket.exists(), "daemon must remove its owner socket");
     assert!(!ready.exists(), "daemon must remove its readiness file");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One crash and restart journey keeps the lease handover visible.
+fn a_restarted_node_recovers_the_lease_its_killed_predecessor_held() {
+    // A Node's lease owner is drawn at random when its supervisor starts, so
+    // a Node killed while it held an actor's lease left that lease under an
+    // owner the restarted Node does not share: the restarted Node recovers
+    // it, with the default single worker, and runs the actor again. (Its
+    // abandoned-lease pass leaves alone only leases of its own owner, which
+    // belong to its own live workers.)
+    let _process_test_guard = DAEMON_SUPERVISOR_PROCESS_TEST_LOCK
+        .lock()
+        .expect("daemon-supervisor process test lock");
+    let root = tempdir().expect("isolated crash-recovery root");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
+        .expect("owner-only test root");
+    let swap_id = "m5-daemon-crash-recovery";
+    let deployment = actor_deployment(root.path(), swap_id);
+    let actor_config =
+        ActorConfig::load_private(&deployment.source_config).expect("real Maker actor config");
+    let actor_config_bytes =
+        fs::read(&deployment.source_config).expect("read exact actor configuration");
+    let actor_pid_file = root.path().join("actor.pid");
+    let first_run = root.path().join("first-run");
+    let invocations = root.path().join("invocations");
+    let actor_program = root.path().join("crash-recovery-zec-maker-actor");
+    // The first run holds its lease until the Node is killed; the run after
+    // the restart reports the swap complete.
+    let program = format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         test -r /proc/self/fd/198 || exit 94\n\
+         test \"$3\" = \"status\" || exit 95\n\
+         printf '%s\\n' \"$3\" >> \"{invocations}\"\n\
+         if test ! -f \"{first_run}\"; then\n\
+           : > \"{first_run}\"\n\
+           printf '%s\\n' \"$$\" > \"{pid}.tmp\"\n\
+           mv \"{pid}.tmp\" \"{pid}\"\n\
+           exec /usr/bin/sleep 300\n\
+         fi\n\
+         printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}'\n",
+        invocations = invocations.display(),
+        first_run = first_run.display(),
+        pid = actor_pid_file.display(),
+    );
+    let program = actor_script(program);
+    write_private(&actor_program, program.as_bytes(), 0o700);
+
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).expect("open isolated coordinator database");
+    store.save(&zec_swap(swap_id)).expect("save ZEC swap");
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                SwapId::new(swap_id).unwrap(),
+                MakerActorKindV1::Zcash,
+                deployment.source_config,
+                Sha256::digest(actor_config_bytes).into(),
+                actor_program,
+                Sha256::digest(program.as_bytes()).into(),
+                actor_config.role_state_db().to_path_buf(),
+            )
+            .expect("valid ZEC Maker manifest"),
+            0,
+        )
+        .expect("pre-register queued ZEC Maker actor");
+    drop(store);
+
+    let runtime = root.path().join("runtime");
+    fs::create_dir(&runtime).expect("create runtime directory");
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("owner-only runtime");
+    let socket = runtime.join("maker.sock");
+    let ready = runtime.join("ready");
+    let mut daemon = TestDaemon::spawn(&database, &socket, &ready);
+    wait_for_file(
+        &mut daemon,
+        &actor_pid_file,
+        Duration::from_secs(30),
+        "first actor run",
+    );
+    let actor_pid: i32 = fs::read_to_string(&actor_pid_file)
+        .expect("read actor PID")
+        .trim()
+        .parse()
+        .expect("numeric actor PID");
+    let leased = SqliteSwapStore::open(&database)
+        .expect("open observer")
+        .list_maker_actor_processes()
+        .expect("inspect leased actor")
+        .remove(0);
+    assert_eq!(leased.schedule_state(), MakerActorScheduleState::Leased);
+    assert_eq!(leased.lease_generation(), 1);
+
+    // The Node dies without resolving its lease, and so does its actor (as
+    // systemd stops a unit's whole control group).
+    let killed = daemon.child_mut();
+    killed.kill().expect("SIGKILL maker daemon");
+    killed.wait().expect("reap killed maker daemon");
+    daemon.0 = None;
+    let _ = kill_process(Pid::from_raw(actor_pid).expect("actor PID"), Signal::KILL);
+    let abandoned = SqliteSwapStore::open(&database)
+        .expect("open observer after the kill")
+        .list_maker_actor_processes()
+        .expect("inspect abandoned actor")
+        .remove(0);
+    assert_eq!(abandoned.schedule_state(), MakerActorScheduleState::Leased);
+    assert_eq!(abandoned.lease_generation(), 1);
+    fs::remove_file(&socket).ok();
+    fs::remove_file(&ready).ok();
+
+    let mut restarted = TestDaemon::spawn(&database, &socket, &ready);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let recovered = loop {
+        let record = SqliteSwapStore::open(&database)
+            .expect("open observer after restart")
+            .list_maker_actor_processes()
+            .expect("inspect recovered actor")
+            .remove(0);
+        if record.schedule_state() == MakerActorScheduleState::Terminal {
+            break record;
+        }
+        if let Some(status) = restarted.child_mut().try_wait().expect("poll maker daemon") {
+            panic!("restarted maker daemon exited: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the restarted Node did not recover the abandoned lease: {record:?}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(
+        recovered.lease_generation(),
+        2,
+        "recovered by one generation transfer, not a fresh claim"
+    );
+    assert_eq!(recovered.attempt_count(), 2);
+    assert_eq!(
+        fs::read_to_string(&invocations).expect("invocation log"),
+        "status\nstatus\n"
+    );
+    // The recovery ran before the restarted Node reports ready; it is
+    // stopped when `restarted` is dropped.
+    wait_for_file(
+        &mut restarted,
+        &ready,
+        Duration::from_secs(30),
+        "restarted daemon readiness",
+    );
 }
 
 #[test]
@@ -322,17 +468,13 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
         Duration::from_secs(10),
         "three-pair daemon readiness",
     );
-    wait_for_file(
+    let child_pid = wait_for_recorded_actor(
         &mut daemon,
+        &database,
+        &xmr_id,
         &xmr_pid_file,
-        Duration::from_secs(5),
         "xmr-unavailable actor identity",
     );
-    let child_pid: u32 = fs::read_to_string(&xmr_pid_file)
-        .expect("read xmr-unavailable actor PID")
-        .trim()
-        .parse()
-        .expect("numeric xmr-unavailable actor PID");
 
     let leased = SqliteSwapStore::open(&database)
         .expect("open observer while xmr-unavailable actor is running")
@@ -865,6 +1007,50 @@ fn wait_for_file(daemon: &mut TestDaemon, path: &Path, timeout: Duration, descri
     loop {
         if path.exists() {
             return;
+        }
+        if let Some(status) = daemon.child_mut().try_wait().expect("poll maker daemon") {
+            panic!("maker daemon exited before {description}: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {description}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Waits until the actor wrote its PID and the supervisor recorded that same
+/// child in the actor's row; returns the PID.
+///
+/// The actor writes its PID file as soon as it runs, which can be before the
+/// supervisor, after `spawn` returns, records the child's identity, and a read
+/// can meet the file half written. Both are polled, up to a bound a loaded
+/// machine does not reach (the actor of a three-worker daemon took longer
+/// than 5 s to start under load).
+fn wait_for_recorded_actor(
+    daemon: &mut TestDaemon,
+    database: &Path,
+    swap_id: &str,
+    pid_file: &Path,
+    description: &str,
+) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let pid = fs::read_to_string(pid_file)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok());
+        if let Some(pid) = pid {
+            let recorded = SqliteSwapStore::open(database)
+                .expect("open actor identity observer")
+                .list_maker_actor_processes()
+                .expect("inspect actor identity")
+                .into_iter()
+                .find(|record| record.swap_id().as_str() == swap_id)
+                .and_then(|record| record.child_identity())
+                .map(|identity| identity.0);
+            if recorded == Some(pid) {
+                return pid;
+            }
         }
         if let Some(status) = daemon.child_mut().try_wait().expect("poll maker daemon") {
             panic!("maker daemon exited before {description}: {status}");

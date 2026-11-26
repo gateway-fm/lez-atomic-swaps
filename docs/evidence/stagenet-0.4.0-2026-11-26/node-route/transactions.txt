@@ -1,0 +1,32 @@
+== faucet-to-maker 94a738290da9df90efd4395403ea628cf15c9042b9a80bb615e55a0bf98d9e5e
+{"missed_tx":null,"txs":[{"tx_hash":"94a738290da9df90efd4395403ea628cf15c9042b9a80bb615e55a0bf98d9e5e","in_pool":false,"block_height":2258576,"block_timestamp":"2026-11-26T01:45:36Z"}]}
+== A-maker-funding 3ff40f7986894e068304c38eed5447ec984afc1599b7fcbfb1a91743d918ab2d
+{"missed_tx":null,"txs":[{"tx_hash":"3ff40f7986894e068304c38eed5447ec984afc1599b7fcbfb1a91743d918ab2d","in_pool":false,"block_height":2258583,"block_timestamp":"2026-11-26T01:58:36Z"}]}
+2026-11-26T01:56:31.920252168Z 2026-11-26 01:56:31.920	I HTTP [172.30.0.3] POST /sendrawtransaction
+2026-11-26T01:56:31.920263293Z 2026-11-26 01:56:31.920	I [172.30.0.3:43970 INC] calling /sendrawtransaction
+2026-11-26T01:56:31.942444460Z 2026-11-26 01:56:31.942	I Transaction added to pool: txid <3ff40f7986894e068304c38eed5447ec984afc1599b7fcbfb1a91743d918ab2d> weight: 2201 fee/byte: 20000, count: 1
+2026-11-26T01:56:38.126779838Z 2026-11-26 01:56:38.126	I Transaction added to pool: txid <3ff40f7986894e068304c38eed5447ec984afc1599b7fcbfb1a91743d918ab2d> weight: 2201 fee/byte: 20000, count: 1
+== A-taker-sweep 5b182e8c75c68fc937db3f99677c795a6c7f6bc9ea16a8a2dc3d8a88874306bf
+{"missed_tx":null,"txs":[{"tx_hash":"5b182e8c75c68fc937db3f99677c795a6c7f6bc9ea16a8a2dc3d8a88874306bf","in_pool":false,"block_height":2258594,"block_timestamp":"2026-11-26T02:13:19Z"}]}
+2026-11-26T02:13:00.336194584Z 2026-11-26 02:13:00.336	I HTTP [172.30.0.4] POST /sendrawtransaction
+2026-11-26T02:13:00.336214167Z 2026-11-26 02:13:00.336	I [172.30.0.4:52366 INC] calling /sendrawtransaction
+2026-11-26T02:13:00.352490667Z 2026-11-26 02:13:00.352	I Transaction added to pool: txid <5b182e8c75c68fc937db3f99677c795a6c7f6bc9ea16a8a2dc3d8a88874306bf> weight: 1519 fee/byte: 20000, count: 1
+2026-11-26T02:13:06.311779587Z 2026-11-26 02:13:06.311	I Transaction added to pool: txid <5b182e8c75c68fc937db3f99677c795a6c7f6bc9ea16a8a2dc3d8a88874306bf> weight: 1519 fee/byte: 20000, count: 1
+== B-maker-funding a722e1e43be96cd83888fbbbe4d2c3107d4349ca9e3b1d2ed401688bc215fe13
+{"missed_tx":null,"txs":[{"tx_hash":"a722e1e43be96cd83888fbbbe4d2c3107d4349ca9e3b1d2ed401688bc215fe13","in_pool":false,"block_height":2258588,"block_timestamp":"2026-11-26T02:03:51Z"}]}
+2026-11-26T02:02:15.087449674Z 2026-11-26 02:02:15.084	I HTTP [172.30.0.3] POST /sendrawtransaction
+2026-11-26T02:02:15.087483883Z 2026-11-26 02:02:15.084	I [172.30.0.3:38432 INC] calling /sendrawtransaction
+2026-11-26T02:02:15.236437883Z 2026-11-26 02:02:15.236	I Transaction added to pool: txid <a722e1e43be96cd83888fbbbe4d2c3107d4349ca9e3b1d2ed401688bc215fe13> weight: 2194 fee/byte: 20000, count: 1
+2026-11-26T02:02:20.015159427Z 2026-11-26 02:02:20.015	I Transaction added to pool: txid <a722e1e43be96cd83888fbbbe4d2c3107d4349ca9e3b1d2ed401688bc215fe13> weight: 2194 fee/byte: 20000, count: 1
+== B-maker-sweep-back 7dcb913175f2e3f6c3c99446f11581f2dba0ac831a5dbbde4b772057de2f0f0a
+{"missed_tx":null,"txs":[{"tx_hash":"7dcb913175f2e3f6c3c99446f11581f2dba0ac831a5dbbde4b772057de2f0f0a","in_pool":false,"block_height":2258649,"block_timestamp":"2026-11-26T04:09:30Z"}]}
+2026-11-26T04:04:02.440754585Z 2026-11-26 04:04:02.440	I HTTP [172.30.0.3] POST /sendrawtransaction
+2026-11-26T04:04:02.440766960Z 2026-11-26 04:04:02.440	I [172.30.0.3:36556 INC] calling /sendrawtransaction
+2026-11-26T04:04:02.455078043Z 2026-11-26 04:04:02.454	I Transaction added to pool: txid <7dcb913175f2e3f6c3c99446f11581f2dba0ac831a5dbbde4b772057de2f0f0a> weight: 1522 fee/byte: 20000, count: 1
+2026-11-26T04:04:08.222894004Z 2026-11-26 04:04:08.222	I Transaction added to pool: txid <7dcb913175f2e3f6c3c99446f11581f2dba0ac831a5dbbde4b772057de2f0f0a> weight: 1522 fee/byte: 20000, count: 1
+== C-maker-funding 2bc4938409ff547c3d210465a63ab3cd03c81e10b1462f2a56e45f1b217991b7
+{"missed_tx":null,"txs":[{"tx_hash":"2bc4938409ff547c3d210465a63ab3cd03c81e10b1462f2a56e45f1b217991b7","in_pool":false,"block_height":2258599,"block_timestamp":"2026-11-26T02:22:11Z"}]}
+2026-11-26T02:21:16.449439925Z 2026-11-26 02:21:16.447	I HTTP [172.30.0.3] POST /sendrawtransaction
+2026-11-26T02:21:16.449454342Z 2026-11-26 02:21:16.447	I [172.30.0.3:54660 INC] calling /sendrawtransaction
+2026-11-26T02:21:16.492625008Z 2026-11-26 02:21:16.492	I Transaction added to pool: txid <2bc4938409ff547c3d210465a63ab3cd03c81e10b1462f2a56e45f1b217991b7> weight: 1523 fee/byte: 20000, count: 1
+2026-11-26T02:21:23.135820553Z 2026-11-26 02:21:23.135	I Transaction added to pool: txid <2bc4938409ff547c3d210465a63ab3cd03c81e10b1462f2a56e45f1b217991b7> weight: 1523 fee/byte: 20000, count: 1

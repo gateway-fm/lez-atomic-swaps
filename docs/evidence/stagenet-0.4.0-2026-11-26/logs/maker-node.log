@@ -1,0 +1,19 @@
+maker actor b5fc18b7c856f724c0f151bcea4b25e374a97eb4d9dc31559a25d955e3150031: drive → observed - (phase taker_lock_confirmed, revision 1, next fund_monero)
+Maker Monero funding: sent 3000000000 in 3ff40f7986894e068304c38eed5447ec984afc1599b7fcbfb1a91743d918ab2d; the network's miners confirm it, the observer records it at 10 confirmations
+maker actor b5fc18b7c856f724c0f151bcea4b25e374a97eb4d9dc31559a25d955e3150031: drive → submitted - (phase taker_lock_confirmed, revision 2, next fund_monero)
+maker actor 3d4c2915531c5ca228ea89ec1afb59926ced7ad42ec408a45538acd6fd2616d1: drive → observed - (phase taker_lock_confirmed, revision 1, next fund_monero)
+Maker Monero funding: sent 3000000000 in a722e1e43be96cd83888fbbbe4d2c3107d4349ca9e3b1d2ed401688bc215fe13; the network's miners confirm it, the observer records it at 10 confirmations
+maker actor 3d4c2915531c5ca228ea89ec1afb59926ced7ad42ec408a45538acd6fd2616d1: drive → submitted - (phase taker_lock_confirmed, revision 2, next fund_monero)
+maker actor b5fc18b7c856f724c0f151bcea4b25e374a97eb4d9dc31559a25d955e3150031: drive → reconciled - (phase both_legs_locked, revision 3, next observe_claim_or_refund)
+maker actor b5fc18b7c856f724c0f151bcea4b25e374a97eb4d9dc31559a25d955e3150031: drive → activated - (phase claim_evidence_available, revision 4, next claim_lez)
+maker actor b5fc18b7c856f724c0f151bcea4b25e374a97eb4d9dc31559a25d955e3150031: claim → awaiting_observation - (phase claim_evidence_available, revision 4, next claim_lez)
+maker actor b5fc18b7c856f724c0f151bcea4b25e374a97eb4d9dc31559a25d955e3150031: claim → completed - (phase completed, revision 5, next complete)
+maker actor 3d4c2915531c5ca228ea89ec1afb59926ced7ad42ec408a45538acd6fd2616d1: drive → reconciled - (phase both_legs_locked, revision 3, next observe_claim_or_refund)
+maker actor 9d17b588f3298891e7632b204e52bbf413c46eba5fafab6db96a4349bb54eaff: drive → observed - (phase taker_lock_confirmed, revision 1, next fund_monero)
+Maker Monero funding: sent 3000000000 in 2bc4938409ff547c3d210465a63ab3cd03c81e10b1462f2a56e45f1b217991b7; the network's miners confirm it, the observer records it at 10 confirmations
+maker actor 9d17b588f3298891e7632b204e52bbf413c46eba5fafab6db96a4349bb54eaff: drive → submitted - (phase taker_lock_confirmed, revision 2, next fund_monero)
+maker actor 9d17b588f3298891e7632b204e52bbf413c46eba5fafab6db96a4349bb54eaff: drive → reconciled - (phase both_legs_locked, revision 3, next observe_claim_or_refund)
+maker actor 3d4c2915531c5ca228ea89ec1afb59926ced7ad42ec408a45538acd6fd2616d1: drive → activated - (phase maker_recovery_available, revision 4, next refund_monero)
+maker actor 3d4c2915531c5ca228ea89ec1afb59926ced7ad42ec408a45538acd6fd2616d1: recover → refunded - (phase refunded, revision 5, next complete)
+maker actor 9d17b588f3298891e7632b204e52bbf413c46eba5fafab6db96a4349bb54eaff: drive → activated - (phase maker_recovery_available, revision 4, next punish_lez)
+maker actor 9d17b588f3298891e7632b204e52bbf413c46eba5fafab6db96a4349bb54eaff: recover → punished - (phase punished, revision 5, next complete)

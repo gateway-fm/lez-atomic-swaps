@@ -1,0 +1,118 @@
+{
+  "scenario": "xmr-wallet-restart",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "179565039804",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "maker": {
+    "swap_id": "e2e8ef2f97762b97d6ee6762d89cdb01d7a207a4479a96e31092f4433abab13e",
+    "role": "maker",
+    "restarts": [
+      {
+        "container": "lez-l4-maker-xmr-wallet",
+        "when": "after the take",
+        "open_wallet_error": "No wallet file",
+        "taker_actor_phase": "lez_locking",
+        "maker_phase": "leased"
+      }
+    ],
+    "lez_before": {
+      "maker": 2405000,
+      "taker": 1595000
+    },
+    "lez_deltas": {
+      "maker": 50000,
+      "taker": -50000
+    },
+    "outcome": "completed",
+    "taker_monero_before": {
+      "address": "4APvmWtJ4CUCFCrwHRjkRhHUyLmNCmCeu8s6CqyJkHpgeVbt11Mijgn2QXz5x61mCG6Taf87vqeWCifJdfmVhajuRvzeE3d",
+      "balance_piconero": 2469037146114414,
+      "daemon_height": 280,
+      "state": "available",
+      "unlocked_piconero": 1800832814764482
+    },
+    "taker_monero_after": {
+      "address": "4APvmWtJ4CUCFCrwHRjkRhHUyLmNCmCeu8s6CqyJkHpgeVbt11Mijgn2QXz5x61mCG6Taf87vqeWCifJdfmVhajuRvzeE3d",
+      "balance_piconero": 2821682951356226,
+      "daemon_height": 300,
+      "state": "available",
+      "unlocked_piconero": 2153524231377052
+    },
+    "taker_monero_sweep": {
+      "txid": "1a1133d7364986d19fe860ea89c5ed50a0485a54c62f1ba05d5741188ff42255",
+      "amount": 998191600000,
+      "height": 291
+    }
+  },
+  "taker": {
+    "swap_id": "d3730747ceec90f676ab455001dc6af6f832f640a9df094915c087a7c0c9e11c",
+    "role": "taker",
+    "restarts": [
+      {
+        "container": "lez-l4-taker-xmr-wallet",
+        "when": "watching for the Monero",
+        "open_wallet_error": "No wallet file",
+        "taker_actor_phase": "taker_lock_confirmed",
+        "maker_phase": "taker_lock_confirmed"
+      },
+      {
+        "container": "lez-l4-taker-xmr-wallet",
+        "when": "before the sweep",
+        "open_wallet_error": "No wallet file",
+        "taker_actor_phase": "awaiting_maker_claim",
+        "maker_phase": "claim_evidence_available"
+      }
+    ],
+    "lez_before": {
+      "maker": 2455000,
+      "taker": 1545000
+    },
+    "lez_deltas": {
+      "maker": 50000,
+      "taker": -50000
+    },
+    "outcome": "completed",
+    "taker_monero_before": {
+      "address": "4APvmWtJ4CUCFCrwHRjkRhHUyLmNCmCeu8s6CqyJkHpgeVbt11Mijgn2QXz5x61mCG6Taf87vqeWCifJdfmVhajuRvzeE3d",
+      "balance_piconero": 2821682951356226,
+      "daemon_height": 300,
+      "state": "available",
+      "unlocked_piconero": 2153524231377052
+    },
+    "taker_monero_after": {
+      "address": "4APvmWtJ4CUCFCrwHRjkRhHUyLmNCmCeu8s6CqyJkHpgeVbt11Mijgn2QXz5x61mCG6Taf87vqeWCifJdfmVhajuRvzeE3d",
+      "balance_piconero": 3174315342618183,
+      "daemon_height": 320,
+      "state": "available",
+      "unlocked_piconero": 2471033529314414
+    },
+    "taker_monero_sweep": {
+      "txid": "bd0928c9c04a5b6aafbec812549fce839badd7833447c26d90d2c109eb06f4e8",
+      "amount": 998191600000,
+      "height": 311
+    }
+  },
+  "result": "passed",
+  "seconds": 371
+}

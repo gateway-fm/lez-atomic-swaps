@@ -1,0 +1,120 @@
+{
+  "scenario": "zec-kill-taker",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "179565039903",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "role": "taker",
+  "points": [
+    {
+      "swap_id": "zec-0e5ddbb1a84ebf7e4b08ae056b1e0b45a6d088d1014e7e21520b04138bae7762",
+      "kill": {
+        "point": "taken",
+        "taker_state": "not_activated",
+        "maker_phase": "leased",
+        "taker_effects": [],
+        "container": "lez-l3-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-25T23:46:42.869205549Z"
+      },
+      "lez_before": {
+        "maker": 2400000,
+        "taker": 1600000
+      },
+      "lez_deltas": {
+        "maker": -50000,
+        "taker": 50000
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "zec-36d44c18f9d0bf3b2396eb2ae2f607e4437ba630dad0f7d09c6f633eeefbfde5",
+      "kill": {
+        "point": "first lock final",
+        "taker_state": "refund_available",
+        "maker_phase": "taker_lock_confirmed",
+        "taker_effects": [],
+        "container": "lez-l3-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-25T23:47:52.342929137Z"
+      },
+      "lez_before": {
+        "maker": 2350000,
+        "taker": 1650000
+      },
+      "lez_deltas": {
+        "maker": -50000,
+        "taker": 50000
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "zec-cade688705084f8ffb7899ba2291aba771568b14515360a6fba1ce571310b66d",
+      "kill": {
+        "point": "both legs locked",
+        "taker_state": "claim_available",
+        "maker_phase": "both_legs_locked",
+        "taker_effects": [],
+        "container": "lez-l3-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-25T23:49:06.568896004Z"
+      },
+      "lez_before": {
+        "maker": 2300000,
+        "taker": 1700000
+      },
+      "lez_deltas": {
+        "maker": -50000,
+        "taker": 50000
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "zec-87eb0fee478f305f2d432187a76deeff8b623d553c3dfcbc7f70bab3440fa52e",
+      "kill": {
+        "point": "claim sent",
+        "taker_state": "claim_in_progress",
+        "maker_phase": "both_legs_locked",
+        "taker_effects": [],
+        "container": "lez-l3-taker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-25T23:50:10.957979048Z"
+      },
+      "lez_before": {
+        "maker": 2250000,
+        "taker": 1750000
+      },
+      "lez_deltas": {
+        "maker": -50000,
+        "taker": 50000
+      },
+      "outcome": "completed"
+    }
+  ],
+  "result": "passed",
+  "seconds": 249
+}

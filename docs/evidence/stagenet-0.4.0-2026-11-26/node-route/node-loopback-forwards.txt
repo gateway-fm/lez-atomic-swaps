@@ -1,0 +1,4 @@
+maker-node socat TCP-LISTEN:18081,bind=127.0.0.1,fork,reuseaddr TCP:lez-stagenet040-monerod:38081 
+maker-node socat TCP-LISTEN:18083,bind=127.0.0.1,fork,reuseaddr TCP:lez-stagenet040-wallet-maker:38083 
+taker-node socat TCP-LISTEN:18081,bind=127.0.0.1,fork,reuseaddr TCP:lez-stagenet040-monerod:38081 
+taker-node socat TCP-LISTEN:18083,bind=127.0.0.1,fork,reuseaddr TCP:lez-stagenet040-wallet-taker:38083 

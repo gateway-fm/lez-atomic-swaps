@@ -1,0 +1,128 @@
+
+[00:12:22] === logos-happy (TakerSellsLez)
+
+[00:12:22] both Basecamps recreated on the logos transport
+
+[00:12:32] the Taker's Delivery node dials the Maker's at /ip4/192.168.144.4/tcp/60000/p2p/16Uiu2HAmBUuKTL9aJ6JpqSdYCCimSuZ9gpjMMNaZNuKrQUyaZXEQ
+
+[00:12:40] the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket
+   4713
+   {"delivery_sources":[{"directory":"/var/lib/lez/taker/delivery","maker_public_key":"03b20e3cabd304e1627af316c28e75b371814f5e24f405634ba59ec7a3c665172c","source_id":"local-maker"}],"chat_socket":"/run/lez/taker/logos-chat-proxy.sock"}
+
+[00:12:40] Maker desk publishes TakerSellsLez Zcash offers from its form until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[00:12:45] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [31m✗[0m taker: real Node health
+    Expected texts not found: ["Node ready"]; desk: {"ready":true,"busy":false,"status":"Node needs attention","detail":"Offer delivery: available","output":"{\"ok\":true,\"result\":{\"chat\":\"available\",\"degraded\":true,\"delivery\":\"available\",\"lez_chain\":{\"degraded\":false,\"finalized_advanced_at_unix_seconds\":1795652006,\"finalized_block_id\":5758,\"finalized_flat_seconds\":0,\"observed_at_unix_seconds\":1795652006,\"stall_threshold_seconds\":60,\"tip_block_id\":5763},\"p"}
+  [31m✗[0m taker: taking one offer prepares the real Taker BTC action
+    take rejected by the Taker Node: {"code":"chain_unavailable","message":"Taker dependency unavailable (chain_unavailable)","ok":false}
+2 passed, 2 failed
+
+[00:14:16] FAILED: step failed
+
+[00:14:16] Logos phase kept in runtime/lanes/3/evidence/logos/20261126T001222Z-Zcash-TakerSellsLez (both containers since 2026-11-26T00:12:22Z, both Chat module logs)
+   == 20261126T001222Z-Zcash-TakerSellsLez
+      online: Maker 00:12:30.317, Taker 00:12:40.076; conversation created 00:14:14.787
+      Chat: the Taker sent 0 message(s), the Maker received 0
+      publish 00:14:14.788 /logos-chat/1/52e595e1/proto 0x7cdd21750cb3: relayed to 1 peer(s); Maker relay 00:14:14.791, handed to its Chat module 00:14:14.791
+      publish 00:14:14.794 /logos-chat/1/3ba3c088d084/proto 0x0e1e9bb65878: relayed to 1 peer(s); Maker relay 00:14:14.796, handed to its Chat module no
+      Maker protocols: relay=true rlnRelay=false store=false filter=true lightPush=true peerExchange=true rendezvous=true
+
+[00:14:16] maker Delivery node: errors, warnings and peer events
+   2026-11-26T00:13:12.359409299Z [2026-11-26 00:13:12.357] [out] [delivery_module] WRN 2026-11-26 00:13:12.356+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=4 error="no store peer available"
+   2026-11-26T00:13:15.362471258Z [2026-11-26 00:13:15.362] [out] [delivery_module] WRN 2026-11-26 00:13:15.361+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=6 error="no store peer available"
+   2026-11-26T00:13:18.366978510Z [2026-11-26 00:13:18.365] [out] [delivery_module] WRN 2026-11-26 00:13:18.364+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=6 error="no store peer available"
+   2026-11-26T00:13:21.373177345Z [2026-11-26 00:13:21.371] [out] [delivery_module] WRN 2026-11-26 00:13:21.368+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=6 error="no store peer available"
+   2026-11-26T00:13:24.372360138Z [2026-11-26 00:13:24.372] [out] [delivery_module] WRN 2026-11-26 00:13:24.371+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=8 error="no store peer available"
+   2026-11-26T00:13:27.375885875Z [2026-11-26 00:13:27.375] [out] [delivery_module] WRN 2026-11-26 00:13:27.373+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=8 error="no store peer available"
+   2026-11-26T00:13:30.379846376Z [2026-11-26 00:13:30.379] [out] [delivery_module] WRN 2026-11-26 00:13:30.378+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=8 error="no store peer available"
+   2026-11-26T00:13:33.384897711Z [2026-11-26 00:13:33.384] [out] [delivery_module] WRN 2026-11-26 00:13:33.384+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=8 error="no store peer available"
+   2026-11-26T00:13:36.386822712Z [2026-11-26 00:13:36.386] [out] [delivery_module] WRN 2026-11-26 00:13:36.386+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=10 error="no store peer available"
+   2026-11-26T00:13:39.389425756Z [2026-11-26 00:13:39.389] [out] [delivery_module] WRN 2026-11-26 00:13:39.388+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=10 error="no store peer available"
+   2026-11-26T00:13:40.078576131Z [2026-11-26 00:13:40.075] [out] [delivery_module] DBG 2026-11-26 00:13:40.074+00:00 Dialing peer                               topics="libp2p dialer" tid=374 peerId=16U*P25fZK addrs="[/ip4/192.168.144.9/tcp/34330]"
+   2026-11-26T00:13:40.078585964Z [2026-11-26 00:13:40.075] [out] [delivery_module] DBG 2026-11-26 00:13:40.074+00:00 Expanded address and hostname              topics="libp2p dialer" tid=374 expandedAddress=/ip4/192.168.144.9/tcp/34330 hostname=192.168.144.9 resolvedAddresses="[/ip4/192.168.144.9/tcp/
+   2026-11-26T00:13:40.078587673Z [2026-11-26 00:13:40.075] [out] [delivery_module] DBG 2026-11-26 00:13:40.074+00:00 Dialing peer                               topics="libp2p dialer" tid=374 peerId=16U*P25fZK addrs="[/ip4/192.168.144.9/tcp/43603]"
+   2026-11-26T00:13:40.078589131Z [2026-11-26 00:13:40.075] [out] [delivery_module] DBG 2026-11-26 00:13:40.074+00:00 Expanded address and hostname              topics="libp2p dialer" tid=374 expandedAddress=/ip4/192.168.144.9/tcp/43603 hostname=192.168.144.9 resolvedAddresses="[/ip4/192.168.144.9/tcp/
+   2026-11-26T00:13:40.078590631Z [2026-11-26 00:13:40.075] [out] [delivery_module] DBG 2026-11-26 00:13:40.074+00:00 Dialing failed                             topics="libp2p dialer" tid=374 description="TcpTransport dial error: (111) Connection refused" peerId=16U*P25fZK
+   2026-11-26T00:13:40.078592131Z [2026-11-26 00:13:40.077] [out] [delivery_module] DBG 2026-11-26 00:13:40.077+00:00 Dial successful                            topics="libp2p dialer" tid=374 peerId=16U*P25fZK
+   2026-11-26T00:13:42.393169132Z [2026-11-26 00:13:42.393] [out] [delivery_module] WRN 2026-11-26 00:13:42.391+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=10 error="no store peer available"
+   2026-11-26T00:13:45.395237550Z [2026-11-26 00:13:45.395] [out] [delivery_module] WRN 2026-11-26 00:13:45.394+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+   2026-11-26T00:13:48.400564343Z [2026-11-26 00:13:48.400] [out] [delivery_module] WRN 2026-11-26 00:13:48.399+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+   2026-11-26T00:13:51.406398470Z [2026-11-26 00:13:51.405] [out] [delivery_module] WRN 2026-11-26 00:13:51.405+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+   2026-11-26T00:13:51.406418261Z [2026-11-26 00:13:51.405] [out] [delivery_module] WRN 2026-11-26 00:13:51.405+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=374 requestId=c8b93aff0f6b006270a7 msgHash=0x4b1703503d88586297dfe0c406fb
+   2026-11-26T00:13:51.406420386Z [2026-11-26 00:13:51.405] [out] [delivery_module] WRN 2026-11-26 00:13:51.405+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=374 requestId=29a0b4b340c2bc2c0ba2 msgHash=0xd3b2d880677203625b6e24b86ac2
+   2026-11-26T00:13:54.410146429Z [2026-11-26 00:13:54.409] [out] [delivery_module] WRN 2026-11-26 00:13:54.408+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+   2026-11-26T00:13:57.412817417Z [2026-11-26 00:13:57.412] [out] [delivery_module] WRN 2026-11-26 00:13:57.411+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+   2026-11-26T00:14:00.416875043Z [2026-11-26 00:14:00.416] [out] [delivery_module] WRN 2026-11-26 00:14:00.415+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+   2026-11-26T00:14:01.419251002Z [2026-11-26 00:14:01.419] [out] [delivery_module] WRN 2026-11-26 00:14:01.417+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=374 requestId=a1f1b465bfc375184021 msgHash=0x4577d0c2d1fdfe4ea2b24f40a71c
+   2026-11-26T00:14:01.419271043Z [2026-11-26 00:14:01.419] [out] [delivery_module] WRN 2026-11-26 00:14:01.417+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=374 requestId=e508529c219bf1b93ef5 msgHash=0x0b85eadb684d97415d9fdf0183fc
+   2026-11-26T00:14:03.422215378Z [2026-11-26 00:14:03.421] [out] [delivery_module] WRN 2026-11-26 00:14:03.420+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=10 error="no store peer available"
+   2026-11-26T00:14:06.423982379Z [2026-11-26 00:14:06.423] [out] [delivery_module] WRN 2026-11-26 00:14:06.422+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+   2026-11-26T00:14:09.425564464Z [2026-11-26 00:14:09.425] [out] [delivery_module] WRN 2026-11-26 00:14:09.424+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+   2026-11-26T00:14:10.079343256Z [2026-11-26 00:14:10.077] [out] [delivery_module] DBG 2026-11-26 00:14:10.075+00:00 Dialing peer                               topics="libp2p dialer" tid=374 peerId=16U*P25fZK addrs="[/ip4/192.168.144.9/tcp/34330]"
+   2026-11-26T00:14:10.079363631Z [2026-11-26 00:14:10.077] [out] [delivery_module] DBG 2026-11-26 00:14:10.075+00:00 Expanded address and hostname              topics="libp2p dialer" tid=374 expandedAddress=/ip4/192.168.144.9/tcp/34330 hostname=192.168.144.9 resolvedAddresses="[/ip4/192.168.144.9/tcp/
+   2026-11-26T00:14:10.079365631Z [2026-11-26 00:14:10.077] [out] [delivery_module] DBG 2026-11-26 00:14:10.075+00:00 Dialing peer                               topics="libp2p dialer" tid=374 peerId=16U*P25fZK addrs="[/ip4/192.168.144.9/tcp/43603]"
+   2026-11-26T00:14:10.079374089Z [2026-11-26 00:14:10.077] [out] [delivery_module] DBG 2026-11-26 00:14:10.075+00:00 Expanded address and hostname              topics="libp2p dialer" tid=374 expandedAddress=/ip4/192.168.144.9/tcp/43603 hostname=192.168.144.9 resolvedAddresses="[/ip4/192.168.144.9/tcp/
+   2026-11-26T00:14:10.079375589Z [2026-11-26 00:14:10.077] [out] [delivery_module] DBG 2026-11-26 00:14:10.076+00:00 Dialing failed                             topics="libp2p dialer" tid=374 description="TcpTransport dial error: (111) Connection refused" peerId=16U*P25fZK
+   2026-11-26T00:14:10.079935673Z [2026-11-26 00:14:10.079] [out] [delivery_module] DBG 2026-11-26 00:14:10.078+00:00 Dial successful                            topics="libp2p dialer" tid=374 peerId=16U*P25fZK
+   2026-11-26T00:14:11.434815715Z [2026-11-26 00:14:11.433] [out] [delivery_module] WRN 2026-11-26 00:14:11.431+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=374 requestId=7f8d4167226d09c93c39 msgHash=0x6659fca0410d4b0b4b7093c8bb6e
+   2026-11-26T00:14:11.434837590Z [2026-11-26 00:14:11.433] [out] [delivery_module] WRN 2026-11-26 00:14:11.431+00:00 Message propagated but not validated by a store node within time window; stop trying. topics="send service" tid=374 requestId=ba1740479af0365cc9b8 msgHash=0x43fc2d43f236b46f30ba61afbc7e
+   2026-11-26T00:14:12.433977299Z [2026-11-26 00:14:12.433] [out] [delivery_module] WRN 2026-11-26 00:14:12.432+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=10 error="no store peer available"
+   2026-11-26T00:14:15.436515633Z [2026-11-26 00:14:15.436] [out] [delivery_module] WRN 2026-11-26 00:14:15.435+00:00 Skipping store validation for              topics="send service" tid=374 messageCount=12 error="no store peer available"
+
+[00:14:17] taker Delivery node: errors, warnings and peer events
+   2026-11-26T00:12:36.054685421Z [2026-11-26 00:12:36.054] [out] [delivery_module] WRN 2026-11-26 00:12:36.053+00:00 whether to mount mix is not specified, defaulting to not mounting topics="waku conf builder" tid=375
+   2026-11-26T00:12:40.074588131Z [2026-11-26 00:12:40.072] [out] [delivery_module] DBG 2026-11-26 00:12:40.071+00:00 About to accept incoming connection        topics="libp2p switch" tid=375
+   2026-11-26T00:12:40.074613506Z [2026-11-26 00:12:40.073] [out] [delivery_module] DBG 2026-11-26 00:12:40.071+00:00 Started libp2p node                        topics="libp2p switch" tid=375 peer="(peerId: 16Uiu2HAkytntD9sABXdmAPu5uj2jzAuCgxQZwrMjwT6bXoP25fZK, listenAddrs: [/ip4/0.0.0.0/tcp/43603], ad
+   2026-11-26T00:12:40.074620131Z [2026-11-26 00:12:40.073] [out] [delivery_module] DBG 2026-11-26 00:12:40.071+00:00 Dialing peer                               topics="libp2p dialer" tid=375 peerId=16U*yaZXEQ addrs="[/ip4/192.168.144.4/tcp/60000]"
+   2026-11-26T00:12:40.074621548Z [2026-11-26 00:12:40.073] [out] [delivery_module] DBG 2026-11-26 00:12:40.071+00:00 Expanded address and hostname              topics="libp2p dialer" tid=375 expandedAddress=/ip4/192.168.144.4/tcp/60000 hostname=192.168.144.4 resolvedAddresses="[/ip4/192.168.144.4/tcp/
+   2026-11-26T00:12:40.086580423Z [2026-11-26 00:12:40.086] [out] [delivery_module] DBG 2026-11-26 00:12:40.081+00:00 Dial successful                            topics="libp2p dialer" tid=375 peerId=16U*yaZXEQ
+   2026-11-26T00:12:40.086595839Z [2026-11-26 00:12:40.086] [out] [delivery_module] INF 2026-11-26 00:12:40.082+00:00 Incoming WakuRelay connection              topics="waku relay" tid=375 connection=16U*yaZXEQ:6b0779782143dbd5b50f6e90 protocol=/vac/waku/relay/2.0.0
+   2026-11-26T00:12:40.096576881Z [2026-11-26 00:12:40.096] [out] [delivery_module] INF 2026-11-26 00:12:40.092+00:00 Finished dialing multiple peers            tid=375 successfulConns=1 attempted=1
+   2026-11-26T00:12:40.096579339Z [2026-11-26 00:12:40.096] [out] [delivery_module] INF 2026-11-26 00:12:40.093+00:00 Relay peer connections                     topics="waku node peer_manager" tid=375 inRelayConns=0/50 outRelayConns=1/25 totalConnections=1/150 notConnectedPeers=1 outsideBackoffPeers=1
+   2026-11-26T00:12:40.097853923Z [2026-11-26 00:12:40.097] [out] [delivery_module] WRN 2026-11-26 00:12:40.096+00:00 No external IP provided for the ENR, this node will not be discoverable topics="eth p2p discv5" tid=375
+   2026-11-26T00:12:40.098425589Z [2026-11-26 00:12:40.098] [out] [delivery_module] WRN 2026-11-26 00:12:40.097+00:00 NAT already initialized, skipping as cannot be done multiple times topics="nat" tid=375
+   2026-11-26T00:12:40.108359173Z [2026-11-26 00:12:40.108] [out] [delivery_module] DBG 2026-11-26 00:12:40.107+00:00 calculateConnectionState                   tid=375 relayCount=1 storeClientCount=0 lightpushCount=1 filterCount=1
+   2026-11-26T00:12:40.108720464Z [2026-11-26 00:12:40.108] [out] [delivery_module] DBG 2026-11-26 00:12:40.107+00:00 connectionStatus change                    tid=375 oldstatus=Disconnected newstatus=PartiallyConnected
+   2026-11-26T00:12:40.109339298Z [2026-11-26 00:12:40.108] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_status_change","connectionStatus":"PartiallyConnected"}
+   2026-11-26T00:12:40.109352089Z [2026-11-26 00:12:40.109] [out] [delivery_module] INF 2026-11-26 00:12:40.107+00:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=375 successfulConns=1 attempted=1
+   2026-11-26T00:12:40.109503714Z [2026-11-26 00:12:40.109] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_change","peerId":"16Uiu2HAmBUuKTL9aJ6JpqSdYCCimSuZ9gpjMMNaZNuKrQUyaZXEQ","peerEvent":"EventMetadataUpdated"}
+   2026-11-26T00:12:40.109512923Z [2026-11-26 00:12:40.109] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback: Unknown event type: connection_change
+   2026-11-26T00:12:40.109789173Z [2026-11-26 00:12:40.109] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_change","peerId":"16Uiu2HAmBUuKTL9aJ6JpqSdYCCimSuZ9gpjMMNaZNuKrQUyaZXEQ","peerEvent":"EventConnected"}
+   2026-11-26T00:12:40.109801798Z [2026-11-26 00:12:40.109] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback: Unknown event type: connection_change
+   2026-11-26T00:12:40.210487089Z [2026-11-26 00:12:40.210] [out] [delivery_module] DBG 2026-11-26 00:12:40.209+00:00 calculateConnectionState                   tid=375 relayCount=1 storeClientCount=0 lightpushCount=1 filterCount=1
+   2026-11-26T00:13:10.076990881Z [2026-11-26 00:13:10.076] [out] [delivery_module] DBG 2026-11-26 00:13:10.075+00:00 Accepted an incoming connection            topics="libp2p switch" tid=375 conn=:6b0779962143dbd5b50f6eaa
+   2026-11-26T00:13:10.077010548Z [2026-11-26 00:13:10.076] [out] [delivery_module] DBG 2026-11-26 00:13:10.075+00:00 About to accept incoming connection        topics="libp2p switch" tid=375
+   2026-11-26T00:13:10.080281089Z [2026-11-26 00:13:10.080] [out] [delivery_module] DBG 2026-11-26 00:13:10.078+00:00 dialMe answer is reachable                 topics="libp2p autonatservice" tid=375 peerId=16Uiu2HAmBUuKTL9aJ6JpqSdYCCimSuZ9gpjMMNaZNuKrQUyaZXEQ
+   2026-11-26T00:13:40.078461506Z [2026-11-26 00:13:40.075] [out] [delivery_module] DBG 2026-11-26 00:13:40.074+00:00 Accepted an incoming connection            topics="libp2p switch" tid=375 conn=:6b0779b42143dbd5b50f6ec6
+   2026-11-26T00:13:40.078478464Z [2026-11-26 00:13:40.075] [out] [delivery_module] DBG 2026-11-26 00:13:40.074+00:00 About to accept incoming connection        topics="libp2p switch" tid=375
+   2026-11-26T00:13:40.080352631Z [2026-11-26 00:13:40.080] [out] [delivery_module] DBG 2026-11-26 00:13:40.079+00:00 dialMe answer is reachable                 topics="libp2p autonatservice" tid=375 peerId=16Uiu2HAmBUuKTL9aJ6JpqSdYCCimSuZ9gpjMMNaZNuKrQUyaZXEQ
+   2026-11-26T00:14:10.078282048Z [2026-11-26 00:14:10.077] [out] [delivery_module] DBG 2026-11-26 00:14:10.076+00:00 Accepted an incoming connection            topics="libp2p switch" tid=375 conn=:6b0779d22143dbd5b50f6ee2
+   2026-11-26T00:14:10.078309131Z [2026-11-26 00:14:10.077] [out] [delivery_module] DBG 2026-11-26 00:14:10.076+00:00 About to accept incoming connection        topics="libp2p switch" tid=375
+   2026-11-26T00:14:10.081202923Z [2026-11-26 00:14:10.080] [out] [delivery_module] ERR 2026-11-26 00:14:10.079+00:00 failed to send the buffer                  topics="libp2p yamux" tid=375 description="Write couldn't finish writing"
+   2026-11-26T00:14:10.081213506Z [2026-11-26 00:14:10.081] [out] [delivery_module] DBG 2026-11-26 00:14:10.079+00:00 dialMe answer is reachable                 topics="libp2p autonatservice" tid=375 peerId=16Uiu2HAmBUuKTL9aJ6JpqSdYCCimSuZ9gpjMMNaZNuKrQUyaZXEQ
+
+[00:14:17] maker Chat module:
+   2026-11-26T00:12:30.317 INFO: chat_module::actions: delivery is online
+
+[00:14:17] taker Chat module:
+   2026-11-26T00:12:40.075 INFO: chat_module::actions: delivery is online
+   2026-11-26T00:14:14.786 INFO: chat_module::actions: created direct conversation 54d96efb20f6c601637a8fdc478df432
+
+[00:14:17] the Taker Node's last lines:
+
+[00:14:17] both Basecamps recreated on the local transport
+[01:14:31]   kept maker-container.log: 357 lines, 37 Delivery dumps dropped, 2 redacted
+[01:14:31]   kept maker-node.log: 2354 lines, 0 Delivery dumps dropped, 0 redacted
+[01:14:31]   kept maker-basecamp.log: 344 lines, 35 Delivery dumps dropped, 2 redacted
+[01:14:31]   kept maker-health.json: 57 lines, 0 Delivery dumps dropped, 0 redacted
+[01:14:31]   kept taker-container.log: 313 lines, 33 Delivery dumps dropped, 2 redacted
+[01:14:31]   kept taker-node.log: 0 lines, 0 Delivery dumps dropped, 0 redacted
+[01:14:31]   kept taker-basecamp.log: 279 lines, 25 Delivery dumps dropped, 2 redacted
+[01:14:31]   kept taker-health.json: 114 lines, 0 Delivery dumps dropped, 0 redacted

@@ -1,0 +1,23 @@
+{
+  "name": "lez_zcash_node",
+  "display_name": "Zcash Node",
+  "version": "0.4.0",
+  "type": "ui_qml",
+  "category": "blockchain",
+  "description": "Hosts a Zcash node (Zebra, zebrad_module) in this Basecamp.",
+  "interface": "universal",
+  "main": "lez_zcash_node_plugin",
+  "view": "qml/Main.qml",
+  "icon": "icons/zcash.svg",
+  "dependencies": [
+    "zebrad_module"
+  ],
+  "dependency_overrides": {
+    "zebrad_module": {
+      "file": "deps/zebrad_module.lidl"
+    }
+  },
+  "codegen": {
+    "rep": "src/lez_zcash_node.rep"
+  }
+}

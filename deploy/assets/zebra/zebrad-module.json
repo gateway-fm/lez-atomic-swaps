@@ -1,0 +1,9 @@
+{
+  "activationHeights": {"nu7": 1},
+  "minerAddress": "__LEZ_MAKER_ZCASH_ADDRESS__",
+  "cacheDir": "/var/lib/zebra/regtest",
+  "exposeJsonRpc": "0.0.0.0:18232",
+  "listenAddr": "127.0.0.1:18344",
+  "peersetInitialTargetSize": 1,
+  "logFilter": "info"
+}

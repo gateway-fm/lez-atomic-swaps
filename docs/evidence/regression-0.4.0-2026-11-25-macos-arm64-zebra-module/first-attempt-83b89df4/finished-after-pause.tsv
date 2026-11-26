@@ -1,0 +1,5 @@
+# the four tries that finished after the runner's scheduler was paused (SIGSTOP 21:54Z); their lane verdict files, not recorded in results.tsv by the runner
+node:xmr:xmr-custody-credit:TakerSellsLez	1	PASSED	238	lane 1
+node:zec:zec-bitcoin-down:TakerSellsForeign	1	PASSED	269	lane 2
+ui:xmr:xmr-concurrent:TakerSellsLez	1	PASSED	321	lane 3
+node:zec:zec-kill-maker:TakerSellsForeign	1	PASSED	338	lane 4

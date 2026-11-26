@@ -36,6 +36,8 @@ services:
     depends_on: !override
       bitcoin-core:
         condition: service_healthy
+      zebra:
+        condition: service_started
     environment:
       LEZ_BITCOIN_CORE_HOST: ${LEZ_CONTAINER_PREFIX}-bitcoin-core
       LEZ_ZEBRA_HOST: ${LEZ_CONTAINER_PREFIX}-zebra

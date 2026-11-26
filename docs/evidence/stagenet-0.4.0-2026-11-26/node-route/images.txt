@@ -1,0 +1,32 @@
+checked 2026-11-26T01:50:55Z
+== lez-stagenet040-maker-node:local sha256:efe7c6286c6fc4effa01f37bb99b1d59f166b4196979cdd3ca2931636df8abff
+build-source.txt f259e791b47f9cda1ee64344790bf977950babcc
+sidecar-source.txt f259e791b47f9cda1ee64344790bf977950babcc
+lez-btc-maker-actor matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-logos-price-worker matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-maker-chat-gateway matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-maker-cli matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-maker-node matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-runtime-healthcheck matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-v02-bridge-poc matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-v02-xmr-stage-a-plan matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-xmr-maker-actor matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-zec-maker-actor matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+xmr-reference-monero-fund matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+xmr-reference-monero-refund matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+xmr-reference-monero-verify matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+xmr-reference-tag15 matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+xmr-reference-tag15-finalized matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+xmr-reference-tag17 matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+== lez-stagenet040-taker-node:local sha256:e36a624c73b61e72b33d1aaa513e264ca3706881e2c17320836739a5d27b3ebe
+build-source.txt f259e791b47f9cda1ee64344790bf977950babcc
+sidecar-source.txt f259e791b47f9cda1ee64344790bf977950babcc
+lez-btc-taker-actor matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-runtime-healthcheck matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-taker-chat-gateway matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-taker-cli matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-taker-node matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-taker-registry-init matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-v02-bridge-poc matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-v02-xmr-stage-a-plan matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0
+lez-zec-taker-actor matches of LEZ_TEST_HOOKS|test_hooks|test-hooks: 0

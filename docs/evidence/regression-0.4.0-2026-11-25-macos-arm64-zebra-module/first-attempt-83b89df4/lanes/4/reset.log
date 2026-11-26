@@ -1,0 +1,12 @@
+[reset 21:53:13] holding both Nodes down inside their Basecamps (their per-swap sidecars stop with them)
+[reset 21:53:15] Taker: swap directories and registry rows
+  registry: swaps, authorities and requests cleared
+[reset 21:53:15] Maker: swap directories, actor registrations, negotiations, consumed offers
+  maker_zec_negotiations: 4 rows removed
+  maker_offers (reserved/consumed): 4 rows removed
+  swaps (+ actor registrations, progress, events, projections): 4 rows removed
+  zec_sdk_agreements (+ every ZEC recovery row): 4 rows removed
+[reset 21:53:15] Bitcoin wallets: release coins reserved by plans that never broadcast
+[reset 21:53:16] exported evidence: back to the certified sample
+[reset 21:53:16] releasing both Nodes
+[reset 21:53:21] done: Taker lists 0 swaps, Maker lists 0

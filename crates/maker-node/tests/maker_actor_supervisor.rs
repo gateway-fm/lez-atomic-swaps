@@ -23,18 +23,19 @@ use btc_fixture::BtcAuthorityFixture;
 use btc_reference_actor::ActorConfig as BtcActorConfig;
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
-    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorResolution,
-    clear_maker_lez_claim_admissions, prepare_maker_actor, supervise_one_abandoned_maker_actor,
-    supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
+    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
+    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, clear_maker_lez_claim_admissions,
+    prepare_maker_actor, supervise_one_due_maker_actor_until,
 };
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, RecoverySchedule, SwapCoordinator,
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    ActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
-    MakerActorManualAction, MakerActorManualActionState, MakerActorProgressObservationV1,
-    MakerActorScheduleState, SqliteSwapStore, validate_maker_actor_program,
+    ActorHeldLock, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,
+    MakerActorManifestV1, MakerActorManualAction, MakerActorManualActionState,
+    MakerActorProgressObservationV1, MakerActorScheduleState, SqliteSwapStore,
+    validate_maker_actor_program,
 };
 use rustix::{
     process::{Pid, Signal, kill_process},
@@ -47,6 +48,64 @@ use zec_reference_actor::ActorConfig;
 
 use support::actor_deployment;
 use xmr_chat_fixture::XmrChatFixture;
+
+/// How long a test waits, after a pass, for its actor's lock to be released.
+///
+/// A pass ends with its actor process reaped and its lock dropped, and the
+/// next pass of these tests starts at once, where a Node waits at least its
+/// requeue delay (a second or more). The kernel releases the lock when the
+/// last descriptor of it closes, and on macOS that can trail the pass: a
+/// reaped child's `flock` can stay held for a few milliseconds after `wait`
+/// returns (tens under load). A next pass in that window finds the lock taken
+/// and backs off
+/// (`actor_lock_unavailable`), which is right for a Node and not what the test
+/// is about. Each pass here therefore waits until its actor's lock is free; a
+/// lock still held after this bound is held by something real, and the test
+/// fails on it.
+const PASS_LOCK_RELEASE: Duration = Duration::from_secs(30);
+
+fn assert_lock_released(
+    store: &SqliteSwapStore,
+    outcome: Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError>,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    if let Ok(Some(outcome)) = &outcome {
+        let record = store
+            .maker_actor_process(outcome.swap_id())
+            .unwrap()
+            .expect("the supervised actor's row");
+        let released = ActorHeldLock::acquire_for_within(
+            record.swap_id(),
+            record.manifest().state_database_path(),
+            PASS_LOCK_RELEASE,
+        );
+        assert!(
+            released.is_ok(),
+            "{}: the actor's lock is still held after its pass: {released:?}",
+            outcome.swap_id().as_str()
+        );
+    }
+    outcome
+}
+
+fn supervise_one_due_maker_actor(
+    store: &mut SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    now: u64,
+    config: &MakerActorSupervisorConfig,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    let outcome = lez_maker_node::supervise_one_due_maker_actor(store, owner, now, config);
+    assert_lock_released(store, outcome)
+}
+
+fn supervise_one_abandoned_maker_actor(
+    store: &mut SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    now: u64,
+    config: &MakerActorSupervisorConfig,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    let outcome = lez_maker_node::supervise_one_abandoned_maker_actor(store, owner, now, config);
+    assert_lock_released(store, outcome)
+}
 
 fn boottime_milliseconds() -> u64 {
     #[cfg(target_os = "linux")]
@@ -1330,6 +1389,67 @@ fn live_old_lock_is_not_stolen_and_does_not_block_a_due_peer() {
     assert_eq!(locked.lease_generation(), 1);
     assert_eq!(locked.attempt_count(), 1);
     drop(old_process_lock);
+}
+
+#[test]
+fn a_lease_another_worker_just_claimed_is_not_recovered_as_abandoned() {
+    // Workers of one Node share its lease owner. A worker claims the row and
+    // then takes the actor's lock; in between, the lock is free. Another
+    // worker's recovery pass took that lease for abandoned, transferred it and
+    // ran the actor, and the claiming worker, finding the lock taken, could no
+    // longer resolve its own lease ("lease conflicts with durable owner"):
+    // its error stopped the supervisor and the Node.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-sibling-claim";
+    let invoked = root.path().join("invoked");
+    let program = format!(
+        "#!/bin/sh\n\
+         printf '%s\\n' \"$3\" >> '{}'\n\
+         exit 95\n",
+        invoked.display()
+    );
+    let mut store = registered_store(root.path(), swap_id, program.as_bytes());
+    let swap_id = SwapId::new(swap_id).unwrap();
+    let node = MakerActorLeaseOwner::new([0x65; 16]).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(20), 5, 30, 8_192).unwrap();
+
+    // One worker has claimed the row and not yet taken the lock.
+    let claimed = store
+        .claim_maker_actor(&swap_id, node, 10)
+        .unwrap()
+        .unwrap();
+
+    // Another worker's recovery pass leaves it alone.
+    assert!(
+        supervise_one_abandoned_maker_actor(&mut store, node, 10, &config)
+            .unwrap()
+            .is_none(),
+        "a lease of this Node's own owner is a live worker's, not abandoned"
+    );
+    assert!(!invoked.exists(), "no actor ran for the recovery pass");
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Leased);
+    assert_eq!(record.lease_generation(), claimed.generation());
+
+    // The claiming worker still owns its lease and resolves it.
+    store
+        .resolve_maker_actor_attempt(
+            &claimed,
+            MakerActorAttemptResolution::Requeue { not_before: 15 },
+            10,
+        )
+        .expect("the claiming worker resolves its own lease");
+
+    // A lease another Node left is still recovered.
+    let stale = store
+        .claim_maker_actor(&swap_id, MakerActorLeaseOwner::new([0x66; 16]).unwrap(), 20)
+        .unwrap()
+        .unwrap();
+    let recovered = supervise_one_abandoned_maker_actor(&mut store, node, 20, &config)
+        .unwrap()
+        .expect("an abandoned lease of another owner is recovered");
+    assert_eq!(recovered.generation(), stale.generation() + 1);
 }
 
 #[test]

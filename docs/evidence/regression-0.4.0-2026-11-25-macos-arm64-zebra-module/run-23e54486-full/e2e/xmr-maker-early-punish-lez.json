@@ -1,0 +1,138 @@
+{
+  "scenario": "xmr-maker-early-punish",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "1795646843",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "bc59025077a2ba9cd8baf21f5fc8f5e649d3023c23478b4cfca91dcb6eb336c0",
+  "offer_id": "offer-e2e-xmr-1795646843",
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "early_punish": {
+    "schema": "lez_v02_escrow_claim_probe_v1",
+    "test_only": true,
+    "effect": "xmr-punish",
+    "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+    "swap_id": "bc59025077a2ba9cd8baf21f5fc8f5e649d3023c23478b4cfca91dcb6eb336c0",
+    "metadata_account": "0a63eec2b7292c55367cc59a13dfe090d4cd9e1204699fd30ce39b7f34d70d2c",
+    "custody_account": "a4c21f190f5640fa2c8514c3e61c850538d90a89cfc6346de54d1fc9e3fc5ea5",
+    "claimant_account": "3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5",
+    "signer_is_claimant": true,
+    "stored_secret_digest": null,
+    "presented_preimage": null,
+    "presented_preimage_sha256": null,
+    "presented_preimage_matches_digest": false,
+    "amount": 50000,
+    "refund_at_ms": 1795647595000,
+    "submitted_before_refund_at": true,
+    "punish_at_ms": 1795647875000,
+    "submitted_before_punish_at": true,
+    "transaction_id": "3dbe37908dd43016a0e26a85aad0eec6695bfdd7a9d7fa077320861430484472",
+    "submission": {
+      "decision": "accepted",
+      "error_code": null,
+      "error_message": null
+    },
+    "included": false,
+    "included_in_block": null,
+    "observed_seconds": 30,
+    "before": {
+      "sequencer_tip": 1916,
+      "tip_timestamp_ms": 1795646918328,
+      "status": "Funded",
+      "custody_balance": 50000,
+      "claimant_balance": 2050000,
+      "claimant_nonce": 2
+    },
+    "after": {
+      "sequencer_tip": 1940,
+      "tip_timestamp_ms": 1795646948952,
+      "status": "Funded",
+      "custody_balance": 50000,
+      "claimant_balance": 2050000,
+      "claimant_nonce": 2
+    },
+    "escrow_kept_custody": true
+  },
+  "punish_after_refund": {
+    "schema": "lez_v02_escrow_claim_probe_v1",
+    "test_only": true,
+    "effect": "xmr-punish",
+    "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+    "swap_id": "bc59025077a2ba9cd8baf21f5fc8f5e649d3023c23478b4cfca91dcb6eb336c0",
+    "metadata_account": "0a63eec2b7292c55367cc59a13dfe090d4cd9e1204699fd30ce39b7f34d70d2c",
+    "custody_account": "a4c21f190f5640fa2c8514c3e61c850538d90a89cfc6346de54d1fc9e3fc5ea5",
+    "claimant_account": "3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5",
+    "signer_is_claimant": true,
+    "stored_secret_digest": null,
+    "presented_preimage": null,
+    "presented_preimage_sha256": null,
+    "presented_preimage_matches_digest": false,
+    "amount": 50000,
+    "refund_at_ms": 1795647595000,
+    "submitted_before_refund_at": false,
+    "punish_at_ms": 1795647875000,
+    "submitted_before_punish_at": false,
+    "transaction_id": "dc7e3e380593deebf27083a856071ec11d4ed0b075828fa69ef4d906b233529d",
+    "submission": {
+      "decision": "accepted",
+      "error_code": null,
+      "error_message": null
+    },
+    "included": false,
+    "included_in_block": null,
+    "observed_seconds": 30,
+    "before": {
+      "sequencer_tip": 2642,
+      "tip_timestamp_ms": 1795647887932,
+      "status": "Refunded",
+      "custody_balance": 0,
+      "claimant_balance": 2050000,
+      "claimant_nonce": 2
+    },
+    "after": {
+      "sequencer_tip": 2664,
+      "tip_timestamp_ms": 1795647918222,
+      "status": "Refunded",
+      "custody_balance": 0,
+      "claimant_balance": 2050000,
+      "claimant_nonce": 2
+    },
+    "escrow_kept_custody": true
+  },
+  "lez_before": {
+    "maker": 2050000,
+    "taker": 1950000
+  },
+  "lez_deltas": {
+    "maker": 0,
+    "taker": 0
+  },
+  "outcome": "refunded",
+  "maker_terminal_phase": "refunded",
+  "result": "passed",
+  "seconds": 1094
+}

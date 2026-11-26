@@ -351,6 +351,12 @@ impl MakerActorLeaseV1 {
         self.generation
     }
 
+    /// The supervisor process that holds this lease.
+    #[must_use]
+    pub const fn owner(&self) -> MakerActorLeaseOwner {
+        self.owner
+    }
+
     /// Returns a deliberately forged value for fence-negative tests.
     #[doc(hidden)]
     #[must_use]

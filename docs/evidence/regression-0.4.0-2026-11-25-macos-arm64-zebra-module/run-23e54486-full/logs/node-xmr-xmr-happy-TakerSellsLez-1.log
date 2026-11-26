@@ -1,0 +1,27 @@
+[01:00:05] === xmr-happy (stamp 179565120503)
+[01:00:05] preflight: indexer historical reads
+[01:00:06]   indexer serves historical reads at the tip (5162)
+[01:00:06] preflight: LEZ finality check waived by request
+[01:00:17]   the Maker's Monero wallet holds 2112.388 XMR unlocked
+[01:00:38]   Maker CLI published offer-e2e-xmr-179565120503 on its running Node
+[01:00:50]   Taker took offer-e2e-xmr-179565120503: swap cda1531601fb (not_activated)
+[01:00:50]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[01:00:50]   [0 s] waiting for the Taker's cda1531601fb to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 5191, tip 5198 (7 unfinalized) [heartbeat]
+[01:00:56]   [6 s] waiting for the Taker's cda1531601fb to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 5191, tip 5198 (7 unfinalized) [heartbeat]
+[01:01:06]   [16 s] waiting for the Taker's cda1531601fb to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker taker_lock_confirmed | LEZ finalized 5206, tip 5214 (8 unfinalized) [heartbeat]
+[01:01:09]   [19 s] waiting for the Taker's cda1531601fb to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 5206, tip 5214 (8 unfinalized) [heartbeat]
+[01:01:37]   [47 s] waiting for the Taker's cda1531601fb to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 5226, tip 5228 (2 unfinalized) [heartbeat]
+[01:01:37]   Taker claimed Monero (replay=False)
+[01:01:38]   [0 s] waiting for the Taker's cda1531601fb to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 5226, tip 5228 (2 unfinalized) [heartbeat]
+[01:01:51]   [13 s] waiting for the Taker's cda1531601fb to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor claim_authorizing, gen 4) | maker both_legs_locked | LEZ finalized 5241, tip 5243 (2 unfinalized) [heartbeat]
+[01:02:06]   [28 s] waiting for the Taker's cda1531601fb to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor awaiting_maker_claim, gen 5) | maker claim_evidence_available | LEZ finalized 5253, tip 5258 (5 unfinalized) [heartbeat]
+[01:02:17]   [39 s] waiting for the Taker's cda1531601fb to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor sweeping, gen 11) | maker completed | LEZ finalized 5253, tip 5258 (5 unfinalized) [heartbeat]
+[01:02:55]   [77 s] waiting for the Taker's cda1531601fb to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker completed (actor completed, gen 12) | maker completed | LEZ finalized 5280, tip 5289 (9 unfinalized) [heartbeat]
+[01:02:55]   [0 s] waiting for the Taker's cda1531601fb to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 5280, tip 5289 (9 unfinalized) [heartbeat]
+[01:02:55]   both Nodes report cda1531601fb completed
+[01:02:55]   [0 s] waiting for LEZ finality to reach block 5294 (the swap's last LEZ transaction): LEZ finalized 5280, tip 5289 (9 unfinalized) [heartbeat] | LEZ finalized 5280, tip 5289 (9 unfinalized) [heartbeat]
+[01:03:11]   LEZ is final through block 5294 after 16s
+[01:03:12]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[01:03:15]   the Taker's Monero balance moved 352.645805 XMR with coinbase
+[01:03:18]   the Taker's Monero wallet received [('6770668cdbfdee7c', 0.9981916)] during the swap (lot 1 XMR)
+[01:03:18] === xmr-happy: passed in 192s

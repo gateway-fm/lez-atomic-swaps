@@ -679,7 +679,7 @@ requirePattern(
   rejectPattern(workflowFile, workflow, /one chat_module /, "must not publish the Chat module built from its flake");
   const pinFile = resolve(repositoryRoot, "deploy/scripts/pin-package-dependencies.sh");
   const pinScript = read(pinFile, "dependency pinning script");
-  requirePattern(pinFile, pinScript, /return version if name in OURS or "-" in version/, "must require every pre-release (patched build) exactly");
+  requirePattern(pinFile, pinScript, /return version if name in OURS(?: \| UNRELEASED)? or "-" in version/, "must require every pre-release (patched build) and every unreleased upstream build exactly");
   requirePattern(pinFile, pinScript, /is required in more than one way in the set/, "must refuse two requirements of one name in the set");
 }
 
