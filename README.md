@@ -74,7 +74,7 @@ and GNU `timeout`; macOS ships bash 3.2, so on a Mac run
 [latest release](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest):
 
 ```sh
-tar -xzf lez-swap-stack-v0.4.0-arm64.tar.gz && cd lez-swap-stack-v0.4.0-arm64
+tar -xzf lez-swap-stack-v0.4.1-arm64.tar.gz && cd lez-swap-stack-v0.4.1-arm64
 ./scripts/start.sh               # pull images → wallet identities → chains → market bootstrap → desk suites
 ```
 
@@ -247,7 +247,7 @@ licence, architecture, DCO, and security-review requirements.
 | [`submission/`](submission/) | M1/M3/M6 reviewer map, evidence index, reproduction guide, and release checksums |
 | [`media/`](media/) | Interactive deck, PDF, walkthrough, captions, and screenshots |
 
-The current public release, v0.4.0, covers the M1 protocol foundation, the M2
+The current public release, v0.4.1, covers the M1 protocol foundation, the M2
 ZEC/LEZ pair, the M3 BTC/LEZ vertical slice, the M4 XMR/LEZ pair (one
 direction, the Taker selling LEZ, see
 [`docs/sdk-lez-xmr.md`](docs/sdk-lez-xmr.md)) and the M6 Maker/Taker
