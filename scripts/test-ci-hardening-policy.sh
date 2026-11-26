@@ -424,7 +424,7 @@ require_fixed 'GITHUB_TOKEN="$rzup_github_token" "$rzup_bin" install "$@"' "$pro
   "$provisional_verifier" deploy/scripts/from-scratch.sh scripts/test-m6-basecamp-integration.sh "$nix_store_cache" \
   || fail "a script that receives a token traces or prints it"
 
-readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
+readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd'
 readonly cargo_deny_policy='advisories bans licenses sources'
 readonly expected_cargo_deny_steps=10
 cargo_deny_steps="$(rg -Fc -- "$cargo_deny_action" "$ci_workflow")"

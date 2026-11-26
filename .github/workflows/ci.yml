@@ -419,13 +419,13 @@ jobs:
       - name: Install checksum-pinned ripgrep
         run: ./scripts/install-ci-ripgrep.sh
       - run: ./scripts/check-spin-lock-remediation.sh
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           command: check advisories bans licenses sources
           arguments: --all-features
       - name: Audit official LEZ v0.2 sidecar graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0_2-sidecar/Cargo.toml
@@ -433,7 +433,7 @@ jobs:
           arguments: --all-features --config compat/lez-v0_2-sidecar/deny.toml
           command-arguments: advisories bans licenses sources
       - name: Audit LEZ v0.2 sequencer reproducers graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-sequencer-reproducers/Cargo.toml
@@ -441,7 +441,7 @@ jobs:
           arguments: --all-features --config compat/lez-v0.2-sequencer-reproducers/deny.toml
           command-arguments: advisories bans licenses sources
       - name: Audit LEZ v0.2 sequencer reproducer guest graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-sequencer-reproducers/guest/Cargo.toml
@@ -449,7 +449,7 @@ jobs:
           arguments: --all-features --config compat/lez-v0.2-sequencer-reproducers/guest/deny.toml
           command-arguments: advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 compatibility graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-provisional/Cargo.toml
@@ -460,7 +460,7 @@ jobs:
       # Logos-owned exception is justified in that graph's own deny.toml and
       # paired with the verifier's feature/reachability checks.
       - name: Audit provisional LEZ v0.2 Risc0 methods graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-provisional/escrow/methods/Cargo.toml
@@ -468,7 +468,7 @@ jobs:
           arguments: --all-features --config compat/lez-v0.2-provisional/escrow/methods/deny.toml
           command-arguments: advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 guest graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
@@ -476,7 +476,7 @@ jobs:
           arguments: --all-features --config compat/lez-v0.2-provisional/escrow/methods/guest/deny.toml
           command-arguments: advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 deployer graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
@@ -484,7 +484,7 @@ jobs:
           arguments: --all-features --config compat/lez-v0.2-provisional/escrow/deployer/deny.toml
           command-arguments: advisories bans licenses sources
       - name: Audit isolated fuzz graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: fuzz/Cargo.toml
@@ -492,7 +492,7 @@ jobs:
           arguments: --all-features --config fuzz/deny.toml
           command-arguments: advisories bans licenses sources
       - name: Audit LEZ v0.2 XMR release service graph
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0_2-xmr-release-service/Cargo.toml
