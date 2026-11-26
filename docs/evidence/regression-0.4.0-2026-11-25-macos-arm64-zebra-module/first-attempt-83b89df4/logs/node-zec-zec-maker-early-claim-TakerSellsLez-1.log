@@ -1,0 +1,26 @@
+[22:32:43] === zec-maker-early-claim (stamp 179564236304)
+[22:32:43] preflight: indexer historical reads
+[22:32:43]   indexer serves historical reads at the tip (4146)
+[22:32:43] preflight: LEZ finality check waived by request
+[22:32:43]   take-time agreement not used here (zec-maker-early-claim reads the dealer's corridor layout): the dealer provisions this corridor
+[22:32:43]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-catalog-fixture.sh; this recreates both Nodes)
+[22:32:50]     [zec-catalog-fixture 21:32:45] 1/8 preconditions
+[22:32:50]     [zec-catalog-fixture 21:32:45]   LEZ chain check skipped by the caller
+[22:32:50]     [zec-catalog-fixture 21:32:48]   zebra height 110 (>= 110: at least 10 mature coinbase outputs)
+[22:32:50]     [zec-catalog-fixture 21:32:48] 2/8 spec
+[22:32:50]       spec zec-devnet-swap-179564236304: channel b6adb2d23891… escrow ca66e0dc4118… discovery from 4116, funder output #1
+[22:32:50]     [zec-catalog-fixture 21:32:49] 3/8 provision (staging volume lez-l4-zec-staging)
+[22:32:50] FAILED: zec-catalog-fixture.sh failed: Error: provisioned actor pair is not isolated
+
+Caused by:
+    actor pair isolation is invalid
+zec-catalog-fixture failed: zec-local-poc-provision failed for swap 0 (see above)
+[22:32:50] === zec-maker-early-claim: failed in 7s
+[22:32:56]   kept maker-container.log: 17620 lines, 1740 Delivery dumps dropped, 2 redacted
+[22:32:56]   kept maker-node.log: 1238 lines, 0 Delivery dumps dropped, 0 redacted
+[22:32:56]   kept maker-basecamp.log: 533 lines, 57 Delivery dumps dropped, 0 redacted
+[22:32:56]   kept maker-health.json: 36 lines, 0 Delivery dumps dropped, 0 redacted
+[22:32:56]   kept taker-container.log: 17365 lines, 1664 Delivery dumps dropped, 4 redacted
+[22:32:56]   kept taker-node.log: 175 lines, 0 Delivery dumps dropped, 0 redacted
+[22:32:56]   kept taker-basecamp.log: 8179 lines, 868 Delivery dumps dropped, 2 redacted
+[22:32:56]   kept taker-health.json: 114 lines, 0 Delivery dumps dropped, 0 redacted

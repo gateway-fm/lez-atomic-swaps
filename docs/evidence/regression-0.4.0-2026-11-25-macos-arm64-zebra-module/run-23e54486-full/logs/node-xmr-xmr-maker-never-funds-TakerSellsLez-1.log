@@ -1,0 +1,32 @@
+[00:20:34] === xmr-maker-never-funds (stamp 1795648834)
+[00:20:34] preflight: indexer historical reads
+[00:20:35]   indexer serves historical reads at the tip (3337)
+[00:20:35] preflight: LEZ finality check waived by request
+[00:20:43]   the Maker's Monero wallet holds 9.992 XMR unlocked
+[00:20:59]   Maker CLI published offer-e2e-xmr-1795648834 on its running Node
+[00:21:09]   Taker took offer-e2e-xmr-1795648834: swap 9d2aacfc37ac (not_activated)
+[00:21:09]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[00:21:09]   stopping the Maker Node before its Monero funding (it needs the Taker's LEZ lock final first)
+[00:21:10]   [0 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_first_lock (actor lez_locking, gen 0) | maker unreachable | LEZ finalized 3350, tip 3354 (4 unfinalized) [heartbeat]
+[00:21:31]   [21 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3366, tip 3370 (4 unfinalized) [heartbeat]
+[00:22:46]   [96 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3431, tip 3436 (5 unfinalized) [heartbeat]
+[00:23:47]   [156 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3482, tip 3484 (2 unfinalized) [heartbeat]
+[00:24:55]   [225 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3524, tip 3533 (9 unfinalized) [heartbeat]
+[00:26:09]   [299 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3591, tip 3599 (8 unfinalized) [heartbeat]
+[00:27:25]   [374 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3644, tip 3647 (3 unfinalized) [heartbeat]
+[00:28:30]   [440 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3692, tip 3695 (3 unfinalized) [heartbeat]
+[00:29:36]   [505 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3746, tip 3759 (13 unfinalized) [heartbeat]
+[00:30:54]   [583 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3804, tip 3807 (3 unfinalized) [heartbeat]
+[00:32:07]   [657 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker unreachable | LEZ finalized 3869, tip 3872 (3 unfinalized) [heartbeat]
+[00:33:00]   [710 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker refund_available (actor refund_available, gen 6) | maker unreachable | LEZ finalized 3903, tip 3905 (2 unfinalized) [heartbeat]
+[00:33:10]   [720 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker unreachable | LEZ finalized 3917, tip 3921 (4 unfinalized) [heartbeat]
+[00:33:20]   [730 s] waiting for the Taker's 9d2aacfc37ac to reach refunded (Taker LEZ lock, no Monero, the Taker Node's own refund from R): taker refunded (actor refunded, gen 9) | maker unreachable | LEZ finalized 3917, tip 3921 (4 unfinalized) [heartbeat]
+[00:33:20]   the Taker Node refunded by itself: no refund was commanded
+[00:33:27]   [0 s] waiting for the Maker's 9d2aacfc37ac to reach a terminal state (back up past the funding cutoff): maker expired (schedule terminal) | LEZ finalized 3917, tip 3921 (4 unfinalized) [heartbeat]
+[00:33:27]   [0 s] waiting for LEZ finality to reach block 3935 (the swap's last LEZ transaction): LEZ finalized 3917, tip 3921 (4 unfinalized) [heartbeat] | LEZ finalized 3917, tip 3921 (4 unfinalized) [heartbeat]
+[00:33:29]   [2 s] waiting for LEZ finality to reach block 3935 (the swap's last LEZ transaction): LEZ finalized 3931, tip 3936 (5 unfinalized) [heartbeat] | LEZ finalized 3931, tip 3936 (5 unfinalized) [heartbeat]
+[00:33:49]   LEZ is final through block 3935 after 22s
+[00:33:49]   settled refunded: LEZ moved {'maker': 0, 'taker': 0} as both Nodes say
+[00:33:56]   the Taker's Monero wallet received [] during the swap (lot 1 XMR)
+[00:33:56]   no Monero moved: the Maker's wallet sent nothing, the Taker's received nothing
+[00:33:56] === xmr-maker-never-funds: passed in 802s

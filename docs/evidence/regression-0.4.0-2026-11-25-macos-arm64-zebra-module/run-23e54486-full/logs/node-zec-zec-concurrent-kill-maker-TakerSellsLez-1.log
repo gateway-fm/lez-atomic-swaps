@@ -1,0 +1,50 @@
+[01:11:56] === zec-concurrent-kill-maker (stamp 1795651916)
+[01:11:57] preflight: indexer historical reads
+[01:11:57]   indexer serves historical reads at the tip (5694)
+[01:11:57] preflight: LEZ finality check waived by request
+[01:11:57]   Maker CLI published offer-e2e-zectt-1795651917 on its running Node (no corridor)
+[01:11:57]   Maker CLI published offer-e2e-zectt-1795651917-1 on its running Node (no corridor)
+[01:11:59]   Taker took offer-e2e-zectt-1795651917: swap zec-98a3fdf5 (not_activated)
+[01:11:59]   take-time agreement: Maker funds 7debd438bad5f54d…:0, Zcash anchor 445, refund height 461
+[01:11:59]   receipt: swap zec-98a3fdf5b248a63f8e1055c85a3235283b12f16ce1b0a921dc92073d7901ae76, actor config /var/lib/lez/taker/btc/swaps/9c6f1d56de057604b11b116945650333fab421d035cfa86c5836d0b7e2eb2c7c/zec-actor/taker/actor-config.json
+[01:12:01]   Taker took offer-e2e-zectt-1795651917-1: swap zec-17831062 (not_activated)
+[01:12:01]   take-time agreement: Maker funds 4d98d74ad8ea93b3…:0, Zcash anchor 445, refund height 461
+[01:12:01]   receipt: swap zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39, actor config /var/lib/lez/taker/btc/swaps/a3c64de3b56a54944e49fe5c745ddd5c89623c0d0a1f8d75b33fc20d392dc3aa/zec-actor/taker/actor-config.json
+[01:12:01]   both taken: zec-98a3fdf5b248a63f8e1055c85a3235283b12f16ce1b0a921dc92073d7901ae76 and zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39; driving both Taker actors in turn
+[01:12:01]   taker zec-98a3fdf5b248a63f8e1055c85a3235283b12f16ce1b0a921dc92073d7901ae76: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 444
+[01:12:02]   taker zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39: not_activated (gen 0) | actor at - | maker: leased | zebra 444
+[01:12:02]   [0 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered)): zec-98a3fdf5 awaiting_first_lock (actor at offered); zec-17831062 not_activated (actor at -) | LEZ finalized 5694, tip 5703 (9 unfinalized) [heartbeat]
+[01:12:13]   taker zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 444
+[01:12:13]   [11 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered)): zec-98a3fdf5 awaiting_first_lock (actor at offered); zec-17831062 awaiting_first_lock (actor at offered) | LEZ finalized 5694, tip 5703 (9 unfinalized) [heartbeat]
+[01:12:33]   taker zec-98a3fdf5b248a63f8e1055c85a3235283b12f16ce1b0a921dc92073d7901ae76: refund_available (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 444
+[01:12:33]   zebra: mined 1 block(s) → height 445 (mempool had ['2f63b3d73be2', 'd03e09054dce'])
+[01:12:34]   taker zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39: refund_available (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 445
+[01:12:34]   zebra: mined 1 block(s) → height 446 (Maker's funding has 1 confirmation(s); the Taker's pre-reveal gate wants 2 (actor at taker_lock_confirmed))
+[01:12:34]   [32 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered)): zec-98a3fdf5 refund_available (actor at taker_lock_confirmed); zec-17831062 refund_available (actor at taker_lock_confirmed) | LEZ finalized 5714, tip 5717 (3 unfinalized) [heartbeat]
+[01:12:44]   taker zec-98a3fdf5b248a63f8e1055c85a3235283b12f16ce1b0a921dc92073d7901ae76: claim_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 446
+[01:12:44]   taker zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39: claim_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 446
+[01:12:44]   killing lez-maker-node with SIGKILL
+[01:12:45]   lez-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[01:12:52]   taker zec-98a3fdf5b248a63f8e1055c85a3235283b12f16ce1b0a921dc92073d7901ae76: claim_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 446
+[01:12:52]   taker zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39: claim_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 446
+[01:12:52]   Maker's Zcash funding for zec-98a3fdf5: d03e09054dced9317a29fe367eb39d7603ff26035db4e05881553287c26c2525 in zebra block 445
+[01:12:52]   Maker's Zcash funding for zec-17831062: 2f63b3d73be226b29c68e4c81c631a68791801ad120e1b44a45575b6840dec9b in zebra block 445
+[01:12:52]   Taker claimed Zcash on zec-98a3fdf5 (replay=False)
+[01:12:52]   Taker claimed Zcash on zec-17831062 (replay=False)
+[01:12:53]   taker zec-98a3fdf5b248a63f8e1055c85a3235283b12f16ce1b0a921dc92073d7901ae76: claim_in_progress (gen 2) | actor at both_legs_locked | maker: claim_evidence_available | zebra 446
+[01:12:53]   zebra: mined 1 block(s) → height 447 (mempool had ['1f9c010f835b', 'fe7888194069'])
+[01:12:53]   taker zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39: claim_in_progress (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 447
+[01:12:53]   [0 s] waiting for 2 swaps to reach completed (two claim inclusions): zec-98a3fdf5 claim_in_progress (actor at both_legs_locked); zec-17831062 claim_in_progress (actor at both_legs_locked) | LEZ finalized 5729, tip 5733 (4 unfinalized) [heartbeat]
+[01:13:03]   taker zec-98a3fdf5b248a63f8e1055c85a3235283b12f16ce1b0a921dc92073d7901ae76: completed (gen 4) | actor at completed | maker: completed | zebra 447
+[01:13:03]   taker zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 447
+[01:13:03]   [11 s] waiting for 2 swaps to reach completed (two claim inclusions): zec-98a3fdf5 completed (actor at completed); zec-17831062 claim_in_progress (actor at claim_evidence_available) | LEZ finalized 5729, tip 5733 (4 unfinalized) [heartbeat]
+[01:13:14]   taker zec-1783106230378d4fd1a2d8f16d4cdc548809397039de90429c4b5dfbafbfac39: completed (gen 4) | actor at completed | maker: completed | zebra 447
+[01:13:14]   Taker's Zcash claim for zec-98a3fdf5: fe78881940692e2f79179359f53333396cb7a3517e5a16866626c62383f7c1d5 in zebra block 447
+[01:13:14]   [0 s] waiting for the Taker's zec-98a3fdf5 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 5746, tip 5749 (3 unfinalized) [heartbeat]
+[01:13:14]   both Nodes report zec-98a3fdf5 completed
+[01:13:14]   Taker's Zcash claim for zec-17831062: 1f9c010f835ba580da5d317b14f084fc8d78b1df1c8e05afda2144a5af9992ed in zebra block 447
+[01:13:14]   [0 s] waiting for the Taker's zec-17831062 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 5746, tip 5749 (3 unfinalized) [heartbeat]
+[01:13:14]   both Nodes report zec-17831062 completed
+[01:13:14]   zec-98a3fdf5: LEZ lez_fund re-plan 1: nonce 34 → 36, tx 35b5f78e33c2 → 887a09ef62f6
+[01:13:14]   zec-17831062: the Taker re-planned its LEZ lock 0 times
+[01:13:14] === zec-concurrent-kill-maker: passed in 78s

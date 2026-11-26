@@ -1,0 +1,167 @@
+{
+  "scenario": "zec-bitcoin-down",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "1795650887",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-480f8cdbf0a33040587426de7d0631e674340e3de91c76fae413981e16edd773",
+  "corridor": "take-time-1795651029",
+  "stopped": [
+    "lez-btc-miner",
+    "lez-bitcoin-core"
+  ],
+  "health_while_down": [
+    {
+      "maker": {
+        "ready": true,
+        "degraded": true,
+        "bitcoin": [
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      },
+      "taker": {
+        "ready": true,
+        "degraded": true,
+        "bitcoin": [
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "maker": {
+        "ready": true,
+        "degraded": true,
+        "bitcoin": [
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      },
+      "taker": {
+        "ready": true,
+        "degraded": true,
+        "bitcoin": [
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "maker": {
+        "ready": true,
+        "degraded": true,
+        "bitcoin": [
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      },
+      "taker": {
+        "ready": true,
+        "degraded": true,
+        "bitcoin": [
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Bitcoin",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      }
+    }
+  ],
+  "bitcoin_after_restart": {
+    "swap_id": "bc31933133934b5cd4c30f43851da5f3e324bbb40f3981598a5bc742d61be0e6",
+    "bitcoin_claim": "f0379fb2e1fa4b061ba369241d997b071e661acbdff08781467cb1bb08f4faf9"
+  },
+  "result": "passed",
+  "seconds": 233
+}

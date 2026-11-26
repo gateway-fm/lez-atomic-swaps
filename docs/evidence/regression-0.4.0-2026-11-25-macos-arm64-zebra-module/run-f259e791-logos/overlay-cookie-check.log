@@ -1,0 +1,4 @@
+2026-11-26T01:28:44Z lez-l2-taker-node (overlay, created 2026-11-26T01:28:41): 4713 -rw------- 1 lez lez 55 Nov 25 22:10 /var/lib/zebra/regtest/.cookie readable 
+2026-11-26T01:28:44Z lez-l3-taker-node (overlay, created 2026-11-26T01:28:41): 4713 -rw------- 1 lez lez 55 Nov 26 00:34 /var/lib/zebra/regtest/.cookie readable 
+2026-11-26T01:28:46Z lez-taker-node (overlay, created 2026-11-26T01:28:43): 4713 -rw------- 1 lez lez 55 Nov 25 22:06 /var/lib/zebra/regtest/.cookie readable 
+2026-11-26T01:29:56Z lez-l3-taker-node (overlay, created 2026-11-26T01:29:55): Error response from daemon: container 015e470691dd0dd8145a554405fc963e7857c3d2aa72411a0b5c15e16267d8c6 is not running 

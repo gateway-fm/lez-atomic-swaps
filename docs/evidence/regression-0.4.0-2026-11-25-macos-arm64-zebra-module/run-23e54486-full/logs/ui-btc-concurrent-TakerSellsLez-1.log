@@ -1,0 +1,92 @@
+
+[00:15:13] === concurrent (TakerSellsLez)
+
+[00:15:13] Maker desk publishes TakerSellsLez offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[00:15:19] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   901da96524596eae99ead429818fe78b0489899df16b06336ecaf8336c9d9db0 awaiting_first_lock 0 -
+
+[00:15:22] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   174dae7c71de34f943efaa3e6841202f9a5a994e3e3a326d4108396d5e5119ea awaiting_first_lock 0 -
+
+[00:15:27] Taker desk: lock_lez on 901da9652459
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[00:15:29] Taker desk: lock_lez on 174dae7c71de
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[00:15:30] Maker desk shows 901da9652459 at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[00:15:45] Maker desk shows 174dae7c71de at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[00:15:57] Taker desk: claim_btc on 901da9652459
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_btc
+2 passed, 0 failed
+
+[00:15:58] Taker desk: claim_btc on 174dae7c71de
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_btc
+2 passed, 0 failed
+
+[00:16:00] Maker desk shows 901da9652459 at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[00:16:21] Taker desk shows 901da9652459 at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 901da9652459: runtime/evidence/901da96524596eae99ead429818fe78b0489899df16b06336ecaf8336c9d9db0.json (5 effects, completed 2026-11-26T00:16:01Z)
+
+[00:16:23] Maker desk shows 174dae7c71de at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[00:16:25] Taker desk shows 174dae7c71de at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 174dae7c71de: runtime/evidence/174dae7c71de34f943efaa3e6841202f9a5a994e3e3a326d4108396d5e5119ea.json (5 effects, completed 2026-11-26T00:16:05Z)
+
+[00:16:27] === concurrent (TakerSellsLez): passed in 74s

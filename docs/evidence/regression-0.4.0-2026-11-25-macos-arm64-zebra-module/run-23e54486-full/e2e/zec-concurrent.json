@@ -1,0 +1,71 @@
+{
+  "scenario": "zec-concurrent",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179565215704",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swaps": [
+    {
+      "swap_id": "zec-698136ef437b2e6fc89c0eda41fa050d23358aaa018f1f9725cf1074e0b9260e",
+      "offer_id": "offer-e2e-zectt-179565215704",
+      "entry": 0,
+      "zcash_funding": {
+        "transaction_id": "edc58df57db22ae46e37fd7d8c59cf93f47ac9b18cf63994c34c456920f7e954",
+        "height": 328
+      },
+      "zcash_claim": {
+        "transaction_id": "e9850e4ba75edff7e13e5d545b3080bd20b2cc0928026bad9a3de21ed445e8fd",
+        "height": 330
+      },
+      "taker_lez_replans": []
+    },
+    {
+      "swap_id": "zec-a00ed5f2d1647d27ebd82e9ebbbe09dea248e6c0c19ed8afc3bbedfc682fe620",
+      "offer_id": "offer-e2e-zectt-179565215704-1",
+      "entry": 1,
+      "zcash_funding": {
+        "transaction_id": "7be06b913dceb1bd600009a929653c5e86b40ecd97a9f9055e7528a86f217e80",
+        "height": 329
+      },
+      "zcash_claim": {
+        "transaction_id": "87c9d14783a62e4373072d9ecdfbbfab37d48e997f4089ff303e5ded3733b4c3",
+        "height": 331
+      },
+      "taker_lez_replans": [
+        {
+          "replan_index": 1,
+          "step": "lez_initialize",
+          "superseded_nonce": 73,
+          "replanned_nonce": 74,
+          "superseded_transaction_id": "5415271def8953c529f9a35a0393a055951113b66b48747dd5a1b8417d89358c",
+          "replanned_transaction_id": "2c9b924e6c804c59ad9853ffc1e62291645a95e83e02e5da96493b11a4792bcf"
+        }
+      ]
+    }
+  ],
+  "corridor": "take-time-1795652158",
+  "profile": "deterministic-local-devnet-v7",
+  "killed": null,
+  "result": "passed",
+  "seconds": 71
+}

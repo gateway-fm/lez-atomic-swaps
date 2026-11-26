@@ -1,0 +1,33 @@
+[01:05:58] === zec-slow-funding (stamp 179565155802)
+[01:05:59] preflight: indexer historical reads
+[01:05:59]   indexer serves historical reads at the tip (5431)
+[01:05:59] preflight: LEZ finality check waived by request
+[01:06:00]   Maker CLI published offer-e2e-zectt-179565155902 on its running Node (no corridor)
+[01:06:01]   Taker took offer-e2e-zectt-179565155902: swap zec-75d7e569 (not_activated)
+[01:06:01]   take-time agreement: Maker funds 1753dd8ca12a8077…:0, Zcash anchor 114, refund height 130
+[01:06:02]   receipt: swap zec-75d7e569cbda1c850f7ff2b47b1fb41a16be76768a90fa5b0b5fd62cbd125543, actor config /var/lib/lez/taker/btc/swaps/bb5b2169985e5efe8f2f8d15f8e3612d873571c7e48e6f35bc820cfb285782a4/zec-actor/taker/actor-config.json
+[01:06:02]   [0 s] waiting for the Maker's Zcash funding of zec-75d7e569 in zebra's mempool (nothing mined): taker awaiting_first_lock | maker leased | Maker journal revision 0 | LEZ finalized 5430, tip 5434 (4 unfinalized) [heartbeat]
+[01:06:19]   [17 s] waiting for the Maker's Zcash funding of zec-75d7e569 in zebra's mempool (nothing mined): taker refund_available | maker offered | Maker journal revision 0 | LEZ finalized 5430, tip 5434 (4 unfinalized) [heartbeat]
+[01:06:24]   the Maker's Zcash funding 24d824489adb waits in the mempool at zebra 113; Maker journal revision 2; holding it unmined for 75 s
+[01:06:34]   [10 s held] Maker journal revision 7, taker refund_available, maker taker_lock_confirmed
+[01:06:45]   [21 s held] Maker journal revision 13, taker refund_available, maker taker_lock_confirmed
+[01:06:55]   [31 s held] Maker journal revision 18, taker refund_available, maker taker_lock_confirmed
+[01:07:05]   [41 s held] Maker journal revision 23, taker refund_available, maker taker_lock_confirmed
+[01:07:15]   [51 s held] Maker journal revision 28, taker refund_available, maker taker_lock_confirmed
+[01:07:26]   [62 s held] Maker journal revision 33, taker refund_available, maker taker_lock_confirmed
+[01:07:36]   [72 s held] Maker journal revision 38, taker refund_available, maker taker_lock_confirmed
+[01:07:46]   [82 s held] Maker journal revision 44, taker refund_available, maker taker_lock_confirmed
+[01:07:46]   the 83 s hold carried the Maker's journal from revision 2 to 44; mining the funding
+[01:07:46]   zebra: mined 1 block(s) → height 114 (the Maker's funding 24d824489adb, after the hold)
+[01:07:47]   [0 s] waiting for the Taker's zec-75d7e569 to reach claim_available (the funding mined after the hold): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 114 | LEZ finalized 5512, tip 5515 (3 unfinalized) [heartbeat]
+[01:07:47]   zebra: mined 1 block(s) → height 115 (Maker's funding has 1 confirmation(s); the Taker's pre-reveal gate wants 2 (actor at taker_lock_confirmed))
+[01:07:50]   [3 s] waiting for the Taker's zec-75d7e569 to reach claim_available (the funding mined after the hold): taker claim_available (gen 2) | actor at taker_lock_confirmed | maker both_legs_locked | zebra 115 | LEZ finalized 5512, tip 5515 (3 unfinalized) [heartbeat]
+[01:07:50]   Taker claimed Zcash (replay=False)
+[01:07:51]   [0 s] waiting for the Taker's zec-75d7e569 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 115 | LEZ finalized 5512, tip 5515 (3 unfinalized) [heartbeat]
+[01:07:51]   zebra: mined 1 block(s) → height 116 (mempool had ['92e285ce541f'])
+[01:07:57]   [6 s] waiting for the Taker's zec-75d7e569 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 116 | LEZ finalized 5512, tip 5515 (3 unfinalized) [heartbeat]
+[01:08:00]   [9 s] waiting for the Taker's zec-75d7e569 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 116 | LEZ finalized 5512, tip 5515 (3 unfinalized) [heartbeat]
+[01:08:01]   [0 s] waiting for the Taker's zec-75d7e569 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 5512, tip 5515 (3 unfinalized) [heartbeat]
+[01:08:01]   both Nodes report zec-75d7e569 completed
+[01:08:01]   the Maker claimed the LEZ after its journal passed revision 44 (now 48): ['lez_followup_claim']; both Nodes completed
+[01:08:01] === zec-slow-funding: passed in 122s

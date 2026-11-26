@@ -1,0 +1,45 @@
+[01:00:15] === mixed-three-pair (stamp 179565121504)
+[01:00:16] preflight: indexer historical reads
+[01:00:16]   indexer serves historical reads at the tip (5174)
+[01:00:16] preflight: LEZ finality check waived by request
+[01:00:16]   Maker CLI published offer-e2e-zectt-179565121604 on its running Node (no corridor)
+[01:00:24]   the Maker's Monero wallet holds 4604.159 XMR unlocked
+[01:00:50]   Maker CLI published offer-e2e-xmr-179565121504 on its running Node
+[01:01:00]   Taker took offer-e2e-xmr-179565121504: swap 7d9a642b7612 (not_activated)
+[01:01:00]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[01:01:01]   Maker published offer-e2e-179565121504-btc
+[01:01:03]   Taker took offer-e2e-179565121504-btc: swap df2bc5b033a7 (not_activated)
+[01:01:04]   Taker locked lez: 123871b2a6b6 (replay=False)
+[01:01:07]   Taker took offer-e2e-zectt-179565121604: swap zec-177f70a6 (not_activated)
+[01:01:07]   take-time agreement: Maker funds c2a2623975e009e2…:0, Zcash anchor 111, refund height 127
+[01:01:08]   receipt: swap zec-177f70a674a417cc598ca634d191a0b49684aa576fa676b4ba1a19f1a92b3346, actor config /var/lib/lez/taker/btc/swaps/198444e02b449ebb58693666cbe91db312821a38ee0e05dfe080c7f5925321b3/zec-actor/taker/actor-config.json
+[01:01:08]   all three taken, all three in flight: Taker {'Monero': 'awaiting_first_lock', 'Bitcoin': 'awaiting_first_lock', 'Zcash': 'not_activated'}, Maker {'Monero': 'offered', 'Bitcoin': 'queued', 'Zcash': 'queued'}
+[01:01:08]   [0 s] waiting for the Taker's 7d9a642b7612 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 5206, tip 5214 (8 unfinalized) [heartbeat]
+[01:01:21]   [13 s] waiting for the Taker's 7d9a642b7612 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 5206, tip 5214 (8 unfinalized) [heartbeat]
+[01:01:46]   [37 s] waiting for the Taker's 7d9a642b7612 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 5241, tip 5243 (2 unfinalized) [heartbeat]
+[01:01:47]   the Monero claim sent, all three in flight: Taker {'Monero': 'claim_in_progress', 'Bitcoin': 'claim_available', 'Zcash': 'refund_available'}, Maker {'Monero': 'taker_lock_confirmed', 'Bitcoin': 'taker_lock_confirmed', 'Zcash': 'offered'}
+[01:01:47]   [0 s] waiting for the Taker's df2bc5b033a7 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 5241, tip 5243 (2 unfinalized) [heartbeat]
+[01:01:47]   Taker claimed Bitcoin (replay=False)
+[01:01:48]   [0 s] waiting for the Taker's zec-177f70a6 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 110 | LEZ finalized 5241, tip 5243 (2 unfinalized) [heartbeat]
+[01:01:48]   zebra at 110: not mining, the Maker's Zcash funding is not out yet
+[01:01:58]   zebra: mined 1 block(s) → height 111 (mempool had ['63520ed5eab0'])
+[01:02:01]   zebra: mined 1 block(s) → height 112 (Maker's funding has 1 confirmation(s); the Taker's pre-reveal gate wants 2 (actor at taker_lock_confirmed))
+[01:02:04]   [16 s] waiting for the Taker's zec-177f70a6 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker taker_lock_confirmed | zebra 112 | LEZ finalized 5241, tip 5243 (2 unfinalized) [heartbeat]
+[01:02:05]   Taker claimed Zcash on zec-177f70a6 (replay=False)
+[01:02:05]   [0 s] waiting for the Taker's zec-177f70a6 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 112 | LEZ finalized 5241, tip 5243 (2 unfinalized) [heartbeat]
+[01:02:05]   zebra: mined 1 block(s) → height 113 (mempool had ['a54aa7a349b6'])
+[01:02:08]   [3 s] waiting for the Taker's zec-177f70a6 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker both_legs_locked | zebra 113 | LEZ finalized 5253, tip 5258 (5 unfinalized) [heartbeat]
+[01:02:25]   [20 s] waiting for the Taker's zec-177f70a6 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker claim_evidence_available | zebra 113 | LEZ finalized 5253, tip 5258 (5 unfinalized) [heartbeat]
+[01:02:25]   [0 s] waiting for the Taker's zec-177f70a6 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 5253, tip 5258 (5 unfinalized) [heartbeat]
+[01:02:25]   [0 s] waiting for the Maker to report zec-177f70a6 completed and terminal: maker claim_evidence_available (schedule leased) | LEZ finalized 5253, tip 5258 (5 unfinalized) [heartbeat]
+[01:02:28]   both Nodes report zec-177f70a6 completed
+[01:02:28]   [0 s] waiting for the Taker's 7d9a642b7612 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor awaiting_maker_claim, gen 5) | maker claim_evidence_available | LEZ finalized 5270, tip 5273 (3 unfinalized) [heartbeat]
+[01:02:33]   [4 s] waiting for the Taker's 7d9a642b7612 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor sweeping, gen 11) | maker completed | LEZ finalized 5270, tip 5273 (3 unfinalized) [heartbeat]
+[01:03:14]   [46 s] waiting for the Taker's 7d9a642b7612 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker completed (actor completed, gen 12) | maker completed | LEZ finalized 5303, tip 5306 (3 unfinalized) [heartbeat]
+[01:03:14]   [0 s] waiting for the Taker's 7d9a642b7612 to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 5303, tip 5306 (3 unfinalized) [heartbeat]
+[01:03:15]   both Nodes report 7d9a642b7612 completed
+[01:03:15]   [0 s] waiting for the Taker's df2bc5b033a7 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 5303, tip 5306 (3 unfinalized) [heartbeat]
+[01:03:15]   both Nodes report df2bc5b033a7 completed
+[01:03:24]   the Taker's Monero wallet received [('3195873d7ee82340', 0.9981916)] during the swap (lot 1 XMR)
+[01:03:24]   all three completed; LEZ transactions signed by the owner accounts meanwhile: {'maker': 1, 'taker': 7}
+[01:03:24] === mixed-three-pair: passed in 189s

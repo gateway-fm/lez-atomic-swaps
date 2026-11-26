@@ -1,0 +1,51 @@
+
+[00:29:36] === happy (TakerSellsLez)
+
+[00:29:36] Maker desk publishes TakerSellsLez offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[00:29:41] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   7e1a589ef6807bbcfa6551048655eef0c6b592c02b7b48878b8b850793c07717 awaiting_first_lock 0 -
+
+[00:29:45] Taker desk: lock_lez on 7e1a589ef680
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[00:29:47] Maker desk shows 7e1a589ef680 at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[00:30:10] Taker desk: claim_btc on 7e1a589ef680
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_btc
+2 passed, 0 failed
+
+[00:30:12] Maker desk shows 7e1a589ef680 at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[00:30:33] Taker desk shows 7e1a589ef680 at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 7e1a589ef680: runtime/lanes/2/evidence/7e1a589ef6807bbcfa6551048655eef0c6b592c02b7b48878b8b850793c07717.json (5 effects, completed 2026-11-26T00:30:16Z)
+
+[00:30:34] === happy (TakerSellsLez): passed in 58s

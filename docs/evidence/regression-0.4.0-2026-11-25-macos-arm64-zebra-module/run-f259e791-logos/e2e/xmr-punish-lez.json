@@ -1,0 +1,57 @@
+{
+  "scenario": "xmr-punish",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "179564726503",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "dd79985ee88c4de7db1d43a470733c3053147438704439011e08c8de1e3b2113",
+  "offer_id": "offer-e2e-xmr-179564726503",
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "lez_before": {
+    "maker": 2355000,
+    "taker": 1645000
+  },
+  "lez_deltas": {
+    "maker": 50000,
+    "taker": -50000
+  },
+  "maker_terminal_phase": "punished",
+  "maker_owner_nonce_before": 1,
+  "maker_owner_nonce_after": 2,
+  "maker_monero_funding": {
+    "txid": "6c396111dc27ff4fee854dedbb15dd4ae13d8705ddf70f051e16764995b94ca6",
+    "amount": 1000000000000,
+    "height": 251,
+    "destinations": [
+      "45PG8qMkxQuQcwTGieWzZaiNiatpzeHQDMcMqpw1EYegGkFgsEe7BHFeBr9ecYtVSYTA3wYXgnV1XWh3zYXMDKKvNxdYNwK"
+    ]
+  },
+  "taker_state": "punished",
+  "taker_attention_reason": null,
+  "result": "passed",
+  "seconds": 1078
+}

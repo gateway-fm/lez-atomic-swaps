@@ -1,0 +1,30 @@
+[01:21:12] === concurrent-kill-maker (stamp 179565247203)
+[01:21:12] preflight: indexer historical reads
+[01:21:13]   indexer serves historical reads at the tip (6108)
+[01:21:13] preflight: LEZ finality check waived by request
+[01:21:13]   Maker published offer-e2e-179565247203-a
+[01:21:15]   Taker took offer-e2e-179565247203-a: swap 31546d53c46f (not_activated)
+[01:21:15]   Maker published offer-e2e-179565247203-b
+[01:21:17]   Taker took offer-e2e-179565247203-b: swap fcedbc90c894 (not_activated)
+[01:21:17]   Taker locked lez: 0499a44a8076 (replay=False)
+[01:21:20]   Taker locked lez: a8a0bcb828e1 (replay=False)
+[01:21:20]   [0 s] waiting for the Taker's 31546d53c46f to reach claim_available (both legs locked): taker awaiting_first_lock (gen 0) | maker offered | LEZ finalized 6110, tip 6115 (5 unfinalized) [heartbeat]
+[01:21:27]   [6 s] waiting for the Taker's 31546d53c46f to reach claim_available (both legs locked): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 6110, tip 6115 (5 unfinalized) [heartbeat]
+[01:21:30]   [9 s] waiting for the Taker's 31546d53c46f to reach claim_available (both legs locked): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 6110, tip 6115 (5 unfinalized) [heartbeat]
+[01:21:30]   [0 s] waiting for the Taker's fcedbc90c894 to reach claim_available (both legs locked): taker awaiting_first_lock (gen 0) | maker offered | LEZ finalized 6110, tip 6115 (5 unfinalized) [heartbeat]
+[01:21:34]   [4 s] waiting for the Taker's fcedbc90c894 to reach claim_available (both legs locked): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 6110, tip 6115 (5 unfinalized) [heartbeat]
+[01:21:41]   [10 s] waiting for the Taker's fcedbc90c894 to reach claim_available (both legs locked): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 6127, tip 6130 (3 unfinalized) [heartbeat]
+[01:21:41]   both swaps have both legs locked (Maker ['both_legs_locked', 'both_legs_locked'])
+[01:21:41]   killing lez-l3-maker-node with SIGKILL
+[01:21:41]   lez-l3-maker-node exited by SIGKILL (exit code 137, not OOM-killed); starting it again
+[01:21:51]   [0 s] waiting for the Taker's 31546d53c46f to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 6127, tip 6130 (3 unfinalized) [heartbeat]
+[01:21:51]   Taker claimed Bitcoin (replay=False)
+[01:21:52]   [0 s] waiting for the Taker's fcedbc90c894 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 6127, tip 6130 (3 unfinalized) [heartbeat]
+[01:21:52]   Taker claimed Bitcoin (replay=False)
+[01:21:52]   [0 s] waiting for the Taker's 31546d53c46f to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker claim_evidence_available | LEZ finalized 6127, tip 6130 (3 unfinalized) [heartbeat]
+[01:22:11]   [19 s] waiting for the Taker's 31546d53c46f to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 6139, tip 6145 (6 unfinalized) [heartbeat]
+[01:22:11]   both Nodes report 31546d53c46f completed
+[01:22:12]   [0 s] waiting for the Taker's fcedbc90c894 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 6139, tip 6145 (6 unfinalized) [heartbeat]
+[01:22:16]   [4 s] waiting for the Taker's fcedbc90c894 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 6139, tip 6145 (6 unfinalized) [heartbeat]
+[01:22:16]   both Nodes report fcedbc90c894 completed
+[01:22:16] === concurrent-kill-maker: passed in 64s

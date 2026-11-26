@@ -1,0 +1,98 @@
+{
+  "scenario": "zec-custody-credit",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "179565231604",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-0ca7c91810d0f2a9ca77333c105fa6a0c4a5bcb570d634d4f2f28a233ada4522",
+  "corridor": "take-time-1795652319",
+  "profile": "deterministic-local-devnet-v5",
+  "offer_id": "offer-e2e-zectt-179565231604",
+  "maker_restart_after_completion": "completed",
+  "maker_funding_attempt_count": 3,
+  "maker_taker_lock_projections": 1,
+  "taker_lez_replans": [],
+  "zcash_funding": {
+    "transaction_id": "cabb6838f1edd2ec38a7d198a99fc7588c84329e2764143e53fb3aa2304e850d",
+    "height": 639
+  },
+  "zcash_claim": {
+    "transaction_id": "b87125b5bc017017773dbaa9c65c20e39349fd4e9d504646ddcd9d571bc4c2cd",
+    "height": 641
+  },
+  "maker_claim_operations": [
+    "zcash_followup_claim"
+  ],
+  "zcash_refund_height": 647,
+  "custody_credit": {
+    "schema": "lez_v02_custody_credit_probe_v1",
+    "test_only": true,
+    "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+    "swap_id": "81c8ee7c31c60a33c1f75deb3e9bce0ee617baba1cd5015301186ef5b8d3fe4f",
+    "metadata_account": "907b19871bbdb6dec2c209d4f949ea53b80d225a1e73e3ded7f8d317c0175b2b",
+    "custody_account": "c5e8aa192203f7fffbe06cb3b7887806b9efa452afb5710dbfe6ad963b4d8da4",
+    "depositor_account": "2ff74e35b4f8cb8331779c80669d7c52a8340d3a4840223f8dd78621a24d735d",
+    "claimant_account": "73f30c421e5147713885bec6dd7e23d1063beec2c7d3f07338b76db192c9644c",
+    "sender_account": "91740ca065e08d2a6817503fe2874890d28dc09ab62c6e1b0bdea03f250d0562",
+    "sender_is_party": false,
+    "escrow_amount": 50000,
+    "credit_amount": 1,
+    "found_by": "depositor",
+    "found_in_block": 6008,
+    "transaction_id": "e9bd90e743b8c590be687470334a6c474012135f75e8edd7700b8b7794eae4d5",
+    "submission": {
+      "decision": "accepted",
+      "error_code": null,
+      "error_message": null
+    },
+    "included": true,
+    "included_in_block": 6010,
+    "observed_seconds": 1,
+    "before": {
+      "sequencer_tip": 6009,
+      "status": "Funded",
+      "custody_balance": 50000,
+      "sender_balance": 100367
+    },
+    "after": {
+      "sequencer_tip": 6010,
+      "status": "Funded",
+      "custody_balance": 50001,
+      "sender_balance": 100366
+    },
+    "credit_landed": true
+  },
+  "custody_credit_lez": {
+    "lez_before": {
+      "maker": 2755000,
+      "taker": 1245000
+    },
+    "lez_deltas": {
+      "maker": -50000,
+      "taker": 50001
+    },
+    "outcome": "completed"
+  },
+  "result": "passed",
+  "seconds": 77
+}

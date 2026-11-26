@@ -1,0 +1,82 @@
+[23:11:13] === xmr-taker-cheats (stamp 179564467302)
+[23:11:13] preflight: indexer historical reads
+[23:11:13]   indexer serves historical reads at the tip (174)
+[23:11:13] preflight: LEZ finality check waived by request
+[23:11:21]   [monero 22:11:20] taker: created its wallet
+[23:11:35]   [monero 22:11:34] maker: created its wallet
+[23:12:27]   [monero 22:11:59] funding: created its wallet
+[23:12:27]   [monero 22:12:10] mined 100 block(s) in 11.1 s → height 100 (coinbase unlocks after 60 blocks; a transfer's ring takes 15 unlocked decoys)
+[23:12:27]   [monero 22:12:22] funding → maker 10 XMR in 47902867bcb9c45275c9eae4b7f944cb90fd3fc97c1ccb4401371bfceb2b793b (fee 2599200000 piconero)
+[23:12:27]   [monero 22:12:23] mined 10 block(s) in 1.2 s → height 110 (the agreement's ten confirmations)
+[23:12:27]   [monero 22:12:27] maker sees it 5.4 s after the transfer: 10 confirmation(s), locked False
+[23:12:27]   funded the Maker's Monero wallet: 47902867bcb9c452…, 10.000 XMR unlocked
+[23:12:48]   Maker CLI published offer-e2e-xmr-179564467302-a on its running Node
+[23:13:02]   Taker took offer-e2e-xmr-179564467302-a: swap 0aa3e83f6cfc (not_activated)
+[23:13:02]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:13:02]   [0 s] waiting for the Taker's 0aa3e83f6cfc to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 234, tip 241 (7 unfinalized) [heartbeat]
+[23:13:09]   [6 s] waiting for the Taker's 0aa3e83f6cfc to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 253, tip 256 (3 unfinalized) [heartbeat]
+[23:13:25]   [23 s] waiting for the Taker's 0aa3e83f6cfc to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker taker_lock_confirmed | LEZ finalized 253, tip 256 (3 unfinalized) [heartbeat]
+[23:13:28]   [26 s] waiting for the Taker's 0aa3e83f6cfc to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 267, tip 270 (3 unfinalized) [heartbeat]
+[23:13:49]   [46 s] waiting for the Taker's 0aa3e83f6cfc to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 281, tip 285 (4 unfinalized) [heartbeat]
+[23:13:49]   taker test hook cheat-refund-before-r: 1
+[23:13:49]   [0 s] waiting for the cheating Taker's refund before R: refund sent: False | LEZ finalized 281, tip 285 (4 unfinalized) [heartbeat]
+[23:13:53]   [4 s] waiting for the cheating Taker's refund before R: refund sent: True | LEZ finalized 281, tip 285 (4 unfinalized) [heartbeat]
+[23:14:23]   the refund sent before R did not land; the escrow still holds the LEZ
+[23:14:23]   taker test hook cheat-refund-before-r: cleared
+[23:14:24]   [0 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 296, tip 301 (5 unfinalized) [heartbeat]
+[23:15:24]   [60 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 346, tip 350 (4 unfinalized) [heartbeat]
+[23:16:27]   [123 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 395, tip 401 (6 unfinalized) [heartbeat]
+[23:17:31]   [187 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 443, tip 448 (5 unfinalized) [heartbeat]
+[23:18:35]   [251 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 494, tip 497 (3 unfinalized) [heartbeat]
+[23:19:38]   [314 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 540, tip 547 (7 unfinalized) [heartbeat]
+[23:20:40]   [377 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 589, tip 595 (6 unfinalized) [heartbeat]
+[23:21:43]   [439 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 639, tip 643 (4 unfinalized) [heartbeat]
+[23:22:46]   [502 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 685, tip 693 (8 unfinalized) [heartbeat]
+[23:23:50]   [566 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 732, tip 740 (8 unfinalized) [heartbeat]
+[23:24:54]   [630 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 786, tip 790 (4 unfinalized) [heartbeat]
+[23:25:13]   [649 s] waiting for the Taker's 0aa3e83f6cfc to reach refunded (the same refund sent again from R): taker refunded (actor refunded, gen 9) | maker both_legs_locked | LEZ finalized 797, tip 807 (10 unfinalized) [heartbeat]
+[23:25:13]   [0 s] waiting for the Maker's 0aa3e83f6cfc to reach a terminal state (the Maker's Monero refund sweep): maker both_legs_locked (schedule leased) | LEZ finalized 797, tip 807 (10 unfinalized) [heartbeat]
+[23:25:32]   [18 s] waiting for the Maker's 0aa3e83f6cfc to reach a terminal state (the Maker's Monero refund sweep): maker maker_recovery_available (schedule leased) | LEZ finalized 816, tip 824 (8 unfinalized) [heartbeat]
+[23:26:04]   [50 s] waiting for the Maker's 0aa3e83f6cfc to reach a terminal state (the Maker's Monero refund sweep): maker refunded (schedule terminal) | LEZ finalized 838, tip 841 (3 unfinalized) [heartbeat]
+[23:26:04]   [0 s] waiting for LEZ finality to reach block 854 (the swap's last LEZ transaction): LEZ finalized 838, tip 841 (3 unfinalized) [heartbeat] | LEZ finalized 838, tip 841 (3 unfinalized) [heartbeat]
+[23:26:08]   [4 s] waiting for LEZ finality to reach block 854 (the swap's last LEZ transaction): LEZ finalized 851, tip 857 (6 unfinalized) [heartbeat] | LEZ finalized 851, tip 857 (6 unfinalized) [heartbeat]
+[23:26:30]   LEZ is final through block 854 after 26s
+[23:26:30]   settled refunded: LEZ moved {'maker': 0, 'taker': 0} as both Nodes say
+[23:26:37]   the Maker's Monero wallet holds 9.996 XMR unlocked
+[23:26:50]   Maker CLI published offer-e2e-xmr-179564467302-b on its running Node
+[23:27:01]   Taker took offer-e2e-xmr-179564467302-b: swap 098ebba7ae55 (not_activated)
+[23:27:01]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[23:27:01]   [0 s] waiting for the Taker's 098ebba7ae55 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 886, tip 890 (4 unfinalized) [heartbeat]
+[23:27:04]   [3 s] waiting for the Taker's 098ebba7ae55 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 886, tip 890 (4 unfinalized) [heartbeat]
+[23:27:13]   [12 s] waiting for the Taker's 098ebba7ae55 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 904, tip 906 (2 unfinalized) [heartbeat]
+[23:27:32]   [31 s] waiting for the Taker's 098ebba7ae55 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 914, tip 922 (8 unfinalized) [heartbeat]
+[23:27:32]   Taker claimed Monero (replay=False)
+[23:27:32]   [0 s] waiting for the Taker's 098ebba7ae55 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 914, tip 922 (8 unfinalized) [heartbeat]
+[23:27:46]   [14 s] waiting for the Taker's 098ebba7ae55 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor claim_authorizing, gen 4) | maker both_legs_locked | LEZ finalized 914, tip 922 (8 unfinalized) [heartbeat]
+[23:28:00]   [27 s] waiting for the Taker's 098ebba7ae55 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor awaiting_maker_claim, gen 5) | maker claim_evidence_available | LEZ finalized 936, tip 939 (3 unfinalized) [heartbeat]
+[23:28:09]   [37 s] waiting for the Taker's 098ebba7ae55 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor sweeping, gen 11) | maker completed | LEZ finalized 936, tip 939 (3 unfinalized) [heartbeat]
+[23:28:42]   [69 s] waiting for the Taker's 098ebba7ae55 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker completed (actor completed, gen 12) | maker completed | LEZ finalized 967, tip 973 (6 unfinalized) [heartbeat]
+[23:28:42]   [0 s] waiting for the Taker's 098ebba7ae55 to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 967, tip 973 (6 unfinalized) [heartbeat]
+[23:28:42]   both Nodes report 098ebba7ae55 completed
+[23:28:42]   [0 s] waiting for LEZ finality to reach block 978 (the swap's last LEZ transaction): LEZ finalized 967, tip 973 (6 unfinalized) [heartbeat] | LEZ finalized 967, tip 973 (6 unfinalized) [heartbeat]
+[23:28:58]   LEZ is final through block 978 after 16s
+[23:28:58]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[23:29:05]   the Taker's Monero balance moved 352.746426 XMR with coinbase
+[23:29:12]   the Taker's Monero wallet received [('8890f86267711895', 0.9981916)] during the swap (lot 1 XMR)
+[23:29:12]   taker test hook cheat-refund-after-claim: 1
+[23:29:12]   [0 s] waiting for the finalized LEZ time to reach R: 586 s to go | LEZ finalized 982, tip 989 (7 unfinalized) [heartbeat]
+[23:30:12]   [60 s] waiting for the finalized LEZ time to reach R: 530 s to go | LEZ finalized 1033, tip 1039 (6 unfinalized) [heartbeat]
+[23:31:13]   [121 s] waiting for the finalized LEZ time to reach R: 464 s to go | LEZ finalized 1084, tip 1087 (3 unfinalized) [heartbeat]
+[23:32:13]   [181 s] waiting for the finalized LEZ time to reach R: 406 s to go | LEZ finalized 1131, tip 1137 (6 unfinalized) [heartbeat]
+[23:33:14]   [241 s] waiting for the finalized LEZ time to reach R: 340 s to go | LEZ finalized 1182, tip 1187 (5 unfinalized) [heartbeat]
+[23:34:14]   [302 s] waiting for the finalized LEZ time to reach R: 284 s to go | LEZ finalized 1231, tip 1237 (6 unfinalized) [heartbeat]
+[23:35:14]   [362 s] waiting for the finalized LEZ time to reach R: 227 s to go | LEZ finalized 1267, tip 1270 (3 unfinalized) [heartbeat]
+[23:36:15]   [423 s] waiting for the finalized LEZ time to reach R: 160 s to go | LEZ finalized 1314, tip 1320 (6 unfinalized) [heartbeat]
+[23:37:16]   [483 s] waiting for the finalized LEZ time to reach R: 104 s to go | LEZ finalized 1367, tip 1370 (3 unfinalized) [heartbeat]
+[23:38:17]   [544 s] waiting for the finalized LEZ time to reach R: 42 s to go | LEZ finalized 1412, tip 1420 (8 unfinalized) [heartbeat]
+[23:38:56]   [584 s] waiting for the finalized LEZ time to reach R: -3 s to go | LEZ finalized 1448, tip 1453 (5 unfinalized) [heartbeat]
+[23:38:56]   [0 s] waiting for the cheating Taker's refund after the Maker's claim: refund sent: False | LEZ finalized 1448, tip 1453 (5 unfinalized) [heartbeat]
+[23:39:01]   [4 s] waiting for the cheating Taker's refund after the Maker's claim: refund sent: True | LEZ finalized 1448, tip 1453 (5 unfinalized) [heartbeat]
+[23:39:31]   taker test hook cheat-refund-after-claim: cleared
+[23:39:31]   the refund sent after the Maker's claim was refused: the escrow stays Claimed
+[23:39:31] === xmr-taker-cheats: passed in 1698s

@@ -1,0 +1,87 @@
+{
+  "corridor": "take-time-1795651901",
+  "direction": "TakerSellsLez",
+  "exported_at_unix_seconds": 1795651983,
+  "maker": {
+    "error": null,
+    "node_view": {
+      "actor_kind": "zcash",
+      "attempt_count": 24,
+      "lease_generation": 24,
+      "manual_action": null,
+      "progress": {
+        "observation": {
+          "next_action": "complete",
+          "phase": "completed",
+          "revision": 8,
+          "state": "active"
+        },
+        "observed_at": 1795651960,
+        "source_generation": 24
+      },
+      "schedule_state": "terminal",
+      "schema_version": 1,
+      "swap_id": "zec-3637cce188ea0339358e66cb07c18790d6694c74c52860d840c833c26ff7867b"
+    }
+  },
+  "offer_id": "offer-e2e-zectt-179565189802",
+  "pair": "Zcash",
+  "profile": "deterministic-local-devnet-v7",
+  "schema_version": 1,
+  "swap_id": "zec-3637cce188ea0339358e66cb07c18790d6694c74c52860d840c833c26ff7867b",
+  "taker": {
+    "actor_status": {
+      "lez_first_lock_replans": [
+        {
+          "replan_index": 1,
+          "replanned_nonce": 46,
+          "replanned_transaction_id": "89ec401e2adaff662bd7fb6375b7e490b23f4ec584046e7a59617c5a631e8f0a",
+          "step": "lez_fund",
+          "superseded_nonce": 44,
+          "superseded_transaction_id": "718639cf3c827be255a88efb88d8efe99e57c06daac15b216ea02164bcb3ce22"
+        }
+      ],
+      "lez_refund_at_ms": 1795652621000,
+      "next_action": "complete",
+      "phase": "completed",
+      "required_margin_ms": 120000,
+      "revealing_claim_hold_attention_ms": 240000,
+      "revision": 4,
+      "role": "taker",
+      "schema_version": 1,
+      "state": "active"
+    },
+    "node_view": {
+      "actor_phase": "completed",
+      "available_action": null,
+      "foreign_units": 100000000,
+      "lez_units": 50000,
+      "offer_id": "offer-e2e-zectt-179565189802",
+      "privacy_guidance": "shield_received_transparent_zec_separately",
+      "progress_generation": 4,
+      "route": {
+        "direction": "TakerSellsLez",
+        "pair": "Zcash"
+      },
+      "schema_version": 1,
+      "state": "completed",
+      "swap_id": "zec-3637cce188ea0339358e66cb07c18790d6694c74c52860d840c833c26ff7867b"
+    }
+  },
+  "zcash_refund_height": 139,
+  "zebra": {
+    "funding_output_spend": {
+      "height": 125,
+      "transaction_id": "8ca9662ab10996fb401a04ef7f29898121bb6078f472b4322f745f893a9851f2"
+    },
+    "maker_funding": {
+      "height": 123,
+      "transaction_id": "c737aeba886f062b2a212b4b989bc8d3e6298da128fa97b583bf58a0b54a22fb"
+    },
+    "provisioned_outpoint": {
+      "output_index": 0,
+      "transaction_id": "f84ceab1c6e0611da94e1dda6f8b04390d05982b4cb6cc937f60ecdb7c8a7850"
+    },
+    "tip_height": 125
+  }
+}

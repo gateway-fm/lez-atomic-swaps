@@ -1,0 +1,2 @@
+deploy/compose.logos.yaml
+deploy/tests/test_image_contexts.py

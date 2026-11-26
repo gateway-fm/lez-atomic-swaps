@@ -1,0 +1,47 @@
+[22:49:03] === zec-bitcoin-down (stamp 1795643343)
+[22:49:03] preflight: indexer historical reads
+[22:49:05]   indexer serves historical reads at the tip (4726)
+[22:49:05] preflight: LEZ finality check waived by request
+[22:49:05]   zebra: mined 110 block(s) → height 110 (coinbase maturity on a new chain)
+[22:49:06]   Maker CLI published offer-e2e-zectt-1795643345 on its running Node (no corridor)
+[22:49:07]   Maker published offer-e2e-1795643343-down
+[22:49:07]   stopping lez-btc-miner
+[22:49:11]   stopping lez-bitcoin-core
+[22:49:12]   lez-btc-miner, lez-bitcoin-core stopped; neither Node reaches 127.0.0.1:18443 any more
+[22:49:12]   restarting the maker Node with Bitcoin's chain down
+[22:50:25]   restarting the taker Node with Bitcoin's chain down
+[22:51:38]   both Nodes started again with Bitcoin's chain down
+[22:51:39]   the Maker withdrew offer-e2e-1795643343-down and refuses to publish on Bitcoin: chain dependency is unavailable for route
+[22:51:40]   the Taker refuses a take on Bitcoin: {"code": -32010, "message": "Taker dependency unavailable", "data": {"category": "chain_unavailable", "pair": "Bitcoin"}}
+[22:51:45]   Taker took offer-e2e-zectt-1795643345: swap zec-eacf4ced (not_activated)
+[22:51:46]   take-time agreement: Maker funds 07bcf292349da0f2…:0, Zcash anchor 111, refund height 127
+[22:51:46]   receipt: swap zec-eacf4ceddd11927814d06950a251ec21b06cccf70694a152db90c61f1f21ab72, actor config /var/lib/lez/taker/btc/swaps/7e64e9525f888debc71f3e3ff34441ddadf82e47a572a8312369e3c019eb23d9/zec-actor/taker/actor-config.json
+[22:51:49]   [1 s] waiting for the Taker's zec-eacf4ced to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 110 | LEZ finalized 4810, tip 4815 (5 unfinalized) [heartbeat]
+[22:52:10]   [21 s] waiting for the Taker's zec-eacf4ced to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at offered | maker offered | zebra 110 | LEZ finalized 4819, tip 4826 (7 unfinalized) [heartbeat]
+[22:52:15]   [26 s] waiting for the Taker's zec-eacf4ced to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 110 | LEZ finalized 4819, tip 4826 (7 unfinalized) [heartbeat]
+[22:52:15]   zebra at 110: not mining, the Maker's Zcash funding is not out yet
+[22:52:19]   zebra: mined 1 block(s) → height 111 (mempool had ['7c392a0859c8'])
+[22:52:22]   [34 s] waiting for the Taker's zec-eacf4ced to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 111 | LEZ finalized 4819, tip 4826 (7 unfinalized) [heartbeat]
+[22:52:22]   zebra: mined 1 block(s) → height 112 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[22:52:22]   Taker claimed Zcash on zec-eacf4ced (replay=False)
+[22:52:23]   [0 s] waiting for the Taker's zec-eacf4ced to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 112 | LEZ finalized 4819, tip 4826 (7 unfinalized) [heartbeat]
+[22:52:23]   zebra: mined 1 block(s) → height 113 (mempool had ['3bb83ab14b30'])
+[22:52:27]   [4 s] waiting for the Taker's zec-eacf4ced to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 113 | LEZ finalized 4833, tip 4838 (5 unfinalized) [heartbeat]
+[22:52:32]   [8 s] waiting for the Taker's zec-eacf4ced to reach completed (claim inclusion): taker completed (gen 4) | actor at claim_evidence_available | maker completed | zebra 113 | LEZ finalized 4833, tip 4838 (5 unfinalized) [heartbeat]
+[22:52:33]   [0 s] waiting for the Taker's zec-eacf4ced to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 4833, tip 4838 (5 unfinalized) [heartbeat]
+[22:52:33]   both Nodes report zec-eacf4ced completed
+[22:52:34]   the Zcash swap completed with Bitcoin Core stopped, both Nodes ready throughout, the Maker's Bitcoin routes unavailable and Zcash's available
+[22:52:35]   [0 s] waiting for lez-bitcoin-core to be healthy again: starting | LEZ finalized 4833, tip 4838 (5 unfinalized) [heartbeat]
+[22:52:43]   lez-bitcoin-core, lez-btc-miner started again
+[22:52:44]   Maker published offer-e2e-1795643343-btc
+[22:52:47]   Taker took offer-e2e-1795643343-btc: swap cacc34b57eea (not_activated)
+[22:52:49]   Taker locked lez: 326adf9352f2 (replay=False)
+[22:52:49]   [0 s] waiting for the Taker's cacc34b57eea to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker offered | LEZ finalized 4840, tip 4850 (10 unfinalized) [heartbeat]
+[22:52:58]   [8 s] waiting for the Taker's cacc34b57eea to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 4840, tip 4850 (10 unfinalized) [heartbeat]
+[22:53:08]   [19 s] waiting for the Taker's cacc34b57eea to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 4858, tip 4861 (3 unfinalized) [heartbeat]
+[22:53:09]   Taker claimed Bitcoin (replay=False)
+[22:53:09]   [0 s] waiting for the Taker's cacc34b57eea to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker claim_evidence_available | LEZ finalized 4858, tip 4861 (3 unfinalized) [heartbeat]
+[22:53:23]   [13 s] waiting for the Taker's cacc34b57eea to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 4858, tip 4861 (3 unfinalized) [heartbeat]
+[22:53:24]   both Nodes report cacc34b57eea completed
+[22:53:24]   the Bitcoin claim 935706a16cb3 is a Taproot key-path spend: one 64-byte signature, no script
+[22:53:24] === zec-bitcoin-down: passed in 262s

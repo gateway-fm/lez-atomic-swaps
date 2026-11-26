@@ -1,0 +1,91 @@
+
+[00:11:45] === logos-happy (TakerSellsForeign)
+
+[00:11:45] both Basecamps recreated on the logos transport
+
+[00:11:55] the Taker's Delivery node dials the Maker's at /ip4/192.168.144.4/tcp/60000/p2p/16Uiu2HAmNZs1mQmQZ9mugDvVhJLhgbNXcmNHFT9cAEVg6GuRu6Zf
+
+[00:12:03] the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket
+   4713
+   {"delivery_sources":[{"directory":"/var/lib/lez/taker/delivery","maker_public_key":"03b20e3cabd304e1627af316c28e75b371814f5e24f405634ba59ec7a3c665172c","source_id":"local-maker"}],"chat_socket":"/run/lez/taker/logos-chat-proxy.sock"}
+   [01:12:03] FAILED: paying the Taker's Zcash key failed: Error: Zebra credential file is unavailable or unsafe
+
+[00:12:03] FAILED: zec-fund
+
+[00:12:04] Logos phase kept in runtime/lanes/3/evidence/logos/20261126T001145Z-Zcash-TakerSellsForeign (both containers since 2026-11-26T00:11:45Z, both Chat module logs)
+   == 20261126T001145Z-Zcash-TakerSellsForeign
+      online: Maker 00:11:54.171, Taker 00:12:03.465; conversation created None
+      Chat: the Taker sent 0 message(s), the Maker received 0
+      Maker protocols: relay=true rlnRelay=false store=false filter=true lightPush=true peerExchange=true rendezvous=true
+
+[00:12:04] maker Delivery node: errors, warnings and peer events
+   2026-11-26T00:11:50.156362386Z [2026-11-26 00:11:50.155] [out] [delivery_module] WRN 2026-11-26 00:11:50.154+00:00 whether to mount mix is not specified, defaulting to not mounting topics="waku conf builder" tid=414
+   2026-11-26T00:11:54.167962096Z [2026-11-26 00:11:54.167] [out] [delivery_module] DBG 2026-11-26 00:11:54.166+00:00 About to accept incoming connection        topics="libp2p switch" tid=414
+   2026-11-26T00:11:54.168325513Z [2026-11-26 00:11:54.168] [out] [delivery_module] DBG 2026-11-26 00:11:54.166+00:00 Started libp2p node                        topics="libp2p switch" tid=414 peer="(peerId: 16Uiu2HAmNZs1mQmQZ9mugDvVhJLhgbNXcmNHFT9cAEVg6GuRu6Zf, listenAddrs: [/ip4/0.0.0.0/tcp/60000], ad
+   2026-11-26T00:11:54.168739304Z [2026-11-26 00:11:54.168] [out] [delivery_module] INF 2026-11-26 00:11:54.167+00:00 Relay peer connections                     topics="waku node peer_manager" tid=414 inRelayConns=0/50 outRelayConns=0/25 totalConnections=0/150 notConnectedPeers=0 outsideBackoffPeers=0
+   2026-11-26T00:11:54.169047179Z [2026-11-26 00:11:54.168] [out] [delivery_module] WRN 2026-11-26 00:11:54.167+00:00 No external IP provided for the ENR, this node will not be discoverable topics="eth p2p discv5" tid=414
+   2026-11-26T00:11:54.169709388Z [2026-11-26 00:11:54.169] [out] [delivery_module] WRN 2026-11-26 00:11:54.168+00:00 NAT already initialized, skipping as cannot be done multiple times topics="nat" tid=414
+   2026-11-26T00:11:54.171274596Z [2026-11-26 00:11:54.171] [out] [delivery_module] DBG 2026-11-26 00:11:54.169+00:00 calculateConnectionState                   tid=414 relayCount=0 storeClientCount=0 lightpushCount=0 filterCount=0
+   2026-11-26T00:11:54.171473763Z [2026-11-26 00:11:54.171] [out] [delivery_module] INF 2026-11-26 00:11:54.170+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=414 pubsubTopic=/waku/2/rs/7341/2
+   2026-11-26T00:11:54.171494888Z [2026-11-26 00:11:54.171] [out] [delivery_module] INF 2026-11-26 00:11:54.170+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=414 pubsubTopic=/waku/2/rs/7341/3
+   2026-11-26T00:11:54.171496179Z [2026-11-26 00:11:54.171] [out] [delivery_module] INF 2026-11-26 00:11:54.170+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=414 pubsubTopic=/waku/2/rs/7341/6
+   2026-11-26T00:11:54.171499263Z [2026-11-26 00:11:54.171] [out] [delivery_module] INF 2026-11-26 00:11:54.170+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=414 pubsubTopic=/waku/2/rs/7341/1
+   2026-11-26T00:11:54.171500554Z [2026-11-26 00:11:54.171] [out] [delivery_module] INF 2026-11-26 00:11:54.170+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=414 pubsubTopic=/waku/2/rs/7341/7
+   2026-11-26T00:11:54.171501721Z [2026-11-26 00:11:54.171] [out] [delivery_module] INF 2026-11-26 00:11:54.170+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=414 pubsubTopic=/waku/2/rs/7341/0
+   2026-11-26T00:11:54.171502846Z [2026-11-26 00:11:54.171] [out] [delivery_module] INF 2026-11-26 00:11:54.170+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=414 pubsubTopic=/waku/2/rs/7341/4
+   2026-11-26T00:11:54.171504013Z [2026-11-26 00:11:54.171] [out] [delivery_module] INF 2026-11-26 00:11:54.170+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=414 pubsubTopic=/waku/2/rs/7341/5
+   2026-11-26T00:12:03.463980669Z [2026-11-26 00:12:03.463] [out] [delivery_module] DBG 2026-11-26 00:12:03.462+00:00 Accepted an incoming connection            topics="libp2p switch" tid=414 conn=:6b077953ffb1594f71d16111
+   2026-11-26T00:12:03.463998919Z [2026-11-26 00:12:03.463] [out] [delivery_module] DBG 2026-11-26 00:12:03.462+00:00 About to accept incoming connection        topics="libp2p switch" tid=414
+   2026-11-26T00:12:03.473742169Z [2026-11-26 00:12:03.472] [out] [delivery_module] INF 2026-11-26 00:12:03.471+00:00 Incoming WakuRelay connection              topics="waku relay" tid=414 connection=16U*y5J1hm:6b077953ffb1594f71d16117 protocol=/vac/waku/relay/2.0.0
+   2026-11-26T00:12:03.478191628Z [2026-11-26 00:12:03.478] [out] [delivery_module] DBG 2026-11-26 00:12:03.476+00:00 calculateConnectionState                   tid=414 relayCount=1 storeClientCount=0 lightpushCount=1 filterCount=1
+   2026-11-26T00:12:03.478235253Z [2026-11-26 00:12:03.478] [out] [delivery_module] DBG 2026-11-26 00:12:03.476+00:00 connectionStatus change                    tid=414 oldstatus=Disconnected newstatus=PartiallyConnected
+   2026-11-26T00:12:03.478689586Z [2026-11-26 00:12:03.478] [out] [delivery_module] ERR 2026-11-26 00:12:03.477+00:00 checkStore failed to get remote msgHashes  tid=414 pubsubTopic=/waku/2/rs/7341/6 cTopics="[/lez-atomic-swaps/1/offers/json]" error="BAD_RESPONSE: no service store peer connected"
+   2026-11-26T00:12:03.478837336Z [2026-11-26 00:12:03.478] [out] [delivery_module] ERR 2026-11-26 00:12:03.477+00:00 checkStore failed to get remote msgHashes  tid=414 pubsubTopic=/waku/2/rs/7341/0 cTopics="[/logos-chat/1/9fe20f68/proto]" error="BAD_RESPONSE: no service store peer connected"
+   2026-11-26T00:12:03.478925586Z [2026-11-26 00:12:03.478] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_status_change","connectionStatus":"PartiallyConnected"}
+   2026-11-26T00:12:03.479791544Z [2026-11-26 00:12:03.479] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_change","peerId":"16Uiu2HAmH5Gf1opfdbtJmgdadgGVYEhaqoJzihV6rabDizy5J1hm","peerEvent":"EventMetadataUpdated"}
+   2026-11-26T00:12:03.479822003Z [2026-11-26 00:12:03.479] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback: Unknown event type: connection_change
+   2026-11-26T00:12:03.480487211Z [2026-11-26 00:12:03.480] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_change","peerId":"16Uiu2HAmH5Gf1opfdbtJmgdadgGVYEhaqoJzihV6rabDizy5J1hm","peerEvent":"EventConnected"}
+   2026-11-26T00:12:03.481205253Z [2026-11-26 00:12:03.481] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback: Unknown event type: connection_change
+   2026-11-26T00:12:03.581109211Z [2026-11-26 00:12:03.581] [out] [delivery_module] DBG 2026-11-26 00:12:03.579+00:00 calculateConnectionState                   tid=414 relayCount=1 storeClientCount=0 lightpushCount=1 filterCount=1
+   2026-11-26T00:12:03.683074711Z [2026-11-26 00:12:03.682] [out] [delivery_module] DBG 2026-11-26 00:12:03.681+00:00 calculateConnectionState                   tid=414 relayCount=1 storeClientCount=0 lightpushCount=1 filterCount=1
+
+[00:12:04] taker Delivery node: errors, warnings and peer events
+   2026-11-26T00:11:59.449012917Z [2026-11-26 00:11:59.448] [out] [delivery_module] WRN 2026-11-26 00:11:59.447+00:00 whether to mount mix is not specified, defaulting to not mounting topics="waku conf builder" tid=375
+   2026-11-26T00:12:03.464569169Z [2026-11-26 00:12:03.462] [out] [delivery_module] DBG 2026-11-26 00:12:03.459+00:00 About to accept incoming connection        topics="libp2p switch" tid=375
+   2026-11-26T00:12:03.464581711Z [2026-11-26 00:12:03.464] [out] [delivery_module] DBG 2026-11-26 00:12:03.460+00:00 Started libp2p node                        topics="libp2p switch" tid=375 peer="(peerId: 16Uiu2HAmH5Gf1opfdbtJmgdadgGVYEhaqoJzihV6rabDizy5J1hm, listenAddrs: [/ip4/0.0.0.0/tcp/40645], ad
+   2026-11-26T00:12:03.464587461Z [2026-11-26 00:12:03.464] [out] [delivery_module] DBG 2026-11-26 00:12:03.462+00:00 Dialing peer                               topics="libp2p dialer" tid=375 peerId=16U*uRu6Zf addrs="[/ip4/192.168.144.4/tcp/60000]"
+   2026-11-26T00:12:03.464588794Z [2026-11-26 00:12:03.464] [out] [delivery_module] DBG 2026-11-26 00:12:03.462+00:00 Expanded address and hostname              topics="libp2p dialer" tid=375 expandedAddress=/ip4/192.168.144.4/tcp/60000 hostname=192.168.144.4 resolvedAddresses="[/ip4/192.168.144.4/tcp/
+   2026-11-26T00:12:03.469006169Z [2026-11-26 00:12:03.468] [out] [delivery_module] INF 2026-11-26 00:12:03.466+00:00 getPubSubPeersInMesh - there is no mesh peer for the given pubsub topic topics="waku relay" tid=375 pubsubTopic=/waku/2/rs/7341/6
+   2026-11-26T00:12:03.473694169Z [2026-11-26 00:12:03.470] [out] [delivery_module] DBG 2026-11-26 00:12:03.469+00:00 Dial successful                            topics="libp2p dialer" tid=375 peerId=16U*uRu6Zf
+   2026-11-26T00:12:03.473722086Z [2026-11-26 00:12:03.472] [out] [delivery_module] INF 2026-11-26 00:12:03.470+00:00 Incoming WakuRelay connection              topics="waku relay" tid=375 connection=16U*uRu6Zf:6b0779537883d0e7fc75819e protocol=/vac/waku/relay/2.0.0
+   2026-11-26T00:12:03.477492336Z [2026-11-26 00:12:03.477] [out] [delivery_module] INF 2026-11-26 00:12:03.475+00:00 Finished dialing multiple peers            tid=375 successfulConns=1 attempted=1
+   2026-11-26T00:12:03.478114628Z [2026-11-26 00:12:03.477] [out] [delivery_module] INF 2026-11-26 00:12:03.476+00:00 Relay peer connections                     topics="waku node peer_manager" tid=375 inRelayConns=0/50 outRelayConns=1/25 totalConnections=1/150 notConnectedPeers=1 outsideBackoffPeers=1
+   2026-11-26T00:12:03.482723628Z [2026-11-26 00:12:03.482] [out] [delivery_module] WRN 2026-11-26 00:12:03.478+00:00 No external IP provided for the ENR, this node will not be discoverable topics="eth p2p discv5" tid=375
+   2026-11-26T00:12:03.482736003Z [2026-11-26 00:12:03.482] [out] [delivery_module] WRN 2026-11-26 00:12:03.480+00:00 NAT already initialized, skipping as cannot be done multiple times topics="nat" tid=375
+   2026-11-26T00:12:03.489529628Z [2026-11-26 00:12:03.489] [out] [delivery_module] DBG 2026-11-26 00:12:03.487+00:00 calculateConnectionState                   tid=375 relayCount=1 storeClientCount=0 lightpushCount=1 filterCount=1
+   2026-11-26T00:12:03.489563753Z [2026-11-26 00:12:03.489] [out] [delivery_module] DBG 2026-11-26 00:12:03.487+00:00 connectionStatus change                    tid=375 oldstatus=Disconnected newstatus=PartiallyConnected
+   2026-11-26T00:12:03.489569836Z [2026-11-26 00:12:03.489] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_status_change","connectionStatus":"PartiallyConnected"}
+   2026-11-26T00:12:03.490782794Z [2026-11-26 00:12:03.490] [out] [delivery_module] INF 2026-11-26 00:12:03.489+00:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=375 successfulConns=1 attempted=1
+   2026-11-26T00:12:03.492788003Z [2026-11-26 00:12:03.492] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_change","peerId":"16Uiu2HAmNZs1mQmQZ9mugDvVhJLhgbNXcmNHFT9cAEVg6GuRu6Zf","peerEvent":"EventMetadataUpdated"}
+   2026-11-26T00:12:03.492821003Z [2026-11-26 00:12:03.492] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback: Unknown event type: connection_change
+   2026-11-26T00:12:03.493251378Z [2026-11-26 00:12:03.493] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback message: {"eventType":"connection_change","peerId":"16Uiu2HAmNZs1mQmQZ9mugDvVhJLhgbNXcmNHFT9cAEVg6GuRu6Zf","peerEvent":"EventConnected"}
+   2026-11-26T00:12:03.493308711Z [2026-11-26 00:12:03.493] [info] [logos] [delivery_module] DeliveryModuleImpl::event_callback: Unknown event type: connection_change
+   2026-11-26T00:12:03.593646753Z [2026-11-26 00:12:03.592] [out] [delivery_module] DBG 2026-11-26 00:12:03.592+00:00 calculateConnectionState                   tid=375 relayCount=1 storeClientCount=0 lightpushCount=1 filterCount=1
+
+[00:12:04] maker Chat module:
+   2026-11-26T00:11:54.171 INFO: chat_module::actions: delivery is online
+
+[00:12:04] taker Chat module:
+   2026-11-26T00:12:03.465 INFO: chat_module::actions: delivery is online
+
+[00:12:04] the Taker Node's last lines:
+
+[00:12:04] both Basecamps recreated on the local transport
+[01:12:17]   kept maker-container.log: 260 lines, 8 Delivery dumps dropped, 2 redacted
+[01:12:17]   kept maker-node.log: 2354 lines, 0 Delivery dumps dropped, 0 redacted
+[01:12:17]   kept maker-basecamp.log: 243 lines, 8 Delivery dumps dropped, 2 redacted
+[01:12:17]   kept maker-health.json: 57 lines, 0 Delivery dumps dropped, 0 redacted
+[01:12:17]   kept taker-container.log: 181 lines, 8 Delivery dumps dropped, 2 redacted
+[01:12:17]   kept taker-node.log: 0 lines, 0 Delivery dumps dropped, 0 redacted
+[01:12:17]   kept taker-basecamp.log: 146 lines, 0 Delivery dumps dropped, 2 redacted
+[01:12:17]   kept taker-health.json: 114 lines, 0 Delivery dumps dropped, 0 redacted

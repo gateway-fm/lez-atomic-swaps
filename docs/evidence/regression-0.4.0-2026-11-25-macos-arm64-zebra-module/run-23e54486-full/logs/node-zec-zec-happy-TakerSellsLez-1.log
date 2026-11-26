@@ -1,0 +1,29 @@
+[01:26:00] === zec-happy (stamp 179565276003)
+[01:26:00] preflight: indexer historical reads
+[01:26:00]   indexer serves historical reads at the tip (6317)
+[01:26:00] preflight: LEZ finality check waived by request
+[01:26:01]   Maker CLI published offer-e2e-zectt-179565276003 on its running Node (no corridor)
+[01:26:03]   Taker took offer-e2e-zectt-179565276003: swap zec-a51d237d (not_activated)
+[01:26:03]   take-time agreement: Maker funds 308bd18b7b92cd83…:0, Zcash anchor 1180, refund height 1196
+[01:26:03]   receipt: swap zec-a51d237d5855e4f895005d5e3e3fa28cd3d5769e0bcc1e4ac6970d808d71a167, actor config /var/lib/lez/taker/btc/swaps/0929d1075dbd38d3ba79b08c8ca79362c5459b0839c31e792bd91f7486aa4134/zec-actor/taker/actor-config.json
+[01:26:03]   [0 s] waiting for the Taker's zec-a51d237d to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 1179 | LEZ finalized 6315, tip 6318 (3 unfinalized) [heartbeat]
+[01:26:20]   [16 s] waiting for the Taker's zec-a51d237d to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at offered | maker offered | zebra 1179 | LEZ finalized 6331, tip 6333 (2 unfinalized) [heartbeat]
+[01:26:23]   [20 s] waiting for the Taker's zec-a51d237d to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 1179 | LEZ finalized 6331, tip 6333 (2 unfinalized) [heartbeat]
+[01:26:26]   zebra: mined 1 block(s) → height 1180 (mempool had ['674fe2391f72'])
+[01:26:33]   [29 s] waiting for the Taker's zec-a51d237d to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1180 | LEZ finalized 6331, tip 6333 (2 unfinalized) [heartbeat]
+[01:26:33]   zebra: mined 1 block(s) → height 1181 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[01:26:33]   Maker's Zcash funding 674fe2391f726f689878dec77ef029e00df85e310ecdad245f943dffffc96191 is in zebra block 1180
+[01:26:33]   Taker claimed Zcash (replay=False)
+[01:26:33]   [0 s] waiting for the Taker's zec-a51d237d to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1181 | LEZ finalized 6331, tip 6333 (2 unfinalized) [heartbeat]
+[01:26:33]   zebra: mined 1 block(s) → height 1182 (mempool had ['7321ac95ef08'])
+[01:26:36]   [3 s] waiting for the Taker's zec-a51d237d to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 1182 | LEZ finalized 6342, tip 6349 (7 unfinalized) [heartbeat]
+[01:26:40]   [7 s] waiting for the Taker's zec-a51d237d to reach completed (claim inclusion): taker completed (gen 4) | actor at claim_evidence_available | maker completed | zebra 1182 | LEZ finalized 6342, tip 6349 (7 unfinalized) [heartbeat]
+[01:26:40]   Taker's Zcash claim 7321ac95ef08b2fd43c78aeb8bc1f55efe3c6671093e0729c3c5a4c493353998 is in zebra block 1182
+[01:26:40]   the Maker's actor submitted ['lez_followup_claim']
+[01:26:40]   [0 s] waiting for the Taker's zec-a51d237d to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 6342, tip 6349 (7 unfinalized) [heartbeat]
+[01:26:41]   both Nodes report zec-a51d237d completed
+[01:26:41]   restarting the Maker Node after the completed swap (claim-journal revalidation)
+[01:26:47]   Maker restarted and still reports the swap completed
+[01:26:48]   zec-a51d237d: the Taker re-planned its LEZ lock 0 times
+[01:26:48]   Maker lock attempt count 2 (projected the Taker's lock 1 time(s); 18 supervisor attempts over the swap); Taker LEZ re-plan count 0
+[01:26:48] === zec-happy: passed in 48s

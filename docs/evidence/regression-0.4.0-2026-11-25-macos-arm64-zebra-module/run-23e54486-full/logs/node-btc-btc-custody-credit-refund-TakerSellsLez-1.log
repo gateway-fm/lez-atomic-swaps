@@ -1,0 +1,30 @@
+[02:05:45] === btc-custody-credit-refund (stamp 1795655145)
+[02:05:45] preflight: indexer historical reads
+[02:05:45]   indexer serves historical reads at the tip (8154)
+[02:05:45] preflight: LEZ finality check waived by request
+[02:05:45]   custody credit: waiting for the taker's escrow to be funded, then 1 unit(s) from heartbeat-echo-02: /usr/local/bin/lez-v02-custody-credit-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --depositor 4gFvhqLj7a2LpYHSgZuYDXRcaSjtcD1Fvag3fzucmdeB --private-key-file /tmp/custody-credit-probe.key --amount 1 --wait-funded-seconds 3600 --observe-seconds 60
+[02:05:46]   Maker published offer-e2e-1795655145
+[02:05:48]   Taker took offer-e2e-1795655145: swap ee7e75af742a (not_activated)
+[02:05:48]   stopping the Maker Node so it never locks Bitcoin
+[02:05:48]   Taker locked lez: 3644c3a1d0b9 (replay=False)
+[02:05:49]   mined 124 blocks past the lock; the Maker cutoff is 100s after the take, the Taker's refund opens 245s after it
+[02:05:49]   [0 s] waiting for the Taker's refund of ee7e75af742a to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 8150, tip 8155 (5 unfinalized) [heartbeat]
+[02:05:49]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[02:05:52]   custody credit: 1 unit(s) to 3056db09e474… in block 8162; custody 1000 → 1001 (lot 1000), escrow Funded
+[02:06:01]   [12 s] waiting for the Taker's refund of ee7e75af742a to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 8150, tip 8155 (5 unfinalized) [heartbeat]
+[02:06:42]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[02:07:03]   [74 s] waiting for the Taker's refund of ee7e75af742a to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 8200, tip 8204 (4 unfinalized) [heartbeat]
+[02:07:34]   refund request admitted (attempt 11, state awaiting_second_lock)
+[02:07:44]   [115 s] waiting for the Taker's refund of ee7e75af742a to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 8233, tip 8238 (5 unfinalized) [heartbeat]
+[02:08:27]   refund request replayed (attempt 16, state refund_in_progress)
+[02:08:48]   [179 s] waiting for the Taker's refund of ee7e75af742a to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 8285, tip 8287 (2 unfinalized) [heartbeat]
+[02:09:22]   refund request replayed (attempt 21, state refund_in_progress)
+[02:09:53]   [244 s] waiting for the Taker's refund of ee7e75af742a to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 8332, tip 8336 (4 unfinalized) [heartbeat]
+[02:10:17]   Taker refunded; Taker Node balances {'btc_trusted_sat': 524998950660, 'lez_units': 1601003} → {'btc_trusted_sat': 524998950660, 'lez_units': 1601004}
+[02:10:26]   [0 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker offered (schedule backoff) | LEZ finalized 8363, tip 8368 (5 unfinalized) [heartbeat]
+[02:10:32]   [5 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker offered (schedule leased) | LEZ finalized 8363, tip 8368 (5 unfinalized) [heartbeat]
+[02:10:37]   Maker reconciled to refunded
+[02:10:37]   [0 s] waiting for LEZ finality to reach block 8385 (the swap's last LEZ transaction): LEZ finalized 8380, tip 8384 (4 unfinalized) [heartbeat] | LEZ finalized 8380, tip 8384 (4 unfinalized) [heartbeat]
+[02:11:00]   LEZ is final through block 8385 after 22s
+[02:11:00]   settled refunded: LEZ moved {'maker': 0, 'taker': 1} as both Nodes say
+[02:11:00] === btc-custody-credit-refund: passed in 315s

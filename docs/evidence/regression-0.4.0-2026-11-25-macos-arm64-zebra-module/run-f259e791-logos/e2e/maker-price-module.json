@@ -1,0 +1,58 @@
+{
+  "scenario": "maker-price-module",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "179565223903",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "beebe523dee7406ae0cf3e151c5fd786e0113737ef75208a37a5330e6a3fc5d9",
+  "offers": [
+    "offer-e2e-price-taken-179565223903",
+    "offer-e2e-price-kept-179565223903"
+  ],
+  "module_sha256": "d551e6f9893aac61d4a5d67b54c3987c26701a78e8299086965d2ae69711579b",
+  "quote": {
+    "observed_at_unix_seconds": 1795652243,
+    "price": {
+      "foreign_units_per_lot": 2,
+      "lez_units_per_lot": 5,
+      "route": {
+        "direction": "TakerSellsForeign",
+        "pair": "Bitcoin"
+      }
+    },
+    "source_revision": 1795652248
+  },
+  "unavailable": {
+    "module_sha256": "54c4e4ef32adf0d9dd3f37bb84dfa18c947109b161923767eb5b31b1d915a37d",
+    "quote": {
+      "code": -32003,
+      "message": "price source is temporarily unavailable"
+    },
+    "publish": {
+      "code": -32003,
+      "message": "price source is temporarily unavailable"
+    }
+  },
+  "result": "passed",
+  "seconds": 70
+}

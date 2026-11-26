@@ -1,0 +1,42 @@
+{
+  "scenario": "taker-refund",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "179565572304",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "refund",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "123",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "65",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "100",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "115",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "245",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "15",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "130",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "c6a8f4dfade8e07f248b50895e03183f8e881b89ed7c05c58327ec1f2e89c7ee",
+  "lock_txid": "dd3dc0193f2f9c262e5aa1c54fbd1a2cb4ef6b48fab2ab543ec66c57ddb2a369",
+  "taker_balance_before": {
+    "btc_trusted_sat": 525006972500,
+    "lez_units": 1293001
+  },
+  "taker_balance_after": {
+    "btc_trusted_sat": 525006968400,
+    "lez_units": 1293001
+  },
+  "cut": false,
+  "taker_probe_at_refund": null,
+  "bitcoin_refund": "103f5e70db04d2114682cd821d6141a12ba34e19fef022181c05737638f6e416",
+  "result": "passed",
+  "seconds": 189
+}

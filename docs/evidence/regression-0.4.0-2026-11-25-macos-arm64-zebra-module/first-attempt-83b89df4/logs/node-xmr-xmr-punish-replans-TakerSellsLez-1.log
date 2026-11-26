@@ -1,0 +1,36 @@
+[21:34:56] === xmr-punish-replans (stamp 179563889602)
+[21:34:56] preflight: indexer historical reads
+[21:34:56]   indexer serves historical reads at the tip (1565)
+[21:34:56] preflight: LEZ finality check waived by request
+[21:35:09]   the Maker's Monero wallet holds 8.994 XMR unlocked
+[21:35:32]   Maker CLI published offer-e2e-xmr-179563889602 on its running Node
+[21:35:48]   Taker took offer-e2e-xmr-179563889602: swap 25e4fb4b7b26 (not_activated)
+[21:35:48]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[21:35:48]   [0 s] waiting for the Taker's 25e4fb4b7b26 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 1593, tip 1597 (4 unfinalized) [heartbeat]
+[21:35:55]   [7 s] waiting for the Taker's 25e4fb4b7b26 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 1593, tip 1597 (4 unfinalized) [heartbeat]
+[21:36:08]   [20 s] waiting for the Taker's 25e4fb4b7b26 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 1606, tip 1611 (5 unfinalized) [heartbeat]
+[21:36:26]   [38 s] waiting for the Taker's 25e4fb4b7b26 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 1622, tip 1626 (4 unfinalized) [heartbeat]
+[21:36:26]   the Taker has verified the Maker's Monero; stopping the Taker Node: it neither claims nor refunds
+[21:36:26]   maker test hook punish-nonce-thefts: 6
+[21:36:26]   [0 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker taker_lock_confirmed (schedule leased) | LEZ finalized 1622, tip 1626 (4 unfinalized) [heartbeat]
+[21:36:30]   [3 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1622, tip 1626 (4 unfinalized) [heartbeat]
+[21:37:32]   [66 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1668, tip 1676 (8 unfinalized) [heartbeat]
+[21:38:33]   [126 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1720, tip 1725 (5 unfinalized) [heartbeat]
+[21:39:33]   [186 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1770, tip 1773 (3 unfinalized) [heartbeat]
+[21:40:33]   [246 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1803, tip 1805 (2 unfinalized) [heartbeat]
+[21:41:33]   [306 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1846, tip 1855 (9 unfinalized) [heartbeat]
+[21:42:34]   [367 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1897, tip 1903 (6 unfinalized) [heartbeat]
+[21:43:35]   [428 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1944, tip 1950 (6 unfinalized) [heartbeat]
+[21:44:35]   [488 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1993, tip 1997 (4 unfinalized) [heartbeat]
+[21:45:36]   [549 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2040, tip 2044 (4 unfinalized) [heartbeat]
+[21:46:36]   [609 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2072, tip 2076 (4 unfinalized) [heartbeat]
+[21:47:37]   [670 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2117, tip 2123 (6 unfinalized) [heartbeat]
+[21:48:38]   [731 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2161, tip 2170 (9 unfinalized) [heartbeat]
+[21:49:39]   [792 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2210, tip 2215 (5 unfinalized) [heartbeat]
+[21:50:40]   [853 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2254, tip 2260 (6 unfinalized) [heartbeat]
+[21:51:41]   [914 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 2301, tip 2305 (4 unfinalized) [heartbeat]
+[21:52:29]   [962 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker maker_recovery_available (schedule leased) | LEZ finalized 2332, tip 2337 (5 unfinalized) [heartbeat]
+[21:53:26]   [1019 s] waiting for the Maker's 25e4fb4b7b26 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker punished (schedule terminal) | LEZ finalized 2381, tip 2385 (4 unfinalized) [heartbeat]
+[21:53:26]   maker test hook punish-nonce-thefts: cleared
+[21:53:29]   6 punish re-plan slots reserved; the Maker's owner signed 7 transactions
+[21:53:30] === xmr-punish-replans: passed in 1114s
