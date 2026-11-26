@@ -342,6 +342,65 @@ class Launcher(unittest.TestCase):
                     self.assertTrue((self.tmp / f'{role}.log').exists())
                 self.assertFalse((self.tmp / 'shared.log').exists())
 
+    XMR_WINDOWS = {'LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS': '320', 'LEZ_XMR_REFUND_SECONDS': '720',
+                   'LEZ_XMR_PUNISH_SECONDS': '1080'}
+    XMR_PROGRAMS = ('lez-v02-xmr-stage-a-plan', 'lez-xmr-maker-actor', 'xmr-reference-monero-fund',
+                    'xmr-reference-tag15', 'xmr-reference-tag15-finalized', 'xmr-reference-monero-refund',
+                    'xmr-reference-monero-verify', 'xmr-reference-tag17')
+
+    def monero_logins(self, directory):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / 'monerod.login').write_text('monerod:secret\n')
+        (directory / 'monero-wallet-rpc.login').write_text('wallet:secret\n')
+
+    def test_on_macos_the_maker_refuses_the_monero_role_and_the_taker_takes_it(self):
+        # The Maker's Monero effect tools refuse to start on macOS (no sealed
+        # memfds): a Maker with Monero logins does not start there. The
+        # Taker's Monero steps run in its Node and its role is written.
+        self.host('Darwin', setpriv=False)
+        for program in self.XMR_PROGRAMS:
+            executable(self.payload / program, '#!/bin/sh\nexit 0\n')
+        home = self.tmp / 'home/Library/Application Support/LEZ'
+        self.inputs(home / 'identity/maker', home / 'market-bootstrap.env', home / 'btc-rpc-cookie')
+        (home / 'identity/taker').mkdir(parents=True)
+        (home / 'identity/taker/identity.json').write_text(json.dumps({'account_id_hex': ACCOUNT}))
+        (home / 'identity/taker/lez-signer.key').write_text('33' * 32)
+        self.monero_logins(home / 'identity/maker')
+        self.monero_logins(home / 'identity/taker')
+        # What the Maker's launcher would have published, had it started.
+        (home / 'delivery').mkdir(parents=True)
+        (home / 'delivery/maker-delivery-identity.pub').write_text(MAKER_KEY)
+        environment = {'PATH': f'{self.fakes}:{self.tools}', 'HOME': str(self.tmp / 'home'),
+                       'CALLS': str(self.calls), 'RECORD': str(self.record),
+                       'LEZ_SIDECAR_PORT_BASE': '19000', 'LEZ_V02_CHANNEL_ID': CHANNEL, **self.XMR_WINDOWS}
+        for bash in bashes():
+            with self.subTest(bash=bash):
+                maker = subprocess.run([bash, str(self.payload / 'node-entrypoint.sh'), 'maker'], env=environment,
+                                       capture_output=True, text=True, timeout=60)
+                self.assertEqual(maker.returncode, 1, maker.stderr)
+                self.assertIn("the Maker's Monero effect tools need Linux", maker.stderr)
+                self.assertIn(str(home / 'identity/maker'), maker.stderr)
+                self.assertFalse(self.record.exists(), 'the Maker Node must not start')
+
+                taker = self.run_launcher(bash, 'taker', **self.XMR_WINDOWS)
+                self.assertEqual(taker['program'], str(self.payload / 'lez-taker-node'))
+                role = json.loads((home / 'taker/xmr-role.json').read_text())
+                self.assertEqual(role['wallet_rpc_endpoint'], 'http://127.0.0.1:18083/')
+                self.assertEqual(role['monerod_endpoint'], 'http://127.0.0.1:18081/')
+                self.assertEqual(role['stage_a_planner'], str(self.payload / 'lez-v02-xmr-stage-a-plan'))
+                self.assertEqual(role['effect_tools'], {})
+                self.record.unlink()
+
+        # On Linux the same Maker takes the role with its tools.
+        root = self.tmp / 'linux'
+        self.inputs(root / 'identity', root / 'manifest.env', root / 'cookie')
+        self.monero_logins(root / 'identity/maker')
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(root / 'state'), LEZ_MONEROD_HOST='127.0.0.1',
+                                  LEZ_XMR_WALLET_HOST='127.0.0.1', **self.XMR_WINDOWS)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        role = json.loads((root / 'state/xmr-role.json').read_text())
+        self.assertEqual(role['effect_tools']['monero_fund'], str(self.payload / 'xmr-reference-monero-fund'))
+
     def test_a_socket_directory_too_long_for_a_unix_socket_is_refused(self):
         self.host('Darwin', setpriv=False)
         result = subprocess.run(

@@ -1,7 +1,8 @@
 """The role Node payload packages carry the same executables on every
 platform: package-role-node.sh (Linux, from the images' staged executables)
 and package-role-node-darwin.sh (macOS on Apple silicon, built on the Mac)
-name the same files for each role. The packages say which variants they
+name the same files for each role, and the Mac build compiles the Nodes with
+the same pairs as from-scratch.sh's Linux build. The packages say which variants they
 carry, and a role image installs its own architecture's Linux variant from a
 package that carries several (the catalog's: darwin-arm64 sorts first)."""
 import json
@@ -27,18 +28,62 @@ def executables(script):
     return found
 
 
+def features_and_packages(command):
+    # (from-scratch.sh's list ends where its devnet hooks, $LEZ_NODE_HOOKS_FEATURE, are added)
+    return {'features': set(re.search(r'--features "?([^"\s$]+)', command).group(1).split(',')),
+            'packages': set(re.findall(r'(?<!\S)-p ([^\s)]+)', command))}
+
+
+def linux_node_build():
+    """The Node build of from-scratch.sh's rust phase, without its devnet hooks."""
+    text = (SCRIPTS / 'from-scratch.sh').read_text()
+    command = re.search(r'^ *cargo build --locked --bins --features .*$', text, re.M).group(0)
+    return features_and_packages(command)
+
+
+def darwin_cargo_commands():
+    text = (SCRIPTS / 'package-role-node-darwin.sh').read_text().replace('\\\n', ' ')
+    return re.findall(r'^\(cd "\$repo" && .*cargo .*\)$', text, re.M)
+
+
+def darwin_node_build():
+    command, = [c for c in darwin_cargo_commands() if '-p lez-maker-node' in c]
+    return features_and_packages(command)
+
+
+def darwin_sidecar_bins():
+    command, = [c for c in darwin_cargo_commands() if 'compat/lez-v0_2-sidecar/Cargo.toml' in c]
+    return set(re.findall(r'--bin ([^\s)]+)', command))
+
+
 class RolePackages(unittest.TestCase):
     def test_linux_and_darwin_packages_carry_the_same_executables(self):
         linux = executables('package-role-node.sh')
         darwin = executables('package-role-node-darwin.sh')
-        # Monero has no macOS package: its executables are Linux-only.
-        monero = re.compile(r'^(lez-xmr-|lez-v02-xmr-|xmr-reference-)')
-        self.assertEqual({role: [b for b in bins if not monero.match(b)]
-                          for role, bins in linux.items()}, darwin)
-        self.assertIn('lez-xmr-maker-actor', linux['maker'])
+        self.assertEqual(linux, darwin)
+        self.assertIn('lez-xmr-maker-actor', darwin['maker'])
+        self.assertIn('lez-v02-xmr-stage-a-plan', darwin['taker'])
         self.assertIn('lez-maker-node', linux['maker'])
         self.assertNotIn('lez-taker-node', linux['maker'])
         self.assertIn('lez-v02-bridge-poc', linux['taker'])
+
+    def test_the_mac_build_has_the_pairs_and_crates_of_the_linux_build(self):
+        # A pair added to from-scratch.sh's Node build (the Linux images and
+        # packages) and not to the Mac's would leave the darwin-arm64 package
+        # without it, as pair-xmr was left out of 0.4.0's.
+        linux, darwin = linux_node_build(), darwin_node_build()
+        self.assertEqual(darwin['features'], linux['features'])
+        self.assertIn('lez-maker-node/pair-xmr', darwin['features'])
+        self.assertIn('lez-taker-node/pair-xmr', darwin['features'])
+        self.assertEqual(darwin['packages'], linux['packages'])
+        self.assertIn('xmr-reference-actor', darwin['packages'])
+
+    def test_the_mac_build_makes_every_sidecar_program_the_packages_carry(self):
+        packaged = {b for bins in executables('package-role-node.sh').values() for b in bins if b.startswith('lez-v02-')}
+        self.assertIn('lez-v02-xmr-stage-a-plan', packaged)
+        self.assertLessEqual(packaged, darwin_sidecar_bins())
+        text = (SCRIPTS / 'package-role-node-darwin.sh').read_text()
+        self.assertIn('if [[ "$b" == lez-v02-* ]]; then src="$target/sidecar/release/$b"', text)
 
     def test_metadata_names_every_variant_it_is_built_for(self):
         for role in ('maker', 'taker'):

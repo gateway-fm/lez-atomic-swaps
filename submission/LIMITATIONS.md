@@ -272,6 +272,18 @@ The launcher and the desks:
   not the port the Node reads). The ports are
   not configurable; running both roles' Monero wallets on one host outside
   containers is not supported.
+- macOS. The darwin-arm64 role packages carry what the Linux ones carry for
+  Monero: both Nodes built with `pair-xmr`, the Stage-A planner, and the
+  Maker's `lez-xmr-maker-actor` and its six effect tools. The Maker's effect
+  tools take their inputs as write-sealed memfds, which macOS does not have,
+  and refuse to start there, so the Maker cannot fund, claim, refund or
+  punish a Monero swap on macOS; its launcher refuses to start a Maker with
+  Monero logins on macOS. The Taker's launcher writes its Monero role there
+  and starts the Node. What ran on macOS: the release build and both
+  packages, the Stage-A planner's unit tests, and the two-Node take-time
+  tests (`xmr_take_process`, `xmr_reserve_process`: fake monerod, sidecar and
+  planner). No Monero swap has run with a Node on macOS, and the pinned
+  Monero release is verified and staged for Linux only.
 
 The Logos transport:
 

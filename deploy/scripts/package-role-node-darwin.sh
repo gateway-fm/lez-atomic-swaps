@@ -9,9 +9,10 @@
 # The Linux sibling, package-role-node.sh, packages the executables the
 # images stage; this one builds them here with cargo from this checkout
 # (release, --locked; LEZ_CARGO_JOBS, default 6): the same executables, the
-# role Node with pair-zec, its CLI, Chat gateway, actors, the Maker's Logos
-# price worker, the health probe and the LEZ v0.2 sidecar
-# (compat/lez-v0_2-sidecar, toolchain 1.96.0). Each is stripped with
+# role Node with the pairs from-scratch.sh builds (pair-zec, pair-xmr), its
+# CLI, Chat gateway, actors, the Maker's Logos price worker and its Monero
+# effect tools, the health probe, and the LEZ v0.2 sidecar and the Monero
+# Stage-A planner (compat/lez-v0_2-sidecar, toolchain 1.96.0). Each is stripped with
 # the macOS strip and signed again ad hoc (stripping invalidates the linker's
 # signature, and Apple silicon runs no unsigned code). The launcher is
 # modules/lez-role-node/node-entrypoint.sh. bin/payload.json names every
@@ -30,11 +31,13 @@ out="${3:?the package to write}"
 # The executables of package-role-node.sh (test_role_node_package.py keeps
 # the two lists the same).
 case "$role" in
-  maker) bins=(lez-maker-node lez-maker-cli lez-maker-chat-gateway lez-logos-price-worker lez-btc-maker-actor lez-zec-maker-actor) ;;
+  maker) bins=(lez-maker-node lez-maker-cli lez-maker-chat-gateway lez-logos-price-worker lez-btc-maker-actor lez-zec-maker-actor
+           lez-xmr-maker-actor xmr-reference-monero-fund xmr-reference-tag15 xmr-reference-tag15-finalized
+           xmr-reference-monero-refund xmr-reference-monero-verify xmr-reference-tag17) ;;
   taker) bins=(lez-taker-node lez-taker-cli lez-taker-chat-gateway lez-taker-registry-init lez-btc-taker-actor lez-zec-taker-actor) ;;
   *) echo "role must be maker or taker" >&2; exit 64 ;;
 esac
-bins+=(lez-v02-bridge-poc lez-runtime-healthcheck)
+bins+=(lez-v02-bridge-poc lez-v02-xmr-stage-a-plan lez-runtime-healthcheck)
 variant=darwin-arm64
 launcher="../modules/lez-role-node/node-entrypoint.sh"
 
@@ -62,10 +65,11 @@ fi
 target="${CARGO_TARGET_DIR:-$repo/target}"
 jobs="${LEZ_CARGO_JOBS:-6}"
 (cd "$repo" && LEZ_RELEASE_BUILD=1 CARGO_TARGET_DIR="$target" nice -n 10 cargo build --release --locked -j "$jobs" --bins \
-  --features lez-maker-node/pair-zec,lez-taker-node/pair-zec \
-  -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor)
+  --features lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr \
+  -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor \
+  -p xmr-reference-actor)
 (cd "$repo" && LEZ_RELEASE_BUILD=1 CARGO_TARGET_DIR="$target/sidecar" nice -n 10 cargo +1.96.0 build --release --locked -j "$jobs" \
-  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --bin lez-v02-bridge-poc)
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan)
 
 source_commit="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" diff --quiet HEAD || source_commit="$source_commit-dirty"
@@ -79,7 +83,7 @@ trap 'rm -rf "$work"' EXIT
 dir="$work/x/$variant"
 mkdir -p "$dir/bin"
 for b in "${bins[@]}"; do
-  if [[ "$b" == lez-v02-bridge-poc ]]; then src="$target/sidecar/release/$b"; else src="$target/release/$b"; fi
+  if [[ "$b" == lez-v02-* ]]; then src="$target/sidecar/release/$b"; else src="$target/release/$b"; fi
   [[ "$(lipo -archs "$src" 2>/dev/null)" == arm64 ]] || { echo "$src is not an arm64 Mach-O executable" >&2; exit 65; }
   install -m 0755 "$src" "$dir/bin/$b"
   strip "$dir/bin/$b"

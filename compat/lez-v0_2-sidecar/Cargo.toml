@@ -65,12 +65,16 @@ xmr-reference-actor = { version = "=0.1.0", path = "../../crates/xmr-reference-a
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rustix = { version = "=1.1.6", features = ["fs", "process"] }
+xmr-reference-actor = { version = "=0.1.0", path = "../../crates/xmr-reference-actor", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread"] }
 
 # The reference actor's reservation runs the real Stage-A planner in tests.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
+xmr-reference-actor = { version = "=0.1.0", path = "../../crates/xmr-reference-actor", default-features = false, features = ["sessions"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
 xmr-reference-actor = { version = "=0.1.0", path = "../../crates/xmr-reference-actor", default-features = false, features = ["sessions"] }
 
 [lints.rust]

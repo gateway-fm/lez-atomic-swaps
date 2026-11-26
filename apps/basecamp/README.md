@@ -136,7 +136,8 @@ by the current user with mode `0600`, read from `LEZ_MAKER_RPC_SOCKET` or
 catalog) needs a Node of its own on the same host. On an Apple-silicon Mac
 the Maker and Taker Nodes also run natively, from darwin-arm64 role packages
 (`deploy/scripts/package-role-node-darwin.sh`), against the devnet's chains in
-Docker (`docs/architecture/logos-native-packaging.md`, "The Node on macOS").
+Docker (`docs/architecture/logos-native-packaging.md`, "The Node on macOS");
+a Maker with a Monero role runs on Linux only.
 Desks installed with exactly pinned dependencies have not loaded in the
 release Basecamp 0.2.x.
 

@@ -1,6 +1,6 @@
 //! Exercises a Monero take between the two Nodes; compiled only with `pair-xmr`.
 #![cfg(feature = "pair-xmr")]
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 //! A real Maker daemon and the real Taker service agree one Monero swap at
 //! take time: `taker_swap_initiate_v1` drives `xmr_reserve_v1` →

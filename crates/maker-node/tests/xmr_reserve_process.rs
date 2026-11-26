@@ -1,6 +1,6 @@
 //! Exercises the take-time Monero agreement; compiled only with `pair-xmr`.
 #![cfg(feature = "pair-xmr")]
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 //! A real Maker daemon agrees one Monero swap with a fake Taker (the
 //! reference actor's Taker half, driven over the Maker's Chat socket) through
