@@ -1266,6 +1266,32 @@
       "remaining": "The wallet-rpc's own daemon is not checked: a wallet-rpc on another network fails its restore or sweep (the address does not decode there), which is caught, not prevented.",
       "owner": "negotiation",
       "state": "checking"
+    },
+    {
+      "id": "TM-0037",
+      "old_ids": [],
+      "view": "local-control",
+      "scenario": "A process of the role's own user connects to the role's LEZ signer socket and obtains a signature for the role's account over any 32-byte hash, that of a LEZ transaction of its own transferring the account's funds included: lez_core 0.4.1-sign.4, Gateway's patched build of the LEZ Core module, signs any hash for the account on request (sign_public_message_hash), and lez_swap_node serves that call to the role's sidecars.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement", "first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E11", "E22", "E12", "E25"]
+      },
+      "classes": ["stride.spoofing", "stride.elevation-of-privilege", "protocol.authorization"],
+      "harms": ["AS-FUNDS", "AS-AUTH"],
+      "milestones": ["M2", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 3, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "lez_swap_node serves the signer on an owner-only Unix socket (created under umask 077) bound to one account, and the role's sidecar checks every returned witness against the transaction it planned.",
+      "proofs": ["modules/lez-swap-node/src/lez_swap_node_impl.cpp", "compat/lez-v0_2-sidecar/src/message_signer.rs", "deploy/builder/patches/logos-execution-zone-module/0001-lez-wallet-ffi-sign-public-message-hash.patch", "deploy/builder/patches/README.md"],
+      "remaining": "Any process of the same user that reaches the socket obtains a signature over any hash; there is no typed transaction preview, purpose, approval, rate limit or audit record. The same user can also read the role's key file (TM-0002). Tracked in issue #197.",
+      "owner": "key-custody",
+      "state": "open"
     }
   ]
 }

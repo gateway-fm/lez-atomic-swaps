@@ -78,6 +78,20 @@ checkpoint; they do not widen the current claim.
   spends. Fee starvation, deep reorganization, and action at arbitrary deadline
   boundaries are not closed production claims.
 
+## Every pair: the role's LEZ signer
+
+This applies to BTC, ZEC and XMR alike (TM-0037).
+
+- The role's LEZ key signs through `lez_core` 0.4.1-sign.4, Gateway's
+  patched build of the LEZ Core module, which signs any 32-byte hash for the
+  role's account on request (`sign_public_message_hash`). `lez_swap_node`
+  serves that call on an owner-only Unix socket to the role's sidecars. The
+  sidecar checks every witness against the transaction it planned, but any
+  process of the same user that reaches the socket can obtain a signature
+  over any hash, including that of a LEZ transaction transferring the
+  account's funds. There is no typed transaction preview, purpose, approval,
+  rate limit or audit record. Tracked in #197.
+
 ## M2 boundary
 
 - **RFP-003 Functionality 4, when the Taker sells LEZ.** F4 asks that the
