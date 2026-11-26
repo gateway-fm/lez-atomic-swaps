@@ -16,7 +16,7 @@ mod finalized_refund_observation;
 mod finalized_xmr_observation;
 pub mod heartbeat;
 mod m4_finalized_facts;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod m4_stage_a_composer;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod m4_tag13_handoff;
@@ -59,7 +59,7 @@ pub use m4_finalized_facts::{
     M4FinalizedAccountNonce, M4FinalizedAccountPresence, StableM4FinalizedNonceSnapshot,
     read_stable_m4_finalized_nonce_snapshot, validate_checked_m4_escrow_program_id,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use m4_stage_a_composer::{
     ActualLocalM4StageAConfig, M4_STAGE_A_DEPLOYMENT_RESIDUAL, M4StageAComposeReceipt,
     M4StageAParameters, compose_m4_stage_a_actual_local, plan_m4_stage_a_unsigned_wire,

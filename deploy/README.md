@@ -29,7 +29,7 @@ that `regress.sh` uses); `scripts/host.sh` refuses an older bash at the start
 of every script and names that command.
 
 ```sh
-tar -xzf lez-swap-stack-v0.4.0-arm64.tar.gz && cd lez-swap-stack-v0.4.0-arm64
+tar -xzf lez-swap-stack-v0.4.1-arm64.tar.gz && cd lez-swap-stack-v0.4.1-arm64
 ./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → desk suites
 ./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two desks
 ```
@@ -909,8 +909,11 @@ run two at once (`ui:xmr:xmr-concurrent`), and show a punishment
 Maker's funding through the refund window, as in `node:xmr:xmr-punish`; the
 Maker desk opened shortly before the punish time watches its row reach
 "Punished", and the Taker desk, back up, shows the swap punished). All four
-are recorded in `docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/` (the videos outside git). Not on the devnet yet: there is no macOS
-package for it. The Maker's systemd unit takes a Monero role from an optional
+are recorded in `docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/` (the videos outside git). Not run with
+native macOS Nodes: the darwin-arm64 packages carry the Monero programs and
+both roles take a Monero role on macOS, with a weaker effect custody for the
+Maker there (`docs/architecture/logos-native-packaging.md`, "The Node on
+macOS"). The Maker's systemd unit takes a Monero role from an optional
 drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with
 stub programs, not run in the VM; the Taker unit has none.
 

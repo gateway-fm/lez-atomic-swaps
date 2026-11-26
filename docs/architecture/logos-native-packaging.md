@@ -254,8 +254,9 @@ Option A1 with lez_swap_node kept as the one lifecycle owner, and the parts of
   (`launcher()` → `<modulePath>/bin/node-entrypoint.sh`, `payload()` →
   `bin/payload.json`) and, under `bin/`, the launcher
   (`modules/lez-role-node/node-entrypoint.sh`), the role's Node and CLI (the
-  Taker's registry initialiser), its Bitcoin and Zcash actors, the LEZ v0.2
-  sidecar and the health probe, stripped. `bin/payload.json` names each file's
+  Taker's registry initialiser), its Bitcoin and Zcash actors (the Maker's
+  Monero actor and its six Monero effect tools too), the LEZ v0.2 sidecar,
+  the Monero Stage-A planner and the health probe, stripped. `bin/payload.json` names each file's
   sha256 and the build and sidecar sources. Nix builds the plugin
   (`from-scratch.sh --only build:role-node-modules`, same pins as
   lez_swap_node); `deploy/scripts/package-role-node.sh` adds `bin/` with the
@@ -585,9 +586,11 @@ adds the launcher and `bin/payload.json`, and writes the variant with the
 lgx that built the plugin (found through the plugin's Nix derivation, or
 `LGX`), then `lgx verify` and the execute-bit check of the Linux script. The
 executables link only macOS system libraries. The two scripts list the same
-executables (`deploy/tests/test_role_node_package.py`); the Linux script is
+executables, and the Mac build compiles the Nodes with the pairs and crates
+of `from-scratch.sh`'s Linux build (`pair-zec`, `pair-xmr`;
+`deploy/tests/test_role_node_package.py`); the Linux script is
 unchanged. The Linux images package debug builds; this one packages release
-builds (the Maker package is 31 MB, the Taker's 44 MB). A catalog package
+builds (at 0.4.1 the Maker package is 69 MB, the Taker's 51 MB). A catalog package
 carries the platforms side by side (next section); the role images install
 their own architecture's Linux variant from it and refuse a package without
 one.
@@ -663,6 +666,44 @@ Not run natively: the scenarios that cut a forward or the Chat socket in a
 container, ZEC `replay`/`wrong-inputs`/`concurrent`, the desk journeys other
 than `happy`, and anything beyond opening the desks in the release Basecamp
 0.2.3.
+
+**Monero.** The packages carry the same Monero programs as the Linux ones
+(both Nodes with `pair-xmr`, the Stage-A planner, the Maker's
+`lez-xmr-maker-actor` and its six effect tools), and both roles take a
+Monero role when their logins (`identity/<role>/monerod.login` and
+`monero-wallet-rpc.login`) are in place: monerod at `127.0.0.1:18081` and
+the role's wallet-rpc at `127.0.0.1:18083` on this host's loopback, no
+forwards, so both roles of one host would read the same two ports.
+
+The Maker's effect custody differs from Linux's (TM-0038). On Linux each
+effect input is a write-sealed memfd the tool reopens through `/proc`; on
+macOS it is an unlinked owner-private copy on a read-only descriptor, made
+the way `lez-swap-store` copies a Bitcoin or Zcash actor's config there
+(`owner_private_input_snapshot`), and the tool reads it through `/dev/fd`
+from offset 0 after checking mode 0400, link count 0, its own user and a
+read-only descriptor (`read_xmr_effect_input_fd`). A descriptor's absence is
+`EBADF` on `/dev/fd/N`. The release journal's directory is reopened by the
+path its descriptor has (`F_GETPATH`) and checked against the held inode,
+so a renamed directory fails closed. The Maker's launcher logs one line
+saying so. A process of the Maker's user that opened a copy for writing
+before it was unlinked can change it undetected; a seal stops that on
+Linux.
+
+What ran on 2026-11-26 on an Apple-silicon Mac (macOS 26): both role
+packages at 0.4.1, their executables answering `--help`; the Monero actor
+suites (`xmr-reference-actor`, `lez-xmr-release-authority`, `lez-swap-store`)
+and the Node suites with `pair-zec` and `pair-xmr`, among them the real tag
+16, tag 17, Monero refund and Monero verify tools on these copies against
+fake LEZ and Monero RPC servers (`tests/tag16_process.rs`), the effect
+routes with stand-in tools (`tests/effect_route.rs`), the Maker's actor
+supervisor through tag 17, refund and claim recovery
+(`maker_xmr_tag17_supervisor.rs`) and the two-Node take
+(`xmr_take_process.rs`); and `xmr-reference-actor`'s `full-lifecycle`
+example against a Monero regtest `monerod` and wallet-rpc in a container
+(the funding, the view-only check, the claim and refund sweeps with the
+rebuilt keys). Not run on macOS: the Maker's effect tools against a live
+`monerod`, and a swap through two Nodes. `monerod` and `monero-wallet-rpc`
+are verified and staged for Linux only (`tests/e2e/monero/provenance.env`).
 
 ### Chains on another host
 

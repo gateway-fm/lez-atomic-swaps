@@ -1,8 +1,9 @@
 //! Exercises the XMR reference actor; compiled only with `pair-xmr`.
 #![cfg(feature = "pair-xmr")]
-// XMR effect children take write-sealed memfd inputs; XMR effects are not
-// ported to macOS and refuse to start there.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
+
+#[path = "../../xmr-reference-actor/tests/support/fd_script.rs"]
+mod fd_script_support;
 
 #[allow(dead_code)]
 #[path = "support/xmr_chat_fixture.rs"]

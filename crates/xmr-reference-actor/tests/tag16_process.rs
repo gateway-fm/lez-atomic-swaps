@@ -1,10 +1,7 @@
 #![cfg(feature = "sessions")]
-// XMR effect children take write-sealed memfd inputs; they refuse to run on
-// macOS, where XMR effects are not ported.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::{
-    ffi::CString,
     fs::{self, File, OpenOptions},
     io::Write as _,
     os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
@@ -47,6 +44,7 @@ use lez_xmr_swap_sdk::{
 use monero::util::key::{PrivateKey as MoneroPrivateKey, PublicKey as MoneroPublicKey};
 use monero::{Address as MoneroAddress, Network as MoneroNetwork};
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng as _};
+#[cfg(target_os = "linux")]
 use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use secp256k1::{Keypair, Message as SecpMessage, PublicKey, Secp256k1, SecretKey};
 use serde::Serialize;
@@ -658,8 +656,9 @@ fn command_with_request_ids(
     command
 }
 
+#[cfg(target_os = "linux")]
 fn sealed_memfd(label: &str, bytes: &[u8]) -> File {
-    let name = CString::new(label).expect("memfd label");
+    let name = std::ffi::CString::new(label).expect("memfd label");
     let descriptor = memfd_create(
         name.as_c_str(),
         MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
@@ -675,6 +674,14 @@ fn sealed_memfd(label: &str, bytes: &[u8]) -> File {
     )
     .expect("seal descriptor");
     file
+}
+
+/// macOS has no sealed memfd: the input is what the Maker's custody hands a
+/// child there, an unlinked owner-private copy on a read-only descriptor.
+#[cfg(target_os = "macos")]
+fn sealed_memfd(label: &str, bytes: &[u8]) -> File {
+    lez_swap_store::owner_private_input_snapshot(label, bytes, 0o400)
+        .expect("create owner-private input snapshot")
 }
 
 fn taker_refund_journal(stage: &StageFixture, path: &Path, presignature: [u8; 65]) {

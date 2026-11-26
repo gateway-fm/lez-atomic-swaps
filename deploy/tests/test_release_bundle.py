@@ -21,7 +21,7 @@ import unittest.mock
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
 RELEASE_ENV = '''# written by scripts/package-dist.sh; read by scripts/start.sh
 LEZ_IMAGE_PREFIX=ghcr.io/gateway-fm/lez-atomic-swaps/lez
-LEZ_IMAGE_TAG=v0.4.0
+LEZ_IMAGE_TAG=v0.4.1
 LEZ_ESCROW_PROGRAM_ID={program}
 LEZ_RELEASE_COMMIT=0123456789abcdef0123456789abcdef01234567
 '''.format(program='ab' * 32)
@@ -43,7 +43,7 @@ class ReleaseBundle(unittest.TestCase):
     def deploy_dir(self, release_env):
         tmp = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp)
-        deploy = tmp / 'lez-swap-stack-v0.4.0-arm64'
+        deploy = tmp / 'lez-swap-stack-v0.4.1-arm64'
         (deploy / 'scripts').mkdir(parents=True)
         for name in ('lane.sh', 'host.sh', 'release-env.sh'):
             shutil.copy(SCRIPTS / name, deploy / 'scripts')
@@ -60,8 +60,8 @@ class ReleaseBundle(unittest.TestCase):
 
     def test_a_bundle_resolves_the_release_images_and_never_builds(self):
         seen = self.probe(self.deploy_dir(RELEASE_ENV))
-        self.assertEqual(seen['image'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.4.0')
-        self.assertEqual(seen['child'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.4.0')
+        self.assertEqual(seen['image'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.4.1')
+        self.assertEqual(seen['child'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.4.1')
         self.assertEqual(seen['LEZ_ESCROW_PROGRAM_ID'], 'ab' * 32)
         self.assertEqual(seen['LEZ_RELEASE_COMMIT'], '0123456789abcdef0123456789abcdef01234567')
         self.assertEqual(seen['images'], 'pull')
@@ -69,7 +69,7 @@ class ReleaseBundle(unittest.TestCase):
 
     def test_a_bundle_of_local_images_uses_them_as_they_are(self):
         local = RELEASE_ENV.replace('LEZ_IMAGE_PREFIX=ghcr.io/gateway-fm/lez-atomic-swaps/lez', 'LEZ_IMAGE_PREFIX=lez') \
-                           .replace('LEZ_IMAGE_TAG=v0.4.0', 'LEZ_IMAGE_TAG=local')
+                           .replace('LEZ_IMAGE_TAG=v0.4.1', 'LEZ_IMAGE_TAG=local')
         seen = self.probe(self.deploy_dir(local))
         self.assertEqual(seen['image'], 'lez-maker-node:local')
         self.assertEqual(seen['images'], 'present')
@@ -295,7 +295,7 @@ def bundle_tree(root):
     assert self_check <= set(removed), removed
     listed = subprocess.run(['git', '-C', str(REPO), 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
                              '--', 'deploy'], capture_output=True, check=True).stdout.decode().split('\0')
-    tree = root / 'lez-swap-stack-v0.4.0-arm64'
+    tree = root / 'lez-swap-stack-v0.4.1-arm64'
     for name in filter(None, listed):
         relative = pathlib.PurePosixPath(name).relative_to('deploy')
         if any(relative == pathlib.PurePosixPath(r) or pathlib.PurePosixPath(r) in relative.parents for r in removed):
@@ -365,7 +365,7 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         self.assertEqual(harness.escrow_program_id(), 'ab' * 32)
         # what it passes to compose, gen-config.sh and the fixtures it starts
         self.assertEqual(environment['LEZ_IMAGE_PREFIX'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez')
-        self.assertEqual(environment['LEZ_IMAGE_TAG'], 'v0.4.0')
+        self.assertEqual(environment['LEZ_IMAGE_TAG'], 'v0.4.1')
         self.assertEqual(environment['LEZ_ESCROW_PROGRAM_ID'], 'ab' * 32)
         self.assertEqual(environment['LEZ_IMAGES'], 'present')
 
@@ -382,7 +382,7 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         probe = ('set -euo pipefail; cd "$1"; source scripts/release-env.sh; '
                  'printf "%s\\n" "${LEZ_IMAGE_PREFIX:-lez}-network-module:${LEZ_IMAGE_TAG:-local}"')
         seen = self.run_in(self.tree, 'bash', '-c', probe, '-', str(self.tree))
-        self.assertEqual(seen.stdout.strip(), 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-network-module:v0.4.0', seen.stderr)
+        self.assertEqual(seen.stdout.strip(), 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-network-module:v0.4.1', seen.stderr)
 
     def release_unavailable(self, cwd, **extra):
         listed = self.run_in(cwd, sys.executable, '-I', 'scripts/node-e2e.py', 'release-unavailable', **extra)

@@ -1,6 +1,5 @@
-// The effect-child tests are Linux-only (write-sealed memfd inputs); on macOS
-// their helpers and imports are compiled but unused.
-#![cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
+#[path = "support/fd_script.rs"]
+mod fd_script_support;
 
 use std::{
     fs::{self, OpenOptions},
@@ -514,8 +513,6 @@ fn write_executable(path: &Path, bytes: &[u8], mode: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("set executable mode");
 }
 
-// XMR effect inputs are write-sealed memfds; not ported to macOS.
-#[cfg(target_os = "linux")]
 #[test]
 fn composed_effect_command_hands_off_exact_fds_and_locks() {
     const PROGRAM: &[u8] = br#"#!/bin/sh
@@ -539,14 +536,15 @@ done
     let ready = root.path().join("child.ready");
     let gate = root.path().join("child.gate");
     let program = root.path().join("tag14-authorize");
-    write_executable(&program, PROGRAM, 0o700);
+    let program_bytes = fd_script_support::fd_script(PROGRAM);
+    write_executable(&program, &program_bytes, 0o700);
 
     let (mut spec, runtime, secret_paths, secret_values) = custody_manifest(root.path());
     spec.taker_tools
         .tag14_authorize
         .program
         .clone_from(&program);
-    spec.taker_tools.tag14_authorize.program_sha256 = hex::encode(Sha256::digest(PROGRAM));
+    spec.taker_tools.tag14_authorize.program_sha256 = hex::encode(Sha256::digest(&program_bytes));
     let authority = validated(&spec);
     let inputs = authority
         .pin_effect_inputs_at_use()
@@ -617,6 +615,32 @@ done
     drop(ActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
 }
 
+/// Where a pinned input's child path points: the descriptor directory.
+#[cfg(target_os = "linux")]
+const DESCRIPTOR_DIRECTORY: &str = "/proc/self/fd";
+#[cfg(target_os = "macos")]
+const DESCRIPTOR_DIRECTORY: &str = "/dev/fd";
+
+/// A pinned input's bytes through its child path. On Linux the path reopens
+/// the file; on macOS it duplicates the descriptor and shares its offset, so
+/// the bytes are read from offset 0 without moving it.
+fn read_snapshot(path: &Path) -> Vec<u8> {
+    #[cfg(target_os = "linux")]
+    {
+        fs::read(path).expect("read descriptor snapshot")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::FileExt as _;
+        let file = fs::File::open(path).expect("open descriptor snapshot");
+        let length = usize::try_from(file.metadata().unwrap().len()).unwrap();
+        let mut bytes = vec![0_u8; length];
+        file.read_exact_at(&mut bytes, 0)
+            .expect("read descriptor snapshot");
+        bytes
+    }
+}
+
 fn assert_effect_child_output(output: std::process::Output, secret_values: Vec<Vec<u8>>) {
     assert!(
         output.status.success(),
@@ -647,8 +671,6 @@ fn assert_effect_child_output(output: std::process::Output, secret_values: Vec<V
     assert_eq!(lines[11], "fd211=absent");
 }
 
-// XMR effect inputs are write-sealed memfds; not ported to macOS.
-#[cfg(target_os = "linux")]
 #[test]
 fn effect_inputs_pin_runtime_and_all_trailing_newline_secrets_before_name_replacement() {
     let root = tempfile::tempdir().expect("isolated effect-input root");
@@ -683,13 +705,10 @@ fn effect_inputs_pin_runtime_and_all_trailing_newline_secrets_before_name_replac
         "every secret has one distinct descriptor"
     );
     for (secret, expected) in secrets.iter().zip(&secret_values) {
-        assert!(secret.child_path().starts_with("/proc/self/fd"));
+        assert!(secret.child_path().starts_with(DESCRIPTOR_DIRECTORY));
         assert_eq!(secret.redacted_len(), expected.len());
         assert_eq!(secret.sha256(), <[u8; 32]>::from(Sha256::digest(expected)));
-        assert_eq!(
-            fs::read(secret.child_path()).expect("read descriptor snapshot"),
-            *expected
-        );
+        assert_eq!(read_snapshot(secret.child_path()), *expected);
     }
 
     replace_named(&runtime, b"{\"generation\":2}\n");
@@ -698,7 +717,7 @@ fn effect_inputs_pin_runtime_and_all_trailing_newline_secrets_before_name_replac
     }
     assert_eq!(pinned.runtime_bytes(), b"{\"generation\":1}\n");
     for (secret, expected) in secrets.iter().zip(&secret_values) {
-        assert_eq!(fs::read(secret.child_path()).unwrap(), *expected);
+        assert_eq!(read_snapshot(secret.child_path()), *expected);
     }
     assert!(
         authority.pin_effect_inputs_at_use().is_err(),

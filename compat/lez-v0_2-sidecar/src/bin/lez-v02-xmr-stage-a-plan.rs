@@ -6,8 +6,8 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(not(target_os = "linux"))]
-compile_error!("the M4 Stage-A planner requires Linux file-safety semantics");
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("the M4 Stage-A planner requires Linux or macOS file-safety semantics");
 
 use std::io::{Read as _, Write as _};
 

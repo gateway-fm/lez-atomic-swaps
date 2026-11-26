@@ -1,7 +1,7 @@
 {
   "name": "lez_zcash_node",
   "display_name": "Zcash Node",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "ui_qml",
   "category": "blockchain",
   "description": "Hosts a Zcash node (Zebra, zebrad_module) in this Basecamp.",

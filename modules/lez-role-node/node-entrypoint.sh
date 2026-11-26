@@ -604,6 +604,12 @@ case "${LEZ_XMR_NETWORK:-regtest}" in
   *) echo "$role: LEZ_XMR_NETWORK must be regtest or stagenet, not '${LEZ_XMR_NETWORK}'" >&2; exit 2 ;;
 esac
 if [[ "$monero_ready" == 1 ]]; then
+  # On macOS the Maker's Monero effect tools take their inputs as unlinked
+  # owner-private copies instead of write-sealed memfds
+  # (crates/xmr-reference-actor/src/effect_input_custody.rs): say so.
+  if [[ "$role" == maker && "$(uname -s)" == Darwin ]]; then
+    echo "maker: macOS: Monero effect inputs are unlinked owner-private copies, not sealed memfds (a process of this user can interfere with them, as it cannot on Linux)" >&2
+  fi
   xmr_tools='{}'
   if [[ "$role" == maker ]]; then
     xmr_tools="$(jq -n --arg bin "$bin" '{monero_fund:"\($bin)/xmr-reference-monero-fund",

@@ -325,13 +325,18 @@ fn reject_forbidden_invocation_secrets() -> Result<()> {
     Ok(())
 }
 
-/// Not ported to macOS: there is no /proc, and a missing path must not read as
-/// an absent descriptor, so the check refuses outright.
+/// macOS: `/dev/fd/N` answers `EBADF` for a descriptor that is not open, the
+/// one answer taken as absent (`xmr_effect_fd_present`).
 #[cfg(target_os = "macos")]
 fn reject_forbidden_invocation_secrets() -> Result<()> {
-    bail!(
-        "Monero finality observer forbidden-FD check needs Linux /proc; XMR effects are not supported on macOS"
-    )
+    for (fd, label) in [(218, "private XMR share"), (219, "finalized LEZ signature")] {
+        if xmr_reference_actor::xmr_effect_fd_present(fd)
+            .with_context(|| format!("inspect forbidden {label} FD"))?
+        {
+            bail!("Monero finality observer received forbidden {label} FD");
+        }
+    }
+    Ok(())
 }
 
 /// The Maker's `FundMonero` observation: the recorded funding, or, after a
@@ -672,12 +677,12 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
     Ok(bytes)
 }
 
-/// Not ported to macOS: this input arrives as a write-sealed memfd and macOS
-/// has no seal to check, so the descriptor is never trusted. The parent
-/// cannot produce one there either (`effect_input_custody`).
+/// macOS: the input arrives as an unlinked owner-private copy on a read-only
+/// descriptor, not a sealed memfd (`read_xmr_effect_input_fd` says what that
+/// keeps and loses).
 #[cfg(target_os = "macos")]
-fn read_sealed_fd(fd: i32, _maximum: usize, label: &'static str) -> Result<Vec<u8>> {
-    anyhow::bail!("{label} FD {fd} needs Linux memfd seals; XMR effects are not supported on macOS")
+fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    xmr_reference_actor::read_xmr_effect_input_fd(fd, maximum, label)
 }
 
 fn validate_evidence_root(path: &Path) -> Result<()> {

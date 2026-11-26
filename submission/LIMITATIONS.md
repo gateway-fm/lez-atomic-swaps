@@ -78,6 +78,20 @@ checkpoint; they do not widen the current claim.
   spends. Fee starvation, deep reorganization, and action at arbitrary deadline
   boundaries are not closed production claims.
 
+## Every pair: the role's LEZ signer
+
+This applies to BTC, ZEC and XMR alike (TM-0037).
+
+- The role's LEZ key signs through `lez_core` 0.4.1-sign.4, Gateway's
+  patched build of the LEZ Core module, which signs any 32-byte hash for the
+  role's account on request (`sign_public_message_hash`). `lez_swap_node`
+  serves that call on an owner-only Unix socket to the role's sidecars. The
+  sidecar checks every witness against the transaction it planned, but any
+  process of the same user that reaches the socket can obtain a signature
+  over any hash, including that of a LEZ transaction transferring the
+  account's funds. There is no typed transaction preview, purpose, approval,
+  rate limit or audit record. Tracked in #197.
+
 ## M2 boundary
 
 - **RFP-003 Functionality 4, when the Taker sells LEZ.** F4 asks that the
@@ -272,6 +286,26 @@ The launcher and the desks:
   not the port the Node reads). The ports are
   not configurable; running both roles' Monero wallets on one host outside
   containers is not supported.
+- macOS. The darwin-arm64 role packages carry what the Linux ones carry for
+  Monero: both Nodes built with `pair-xmr`, the Stage-A planner, and the
+  Maker's `lez-xmr-maker-actor` and its six effect tools, and both roles'
+  launchers take a Monero role there. The Maker's effect custody is weaker
+  on macOS (TM-0038): its effect inputs are unlinked owner-private copies,
+  not write-sealed memfds, its tools run by a checked name, not from a
+  descriptor, and its release journal is reopened by path. A process of the
+  Maker's own user that opened a copy for writing before it was unlinked
+  can still change an effect's inputs, undetected; on Linux nothing can.
+  What ran on macOS (2026-11-26, Apple silicon): both packages built, the
+  Monero actor suites (`xmr-reference-actor`, `lez-xmr-release-authority`,
+  `lez-swap-store`) and the Node suites with `pair-zec` and `pair-xmr`,
+  among them the real tag 16, tag 17, Monero refund and Monero verify tools
+  on these copies against fake RPC servers and the Maker's actor supervisor
+  with fake tools; and the SDK's `full-lifecycle` example against a Monero
+  regtest `monerod` and wallet-rpc in a container (funding, view-only
+  verification, both sweeps with rebuilt keys). Not run on macOS: the
+  Maker's effect tools against a live `monerod`, and any swap through two
+  Nodes; the pinned Monero release is verified and staged for Linux only,
+  and the fixed ports above allow one role's wallet-rpc per host.
 
 The Logos transport:
 

@@ -3367,6 +3367,95 @@ fn open_path_no_symlinks(path: &Path, label: &'static str) -> Result<File> {
     .map_err(|_| anyhow!("{label} is unavailable or unsafe"))
 }
 
+/// Reads an XMR effect input this child inherited on `fd`, on macOS.
+///
+/// The parent hands each input over as an unlinked owner-private copy on a
+/// read-only descriptor (`effect_input_custody`'s macOS `seal_bytes`). This
+/// accepts only a regular file of this user with mode 0400, link count 0 and
+/// a read-only descriptor, reads it from offset 0 without moving the shared
+/// offset (`/dev/fd/N` duplicates the descriptor, it does not reopen the
+/// file), and refuses it if its identity, size or times changed while it was
+/// read or its size is not what was read.
+///
+/// What it cannot check, unlike the Linux reader's seals: whether some other
+/// descriptor of the file, held by a process of the same user since before
+/// the parent unlinked it, can still write it. A write through one before
+/// the read is not detected; one during the read changes the times and is.
+///
+/// # Errors
+///
+/// Every condition above, an unreadable descriptor, or more than `maximum`
+/// bytes.
+#[cfg(target_os = "macos")]
+pub fn read_xmr_effect_input_fd(fd: i32, maximum: usize, label: &str) -> Result<Vec<u8>> {
+    use std::os::unix::fs::FileExt as _;
+
+    let file = File::open(format!("/dev/fd/{fd}")).with_context(|| format!("open {label} FD"))?;
+    let before = file
+        .metadata()
+        .with_context(|| format!("inspect {label} FD"))?;
+    let access =
+        rustix::fs::fcntl_getfl(&file).with_context(|| format!("inspect {label} FD access"))?;
+    ensure!(
+        before.file_type().is_file()
+            && before.mode() & 0o7777 == 0o400
+            && before.nlink() == 0
+            && before.uid() == effective_uid()
+            && access & OFlags::RWMODE == OFlags::RDONLY,
+        "{label} FD is unsafe"
+    );
+    let limit = maximum.saturating_add(1);
+    let mut bytes = vec![0_u8; limit];
+    let mut filled = 0;
+    while filled < limit {
+        let read = file
+            .read_at(
+                &mut bytes[filled..],
+                u64::try_from(filled).unwrap_or(u64::MAX),
+            )
+            .with_context(|| format!("read {label} FD"))?;
+        if read == 0 {
+            break;
+        }
+        filled += read;
+    }
+    bytes.truncate(filled);
+    let after = file
+        .metadata()
+        .with_context(|| format!("reinspect {label} FD"))?;
+    ensure!(
+        bytes.len() <= maximum
+            && before.len() == u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+            && after.dev() == before.dev()
+            && after.ino() == before.ino()
+            && after.len() == before.len()
+            && after.mode() == before.mode()
+            && after.nlink() == 0
+            && after.mtime() == before.mtime()
+            && after.mtime_nsec() == before.mtime_nsec()
+            && after.ctime() == before.ctime()
+            && after.ctime_nsec() == before.ctime_nsec(),
+        "{label} FD is oversized or changed"
+    );
+    Ok(bytes)
+}
+
+/// Whether this process has descriptor `fd` open, on macOS: `/dev/fd/N`
+/// answers `EBADF` for a descriptor that is not open, which is the only
+/// answer taken as absent (on Linux, `/proc/self/fd/N` is missing).
+///
+/// # Errors
+///
+/// Any other failure to inspect the descriptor.
+#[cfg(target_os = "macos")]
+pub fn xmr_effect_fd_present(fd: i32) -> Result<bool> {
+    match std::fs::metadata(format!("/dev/fd/{fd}")) {
+        Ok(_) => Ok(true),
+        Err(error) if error.raw_os_error() == Some(Errno::BADF.raw_os_error()) => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("inspect descriptor {fd}")),
+    }
+}
+
 #[derive(Clone, Copy)]
 enum FilePolicy {
     Public,

@@ -338,17 +338,23 @@ pub fn load_xmr_effect_child_plan_fd() -> Result<XmrEffectChildPlanV1> {
     parse_xmr_effect_child_plan_v1(&bytes)
 }
 
-/// Not ported to macOS: the plan arrives as a write-sealed memfd and macOS has
-/// no seal to check, so the descriptor is never trusted and loading fails.
+/// Loads and validates the child plan from fixed descriptor 217 on macOS,
+/// where it arrives as an unlinked owner-private copy on a read-only
+/// descriptor instead of a sealed memfd (`read_xmr_effect_input_fd` says what
+/// that keeps and loses).
 ///
 /// # Errors
 ///
-/// Always.
+/// Rejects an unsafe, changed or oversized descriptor and any
+/// semantic/canonical child-plan error.
 #[cfg(target_os = "macos")]
 pub fn load_xmr_effect_child_plan_fd() -> Result<XmrEffectChildPlanV1> {
-    anyhow::bail!(
-        "XMR effect child plan descriptor {XMR_EFFECT_CHILD_PLAN_FD} needs Linux memfd seals; XMR effects are not supported on macOS"
-    )
+    let bytes = crate::read_xmr_effect_input_fd(
+        XMR_EFFECT_CHILD_PLAN_FD,
+        XMR_EFFECT_CHILD_PLAN_MAX_BYTES,
+        "XMR effect child plan",
+    )?;
+    parse_xmr_effect_child_plan_v1(&bytes)
 }
 
 /// Loads FD 217 and binds it to one worker's compiled route.

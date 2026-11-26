@@ -268,14 +268,22 @@ fn provision_maker_recovery(
         effect_log.display(),
         effect_log.display(),
     );
-    write(&worker, worker_script.as_bytes(), 0o700);
+    write(
+        &worker,
+        &super::fd_script_support::fd_script(worker_script.as_bytes()),
+        0o700,
+    );
     let observer = effect_root.join("observer");
     let observer_script = format!(
         "#!/bin/sh\nset -eu\n         test \"$1\" = \"--xmr-workflow-step\"\n         test \"$2\" = \"{step_name}\"\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {observer_fd218_assertion}\n         {observer_fd219_assertion}\n         {observer_fd225_assertion}\n         grep -Fq '\"mode\":\"observe\"' /proc/self/fd/217\n         printf 'observe\\n' >> '{}'\n         printf '%s\\n' '{{\"schema_version\":1,\"step\":\"{step_name}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{}\"}}'\n",
         effect_log.display(),
         "ab".repeat(32),
     );
-    write(&observer, observer_script.as_bytes(), 0o700);
+    write(
+        &observer,
+        &super::fd_script_support::fd_script(observer_script.as_bytes()),
+        0o700,
+    );
     let unused = effect_root.join("unused-worker");
     write(&unused, b"#!/bin/sh\nexit 97\n", 0o700);
 
