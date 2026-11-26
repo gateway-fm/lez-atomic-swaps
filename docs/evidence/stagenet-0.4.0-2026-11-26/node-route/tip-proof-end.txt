@@ -1,0 +1,7 @@
+at 2026-11-26T06:26:34Z
+{"height":2258726,"target_height":0,"synchronized":true,"nettype":"stagenet","top_block_hash":"c71ca8b2e1a50c1bcaae5bbd3f434ba9281170f1ed8d809e7a26eff659cf689e","outgoing_connections_count":15,"database_size":6909214720,"version":"0.18.5.1-release"}
+own   2258725 c71ca8b2e1a50c1bcaae5bbd3f434ba9281170f1ed8d809e7a26eff659cf689e 2026-11-26T06:23:36Z
+node.monerodevs.org:38089 2258725 c71ca8b2e1a50c1bcaae5bbd3f434ba9281170f1ed8d809e7a26eff659cf689e
+stagenet.xmr-tw.org:38081 2258725 c71ca8b2e1a50c1bcaae5bbd3f434ba9281170f1ed8d809e7a26eff659cf689e
+node.sethforprivacy.com:38089 2258725 c71ca8b2e1a50c1bcaae5bbd3f434ba9281170f1ed8d809e7a26eff659cf689e
+genesis 76ee3cc98646292206cd3e86f74d88b4dcc1d937088645e9b0cbca84b7ce74eb

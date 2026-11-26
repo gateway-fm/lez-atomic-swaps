@@ -1,0 +1,3 @@
+/lez-stagenet040-monerod image=lez-stagenet040-monero:0.18.5.1 cmd=["--config-file=/run-config/monerod.conf","--non-interactive"] restart=unless-stopped cpus=6000000000
+/lez-stagenet040-wallet-maker image=lez-stagenet040-monero:0.18.5.1 cmd=["--config-file=/run-config/wallet.conf"] restart=unless-stopped cpus=1000000000
+/lez-stagenet040-wallet-taker image=lez-stagenet040-monero:0.18.5.1 cmd=["--config-file=/run-config/wallet.conf"] restart=unless-stopped cpus=1000000000

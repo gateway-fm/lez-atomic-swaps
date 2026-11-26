@@ -1,0 +1,42 @@
+calls by caller address and method, 2026-11-26T01:51:46. to 2026-11-26T06:27:14.
+  91 172.30.0.1 get_info
+  63 172.30.0.1 /get_transactions
+   2 172.30.0.1 get_block_header_by_height
+   2 172.30.0.1 on_get_block_hash
+ 848 172.30.0.3 /getblocks.bin
+ 684 172.30.0.3 /gethashes.bin
+ 127 172.30.0.3 /get_transaction_pool_hashes.bin
+  20 172.30.0.3 hard_fork_info
+   6 172.30.0.3 /get_output_distribution.bin
+   6 172.30.0.3 /get_outs.bin
+   5 172.30.0.3 get_info
+   4 172.30.0.3 /sendrawtransaction
+   4 172.30.0.3 get_fee_estimate
+   4 172.30.0.3 get_txpool_backlog
+   4 172.30.0.3 getblockheadersrange
+   2 172.30.0.3 /gettransactions
+ 911 172.30.0.4 /getblocks.bin
+ 684 172.30.0.4 /gethashes.bin
+ 108 172.30.0.4 /get_transaction_pool_hashes.bin
+   5 172.30.0.4 hard_fork_info
+   1 172.30.0.4 /get_output_distribution.bin
+   1 172.30.0.4 /get_outs.bin
+   1 172.30.0.4 /sendrawtransaction
+   1 172.30.0.4 get_fee_estimate
+   1 172.30.0.4 get_info
+   1 172.30.0.4 get_txpool_backlog
+   1 172.30.0.4 getblockheadersrange
+3295 172.30.0.5 get_info
+1570 172.30.0.5 get_block_header_by_height
+ 214 172.30.0.5 get_last_block_header
+ 134 172.30.0.5 on_get_block_hash
+ 105 172.30.0.5 /get_transactions
+ 105 172.30.0.5 get_block
+  69 172.30.0.5 get_block_count
+1626 172.30.0.6 get_info
+ 219 172.30.0.6 get_last_block_header
+ 111 172.30.0.6 on_get_block_hash
+ 106 172.30.0.6 /get_transactions
+ 106 172.30.0.6 get_block
+ 106 172.30.0.6 get_block_header_by_height
+   3 172.30.0.6 get_block_count

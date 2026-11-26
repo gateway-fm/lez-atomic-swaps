@@ -1,0 +1,6 @@
+
+lez-stagenet040-dev-maker-node 172.30.0.5/16
+lez-stagenet040-dev-taker-node 172.30.0.6/16
+lez-stagenet040-monerod 172.30.0.2/16
+lez-stagenet040-wallet-maker 172.30.0.3/16
+lez-stagenet040-wallet-taker 172.30.0.4/16

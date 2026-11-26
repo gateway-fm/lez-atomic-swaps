@@ -1,0 +1,6 @@
+maker-node LEZ_MONEROD_HOST=lez-stagenet040-monerod:38081
+maker-node LEZ_XMR_NETWORK=stagenet
+maker-node LEZ_XMR_WALLET_HOST=lez-stagenet040-wallet-maker:38083
+taker-node LEZ_XMR_NETWORK=stagenet
+taker-node LEZ_MONEROD_HOST=lez-stagenet040-monerod:38081
+taker-node LEZ_XMR_WALLET_HOST=lez-stagenet040-wallet-taker:38083

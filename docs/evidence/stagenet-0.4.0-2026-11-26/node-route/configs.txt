@@ -1,0 +1,40 @@
+== wallet-maker.conf
+stagenet=1
+wallet-dir=/var/lib/monero-wallet
+rpc-bind-ip=0.0.0.0
+rpc-bind-port=38083
+confirm-external-bind=1
+rpc-login=operator:<removed>
+daemon-address=lez-stagenet040-monerod:38081
+daemon-login=daemon:<removed>
+trusted-daemon=1
+non-interactive=1
+log-level=0
+== wallet-taker.conf
+stagenet=1
+wallet-dir=/var/lib/monero-wallet
+rpc-bind-ip=0.0.0.0
+rpc-bind-port=38083
+confirm-external-bind=1
+rpc-login=operator:<removed>
+daemon-address=lez-stagenet040-monerod:38081
+daemon-login=daemon:<removed>
+trusted-daemon=1
+non-interactive=1
+log-level=0
+== monerod.conf
+stagenet=1
+data-dir=/var/lib/monero
+prune-blockchain=1
+rpc-bind-ip=0.0.0.0
+rpc-bind-port=38081
+confirm-external-bind=1
+rpc-login=daemon:<removed>
+add-peer=node.monerodevs.org:38080
+add-peer=node2.monerodevs.org:38080
+add-peer=node.sethforprivacy.com:38080
+add-peer=stagenet.xmr-tw.org:38080
+out-peers=16
+no-igd=1
+check-updates=disabled
+log-level=0
