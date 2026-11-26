@@ -351,12 +351,12 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
     Ok(bytes)
 }
 
-/// Not ported to macOS: this input arrives as a write-sealed memfd and macOS
-/// has no seal to check, so the descriptor is never trusted. The parent
-/// cannot produce one there either (`effect_input_custody`).
+/// macOS: the input arrives as an unlinked owner-private copy on a read-only
+/// descriptor, not a sealed memfd (`read_xmr_effect_input_fd` says what that
+/// keeps and loses).
 #[cfg(target_os = "macos")]
-fn read_sealed_fd(fd: i32, _maximum: usize, label: &'static str) -> Result<Vec<u8>> {
-    anyhow::bail!("{label} FD {fd} needs Linux memfd seals; XMR effects are not supported on macOS")
+fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    xmr_reference_actor::read_xmr_effect_input_fd(fd, maximum, label)
 }
 
 fn read_sidecar_capability_fd(fd: i32) -> Result<SidecarCapability> {
@@ -486,13 +486,14 @@ fn validate_existing_evidence(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use std::os::fd::AsRawFd as _;
     #[cfg(target_os = "linux")]
     use std::{ffi::CString, fs::File, io::Write as _, os::fd::AsRawFd as _};
 
     #[cfg(target_os = "linux")]
     use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 
-    #[cfg(target_os = "linux")]
     use super::{MAX_CAPABILITY_FILE_BYTES, read_sidecar_capability_fd};
     use super::{next_scan_start_height, parse_view_key, scan_page_blocks};
 
@@ -517,8 +518,6 @@ mod tests {
         }
     }
 
-    // Sealed memfds are Linux-only; the macOS reader refuses every descriptor.
-    #[cfg(target_os = "linux")]
     #[test]
     fn sealed_capability_accepts_exact_grammar_and_one_optional_line_ending() {
         let capability = "a".repeat(128);
@@ -576,5 +575,13 @@ mod tests {
         )
         .expect("seal capability");
         file
+    }
+
+    /// macOS: the unlinked owner-private copy the Maker's custody hands a
+    /// child there.
+    #[cfg(target_os = "macos")]
+    fn sealed_memfd(bytes: &[u8]) -> std::fs::File {
+        lez_swap_store::owner_private_input_snapshot("m7-tag14-classifier-test", bytes, 0o400)
+            .expect("create capability snapshot")
     }
 }

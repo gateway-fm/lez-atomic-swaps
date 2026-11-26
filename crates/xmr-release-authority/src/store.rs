@@ -1267,13 +1267,37 @@ impl SecureDirectory {
         Ok(directory)
     }
 
-    /// Not ported to macOS: the database connection reaches the file through
-    /// the `/proc/self/fd/N/` directory alias, and the macOS `/dev/fd` cannot
-    /// be walked into. Reopening the directory by name would drop the parent pin this
-    /// entry point exists for, so a parent-pinned directory is refused.
+    /// macOS: the database connection cannot reach the file through the held
+    /// descriptor (`/dev/fd` cannot be walked into), so the directory's
+    /// current path is taken from the descriptor itself (`F_GETPATH`) and the
+    /// store is opened by that path with every check of [`Self::open`]: no
+    /// symlink in any component, a trusted parent chain, and, at every
+    /// revalidation, the path must still name the held directory (same device
+    /// and inode). The database file is created and verified through the held
+    /// descriptor, as on Linux.
+    ///
+    /// Kept from Linux: the store is only ever opened in the directory the
+    /// parent handed over; a path that comes to name another directory is
+    /// refused. Lost: on Linux the held descriptor is the path, so the store
+    /// keeps working after the directory is renamed; here a rename (or a
+    /// same-user process moving it) makes every later operation fail closed,
+    /// and `SQLite` resolves the path itself in the instants between the
+    /// identity checks.
     #[cfg(target_os = "macos")]
-    fn from_descriptor(_descriptor: File) -> Result<Self, ReleaseError> {
-        Err(ReleaseError::InsecureDirectory)
+    fn from_descriptor(descriptor: File) -> Result<Self, ReleaseError> {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let metadata = validate_private_directory(&descriptor)?;
+        let name = rustix::fs::getpath(&descriptor).map_err(|_| ReleaseError::InsecureDirectory)?;
+        let directory = Self {
+            path: PathBuf::from(OsStr::from_bytes(name.as_bytes())),
+            descriptor,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            descriptor_relative: false,
+        };
+        directory.revalidate()?;
+        Ok(directory)
     }
 
     fn revalidate(&self) -> Result<(), ReleaseError> {
@@ -1860,7 +1884,7 @@ mod tests {
         assert_eq!(DATABASE_SCHEMA_VERSION, 3);
     }
 
-    // Parent-pinned directories are refused on macOS (`from_descriptor`).
+    // On macOS a renamed directory fails closed instead (`from_descriptor`).
     #[cfg(target_os = "linux")]
     #[test]
     fn descriptor_relative_open_survives_directory_rename_and_rejects_paths() {
@@ -2670,25 +2694,45 @@ mod tests {
         assert!(store.exact_publication(&ambiguous, &key).is_ok());
     }
 
+    // macOS opens a parent-pinned directory by the path its descriptor has
+    // now (`from_descriptor`): the store works in place, and once the
+    // directory is renamed every later operation fails closed instead of
+    // following it.
     #[cfg(target_os = "macos")]
     #[test]
-    fn descriptor_relative_open_is_refused_on_macos() {
-        let root = tempfile::tempdir().unwrap();
-        let directory = File::open(root.path()).unwrap();
-        assert!(matches!(
-            ReleaseStore::open_in_directory(directory, "release.sqlite3"),
-            Err(ReleaseError::InsecureDirectory)
-        ));
-        let directory = File::open(root.path()).unwrap();
-        assert!(matches!(
-            ReleaseStore::open_existing_in_directory(directory, "release.sqlite3"),
-            Err(ReleaseError::InsecureDirectory)
-        ));
-        assert!(!root.path().join("release.sqlite3").exists());
+    fn descriptor_relative_open_on_macos_fails_closed_after_a_rename() {
+        let directory = directory();
+        let original = directory.path().to_path_buf();
+        let moved = original.with_extension("moved");
+        let descriptor = File::open(&original).unwrap();
+        let store = ReleaseStore::open_in_directory(descriptor, "descriptor.sqlite").unwrap();
+        store.revalidate_storage().unwrap();
+        fs::rename(&original, &moved).unwrap();
+        assert_eq!(
+            store.revalidate_storage().unwrap_err(),
+            ReleaseError::InsecureDirectory
+        );
+        drop(store);
+        fs::rename(&moved, &original).unwrap();
+        let descriptor = File::open(&original).unwrap();
+        assert!(ReleaseStore::open_existing_in_directory(descriptor, "descriptor.sqlite").is_ok());
+
+        // A path that names another directory than the held one is refused.
+        let descriptor = File::open(&original).unwrap();
+        fs::rename(&original, &moved).unwrap();
+        fs::create_dir(&original).unwrap();
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o700)).unwrap();
+        let store =
+            ReleaseStore::open_existing_in_directory(descriptor, "descriptor.sqlite").unwrap();
+        assert!(
+            store.revalidate_storage().is_ok(),
+            "the descriptor's own path follows the move"
+        );
+        drop(store);
+        fs::remove_dir(&original).unwrap();
+        fs::rename(&moved, &original).unwrap();
     }
 
-    // Parent-pinned directories are refused on macOS (`from_descriptor`).
-    #[cfg(target_os = "linux")]
     #[test]
     fn descriptor_relative_open_existing_never_creates_missing_database() {
         let directory = directory();
@@ -2701,8 +2745,6 @@ mod tests {
         assert!(!path.exists());
     }
 
-    // Parent-pinned directories are refused on macOS (`from_descriptor`).
-    #[cfg(target_os = "linux")]
     #[test]
     fn descriptor_relative_open_existing_never_initializes_empty_file() {
         let directory = directory();

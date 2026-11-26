@@ -2978,6 +2978,35 @@ fn sealed_artifact(name: &str, bytes: &[u8], mode: u32) -> Result<File, MakerAct
     Ok(reader)
 }
 
+/// The macOS stand-in for a write-sealed input snapshot handed to a child:
+/// the bytes in an unlinked owner-private copy on a read-only descriptor, as
+/// `sealed_artifact` makes an actor's config. Only non-executable modes are
+/// accepted; the returned file has link count 0 and exactly `mode`.
+///
+/// It keeps, against the Linux memfd seal: the bytes are this process's own
+/// copy, no path names them once this returns, other users never reach them
+/// (0700 directory, owner-only mode), and the descriptor is read-only. It
+/// loses: the seal binds every descriptor of the file, the owner's included;
+/// here a process of the same user that opened the copy for writing in the
+/// instant before it was unlinked keeps a descriptor that can still change
+/// the bytes, and nothing on the file says so.
+///
+/// # Errors
+///
+/// [`MakerActorProcessError::ArtifactPreparation`] when the mode is
+/// executable or the copy cannot be made and checked.
+#[cfg(target_os = "macos")]
+pub fn owner_private_input_snapshot(
+    name: &str,
+    bytes: &[u8],
+    mode: u32,
+) -> Result<File, MakerActorProcessError> {
+    if mode & 0o111 != 0 || mode & !0o600 != 0 {
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    }
+    sealed_artifact(name, bytes, mode)
+}
+
 /// An already pinned program copy, if it is still exactly these bytes.
 #[cfg(target_os = "macos")]
 fn existing_pinned_program(path: &Path, bytes: &[u8], mode: u32) -> Option<File> {

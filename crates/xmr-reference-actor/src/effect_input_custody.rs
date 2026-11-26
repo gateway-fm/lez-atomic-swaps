@@ -25,7 +25,7 @@ use lez_xmr_release_authority::{PublicationProtectionKey, ReleaseStore};
 use lez_xmr_swap_sdk::{MoneroPrivateViewKey, XmrActivatedAgreementV1, XmrAgreementV1};
 #[cfg(target_os = "linux")]
 use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, memfd_create};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::io::fcntl_dupfd_cloexec;
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
@@ -990,7 +990,11 @@ fn pin_secret(
     let redacted_len = source.bytes.len();
     let snapshot = seal_bytes(label, &source.bytes)?;
     source.bytes.zeroize();
+    #[cfg(target_os = "linux")]
     let child_path = PathBuf::from(format!("/proc/self/fd/{}", snapshot.as_raw_fd()));
+    // macOS has no /proc; /dev/fd/N names the same descriptor.
+    #[cfg(target_os = "macos")]
+    let child_path = PathBuf::from(format!("/dev/fd/{}", snapshot.as_raw_fd()));
     Ok(PinnedXmrEffectSecretV1 {
         snapshot,
         child_path,
@@ -1156,13 +1160,148 @@ fn seal_bytes(label: &str, bytes: &[u8]) -> Result<File> {
     Ok(File::from(high_descriptor))
 }
 
-/// Not ported to macOS: XMR effect inputs are handed to children as
-/// write-sealed memfds that they reopen by descriptor path, and macOS has no
-/// sealed anonymous file. Rather than hand over a weaker unsealed copy, every
-/// XMR effect input snapshot fails here, so no XMR effect child is started.
+/// The macOS stand-in for [`seal_bytes`]: macOS has no sealed anonymous
+/// file, so the input is an unlinked owner-private copy (mode 0400, link
+/// count 0) on a read-only descriptor, made by `lez-swap-store`'s
+/// `owner_private_input_snapshot`, the same custody the Maker's Bitcoin and
+/// Zcash actor configs have on macOS, and moved to a high descriptor as on
+/// Linux. The child checks the same mode, a link count of 0, its own user and
+/// a read-only descriptor (`read_xmr_effect_input_fd`).
+///
+/// Kept from Linux: no path names the bytes once this returns, other users
+/// never reach them, and the descriptor cannot write. Lost: a memfd seal
+/// makes the bytes immutable through every descriptor, the owner's included;
+/// a process of the same user that opened the copy for writing in the instant
+/// before it was unlinked can still change it, and the child cannot tell.
 #[cfg(target_os = "macos")]
-fn seal_bytes(label: &str, _bytes: &[u8]) -> Result<File> {
-    anyhow::bail!(
-        "sealed XMR effect input {label} needs Linux memfd seals; XMR effects are not supported on macOS"
-    )
+fn seal_bytes(label: &str, bytes: &[u8]) -> Result<File> {
+    let snapshot =
+        lez_swap_store::owner_private_input_snapshot("lez-xmr-effect-input", bytes, 0o400)
+            .map_err(|_| anyhow::anyhow!("create owner-private XMR effect input {label}"))?;
+    let metadata = snapshot
+        .metadata()
+        .context("inspect owner-private XMR effect input")?;
+    ensure!(
+        metadata.len() == u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+            && metadata.permissions().mode() & 0o7777 == 0o400
+            && metadata.nlink() == 0,
+        "owner-private XMR effect input has wrong metadata"
+    );
+    let high_descriptor = fcntl_dupfd_cloexec(&snapshot, 200)
+        .context("allocate collision-free XMR effect input descriptor")?;
+    drop(snapshot);
+    Ok(File::from(high_descriptor))
+}
+
+/// The macOS stand-in for the sealed effect inputs and its reader.
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use std::{
+        fs::{self, File, OpenOptions},
+        io::Write as _,
+        os::{
+            fd::AsRawFd as _,
+            unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+        },
+    };
+
+    use rustix::fs::{OFlags, fcntl_getfl};
+
+    use super::seal_bytes;
+    use crate::{read_xmr_effect_input_fd, xmr_effect_fd_present};
+
+    #[test]
+    fn an_input_is_an_unlinked_read_only_owner_copy_on_a_high_descriptor() {
+        let snapshot = seal_bytes("test input", b"exact input bytes\n").unwrap();
+        let metadata = snapshot.metadata().unwrap();
+        assert!(snapshot.as_raw_fd() >= 200);
+        assert_eq!(metadata.nlink(), 0, "no path names the copy");
+        assert_eq!(metadata.mode() & 0o7777, 0o400);
+        assert_eq!(metadata.uid(), rustix::process::geteuid().as_raw());
+        assert_eq!(
+            fcntl_getfl(&snapshot).unwrap() & OFlags::RWMODE,
+            OFlags::RDONLY
+        );
+        // Read twice through the descriptor path: the reader does not depend
+        // on the shared offset /dev/fd/N gives a duplicate.
+        for _ in 0..2 {
+            assert_eq!(
+                read_xmr_effect_input_fd(snapshot.as_raw_fd(), 64, "test input").unwrap(),
+                b"exact input bytes\n"
+            );
+        }
+        assert!(
+            read_xmr_effect_input_fd(snapshot.as_raw_fd(), 8, "test input").is_err(),
+            "oversized"
+        );
+    }
+
+    #[test]
+    fn a_descriptor_that_could_write_or_a_named_file_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("input");
+        let mut writable = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o400)
+            .open(&path)
+            .unwrap();
+        writable.write_all(b"bytes").unwrap();
+        // Still named: a path can reach it.
+        let named = File::open(&path).unwrap();
+        assert!(read_xmr_effect_input_fd(named.as_raw_fd(), 64, "named").is_err());
+        fs::remove_file(&path).unwrap();
+        // Unlinked, but the descriptor can write.
+        assert!(read_xmr_effect_input_fd(writable.as_raw_fd(), 64, "writable").is_err());
+        // Unlinked and read-only, but not mode 0400.
+        let handed_off = seal_bytes("test input", b"bytes").unwrap();
+        let path = root.path().join("other");
+        fs::write(&path, b"bytes").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let other = File::open(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(read_xmr_effect_input_fd(other.as_raw_fd(), 64, "mode 0600").is_err());
+        assert!(read_xmr_effect_input_fd(handed_off.as_raw_fd(), 64, "handed off").is_ok());
+    }
+
+    #[test]
+    fn a_writer_that_held_a_descriptor_before_the_unlink_can_still_change_the_input() {
+        // The one way to change a copy after hand-off, and what macOS loses
+        // against a seal: a descriptor of the same user opened for writing
+        // before the copy was unlinked. Its write between two reads is not
+        // refused; the reader sees the new bytes.
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("input");
+        let mut writer = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        writer.write_all(b"first").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+        let reader = File::open(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            read_xmr_effect_input_fd(reader.as_raw_fd(), 64, "input").unwrap(),
+            b"first"
+        );
+        writer.write_all(b" and more").unwrap();
+        assert_eq!(
+            read_xmr_effect_input_fd(reader.as_raw_fd(), 64, "input").unwrap(),
+            b"first and more",
+            "a same-user writer that held a descriptor before the unlink is not stopped"
+        );
+    }
+
+    #[test]
+    fn an_absent_descriptor_reads_absent_and_an_open_one_present() {
+        let snapshot = seal_bytes("test input", b"x").unwrap();
+        assert!(xmr_effect_fd_present(snapshot.as_raw_fd()).unwrap());
+        let number = snapshot.as_raw_fd();
+        drop(snapshot);
+        assert!(!xmr_effect_fd_present(number).unwrap());
+    }
 }

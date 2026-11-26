@@ -49,6 +49,8 @@ pub use btc_recovery::{
     BtcAgreementAcceptance, BtcLifecycleEvidenceKind, BtcLifecycleEvidenceV1, BtcOfflineStatus,
     BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome, SqliteBtcRecoveryStore,
 };
+#[cfg(target_os = "macos")]
+pub use maker_actor_process::owner_private_input_snapshot;
 pub use maker_actor_process::{
     ActorHeldLock, MAKER_ACTOR_CONFIG_FD, MAKER_ACTOR_LOCK_FD, MAKER_ACTOR_LOCK_TRANSFER_FD,
     MakerActorArtifacts, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,

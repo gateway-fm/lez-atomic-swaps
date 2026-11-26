@@ -1,8 +1,6 @@
 //! Exercises the XMR reference actor; compiled only with `pair-xmr`.
 #![cfg(feature = "pair-xmr")]
-// XMR effect children take write-sealed memfd inputs; XMR effects are not
-// ported to macOS and refuse to start there.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 //! Separate-process proof for the M5 XMR Chat application handoff.
 //!
@@ -15,6 +13,8 @@
 
 #[path = "support/cross_role_binary.rs"]
 mod cross_role;
+#[path = "../../xmr-reference-actor/tests/support/fd_script.rs"]
+mod fd_script_support;
 
 use std::{
     collections::BTreeMap,
@@ -1650,12 +1650,12 @@ fn taker_effect_authority(
         .expect("UTF-8 preflight rejection marker path");
     assert!(!marker_text.contains('\''));
     assert!(!rejection_marker_text.contains('\''));
-    let tag14_release_worker = format!(
+    let tag14_release_worker = fd_script_support::fd_script_text(&format!(
         "#!/bin/sh\nset -eu\n[ \"$#\" -eq 0 ]\nfor fd in 197 198 199 220 221 222 223; do test -e \"/proc/self/fd/$fd\"; done\nfor fd in 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219; do test ! -e \"/proc/self/fd/$fd\"; done\nif grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/220; then\n  test ! -e '{rejection_marker_text}'\n  printf 'preflight\\n' >> '{marker_text}'\n  exit 0\nfi\ngrep -Fq '\"mode\":\"invoke\"' /proc/self/fd/220\nprintf 'invoked\\n' >> '{marker_text}'\n"
-    );
-    let preflight_aware_sender_worker = format!(
+    ));
+    let preflight_aware_sender_worker = fd_script_support::fd_script_text(&format!(
         "#!/bin/sh\nset -eu\nif grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/217; then\n  test ! -e '{rejection_marker_text}'\n  printf 'preflight\\n' >> '{marker_text}'\n  exit 0\nfi\nprintf 'invoked\\n' >> '{marker_text}'\n"
-    );
+    ));
     let inert_worker = "#!/bin/sh\nexit 0\n";
     let (step_name, effect_evidence_sha256, tag14_worker, tag16_worker) = match terminal_step {
         XmrWorkflowStep::AuthorizeLezTag14 => (

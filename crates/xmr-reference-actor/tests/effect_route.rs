@@ -1,7 +1,8 @@
 #![cfg(feature = "sessions")]
-// XMR effect children take write-sealed memfd inputs; they refuse to run on
-// macOS, where XMR effects are not ported.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
+
+#[path = "support/fd_script.rs"]
+mod fd_script_support;
 
 use std::{
     ffi::OsString,
@@ -10,7 +11,10 @@ use std::{
     os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::LazyLock,
 };
+
+use fd_script_support::fd_script;
 
 use clap::Parser as _;
 use lez_adaptor_role_runner::{Cli as RunnerCli, execute as execute_runner};
@@ -39,7 +43,7 @@ use xmr_reference_actor::{
 const RUN_ID: &str = "m5-xmr-tag14-effect-route-red";
 const TAKER_OWNER: &str = "1515151515151515151515151515151515151515151515151515151515151515";
 const MAKER_OWNER: &str = "2424242424242424242424242424242424242424242424242424242424242424";
-const WORKER: &[u8] = br#"#!/bin/sh
+const WORKER_SCRIPT: &[u8] = br#"#!/bin/sh
 set -eu
 for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do
     test -e "/proc/self/fd/$fd"
@@ -53,7 +57,7 @@ if test "${XMR_TEST_EMIT_APPLICATION_HASHES:-}" = "1"; then
     cat /proc/self/fd/217
 fi
 "#;
-const MONERO_WORKER: &[u8] = br#"#!/bin/sh
+const MONERO_WORKER_SCRIPT: &[u8] = br#"#!/bin/sh
 set -eu
 for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219; do
     test -e "/proc/self/fd/$fd"
@@ -63,7 +67,7 @@ grep -Fq '"step":"sweep_monero_claim"' /proc/self/fd/217
 grep -Fq '"executable_abi":"lez_xmr_monero_claim_sweep_v2"' /proc/self/fd/217
 grep -Fq 'canonical-finalized-claim-signature' /proc/self/fd/219
 "#;
-const REFUND_WORKER: &[u8] = br#"#!/bin/sh
+const REFUND_WORKER_SCRIPT: &[u8] = br#"#!/bin/sh
 set -eu
 for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218; do
     test -e "/proc/self/fd/$fd"
@@ -78,7 +82,7 @@ grep -Fq '"step":"refund_lez_tag16"' /proc/self/fd/217
 grep -Fq '"executable_abi":"lez_xmr_tag16_refund_v1"' /proc/self/fd/217
 sha256sum /proc/self/fd/218 | cut -d ' ' -f 1
 "#;
-const MAKER_REFUND_WORKER: &[u8] = br#"#!/bin/sh
+const MAKER_REFUND_WORKER_SCRIPT: &[u8] = br#"#!/bin/sh
 set -eu
 for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219; do
     test -e "/proc/self/fd/$fd"
@@ -89,7 +93,7 @@ grep -Fq '"executable_abi":"lez_xmr_monero_refund_sweep_v3"' /proc/self/fd/217
 sha256sum /proc/self/fd/218 | cut -d ' ' -f 1
 sha256sum /proc/self/fd/219 | cut -d ' ' -f 1
 "#;
-const RELEASE_WORKER: &[u8] = br#"#!/bin/sh
+const RELEASE_WORKER_SCRIPT: &[u8] = br#"#!/bin/sh
 set -eu
 test "$#" -eq 0
 for fd in 197 198 199 220 221 222 223; do
@@ -107,7 +111,7 @@ if grep -Fq '"mode":"preflight"' /proc/self/fd/220; then
 fi
 grep -Fq '"mode":"invoke"' /proc/self/fd/220
 "#;
-const PUNISH_WORKER: &[u8] = br#"#!/bin/sh
+const PUNISH_WORKER_SCRIPT: &[u8] = br#"#!/bin/sh
 set -eu
 for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do
     test -e "/proc/self/fd/$fd"
@@ -120,7 +124,7 @@ if grep -Fq "\"mode\":\"preflight\"" /proc/self/fd/217; then
 fi
 grep -Fq "\"mode\":\"invoke\"" /proc/self/fd/217
 "#;
-const OBSERVER: &[u8] = br#"#!/bin/sh
+const OBSERVER_SCRIPT: &[u8] = br#"#!/bin/sh
 set -eu
 test "$#" -eq 2
 test "$1" = "--xmr-workflow-step"
@@ -133,6 +137,16 @@ grep -Fq '"mode":"observe"' /proc/self/fd/217
 grep -Fq "\"step\":\"$2\"" /proc/self/fd/217
 printf '{"schema_version":1,"step":"%s","state":"pending"}\n' "$2"
 "#;
+
+// The scripts as this platform runs them (`support/fd_script.rs`).
+static WORKER: LazyLock<Vec<u8>> = LazyLock::new(|| fd_script(WORKER_SCRIPT));
+static MONERO_WORKER: LazyLock<Vec<u8>> = LazyLock::new(|| fd_script(MONERO_WORKER_SCRIPT));
+static REFUND_WORKER: LazyLock<Vec<u8>> = LazyLock::new(|| fd_script(REFUND_WORKER_SCRIPT));
+static MAKER_REFUND_WORKER: LazyLock<Vec<u8>> =
+    LazyLock::new(|| fd_script(MAKER_REFUND_WORKER_SCRIPT));
+static RELEASE_WORKER: LazyLock<Vec<u8>> = LazyLock::new(|| fd_script(RELEASE_WORKER_SCRIPT));
+static PUNISH_WORKER: LazyLock<Vec<u8>> = LazyLock::new(|| fd_script(PUNISH_WORKER_SCRIPT));
+static OBSERVER: LazyLock<Vec<u8>> = LazyLock::new(|| fd_script(OBSERVER_SCRIPT));
 
 #[derive(Serialize)]
 struct ToolFixture {
@@ -794,10 +808,10 @@ fn effect_authority(
     let claim_sweep = root.join("claim-sweep");
     let monero_verify = root.join("monero-verify");
     let tag16_refund = root.join("tag16-refund");
-    write_private(&classifier, OBSERVER, 0o700);
-    write_private(&claim_sweep, MONERO_WORKER, 0o700);
-    write_private(&monero_verify, OBSERVER, 0o700);
-    write_private(&tag16_refund, REFUND_WORKER, 0o700);
+    write_private(&classifier, OBSERVER.as_slice(), 0o700);
+    write_private(&claim_sweep, MONERO_WORKER.as_slice(), 0o700);
+    write_private(&monero_verify, OBSERVER.as_slice(), 0o700);
+    write_private(&tag16_refund, REFUND_WORKER.as_slice(), 0o700);
     let rpc_at = |_name: &str, port: u16, index: usize| RpcFixture {
         url: format!("http://127.0.0.1:{port}/"),
         username_file: secrets[index].clone(),
@@ -848,9 +862,9 @@ fn effect_authority(
                     .and_then(|name| name.to_str())
                     .expect("ASCII worker name"),
                 Sha256::digest(if semantic_tag14 {
-                    RELEASE_WORKER
+                    RELEASE_WORKER.as_slice()
                 } else {
-                    WORKER
+                    WORKER.as_slice()
                 })
                 .into(),
                 if semantic_tag14 {
@@ -862,25 +876,25 @@ fn effect_authority(
             finalized_classifier: tool(
                 root,
                 "classifier",
-                Sha256::digest(OBSERVER).into(),
+                Sha256::digest(OBSERVER.as_slice()).into(),
                 "lez_xmr_finalized_classifier_v1",
             ),
             monero_claim: tool(
                 root,
                 "claim-sweep",
-                Sha256::digest(MONERO_WORKER).into(),
+                Sha256::digest(MONERO_WORKER.as_slice()).into(),
                 "lez_xmr_monero_claim_sweep_v2",
             ),
             monero_verify: tool(
                 root,
                 "monero-verify",
-                Sha256::digest(OBSERVER).into(),
+                Sha256::digest(OBSERVER.as_slice()).into(),
                 "lez_xmr_monero_verify_v2",
             ),
             tag16_refund: tool(
                 root,
                 "tag16-refund",
-                Sha256::digest(REFUND_WORKER).into(),
+                Sha256::digest(REFUND_WORKER.as_slice()).into(),
                 "lez_xmr_tag16_refund_v1",
             ),
         }),
@@ -915,11 +929,11 @@ fn maker_effect_authority(
 ) -> Vec<u8> {
     let (runtime, capability, secrets) = write_effect_inputs(root, "maker");
     let classifier = root.join("classifier");
-    write_private(&classifier, OBSERVER, 0o700);
+    write_private(&classifier, OBSERVER.as_slice(), 0o700);
     let refund_worker = root.join("maker-refund-sweep");
-    write_private(&refund_worker, MAKER_REFUND_WORKER, 0o700);
+    write_private(&refund_worker, MAKER_REFUND_WORKER.as_slice(), 0o700);
     let monero_verify = root.join("maker-monero-verify");
-    write_private(&monero_verify, OBSERVER, 0o700);
+    write_private(&monero_verify, OBSERVER.as_slice(), 0o700);
     let _evidence = owner_directory(root, "evidence");
     let rpc_at = |port: u16, index: usize| RpcFixture {
         url: format!("http://127.0.0.1:{port}/"),
@@ -966,25 +980,25 @@ fn maker_effect_authority(
             finalized_classifier: tool(
                 root,
                 "classifier",
-                Sha256::digest(OBSERVER).into(),
+                Sha256::digest(OBSERVER.as_slice()).into(),
                 "lez_xmr_finalized_classifier_v1",
             ),
             monero_refund: tool(
                 root,
                 "maker-refund-sweep",
-                Sha256::digest(MAKER_REFUND_WORKER).into(),
+                Sha256::digest(MAKER_REFUND_WORKER.as_slice()).into(),
                 "lez_xmr_monero_refund_sweep_v3",
             ),
             monero_verify: tool(
                 root,
                 "maker-monero-verify",
-                Sha256::digest(OBSERVER).into(),
+                Sha256::digest(OBSERVER.as_slice()).into(),
                 "lez_xmr_monero_verify_v2",
             ),
             lez_punish: tool(
                 root,
                 worker_name,
-                Sha256::digest(PUNISH_WORKER).into(),
+                Sha256::digest(PUNISH_WORKER.as_slice()).into(),
                 "lez_xmr_tag17_punish_v1",
             ),
         }),
@@ -1085,7 +1099,7 @@ fn maker_recovery_route_fixture(branch: XmrWorkflowBranch, step: XmrWorkflowStep
     let worker = match step {
         XmrWorkflowStep::PunishLezTag17 => {
             let worker = effect_root.join("tag17-worker");
-            write_private(&worker, PUNISH_WORKER, 0o700);
+            write_private(&worker, PUNISH_WORKER.as_slice(), 0o700);
             worker
         }
         XmrWorkflowStep::SweepMoneroRefund => effect_root.join("maker-refund-sweep"),
@@ -1230,9 +1244,9 @@ fn route_fixture_for_mode(
     write_private(
         &worker,
         if semantic_tag14 {
-            RELEASE_WORKER
+            RELEASE_WORKER.as_slice()
         } else {
-            WORKER
+            WORKER.as_slice()
         },
         0o700,
     );
@@ -1655,7 +1669,7 @@ fn taker_tag14_effect_route_pins_before_authorizing_and_never_rearms() {
         "Taker authority must reject the Maker claim slot without mutation"
     );
 
-    fs::write(&fixture.worker, WORKER).expect("restore exact worker bytes");
+    fs::write(&fixture.worker, WORKER.as_slice()).expect("restore exact worker bytes");
     let (mut command, first_plan) = match execution
         .prepare_effect_invocation(
             XmrWorkflowStep::AuthorizeLezTag14,
@@ -1830,7 +1844,7 @@ fn taker_observer_route_is_read_only_role_fixed_and_uses_sending_plan_identity()
         "observer digest drift fails before journal eligibility"
     );
     assert_eq!(fs::read(&fixture.workflow).unwrap(), unknown);
-    fs::write(&classifier, OBSERVER).unwrap();
+    fs::write(&classifier, OBSERVER.as_slice()).unwrap();
 
     let exact = XmrWorkflowReconciliationV2::new(
         [0xa4; 32],

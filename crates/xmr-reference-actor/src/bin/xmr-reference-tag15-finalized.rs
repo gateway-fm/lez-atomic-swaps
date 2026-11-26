@@ -175,11 +175,15 @@ async fn execute() -> Result<()> {
     // evidence; a tool stopped before it wrote that evidence leaves none, and
     // the swap's one tag 15 (the escrow is claimed once) is discovered by its
     // terms instead.
-    let target = if Path::new(&format!(
+    #[cfg(target_os = "linux")]
+    let exact_transaction_present = Path::new(&format!(
         "/proc/self/fd/{XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD}"
     ))
-    .exists()
-    {
+    .exists();
+    #[cfg(target_os = "macos")]
+    let exact_transaction_present =
+        xmr_reference_actor::xmr_effect_fd_present(XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD)?;
+    let target = if exact_transaction_present {
         let exact_transaction_bytes = read_sealed_fd(
             XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
             usize::try_from(MAX_EVIDENCE_BYTES).unwrap_or(usize::MAX),
@@ -556,12 +560,12 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
     Ok(bytes)
 }
 
-/// Not ported to macOS: this input arrives as a write-sealed memfd and macOS
-/// has no seal to check, so the descriptor is never trusted. The parent
-/// cannot produce one there either (`effect_input_custody`).
+/// macOS: the input arrives as an unlinked owner-private copy on a read-only
+/// descriptor, not a sealed memfd (`read_xmr_effect_input_fd` says what that
+/// keeps and loses).
 #[cfg(target_os = "macos")]
-fn read_sealed_fd(fd: i32, _maximum: usize, label: &'static str) -> Result<Vec<u8>> {
-    anyhow::bail!("{label} FD {fd} needs Linux memfd seals; XMR effects are not supported on macOS")
+fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    xmr_reference_actor::read_xmr_effect_input_fd(fd, maximum, label)
 }
 
 fn read_sidecar_capability_fd(fd: i32) -> Result<SidecarCapability> {
