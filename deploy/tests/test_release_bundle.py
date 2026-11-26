@@ -86,6 +86,47 @@ class ReleaseBundle(unittest.TestCase):
         self.assertEqual(seen['image'], 'lez-maker-node:local')
         self.assertEqual(seen['images'], 'build')
 
+    MARKET_PROBE = '''set -euo pipefail
+cd "$1"
+source scripts/{script}
+printf 'market=%s\\nidentities=%s\\n' "${{LEZ_MARKET_ROOT:-}}" "${{LEZ_WALLET_IDENTITIES:-}}"
+bash -c 'printf "child=%s\\n" "${{LEZ_MARKET_ROOT:-}}"'
+'''
+
+    def market_probe(self, deploy, script='lane.sh', **env):
+        clean = {key: value for key, value in os.environ.items() if not key.startswith('LEZ_')}
+        run = subprocess.run(['bash', '-c', self.MARKET_PROBE.format(script=script), '-', str(deploy)],
+                             env={**clean, **env}, capture_output=True, text=True, check=True)
+        return dict(line.split('=', 1) for line in run.stdout.splitlines())
+
+    def test_a_bundle_resolves_the_market_root_start_sh_chose(self):
+        # The v0.4.0 candidate's smoke (run 45787011692): start.sh passed with
+        # its default market root, <bundle>/market, then `up.sh` on its own
+        # stopped at gen-config.sh's "LEZ_MARKET_ROOT must select the market
+        # root": gen-config.sh looks only outside deploy/, where a checkout keeps it.
+        self.assertIn('export LEZ_MARKET_ROOT="${LEZ_MARKET_ROOT:-$DEPLOY_ROOT/market}"',
+                      (SCRIPTS / 'start.sh').read_text())
+        deploy = self.deploy_dir(RELEASE_ENV)
+        for script in ('lane.sh', 'release-env.sh'):  # up.sh and the fixtures; gen-config.sh and regress.sh
+            seen = self.market_probe(deploy, script)
+            self.assertEqual(seen['market'], f'{deploy}/market', script)
+            self.assertEqual(seen['identities'], f'{deploy}/market/identities', script)
+            self.assertEqual(seen['child'], f'{deploy}/market', script)
+        # the root start.sh was given, as runtime.env records it
+        (deploy / 'runtime').mkdir()
+        (deploy / 'runtime' / 'runtime.env').write_text('LEZ_STACK_PREFIX=lez\nLEZ_MARKET_ROOT=/srv/lez-market\n')
+        seen = self.market_probe(deploy)
+        self.assertEqual(seen['market'], '/srv/lez-market')
+        self.assertEqual(seen['identities'], '/srv/lez-market/identities')
+        # and the environment over both
+        seen = self.market_probe(deploy, LEZ_MARKET_ROOT='/elsewhere', LEZ_WALLET_IDENTITIES='/ids')
+        self.assertEqual((seen['market'], seen['identities']), ('/elsewhere', '/ids'))
+
+    def test_a_checkout_names_no_market_root(self):
+        # a checkout keeps gen-config.sh's search outside deploy/
+        seen = self.market_probe(self.deploy_dir(None))
+        self.assertEqual((seen['market'], seen['identities']), ('', ''))
+
     def test_package_dist_lays_out_the_bundle_this_test_models(self):
         # The bundle is `git archive HEAD:deploy` without the build material,
         # plus release.env beside compose.yaml with these four keys.
