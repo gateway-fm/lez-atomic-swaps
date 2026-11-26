@@ -910,10 +910,10 @@ Maker's funding through the refund window, as in `node:xmr:xmr-punish`; the
 Maker desk opened shortly before the punish time watches its row reach
 "Punished", and the Taker desk, back up, shows the swap punished). All four
 are recorded in `docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/` (the videos outside git). Not run with
-native macOS Nodes: the darwin-arm64 packages carry the Monero programs, but
-the Maker's Monero effect tools do not run on macOS and its launcher refuses a
-Monero role there (`docs/architecture/logos-native-packaging.md`, "The Node
-on macOS"). The Maker's systemd unit takes a Monero role from an optional
+native macOS Nodes: the darwin-arm64 packages carry the Monero programs and
+both roles take a Monero role on macOS, with a weaker effect custody for the
+Maker there (`docs/architecture/logos-native-packaging.md`, "The Node on
+macOS"). The Maker's systemd unit takes a Monero role from an optional
 drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with
 stub programs, not run in the VM; the Taker unit has none.
 

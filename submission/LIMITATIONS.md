@@ -288,16 +288,24 @@ The launcher and the desks:
   containers is not supported.
 - macOS. The darwin-arm64 role packages carry what the Linux ones carry for
   Monero: both Nodes built with `pair-xmr`, the Stage-A planner, and the
-  Maker's `lez-xmr-maker-actor` and its six effect tools. The Maker's effect
-  tools take their inputs as write-sealed memfds, which macOS does not have,
-  and refuse to start there, so the Maker cannot fund, claim, refund or
-  punish a Monero swap on macOS; its launcher refuses to start a Maker with
-  Monero logins on macOS. The Taker's launcher writes its Monero role there
-  and starts the Node. What ran on macOS: the release build and both
-  packages, the Stage-A planner's unit tests, and the two-Node take-time
-  tests (`xmr_take_process`, `xmr_reserve_process`: fake monerod, sidecar and
-  planner). No Monero swap has run with a Node on macOS, and the pinned
-  Monero release is verified and staged for Linux only.
+  Maker's `lez-xmr-maker-actor` and its six effect tools, and both roles'
+  launchers take a Monero role there. The Maker's effect custody is weaker
+  on macOS (TM-0038): its effect inputs are unlinked owner-private copies,
+  not write-sealed memfds, its tools run by a checked name, not from a
+  descriptor, and its release journal is reopened by path. A process of the
+  Maker's own user that opened a copy for writing before it was unlinked
+  can still change an effect's inputs, undetected; on Linux nothing can.
+  What ran on macOS (2026-11-26, Apple silicon): both packages built, the
+  Monero actor suites (`xmr-reference-actor`, `lez-xmr-release-authority`,
+  `lez-swap-store`) and the Node suites with `pair-zec` and `pair-xmr`,
+  among them the real tag 16, tag 17, Monero refund and Monero verify tools
+  on these copies against fake RPC servers and the Maker's actor supervisor
+  with fake tools; and the SDK's `full-lifecycle` example against a Monero
+  regtest `monerod` and wallet-rpc in a container (funding, view-only
+  verification, both sweeps with rebuilt keys). Not run on macOS: the
+  Maker's effect tools against a live `monerod`, and any swap through two
+  Nodes; the pinned Monero release is verified and staged for Linux only,
+  and the fixed ports above allow one role's wallet-rpc per host.
 
 The Logos transport:
 
