@@ -604,14 +604,11 @@ case "${LEZ_XMR_NETWORK:-regtest}" in
   *) echo "$role: LEZ_XMR_NETWORK must be regtest or stagenet, not '${LEZ_XMR_NETWORK}'" >&2; exit 2 ;;
 esac
 if [[ "$monero_ready" == 1 ]]; then
-  # The Maker's Monero effects (its funding, claim, verification, refund sweep
-  # and punishment tools) take their inputs as write-sealed memfds, which
-  # macOS does not have: on macOS each of them refuses to start
-  # (crates/xmr-reference-actor/src/effect_input_custody.rs). A Maker there
-  # would take Monero swaps it can never fund, so it does not start with them.
+  # On macOS the Maker's Monero effect tools take their inputs as unlinked
+  # owner-private copies instead of write-sealed memfds
+  # (crates/xmr-reference-actor/src/effect_input_custody.rs): say so.
   if [[ "$role" == maker && "$(uname -s)" == Darwin ]]; then
-    echo "maker: the Maker's Monero effect tools need Linux (sealed memfds) and do not run on macOS; remove the Maker's Monero logins from $monero_logins, or run the Maker on Linux" >&2
-    exit 1
+    echo "maker: macOS: Monero effect inputs are unlinked owner-private copies, not sealed memfds (a process of this user can interfere with them, as it cannot on Linux)" >&2
   fi
   xmr_tools='{}'
   if [[ "$role" == maker ]]; then
