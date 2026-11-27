@@ -1612,11 +1612,11 @@ fn settle_lez_lock(
 fn lock_still_in_flight(kind: MakerActorKindV1, effect: &Value) -> bool {
     let field = |key: &str| effect.get(key).and_then(Value::as_str);
     match (kind, field("outcome")) {
-        (MakerActorKindV1::Zcash, Some("submitted")) => true,
+        (MakerActorKindV1::Zcash, Some("submitted"))
+        | (MakerActorKindV1::Monero, Some("awaiting_observation")) => true,
         (MakerActorKindV1::Zcash, Some("awaiting_observation")) => {
             field("operation") == Some("lez_initialize")
         }
-        (MakerActorKindV1::Monero, Some("awaiting_observation")) => true,
         _ => false,
     }
 }

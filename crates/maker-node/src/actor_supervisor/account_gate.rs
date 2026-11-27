@@ -29,7 +29,7 @@ pub(super) static LEZ_ACCOUNT_GATE: Mutex<()> = Mutex::new(());
 /// seconds of a healthy sequencer; one still unfinished then is waiting for
 /// LEZ finality, which takes no nonce. Past the limit the other locks are
 /// planned beside it, and a transaction that loses its nonce is planned again.
-pub(super) const LEZ_LOCK_HOLD_LIMIT: Duration = Duration::from_secs(120);
+pub(super) const LEZ_LOCK_HOLD_LIMIT: Duration = Duration::from_mins(2);
 
 /// How long a Bitcoin LEZ escrow the Node prepared holds the other locks
 /// after each pass of its preparer that still finds it in flight (three
