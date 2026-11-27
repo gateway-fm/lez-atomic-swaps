@@ -5,7 +5,8 @@
 
 #[path = "support/cross_role_binary.rs"]
 mod cross_role;
-mod support;
+#[path = "support/zec_take_time.rs"]
+mod take_time;
 
 use std::{
     fs,
@@ -17,7 +18,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use support::actor_deployment;
+use take_time::{TakeTimeMaker, UNSERVED_ZEBRA};
 
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
@@ -167,7 +168,15 @@ fn start_daemon(
         &hex::encode([8; 32]).into_bytes(),
         0o600,
     );
-    let actor = actor_deployment(run, "m5-integration-authority-001");
+    // The Maker's Zcash authority is the take-time one (`zec_reserve_v1`); no
+    // swap is taken here, so its Zebra and its sidecar are never asked.
+    let authority = TakeTimeMaker::new(
+        &run.join("take-time-maker"),
+        UNSERVED_ZEBRA,
+        Path::new("/usr/bin/true"),
+        19_500,
+        None,
+    );
     let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
         .arg("--socket")
         .arg(&socket)
@@ -181,18 +190,7 @@ fn start_daemon(
         .arg(runtime.join("chat.sock"))
         .arg("--delivery-signing-key-file")
         .arg(delivery_key)
-        .arg("--maker-claim-key-id")
-        .arg("m5-logos-price-claim-key-v1")
-        .arg("--maker-claim-key-file")
-        .arg(&actor.claim_key)
-        .arg("--zec-source-maker-config")
-        .arg(&actor.source_config)
-        .arg("--zec-maker-actor-root")
-        .arg(&actor.root)
-        .arg("--zec-actor-program")
-        .arg(&actor.program)
-        .arg("--zec-actor-program-sha256")
-        .arg(&actor.program_sha256)
+        .args(authority.arguments())
         .arg("--logos-price-worker")
         .arg(worker)
         .arg("--logos-price-module")

@@ -6,6 +6,8 @@
 #[path = "support/cross_role_binary.rs"]
 mod cross_role;
 mod support;
+#[path = "support/zec_take_time.rs"]
+mod take_time;
 
 use std::{
     fs,
@@ -20,6 +22,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use support::actor_deployment;
+use take_time::{TakeTimeMaker, UNSERVED_ZEBRA};
 
 use lez_maker_node::apply_zcash_funding_event;
 use lez_swap_core::{
@@ -876,7 +879,15 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => panic!("create Delivery signing key: {error}"),
     }
-    let actor = actor_deployment(run, "m5-integration-authority-001");
+    // The Maker's Zcash authority is the take-time one (`zec_reserve_v1`); no
+    // swap is taken here, so its Zebra and its sidecar are never asked.
+    let authority = TakeTimeMaker::new(
+        &run.join("take-time-maker"),
+        UNSERVED_ZEBRA,
+        Path::new("/usr/bin/true"),
+        19_500,
+        None,
+    );
     let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
         .arg("--socket")
         .arg(&socket)
@@ -890,18 +901,7 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         .arg(runtime.join("chat.sock"))
         .arg("--delivery-signing-key-file")
         .arg(delivery_key)
-        .arg("--maker-claim-key-id")
-        .arg("m5-operator-claim-key-v1")
-        .arg("--maker-claim-key-file")
-        .arg(&actor.claim_key)
-        .arg("--zec-source-maker-config")
-        .arg(&actor.source_config)
-        .arg("--zec-maker-actor-root")
-        .arg(&actor.root)
-        .arg("--zec-actor-program")
-        .arg(&actor.program)
-        .arg("--zec-actor-program-sha256")
-        .arg(&actor.program_sha256)
+        .args(authority.arguments())
         .spawn()
         .expect("start maker daemon");
     let mut daemon = Daemon(child);
