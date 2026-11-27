@@ -135,6 +135,9 @@ and a Zcash offer in which the Taker sells LEZ can be funded only once that
 address has been paid. Each Zcash swap is agreed with the Taker's Node when
 the offer is taken: nothing is prepared for a swap ahead of the take, and the
 Maker never holds the swap's secret before the Taker reveals it by claiming.
+The Maker Node is given its Zcash role (`--zec-role-config`, which the
+launcher writes) and no actor template: `--zec-source-maker-config` no longer
+exists, and a start that names it is refused as an unexpected argument.
 
 Every setting, its default and the platform differences are in
 [logos-native-packaging.md](architecture/logos-native-packaging.md) ("The Node on macOS",

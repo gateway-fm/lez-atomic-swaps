@@ -337,10 +337,18 @@ crate. The two map like this:
 A ZEC take on the Nodes is composed at take time: the Maker publishes an
 offer, the Taker takes it. The Taker Node reads no swap from its startup
 configuration; one that still names `initiation.prepared_zec` is refused at
-load by that name. With a Zcash role config on both Nodes (`--zec-role-config`
-on the Maker, `initiation.zec_role_config` on the Taker: profile, Zebra
-endpoint, the Taker's Zcash key) any live Zcash offer is taken by one more
-Chat round before the existing two:
+load by that name. The Maker Node takes no actor template at start either: its
+flag `--zec-source-maker-config` is gone, and a command line or configuration
+that names it is refused at start as an unexpected argument. The Taker CLI's
+file lane accepts no Zcash draft (`--accept-zec-offer` is gone,
+[cli-reference.md](cli-reference.md)). With a Zcash role config on both Nodes
+(`--zec-role-config` on the Maker, `initiation.zec_role_config` on the Taker:
+profile, Zebra endpoint, the Taker's Zcash key) any live Zcash offer is taken
+in three Chat rounds, `zec_reserve_v1`, `zec_chat_propose_v1` and
+`zec_chat_complete_v1`. The Maker signs and completes only what it reserved:
+a proposal or a completion that names a reservation the Maker does not hold
+is refused (`the ZEC reservation is unknown`), and so is a draft other than
+the one the Maker answered the reservation with. The first round:
 
 **`zec_reserve_v1`** (Taker → Maker; [`reserve.rs`](../crates/zec-reference-actor/src/reserve.rs)).
 The Taker sends the reservation id (derived from its initiation request), the

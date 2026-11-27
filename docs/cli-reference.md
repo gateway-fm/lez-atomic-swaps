@@ -566,10 +566,18 @@ receipt without effect authority supports `monitor` only.
 ### Discovery and acceptance flags (no subcommand)
 
 Run without a subcommand, `lez-taker-cli` reads a Maker's offers from a run-local Delivery
-directory itself, without the Node, and can accept one over the Maker's Chat socket into
-owner-private files. The Node's own take (`swap take`) does all of this inside the Node; these
-flags are the file-based lane the crate tests and the actor fixtures use. Every path is an
-owner-private file or directory.
+directory itself, without the Node, and can accept a Bitcoin or Monero offer over the Maker's
+Chat socket into owner-private files. The Node's own take (`swap take`) does all of this inside
+the Node; these flags are the file-based lane the crate tests and the actor fixtures use. Every
+path is an owner-private file or directory.
+
+A Zcash offer is not accepted in this lane: a Zcash swap is agreed by the two Nodes at take time
+(`swap take`), each with its own key, and no draft made ahead of the take is accepted. The
+flags `--accept-zec-offer`, `--zec-source-taker-config`, `--zec-taker-actor-root` and
+`--zec-acceptance-receipt` no longer exist and are refused as unexpected arguments;
+the acceptance flags below given without `--accept-btc-offer` or `--accept-xmr-offer` are refused
+with a message naming `lez-taker-cli swap take`. The last line of `lez-taker-cli --help` names
+the pairs the binary was built with (`Pairs in this build: bitcoin, zcash.`).
 
 Discovery needs `--delivery-directory`, `--maker-public-key` (the Maker identity to trust) and
 `--now-unix-seconds` (the time offers are judged live at), and prints `{schema_version,
@@ -580,12 +588,10 @@ by pair and `--direction` by direction (`--direction` needs `--pair`).
 |---|---|---|
 | plan a Bitcoin take | `--plan-btc-offer <id>` | `--reservation-id`, `--foreign-units`; prints `{offer_id, reservation_id, signed_envelope_sha256, swap_id, foreign_units, lez_units, private_material_disclosed}` and accepts no Chat, signing or actor flag |
 | accept a Bitcoin offer | `--accept-btc-offer <id>` | `--chat-socket`, `--reservation-id`, `--foreign-units`, `--unsigned-draft-file`, `--taker-signing-key-file`, `--agreement-output-file`, `--btc-source-taker-config`, `--btc-taker-actor-root`, `--btc-acceptance-receipt`, and for the contribution-bound Chat round `--maker-contribution-file`, `--taker-contribution-file`, `--btc-role-root` |
-| accept a Zcash offer (`pair-zec` builds) | `--accept-zec-offer <id>` | `--chat-socket`, `--reservation-id`, `--foreign-units`, `--unsigned-draft-file`, `--taker-signing-key-file`, `--agreement-output-file`, `--zec-source-taker-config`, `--zec-taker-actor-root`, `--zec-acceptance-receipt` |
 | accept a Monero offer (`pair-xmr` builds) | `--accept-xmr-offer <id>` | `--chat-socket`, `--reservation-id`, `--xmr-stage-a-file`, `--xmr-activation-file`, `--xmr-source-taker-root`, `--xmr-taker-public-packet`, `--xmr-maker-public-packet`, `--xmr-taker-role-journal`, `--xmr-taker-actor-root`, `--xmr-acceptance-receipt`, and for chain effects `--xmr-effect-authority-file`, `--xmr-effect-manifest-file`, `--xmr-workflow-journal`, `--xmr-run-id` |
 
 Only one acceptance, or the plan, may be asked for in one run. A Bitcoin acceptance defaults
-to `taker-sells-foreign`, a Zcash acceptance to `taker-sells-lez`; a Monero acceptance takes
-`monero` and `taker-sells-lez` only. An acceptance whose agreement file (for Monero, actor
+to `taker-sells-foreign`; a Monero acceptance takes `monero` and `taker-sells-lez` only. An acceptance whose agreement file (for Monero, actor
 root) already exists resumes from it without reading Delivery again. Each prints its
 acceptance result as one JSON line.
 

@@ -1,8 +1,9 @@
 # M2 on the Docker devnet: ZEC handover
 
-(Historical brief. `zec-provision.sh`, the prepared catalog and the dealer
-tools it describes are removed (issue #162); Zcash swaps are set up
-at take time.)
+(Historical brief. `zec-provision.sh`, the prepared catalog, the dealer
+tools, the Maker Node's `--zec-source-maker-config` and the Taker CLI's
+`--accept-zec-offer` it describes are removed (issue #162); Zcash swaps are
+set up at take time.)
 
 Branch `feat/m2-zec-on-docker`. This is the engineering brief for finishing
 the Zcash leg on the existing Docker stack, written by the reviewing session
