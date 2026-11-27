@@ -283,6 +283,21 @@ const chatText = read(chatSource, "shared Logos Chat bridge implementation");
 const chatContractText = `${chatHeaderText ?? ""}\n${chatText ?? ""}`;
 const marketSourceFile = resolve(basecampRoot, "common/node_market.cpp");
 const marketText = read(marketSourceFile, "shared Node-market adapter");
+// Issue #182: the Taker desk turns an action the row carries into a button
+// and an "is yours to run" note. On a Zcash swap the row between the Taker's
+// lock and the Maker's is the Node's awaiting_second_lock with no action; a
+// refund the Node offers there (the claim window closed with no Maker lock)
+// reads as the Maker having missed its window, never as still waiting for
+// the Maker's lock with a Refund beside it.
+rejectPattern(marketSourceFile, marketText,
+  /Refund recovers your[^;]*if it never does/,
+  "must not offer the Taker's Zcash refund while the Maker is still in time to lock");
+requirePattern(marketSourceFile, marketText,
+  /nodeState == "refund_available" && availableAction == QStringLiteral\("refund"\)\)\s*return \{"refund_ready", "The Maker did not lock in time"/,
+  "must read a Zcash refund offered with no Maker lock as the Maker having missed its window");
+requirePattern(marketSourceFile, marketText,
+  /nodeState == "awaiting_second_lock"\)\s*return \{"awaiting_maker_lock", "Waiting for the Maker's " \+ theirChain \+ " lock", 50,[^;]*, "", ""\}/,
+  "must show the wait for the Maker's lock with no action");
 const kitDir = resolve(basecampRoot, "common/qml");
 const kitFiles = ["ActivityLog", "AmountLeg", "FieldLabel", "FilterTab", "LuxeButton", "LuxeCombo", "LuxeField", "LuxeSlider", "Panel", "SectionTitle", "SideToggle", "StatusStrip", "SwapRow", "Timeline"];
 const kitText = kitFiles.map((name) => read(resolve(kitDir, `${name}.qml`), `shared UI kit ${name}`) ?? "").join("\n");

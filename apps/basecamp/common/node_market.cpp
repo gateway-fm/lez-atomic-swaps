@@ -445,9 +445,10 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
             return {"lock_pending", myChain + " lock pending", 20,
                     sellsBitcoin ? "Your Node's supervisor funds the Zcash HTLC on its own; the desk follows it"
                                  : "Your Node's supervisor submits the LEZ escrow lock on its own; the desk follows it", "", ""};
-        // The ZEC projection folds every phase between the Taker's lock and its
-        // revealing claim into refund_available: the swap is moving and a
-        // refund is merely allowed, which is not "the Maker missed its window".
+        // Between the Taker's lock and the Maker's the Node reports
+        // awaiting_second_lock with no action while the Maker is still in
+        // time to lock (the generic row below); it offers Refund there only
+        // once the Taker's claim window has closed with no Maker lock seen.
         // The Taker locks first, holds the secret and claims the Maker-funded
         // leg first in both directions: selling LEZ, the Maker funds Zcash and
         // the Taker claims it; selling ZEC, the Maker funds the LEZ escrow and
@@ -472,11 +473,14 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
                     sellsBitcoin ? "Refund recovers your " + mine + " at the refund height; the Maker's LEZ refund needs nothing from you"
                                  : "Refund recovers your " + mine + " at the LEZ refund time; the Maker's Zcash refund needs nothing from you",
                     refundAction, "Refund " + mine};
+        // No Maker lock was seen before the Taker's claim window closed: the
+        // Node offers the refund of the Taker's own leg, which lands at its
+        // deadline. The Node offers no refund while the Maker can still lock.
         if (nodeState == "refund_available" && availableAction == QStringLiteral("refund"))
-            return {"awaiting_maker_lock", "Waiting for the Maker's " + theirChain + " lock", 50,
-                    QString(sellsBitcoin ? "The Maker's Node funds the LEZ escrow once your Zcash funding is confirmed"
-                                         : "The Maker's Node funds the Zcash HTLC once your LEZ lock is confirmed")
-                        + "; Refund recovers your " + mine + " if it never does", refundAction, "Refund " + mine};
+            return {"refund_ready", "The Maker did not lock in time", 60,
+                    sellsBitcoin ? "Refund recovers your " + mine + " at the refund height"
+                                 : "Refund recovers your " + mine + " at the LEZ refund time",
+                    refundAction, "Refund " + mine};
         // The Taker's own refund is in flight or back; the Maker's refund of
         // its leg is the earlier one and the Node observes it. The Maker
         // missed nothing: both legs were locked and the Taker refunded by choice.
