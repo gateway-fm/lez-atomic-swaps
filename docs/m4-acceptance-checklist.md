@@ -27,7 +27,15 @@ lanes in 195 minutes. The three failures are the three tests on the Logos
 transport overlay (`compose.logos.yaml`), which dropped the Taker's Zebra
 cookie mount. `f259e791` is `23e54486` plus that overlay fix and its test, and
 those three passed on it on their first try. One operator ran both parties on
-one host, an Apple-silicon Mac (linux/arm64 images). The run before, at
+one host, an Apple-silicon Mac (linux/arm64 images). On the v0.4.1 release
+bundle (images of `2373e287`), the 22 Monero tests that run on release
+images, 18 Node and 4 desk, passed on an Apple-silicon Mac, 21 on their
+first try and `xmr-shared-address-dust` when run again
+([bundle-xmr-0.4.1-2026-11-27](evidence/bundle-xmr-0.4.1-2026-11-27/RESULT.md));
+on the same stack, four XMR/LEZ swaps ran with one role's Node native from
+its darwin-arm64 0.4.1 package
+([macos-native-0.4.1-2026-11-27](evidence/macos-native-0.4.1-2026-11-27/README.md)).
+The run before, at
 `957c8016`
 ([regression-0.4.0-2026-11-24-macos-arm64](evidence/regression-0.4.0-2026-11-24-macos-arm64/)),
 with Zebra 7.0.0 as a plain container, passed 179 of 179, each on its first

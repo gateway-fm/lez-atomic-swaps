@@ -1,0 +1,5 @@
+[05:49:21] regression run: 1 tests on the release images ghcr.io/gateway-fm/lez-atomic-swaps/lez-*:sha-2373e28735b7 of 2373e28735b7 (release.env), results in /Users/mandrigin/tmp/lez-m4/release-041/bundle-xmr/rerun-dust-1
+[05:49:21] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[05:49:27]     node:xmr:xmr-shared-address-dust:TakerSellsLez (try 1) starts: LEZ finalized 22482, tip 22489
+[05:52:21] === node:xmr:xmr-shared-address-dust:TakerSellsLez (try 1): PASSED in 174 s (+6 s before it); LEZ finalized 22623, tip 22629
+[05:52:21] regression run: 1 of 1 passed in 3 min, 0 new chains, 0 profile switches,        0 frozen tries

@@ -1,0 +1,113 @@
+{
+  "scenario": "xmr-custody-credit",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "179573705002",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "1785b6ab426fa6e2e4d3b1f60e2ee5265acf541204da3e7feddfa9e980eff370",
+  "offer_id": "offer-e2e-xmr-179573705002",
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "lez_before": {
+    "maker": 2200000,
+    "taker": 1800001
+  },
+  "lez_deltas": {
+    "maker": 50001,
+    "taker": -50000
+  },
+  "outcome": "completed",
+  "taker_monero_before": {
+    "address": "43MRmgnqEk7jbEr9mKAha18fnAusiQj5f5RYjNttsBCDa2LYhxyvjMX2gpyBoBhYRRLaKgio7EvhWUF9AS2kNaxMVZ4SxWW",
+    "balance_piconero": 705466017297478,
+    "daemon_height": 180,
+    "state": "available",
+    "unlocked_piconero": 1996383200000
+  },
+  "taker_monero_after": {
+    "address": "43MRmgnqEk7jbEr9mKAha18fnAusiQj5f5RYjNttsBCDa2LYhxyvjMX2gpyBoBhYRRLaKgio7EvhWUF9AS2kNaxMVZ4SxWW",
+    "balance_piconero": 1058178900114660,
+    "daemon_height": 200,
+    "state": "available",
+    "unlocked_piconero": 2994574800000
+  },
+  "taker_monero_sweep": {
+    "txid": "b62c36970225334258ae49d7454227a67908113ba072d7afe9cc4687617e3dc3",
+    "amount": 998191600000,
+    "height": 191
+  },
+  "custody_credit": {
+    "schema": "lez_v02_custody_credit_probe_v1",
+    "test_only": true,
+    "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+    "swap_id": "1785b6ab426fa6e2e4d3b1f60e2ee5265acf541204da3e7feddfa9e980eff370",
+    "metadata_account": "b3c888cade73cdecb0dd88345b0f0e02c9752e8123ba5f5224299f69979f6dcd",
+    "custody_account": "a47418f1f7d7fddd7efdcd820dd231ffd0d28a09ab445cbaff6aa6fe028f60b3",
+    "depositor_account": "dfdcd6a6cf86d11bac7bc915fdd46561973e17267ca0560a33d3461f6320a427",
+    "claimant_account": "b19dc7d9b5de21c378f5ce9814a4e3efc3a2b8ee833896bc0708bbc1f9900c75",
+    "sender_account": "b2a0e5410c20ebd7ba720924005e4ba600e5af0ca88250e9a4ba2d1a805213b1",
+    "sender_is_party": false,
+    "escrow_amount": 50000,
+    "credit_amount": 1,
+    "found_by": "depositor",
+    "found_in_block": 5095,
+    "transaction_id": "30587027fce14352b182d153541eaedeaf81d6767eb13a5f84b0126a16edc867",
+    "submission": {
+      "decision": "accepted",
+      "error_code": null,
+      "error_message": null
+    },
+    "included": true,
+    "included_in_block": 5097,
+    "observed_seconds": 1,
+    "before": {
+      "sequencer_tip": 5096,
+      "status": "Funded",
+      "custody_balance": 50000,
+      "sender_balance": 100300
+    },
+    "after": {
+      "sequencer_tip": 5097,
+      "status": "Funded",
+      "custody_balance": 50001,
+      "sender_balance": 100299
+    },
+    "credit_landed": true
+  },
+  "custody_credit_lez": {
+    "lez_before": {
+      "maker": 2200000,
+      "taker": 1800001
+    },
+    "lez_deltas": {
+      "maker": 50001,
+      "taker": -50000
+    },
+    "outcome": "completed"
+  },
+  "result": "passed",
+  "seconds": 217
+}

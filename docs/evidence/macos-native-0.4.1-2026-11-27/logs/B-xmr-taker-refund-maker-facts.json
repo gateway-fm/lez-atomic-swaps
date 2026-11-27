@@ -1,0 +1,69 @@
+{
+ "swap_id": "d59a79575685574dcb52c19fa3787ee2d94af529406f437453fd11ddc09676f6",
+ "swap_dir": "9772ab573c6458d5ad824e5b24e152b1113f5daabc7521d99665fd11cac03c19",
+ "evidence": {
+  "finalized-refund-signature.json": {
+   "kind": "final_signature"
+  },
+  "maker-lez-scan.json": {},
+  "maker-refund-activation.json": {
+   "swap_id": "d59a79575685574dcb52c19fa3787ee2d94af529406f437453fd11ddc09676f6"
+  },
+  "maker-refund-observed-signature.json": {
+   "kind": "final_signature"
+  },
+  "monero-funding-receipt.json": {
+   "transaction_id": "3a07223bb1d9cd687c23527d12b3535dee32a7596e0985dc025b4429afd1731d",
+   "destination_address": "472fXHLkmiFfxN1tHyCEmy2452cqyYXkoK1XmsWt5X8ZSoShNGZHpzTgHwuPyppsZVHvH6EjzGtEhTyDDQcEb1TnASC9S2Z",
+   "amount_piconero": 1000000000000,
+   "containing_block_hash": "51e95098ee893e7321658bf3c9258e92155efb3e612743c3a0eb27ff41e02c31",
+   "containing_block_height": 501,
+   "confirmations": 10,
+   "network_scope": "isolated_official_monero_regtest"
+  },
+  "monero-funding.json": {
+   "attempt_state": "confirmed",
+   "shared_address": "472fXHLkmiFfxN1tHyCEmy2452cqyYXkoK1XmsWt5X8ZSoShNGZHpzTgHwuPyppsZVHvH6EjzGtEhTyDDQcEb1TnASC9S2Z",
+   "amount_piconero": 1000000000000,
+   "transaction_id": "3a07223bb1d9cd687c23527d12b3535dee32a7596e0985dc025b4429afd1731d",
+   "network_scope": "isolated_official_monero_regtest"
+  },
+  "monero-refund-finalized.json": {
+   "swap_id": "d59a79575685574dcb52c19fa3787ee2d94af529406f437453fd11ddc09676f6",
+   "destination_address": "4AsRe3DmjPyBJASisz4urfYmZTpHm7HQP6iLBp44FLQADSRCpgNaCwwfX3hFUB5EkJbtWvPNfoTtw4kzZuwteaS4HNZ4CmU",
+   "transaction_id": "ca40edc566dbdd992cc620bda42ed5b045fe0d5e2dc0b912cbbc894e8caa5fc7",
+   "containing_block_hash": "cc9291d0c307fe49fc3e3ea94cf8d0531a04d117b338e5b6e7090509a14be7f0",
+   "containing_block_height": 511,
+   "confirmations": 10,
+   "network_scope": "isolated_official_monero_regtest"
+  },
+  "monero-refund-submission.json": {
+   "swap_id": "d59a79575685574dcb52c19fa3787ee2d94af529406f437453fd11ddc09676f6",
+   "shared_address": "472fXHLkmiFfxN1tHyCEmy2452cqyYXkoK1XmsWt5X8ZSoShNGZHpzTgHwuPyppsZVHvH6EjzGtEhTyDDQcEb1TnASC9S2Z",
+   "destination_address": "4AsRe3DmjPyBJASisz4urfYmZTpHm7HQP6iLBp44FLQADSRCpgNaCwwfX3hFUB5EkJbtWvPNfoTtw4kzZuwteaS4HNZ4CmU",
+   "transaction_id": "ca40edc566dbdd992cc620bda42ed5b045fe0d5e2dc0b912cbbc894e8caa5fc7"
+  },
+  "tag13-funding-finalized.json": {
+   "outcome.finalized_clock.height": 23050,
+   "outcome.finalized_clock.timestamp_ms": 1795759265956,
+   "outcome.facts.transaction.transaction_id": "fc055969b5c411f2916f6d92b47e8124162222c2a4b5eab6a4d5eb6583a0c570",
+   "outcome.facts.transaction.position.height": 23048,
+   "outcome.facts.instruction.swap_id": "d59a79575685574dcb52c19fa3787ee2d94af529406f437453fd11ddc09676f6",
+   "outcome.facts.containing_block.block_id": 23048,
+   "outcome.facts.containing_block.timestamp_ms": 1795759263302,
+   "outcome.facts.metadata.swap_id": "d59a79575685574dcb52c19fa3787ee2d94af529406f437453fd11ddc09676f6",
+   "outcome.facts.metadata.state": "funded"
+  },
+  "tag16-finalized.json": {
+   "outcome.finalized_clock.height": 23624,
+   "outcome.finalized_clock.timestamp_ms": 1795759994340,
+   "outcome.facts.transaction.transaction_id": "fc30359f67ae5abeed55a89b97177df3daa3eac54a9d6da2c1eefeab65d0c170",
+   "outcome.facts.transaction.position.height": 23611,
+   "outcome.facts.instruction.swap_id": "d59a79575685574dcb52c19fa3787ee2d94af529406f437453fd11ddc09676f6",
+   "outcome.facts.containing_block.block_id": 23611,
+   "outcome.facts.containing_block.timestamp_ms": 1795759977938,
+   "outcome.facts.metadata.swap_id": "d59a79575685574dcb52c19fa3787ee2d94af529406f437453fd11ddc09676f6",
+   "outcome.facts.metadata.state": "refunded"
+  }
+ }
+}

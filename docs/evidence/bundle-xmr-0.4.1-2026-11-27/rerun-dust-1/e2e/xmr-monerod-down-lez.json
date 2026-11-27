@@ -1,0 +1,144 @@
+{
+  "scenario": "xmr-monerod-down",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "1795732410",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "stopped": [
+    "lez041n-monerod"
+  ],
+  "health_while_down": {
+    "maker": {
+      "ready": true,
+      "degraded": true,
+      "monero": [
+        {
+          "route": {
+            "pair": "Monero",
+            "direction": "TakerSellsLez"
+          },
+          "state": "unavailable"
+        }
+      ]
+    },
+    "taker": {
+      "ready": true,
+      "degraded": true,
+      "monero": [
+        {
+          "route": {
+            "pair": "Monero",
+            "direction": "TakerSellsLez"
+          },
+          "state": "unavailable"
+        }
+      ]
+    }
+  },
+  "withdrawn_offer": "offer-e2e-xmr-1795732410-down",
+  "happy_after_restart": {
+    "swap_id": "1e2c4af8bffe1b30eda2c598b12e7575467bb6928aaa11b781d2c8899e16dff5",
+    "offer_id": "offer-e2e-xmr-1795732410h",
+    "windows": {
+      "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+      "LEZ_XMR_REFUND_SECONDS": 720,
+      "LEZ_XMR_PUNISH_SECONDS": 1000
+    },
+    "lez_before": {
+      "maker": 2350000,
+      "taker": 1650000
+    },
+    "lez_deltas": {
+      "maker": 50000,
+      "taker": -50000
+    },
+    "outcome": "completed",
+    "taker_monero_before": {
+      "address": "49GJrTiApgeUMmACM1S2ujNEFtXghVn2pTPCCsrGB6TXe45z7fcGx2fbVnnAzWtcUiDYrgV7ngXDgPzChs8cE4faM18TJ6V",
+      "balance_piconero": 2469037146114414,
+      "daemon_height": 250,
+      "state": "available",
+      "unlocked_piconero": 1413953445799093
+    },
+    "taker_monero_after": {
+      "address": "49GJrTiApgeUMmACM1S2ujNEFtXghVn2pTPCCsrGB6TXe45z7fcGx2fbVnnAzWtcUiDYrgV7ngXDgPzChs8cE4faM18TJ6V",
+      "balance_piconero": 2821703073285481,
+      "daemon_height": 270,
+      "state": "available",
+      "unlocked_piconero": 1766659620282993
+    },
+    "taker_monero_sweep": {
+      "txid": "21b81a1ec773afc53dc74e3886826d8238cdebef9ba6fa2ef6b0723c76fe0109",
+      "amount": 998191600000,
+      "height": 261
+    }
+  },
+  "mid_swap": {
+    "swap_id": "5bdbb5f829c7febfacf2b03b15cd2bc7b84dd9d0504f4c86bff182536ecf1354",
+    "outage_seconds": 77,
+    "at_outage_end": {
+      "maker": "taker_lock_confirmed",
+      "taker": "taker_lock_confirmed"
+    },
+    "outcome": "completed",
+    "maker_monero_fundings": [
+      {
+        "txid": "5a0ef934ca4ab85714a914cdf41fcbae85120aa2fe742d9b04165c6daeea00b5",
+        "amount": 1000000000000,
+        "height": 271,
+        "destinations": [
+          "49HH8Q9U7DSJdqMq1pBMLhC5Ut4ttA3CY2z624vzkXmq9VEguwhEwtcKMBNkgDfkDuRMNEA6hE2UJYdR1F1DsVMCVcDeX7P"
+        ]
+      }
+    ],
+    "lez_before": {
+      "maker": 2400000,
+      "taker": 1600000
+    },
+    "lez_deltas": {
+      "maker": 50000,
+      "taker": -50000
+    },
+    "taker_monero_before": {
+      "address": "49GJrTiApgeUMmACM1S2ujNEFtXghVn2pTPCCsrGB6TXe45z7fcGx2fbVnnAzWtcUiDYrgV7ngXDgPzChs8cE4faM18TJ6V",
+      "balance_piconero": 2821703073285481,
+      "daemon_height": 270,
+      "state": "available",
+      "unlocked_piconero": 1766659620282993
+    },
+    "taker_monero_after": {
+      "address": "49GJrTiApgeUMmACM1S2ujNEFtXghVn2pTPCCsrGB6TXe45z7fcGx2fbVnnAzWtcUiDYrgV7ngXDgPzChs8cE4faM18TJ6V",
+      "balance_piconero": 3174355585709115,
+      "daemon_height": 290,
+      "state": "available",
+      "unlocked_piconero": 2119352378484171
+    },
+    "taker_monero_sweep": {
+      "txid": "30d63bf1abb79a78b6b92d14f41a3aca9be9388aecb7cbc43a0026b44f613ae2",
+      "amount": 998191600000,
+      "height": 281
+    }
+  },
+  "result": "passed",
+  "seconds": 411
+}

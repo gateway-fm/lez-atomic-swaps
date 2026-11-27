@@ -1,0 +1,36 @@
+[05:55:54Z up-native] funding wallet-rpc to 127.0.0.1:18183
+ Container lez041n-xmr-funding-wallet Recreate 
+ Container lez041n-xmr-funding-wallet Recreated 
+ Container lez041n-xmr-funding-wallet Starting 
+ Container lez041n-xmr-funding-wallet Started 
+[05:55:55Z up-native] stopping lez041n-maker-node
+staged maker home (prefix lez041n): ./btc-rpc-cookie ./identity/maker/identity.json ./identity/maker/lez-signer.key ./identity/maker/monero-wallet-rpc.login ./identity/maker/monerod.login ./identity/maker/zcash.key ./market-bootstrap.env ./xmr/wallet-rpc.conf ./zebra-cookie 
+[05:55:55Z up-native] monero-wallet-rpc (macOS) on 127.0.0.1:18083
+[05:55:58Z up-native] Logos host (logosctl session) and the maker Node from its package
+Daemon started (pid 20922)
+Logs: ~/tmp/lez-m4/release-041/sB/logs/daemon.log
+$ package install lez_core-0.4.1-sign.4.lgx -y
+{"affected_loaded":[],"changes":[{"action":"install","file":"$WORK/pkgs-B/lez_core-0.4.1-sign.4.lgx","fromVersion":"","name":"lez_core","signature":"unsigned","toVersion":"0.4.1-sign.4"}],"installed":["lez_core"],"op":"install","reloaded":[],"status":"ok","stopped_dependents":[]}
+$ package install lez_swap_node-0.4.1.lgx -y
+{"affected_loaded":[],"changes":[{"action":"install","file":"$WORK/pkgs-B/lez_swap_node-0.4.1.lgx","fromVersion":"","name":"lez_swap_node","signature":"unsigned","toVersion":"0.4.1"}],"installed":["lez_swap_node"],"op":"install","reloaded":[],"status":"ok","stopped_dependents":[]}
+$ package install lez_maker_node-0.4.1.lgx -y
+{"affected_loaded":[],"changes":[{"action":"install","file":"$WORK/pkgs-B/lez_maker_node-0.4.1.lgx","fromVersion":"","name":"lez_maker_node","signature":"unsigned","toVersion":"0.4.1"}],"installed":["lez_maker_node"],"op":"install","reloaded":[],"status":"ok","stopped_dependents":[]}
+$ module load lez_maker_node
+{"dependencies_loaded":["lez_swap_node","lez_core"],"module":"lez_maker_node","status":"ok","version":"0.4.1"}
+$ call lez_core create_new <config> <storage> <statistics> <password>
+{"method":"create_new","module":"lez_core","result":"<redacted>","status":"ok"}
+$ call lez_core import_public_account <maker key>
+{"method":"import_public_account","module":"lez_core","result":0,"status":"ok"}
+$ call lez_swap_node serve_signer $LEZ_NODE_HOME/wallet/maker.sock a53cfb64735c1344a80b32431f5c8f3fa851b8539400466c6b8d8f0805a1fb45
+{"method":"serve_signer","module":"lez_swap_node","result":0,"status":"ok"}
+$ call lez_maker_node launcher
+{"result":"$SESSION/modules/lez_maker_node/bin/node-entrypoint.sh"}
+$ call lez_swap_node start_node maker <launcher> $LEZ_NODE_HOME/maker.out.log $LEZ_NODE_HOME/maker.hold
+{"method":"start_node","module":"lez_swap_node","result":0,"status":"ok"}
+node socket up
+[05:56:54Z up-native] recreating lez041n-taker-node with the native Maker's Delivery directory
+ Container lez041n-taker-node Recreate 
+ Container lez041n-taker-node Recreated 
+ Container lez041n-taker-node Starting 
+ Container lez041n-taker-node Started 
+[05:57:01Z up-native] up: maker native, taker in lez041n-taker-node

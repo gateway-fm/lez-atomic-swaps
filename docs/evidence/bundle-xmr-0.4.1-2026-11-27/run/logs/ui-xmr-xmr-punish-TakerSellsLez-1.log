@@ -1,0 +1,62 @@
+
+[23:00:55] === xmr-punish (TakerSellsLez)
+   [00:01:11]   the Maker's Monero wallet holds 2848.916 XMR unlocked
+
+[23:01:11] Maker desk publishes TakerSellsLez Monero offers from its form until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[23:01:16] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   61e967fb6b50dae44f714a62b4d773bc5ecf666656490be378f1b8578d3d7c52 awaiting_first_lock 0 -
+
+[23:01:27] The Taker Node locks its LEZ on its own and the Maker Node funds Monero; the Taker will neither claim nor refund
+
+[23:01:27] Taker desk shows 61e967fb6b50 claimable (not pressed)
+
+[23:01:27] Maker desk shows 61e967fb6b50 funded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  label: Your Monero claim is ready
+  [32m✓[0m taker: swap reaches claim_ready
+2 passed, 0 failed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached awaiting_taker_claim|claiming_lez|completed (awaiting_taker_claim|claiming_lez|completed)
+  [32m✓[0m maker: wait awaiting_taker_claim|claiming_lez|completed reached by the Node
+4 passed, 0 failed
+
+[23:02:11] stopping the Taker's Basecamp (desk, signer and Node): it neither claims nor refunds through the refund window
+
+[23:02:11] waiting 854s (the Taker's Basecamp down through the refund time, 720 s after the take, up to shortly before the punish time, 1000 s)
+
+[23:16:26] The Taker's Node has been down since the Monero was funded: it never claimed and sent no refund in its refund window (from 720 s after the take). From the punish time (1000 s) the Maker Node takes the Taker's LEZ on its own; its Monero stays at the shared address
+
+[23:16:26] Maker desk shows 61e967fb6b50 punished
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Punished
+  Node-owned swap: Maker reached punished (punished)
+  [32m✓[0m maker: wait punished reached by the Node
+4 passed, 0 failed
+
+[23:18:33] starting the Taker's Basecamp again, past the punish time
+
+[23:18:36] The Taker's Basecamp is back past the punish time: its refund window is closed and the Maker has taken its LEZ
+
+[23:18:36] Taker desk shows 61e967fb6b50 punished
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  label: Punished
+  [32m✓[0m taker: swap reaches punished
+2 passed, 0 failed
+
+[23:18:37] evidence export skipped: a Monero swap's record is node-e2e.py's (node:xmr tests)
+
+[23:18:37] === xmr-punish (TakerSellsLez): passed in 1062s

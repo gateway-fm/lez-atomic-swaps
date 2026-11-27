@@ -1,0 +1,41 @@
+[00:18:41] === xmr-taker-refund (stamp 1795735121)
+[00:18:41] preflight: indexer historical reads
+[00:18:42]   indexer serves historical reads at the tip (3501)
+[00:18:42] preflight: LEZ finality check waived by request
+[00:18:45]   the Taker Node refunds by itself: false
+[00:18:51]   the Maker's Monero wallet holds 3164.406 XMR unlocked
+[00:19:08]   Maker CLI published offer-e2e-xmr-1795735121 on its running Node
+[00:19:18]   Taker took offer-e2e-xmr-1795735121: swap 2b7000587dac (not_activated)
+[00:19:18]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[00:19:18]   [0 s] waiting for the Taker's 2b7000587dac to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 3519, tip 3526 (7 unfinalized) [heartbeat]
+[00:19:21]   [3 s] waiting for the Taker's 2b7000587dac to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 3519, tip 3526 (7 unfinalized) [heartbeat]
+[00:19:33]   [15 s] waiting for the Taker's 2b7000587dac to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 3536, tip 3543 (7 unfinalized) [heartbeat]
+[00:19:46]   [28 s] waiting for the Taker's 2b7000587dac to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 3557, tip 3560 (3 unfinalized) [heartbeat]
+[00:19:46]   the Maker's Monero is at depth; the Taker does not claim it
+[00:19:46]   [0 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 3557, tip 3560 (3 unfinalized) [heartbeat]
+[00:20:48]   [61 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3588, tip 3594 (6 unfinalized) [heartbeat]
+[00:21:49]   [123 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3638, tip 3645 (7 unfinalized) [heartbeat]
+[00:22:51]   [185 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3689, tip 3696 (7 unfinalized) [heartbeat]
+[00:23:53]   [246 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3741, tip 3747 (6 unfinalized) [heartbeat]
+[00:24:54]   [308 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3793, tip 3798 (5 unfinalized) [heartbeat]
+[00:25:56]   [369 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3846, tip 3849 (3 unfinalized) [heartbeat]
+[00:26:57]   [431 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3892, tip 3900 (8 unfinalized) [heartbeat]
+[00:27:59]   [492 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3947, tip 3951 (4 unfinalized) [heartbeat]
+[00:29:00]   [554 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 3998, tip 4002 (4 unfinalized) [heartbeat]
+[00:30:02]   [615 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 4049, tip 4053 (4 unfinalized) [heartbeat]
+[00:31:03]   [677 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker claim_available (actor both_legs_locked, gen 3) | maker both_legs_locked | LEZ finalized 4095, tip 4104 (9 unfinalized) [heartbeat]
+[00:31:09]   [683 s] waiting for the Taker's 2b7000587dac to reach refund_available (the agreement's refund time): taker refund_available (actor refund_available, gen 6) | maker both_legs_locked | LEZ finalized 4095, tip 4104 (9 unfinalized) [heartbeat]
+[00:31:09]   Taker refund admitted (replay=False)
+[00:31:10]   [0 s] waiting for the Taker's 2b7000587dac to reach refunded (tag 16 final): taker refund_in_progress (actor refund_available, gen 6) | maker both_legs_locked | LEZ finalized 4095, tip 4104 (9 unfinalized) [heartbeat]
+[00:31:21]   [11 s] waiting for the Taker's 2b7000587dac to reach refunded (tag 16 final): taker refund_in_progress (actor refund_in_flight, gen 8) | maker both_legs_locked | LEZ finalized 4095, tip 4104 (9 unfinalized) [heartbeat]
+[00:31:31]   [21 s] waiting for the Taker's 2b7000587dac to reach refunded (tag 16 final): taker refunded (actor refunded, gen 9) | maker both_legs_locked | LEZ finalized 4115, tip 4121 (6 unfinalized) [heartbeat]
+[00:31:31]   [0 s] waiting for the Maker's 2b7000587dac to reach a terminal state (the Maker's Monero refund sweep): maker both_legs_locked (schedule leased) | LEZ finalized 4115, tip 4121 (6 unfinalized) [heartbeat]
+[00:31:47]   [15 s] waiting for the Maker's 2b7000587dac to reach a terminal state (the Maker's Monero refund sweep): maker maker_recovery_available (schedule leased) | LEZ finalized 4135, tip 4138 (3 unfinalized) [heartbeat]
+[00:32:12]   [40 s] waiting for the Maker's 2b7000587dac to reach a terminal state (the Maker's Monero refund sweep): maker refunded (schedule terminal) | LEZ finalized 4152, tip 4155 (3 unfinalized) [heartbeat]
+[00:32:12]   [0 s] waiting for LEZ finality to reach block 4161 (the swap's last LEZ transaction): LEZ finalized 4152, tip 4155 (3 unfinalized) [heartbeat] | LEZ finalized 4152, tip 4155 (3 unfinalized) [heartbeat]
+[00:32:26]   LEZ is final through block 4161 after 14s
+[00:32:26]   settled refunded: LEZ moved {'maker': 0, 'taker': 0} as both Nodes say
+[00:32:31]   the Maker's Monero wallet received [('1e0a4989bf4997e1', 0.9981904)] during the swap (lot 1 XMR)
+[00:32:36]   the Taker's Monero wallet received [] during the swap (lot 1 XMR)
+[00:32:39]   the Taker Node refunds by itself: true
+[00:32:39] === xmr-taker-refund: passed in 838s

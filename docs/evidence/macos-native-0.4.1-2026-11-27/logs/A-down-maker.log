@@ -1,0 +1,6 @@
+{"message":"Daemon shutting down.","status":"ok"}
+ Container lez040n-taker-node Recreate 
+ Container lez040n-taker-node Recreated 
+ Container lez040n-taker-node Starting 
+ Container lez040n-taker-node Started 
+down: maker native ended; both roles in their containers

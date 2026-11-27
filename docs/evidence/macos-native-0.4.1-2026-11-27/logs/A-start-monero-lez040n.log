@@ -1,0 +1,191 @@
+
+[20:04:10 start] pulling ghcr.io/gateway-fm/lez-atomic-swaps/lez-*:v0.4.0
+time="2026-11-26T21:04:10+01:00" level=warning msg="The \"LEZ_V02_CHANNEL_ID\" variable is not set. Defaulting to a blank string."
+time="2026-11-26T21:04:10+01:00" level=warning msg="The \"LEZ_V02_CHANNEL_ID\" variable is not set. Defaulting to a blank string."
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-services:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-bitcoin-core:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-wallet-module:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-explorer:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-monerod:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-network-module:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-miner:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-explorer:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-zebra-module:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-basecamp-ui:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-bitcoin-core:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-explorer:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-basecamp-ui:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-network-module:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-zebra-module:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-explorer:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-miner:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-wallet-module:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-services:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-monerod:v0.4.0 Pulled 
+
+[20:04:12 start] runtime config, image pull, stack start
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795714899 (2026-11-26T17:41:39Z), root 4e9fe3aac4b650f94b246d4f7085df6954c2e43beec26b53aa267366d8af3989
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tm9nDSRz71an9UFfBwLDrY8MzmyZhZvrdAs): runtime/zebra/zebrad-module.json
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+reusing existing timing profile fast
+runtime generated at runtime
+  [time 20:04:16] runtime config: 4 s (4 s since up.sh started)
+[2/6] images…
+  pulling ghcr.io/gateway-fm/lez-atomic-swaps/lez-*:v0.4.0…
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-wallet-module:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-basecamp-ui:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-explorer:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-services:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-monerod:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-explorer:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-network-module:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-zebra-module:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-bitcoin-core:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-miner:v0.4.0 Pulling 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-miner:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-basecamp-ui:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-wallet-module:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-network-module:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-bitcoin-core:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-explorer:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-explorer:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-services:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-monerod:v0.4.0 Pulled 
+ Image ghcr.io/gateway-fm/lez-atomic-swaps/lez-zebra-module:v0.4.0 Pulled 
+  [time 20:04:17] images: 1 s (5 s since up.sh started)
+[3/6] starting chains…
+ Container lez040n-sequencer Running 
+ Container lez040n-btc-miner Running 
+ Container lez040n-bitcoin-core Running 
+ Container lez040n-network Running 
+ Container lez040n-zebra Running 
+ Volume lez040n-monerod-data Creating 
+ Volume lez040n-maker-xmr-wallet Creating 
+ Volume lez040n-xmr-funding-wallet Creating 
+ Volume lez040n-monerod-data Creating 
+ Volume lez040n-xmr-funding-wallet Creating 
+ Volume lez040n-taker-xmr-wallet Creating 
+ Volume lez040n-taker-xmr-wallet Creating 
+ Volume lez040n-maker-xmr-wallet Creating 
+ Volume lez040n-taker-xmr-wallet Created 
+ Volume lez040n-taker-xmr-wallet Created 
+ Volume lez040n-maker-xmr-wallet Created 
+ Volume lez040n-maker-xmr-wallet Created 
+ Volume lez040n-xmr-funding-wallet Created 
+ Volume lez040n-xmr-funding-wallet Created 
+ Volume lez040n-monerod-data Created 
+ Volume lez040n-monerod-data Created 
+ Container lez040n-monerod Creating 
+ Container lez040n-monerod Created 
+ Container lez040n-taker-xmr-wallet Creating 
+ Container lez040n-xmr-funding-wallet Creating 
+ Container lez040n-maker-xmr-wallet Creating 
+ Container lez040n-xmr-funding-wallet Created 
+ Container lez040n-maker-xmr-wallet Created 
+ Container lez040n-taker-xmr-wallet Created 
+ Container lez040n-monerod Starting 
+ Container lez040n-network Waiting 
+ Container lez040n-bitcoin-core Waiting 
+ Container lez040n-network Healthy 
+ Container lez040n-bitcoin-core Healthy 
+ Container lez040n-monerod Started 
+ Container lez040n-taker-xmr-wallet Starting 
+ Container lez040n-maker-xmr-wallet Starting 
+ Container lez040n-xmr-funding-wallet Starting 
+ Container lez040n-taker-xmr-wallet Started 
+ Container lez040n-maker-xmr-wallet Started 
+ Container lez040n-xmr-funding-wallet Started 
+  [time 20:04:22] start the chains (compose up): 5 s (10 s since up.sh started)
+  [time 20:04:23] chains healthy: 1 s (11 s since up.sh started)
+  [time 20:04:23] indexer check (repair-indexer.sh): 0 s (11 s since up.sh started)
+Regtest wallets ready; Maker 3449.989928 BTC, Taker 5250.009908 BTC spendable.
+[4/6] market: bootstrapped by start.sh from the tools image after this
+  [time 20:04:24] Bitcoin Core wallets (seed-btc-wallets.py): 1 s (12 s since up.sh started)
+[5/6] Nodes…
+ Container lez040n-bitcoin-core Running 
+ Container lez040n-zebra Running 
+ Container lez040n-network Running 
+ Container lez040n-sequencer Running 
+ Container lez040n-maker-node Recreate 
+ Container lez040n-maker-node Recreated 
+ Container lez040n-network Waiting 
+ Container lez040n-network Healthy 
+ Container lez040n-bitcoin-core Waiting 
+ Container lez040n-network Waiting 
+ Container lez040n-sequencer Waiting 
+ Container lez040n-sequencer Healthy 
+ Container lez040n-bitcoin-core Healthy 
+ Container lez040n-network Healthy 
+ Container lez040n-maker-node Starting 
+ Container lez040n-maker-node Started 
+ Container lez040n-taker-node Recreate 
+ Container lez040n-taker-node Recreated 
+ Container lez040n-taker-node Starting 
+ Container lez040n-taker-node Started 
+  [time 20:04:27] start the Nodes (compose up): 3 s (15 s since up.sh started)
+  [time 20:04:34] Nodes healthy: 7 s (22 s since up.sh started)
+  [time 20:04:34] Nodes answer owner health: 0 s (22 s since up.sh started)
+  [time 20:04:34] market check (verify-market.py): 0 s (22 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez040n-sequencer Running 
+ Container lez040n-network Running 
+ Container lez040n-heartbeat Running 
+ Container lez040n-network Waiting 
+ Container lez040n-network Healthy 
+ Container lez040n-network Waiting 
+ Container lez040n-sequencer Waiting 
+ Container lez040n-sequencer Healthy 
+ Container lez040n-network Healthy 
+  [time 20:04:35] finality heartbeat: 1 s (23 s since up.sh started)
+[6/6] the parties' desks…
+  [time 20:04:35] desk suites: 0 s (23 s since up.sh started)
+indexer serves historical reads at the tip (6893)
+
+[20:04:35 start] market bootstrap (idempotent)
+heartbeat-pulse-01: vault already claimed (owner holds 99595)
+heartbeat-echo-02: vault already claimed (owner holds 100405)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+ Container lez040n-maker-node Recreate 
+ Container lez040n-maker-node Recreated 
+ Container lez040n-taker-node Recreate 
+ Container lez040n-taker-node Recreated 
+ Container lez040n-maker-node Starting 
+ Container lez040n-maker-node Started 
+ Container lez040n-maker-node Waiting 
+ Container lez040n-maker-node Healthy 
+ Container lez040n-taker-node Starting 
+ Container lez040n-taker-node Started 
+ Container lez040n-taker-node Waiting 
+ Container lez040n-maker-node Waiting 
+ Container lez040n-maker-node Healthy 
+ Container lez040n-taker-node Healthy 
+
+[20:04:47 start] waiting for both Nodes to report ready
+
+──────────────────────────────────────────────────────────────────
+ LEZ swap stack is up from ghcr.io/gateway-fm/lez-atomic-swaps/lez-*:v0.4.0
+
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: <redacted>; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: <redacted>; the Taker desk)
+   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining)
+   explorers             BTC http://127.0.0.1:3002, LEZ + proof http://127.0.0.1:3003/#/evidence
+                         (off unless verify-all.sh ran; docker compose --env-file runtime/runtime.env --profile explorers up -d)
+   swap                  ./scripts/swap-through-ui.sh   (or click through the two desks)
+   verify                ./scripts/verify-all.sh
+   logs                  docker compose --env-file runtime/runtime.env logs -f <service>
+   stop                  ./scripts/down.sh            (--wipe removes chains and Node state)
+
+ wallet identities and the escrow deployment live in $HOME/tmp/lez-m4/release-040/native/stack/lez-swap-stack-v0.4.0-arm64/market
+──────────────────────────────────────────────────────────────────
