@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # from-scratch.sh — bring the whole local LEZ ↔ BTC swap environment up from
 # nothing, reproducibly, on an arm64 host (macOS with Docker Desktop, or Linux
-# with Docker): prerequisites, pinned sources, every image payload built in
+# with Docker) or an x86_64 Linux host: prerequisites, pinned sources, every image payload built in
 # throwaway containers, the settlement market, the stack, and each party's desk.
 #
 #   deploy/scripts/from-scratch.sh [--workspace DIR] [--swap] [--evidence] [--only PHASE]
@@ -83,8 +83,18 @@ readonly BASECAMP_COMMIT=48b26c0d33573b5dd3695ae5868b04328f79e5c6
 readonly NIX_IMAGE="nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21"
 readonly RUST_IMAGE="rust:1.96.0-bookworm"
 readonly RISC0_TAG=v3.0.5
-readonly RAPIDSNARK_URL="https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-aarch64-pic-v0.0.8.zip"
-readonly RAPIDSNARK_LIB_SHA256="43553a6ae796621c63837829fb8b35c46cd8f0ffdb1d88f3761eb10ddbe59657"
+# The Logos rapidsnark release of this host's architecture, the two assets and
+# digests deploy/builder/Dockerfile pins (tests/test_from_scratch_host.py holds
+# the two files to the same values).
+readonly RAPIDSNARK_RELEASE="https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8"
+case "$(uname -m)" in
+  x86_64|amd64)
+    readonly RAPIDSNARK_URL="$RAPIDSNARK_RELEASE/rapidsnark-linux-x86_64-pic-v0.0.8.zip"
+    readonly RAPIDSNARK_LIB_SHA256="d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423" ;;
+  *)
+    readonly RAPIDSNARK_URL="$RAPIDSNARK_RELEASE/rapidsnark-linux-aarch64-pic-v0.0.8.zip"
+    readonly RAPIDSNARK_LIB_SHA256="43553a6ae796621c63837829fb8b35c46cd8f0ffdb1d88f3761eb10ddbe59657" ;;
+esac
 # The escrow guest's pinned digests come from the artifact verifier of the
 # commit under test, so the artifact, the market bootstrap and the swaps agree
 # on one program.
@@ -138,9 +148,12 @@ build_step_wanted() { [[ -z "$ONLY" || "$ONLY" == build || "$ONLY" == "build:$1"
 # ---- host ---------------------------------------------------------------------
 phase_host() {
   PHASE=host
-  if [[ "$(uname -m)" != "arm64" && "$(uname -m)" != "aarch64" ]]; then
-    fail "this environment is pinned to arm64 (native LEZ, r0vm, Basecamp builds)"
-  fi
+  # arm64 (macOS with Docker Desktop, Linux) and x86_64 Linux: the builder
+  # image, the Nix packages and the pins below exist for both.
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64|Linux-aarch64|Linux-arm64|Linux-x86_64) ;;
+    *) fail "this environment is built for arm64 hosts and for x86_64 Linux, not $(uname -s) $(uname -m)" ;;
+  esac
   if [[ "$(uname -s)" == "Darwin" ]]; then
     command -v brew >/dev/null || fail "install Homebrew first: https://brew.sh"
     for formula in jq git curl openssl python3; do
@@ -444,10 +457,10 @@ seed_tools_from_image() {
   own_provision
 }
 
-# rapidsnark prover libraries (the Logos fork's aarch64 release)
+# rapidsnark prover libraries (the Logos fork's release for this host's architecture)
 build_rapidsnark() {
   if [[ ! -f "$PROVISION/rapidsnark-arm/librapidsnark.a" ]]; then
-    log "fetching rapidsnark aarch64 libraries"
+    log "fetching the rapidsnark libraries for $(uname -m)"
     builder_run -- "tmp=\$(mktemp -d); curl -fsSL '$RAPIDSNARK_URL' -o \$tmp/r.zip; unzip -qo \$tmp/r.zip -d \$tmp/r;
       mkdir -p /provision/rapidsnark-arm; cp \$(find \$tmp/r -name '*.a') /provision/rapidsnark-arm/"
   fi
@@ -558,16 +571,18 @@ build_wallet_module() {
 # pinned commit, built by its own flake as a portable lgx (variant
 # linux-arm64 or linux-amd64: this host's). Upstream publishes no release of
 # it, so the package must match the sha256 our build of that commit gave on
-# the host's architecture. Only linux-arm64 is pinned (the devnet's hosts); on
-# another architecture the build stops after printing the sha256 it got.
+# the host's architecture: linux-arm64 and linux-amd64 are pinned; on another
+# architecture the build stops after printing the sha256 it got.
 # A cold build compiles Zebra (16 min on 4 cores of an M-series Mac).
 # LEZ_BUILD_CPUS caps the build container's CPUs; the container is named
 # <LEZ_BUILD_CONTAINER_PREFIX>-zebrad-module (default lez-build).
 readonly ZEBRAD_MODULE_COMMIT=ab43ad345ea9d89ceb08750f46621389262eb508
 readonly ZEBRAD_MODULE_SHA256_AARCH64=59047d1e8c0141d2e36a83144f59cd2d121355b031816df58293f66ebcea486c
+readonly ZEBRAD_MODULE_SHA256_X86_64=08b6afdb92821117bba85ca733dcb50a978764d1a3605a1acd024055f8d74a46
 zebrad_module_pin() {
   case "$(uname -m)" in
     aarch64|arm64) echo "$ZEBRAD_MODULE_SHA256_AARCH64" ;;
+    x86_64|amd64) echo "$ZEBRAD_MODULE_SHA256_X86_64" ;;
     *) echo unpinned ;;
   esac
 }
@@ -673,7 +688,8 @@ build_escrow() {
       socket=(); prebuilt=(-e LEZ_V02_PREBUILT_GUEST_ELF=/provision/escrow-guest/zec_escrow_v02.bin)
       log "building the escrow deployer around the prebuilt guest ELF"
     else
-      if [[ "$(uname -s)" == Linux && ! -e /proc/sys/fs/binfmt_misc/qemu-x86_64 ]]; then
+      # (an x86_64 host runs the image natively)
+      if [[ "$(uname -s)" == Linux && "$(uname -m)" != x86_64 && ! -e /proc/sys/fs/binfmt_misc/qemu-x86_64 ]]; then
         fail "the risc0 guest builder is an amd64 image: register emulation first, e.g. docker run --privileged --rm tonistiigi/binfmt --install amd64"
       fi
       log "building the escrow artifact for this commit (cargo-risczero from source, then the pinned guest; ~1.5 h cold)"
@@ -941,7 +957,7 @@ phase_stack() {
   log "desk suites in each party's Basecamp (the Maker suite also seeds the order book)"
   local role
   for role in maker taker; do
-    docker exec "lez-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed' || fail "$role desk suite failed"
+    docker exec "${LEZ_STACK_PREFIX:-lez}-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed' || fail "$role desk suite failed"
   done
   bash scripts/verify-all.sh 2>&1 | grep -E 'OK|FAIL|checks|failed' || fail "verify-all.sh reported a failed stage"
 }
