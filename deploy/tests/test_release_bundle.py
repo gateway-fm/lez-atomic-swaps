@@ -409,7 +409,8 @@ class BundleRegressionEntryPoints(unittest.TestCase):
             'zec-kill-maker-claim', 'zec-activate-after-expiry', 'zec-maker-cli-claim', 'claim-send-fails',
             'zec-maker-claim-collision'})
         self.assertLessEqual(hooked - {'xmr-kill-taker'}, named)
-        self.assertLessEqual(harness.ZEC_CATALOG_SCENARIOS | harness.ZEC_DEALER_LAYOUT_SCENARIOS, named)
+        # agreed at take time by the two Nodes, these run from a bundle
+        self.assertFalse(named & {'zec-regenerated-config', 'zec-tampered-config', 'zec-maker-early-claim'}, named)
         self.assertIn('maker-price-module', named)
         self.assertIn('maker-price-module-stale', named)
         # selling ZEC runs from a bundle: the Taker image carries the test payer
@@ -444,7 +445,6 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         for test in ('node:zec:zec-kill-maker-claim:TakerSellsLez', 'node:zec:zec-activate-after-expiry:TakerSellsLez',
                      'node:zec:zec-maker-claim-collision:TakerSellsLez',
                      'node:xmr:xmr-taker-cheats:TakerSellsLez', 'node:xmr:xmr-kill-maker:TakerSellsLez',
-                     'node:zec:zec-regenerated-catalog:TakerSellsLez', 'node:zec:zec-maker-early-claim:TakerSellsLez',
                      'node:btc:maker-price-module:TakerSellsForeign',
                      'node:btc:maker-price-module-stale:TakerSellsForeign',
                      'node:zec:zec-maker-cli-claim:TakerSellsLez', 'node:btc:claim-send-fails:TakerSellsLez',
@@ -453,15 +453,16 @@ class BundleRegressionEntryPoints(unittest.TestCase):
             line = next(line for line in said if f'=== {test}: ' in line)
             self.assertIn('not run on release images (', line)
         self.assertEqual(len(said), len(left_out))
-        # ten need the hooks (claim-send-fails in both directions), five the
-        # dealer fixture (the two catalog tests in both directions and
-        # zec-maker-early-claim), two the repository
-        self.assertEqual(len(left_out), 17, left_out)
+        # ten need the hooks (claim-send-fails in both directions), two the repository
+        self.assertEqual(len(left_out), 12, left_out)
         for test in ('node:zec:zec-happy:TakerSellsLez', 'node:btc:btc-custody-credit:TakerSellsForeign',
                      'node:zec:zec-custody-credit:TakerSellsLez', 'node:btc:regenerated-config:TakerSellsForeign',
                      'node:xmr:xmr-kill-taker:TakerSellsLez', 'ui:btc:happy:TakerSellsLez',
                      'node:zec:zec-happy:TakerSellsForeign', 'ui:zec:zec-happy:TakerSellsForeign',
-                     'node:zec:zec-custody-credit:TakerSellsForeign', 'node:zec:zec-claim-at-one-confirmation:TakerSellsForeign'):
+                     'node:zec:zec-custody-credit:TakerSellsForeign', 'node:zec:zec-claim-at-one-confirmation:TakerSellsForeign',
+                     'node:zec:zec-regenerated-config:TakerSellsLez', 'node:zec:zec-regenerated-config:TakerSellsForeign',
+                     'node:zec:zec-tampered-config:TakerSellsLez', 'node:zec:zec-tampered-config:TakerSellsForeign',
+                     'node:zec:zec-maker-early-claim:TakerSellsLez'):
             self.assertIn(test, kept)
         self.assertEqual(self.regress_list(self.tree, 'smoke')[0], self.regress_list(DEPLOY, 'smoke')[0])
 

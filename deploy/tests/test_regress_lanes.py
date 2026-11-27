@@ -325,6 +325,22 @@ class Tiers(unittest.TestCase):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
         self.assertEqual(len(full), 200)
 
+    def test_the_take_time_config_tests_carry_the_bitcoin_names(self):
+        full = self.tier('full')
+        for scenario in ('zec-regenerated-config', 'zec-tampered-config'):
+            for direction in ('TakerSellsLez', 'TakerSellsForeign'):
+                self.assertIn(f'node:zec:{scenario}:{direction}', full)
+                self.assertIn(f'node:btc:{scenario.removeprefix("zec-")}:{direction}', full)
+        self.assertFalse([test for test in full if 'catalog' in test])
+
+    def test_the_maker_early_claim_takes_under_the_refund_journeys_zec_profile(self):
+        # It ends in the Taker's LEZ refund and checks it runs under -v8, the
+        # selling-LEZ twin of -v6: the Nodes must take under that profile.
+        group = next(line for line in (SCRIPTS / 'regress.sh').read_text().splitlines()
+                     if 'echo zec-v6 ;; *) echo fast' in line)
+        self.assertIn('|zec-maker-early-claim)', group)
+        self.assertIn('zec-taker-refund|', group)
+
     def test_full_has_the_early_zcash_refund_in_both_directions_on_the_node_and_the_desk(self):
         # Issue #182: a refund asked for before the Maker's lock is refused
         # (node) and the desk offers none (ui), and the swap completes: on the

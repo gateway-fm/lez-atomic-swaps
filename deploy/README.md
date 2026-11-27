@@ -76,9 +76,6 @@ bundle:
   points hold the claim in the Maker's sidecar), `node:zec:zec-kill-maker-claim`,
   `node:zec:zec-maker-cli-claim`, `node:zec:zec-maker-claim-collision`,
   `node:zec:zec-activate-after-expiry` and `node:btc:claim-send-fails`;
-- they need the Zcash dealer test fixture: `node:zec:zec-regenerated-catalog`
-  and `node:zec:zec-tampered-catalog` in both directions, and
-  `node:zec:zec-maker-early-claim`;
 - they compile the repository's TEST price module: `node:btc:maker-price-module`
   and `node:btc:maker-price-module-stale`.
 

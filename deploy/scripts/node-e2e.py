@@ -322,9 +322,6 @@ RELEASE_UNAVAILABLE = (
     ("node:btc:claim-send-fails:*", RELEASE_HOOKS),
     ("node:zec:zec-maker-claim-collision:*", RELEASE_HOOKS),
     ("node:zec:zec-activate-after-expiry:*", RELEASE_HOOKS),
-    ("node:zec:zec-regenerated-catalog:*", RELEASE_DEALER),
-    ("node:zec:zec-tampered-catalog:*", RELEASE_DEALER),
-    ("node:zec:zec-maker-early-claim:*", RELEASE_DEALER),
     ("node:btc:maker-price-module:*", "compiles the repository's TEST price module (crates/logos-price-c-api), "
                                       "which a release bundle does not carry"),
     ("node:btc:maker-price-module-stale:*", "compiles the repository's TEST price module (crates/logos-price-c-api), "
@@ -3980,8 +3977,7 @@ ZEC_NU7_PROFILES = {"deterministic-local-devnet-v5", "deterministic-local-devnet
 # `take-time`, the Maker publishes an offer on its running Node and the Nodes
 # compose the agreement when the scenario takes it (zec_reserve_v1). What the
 # take-time path cannot serve stays on the dealer, and the log says why: the
-# public lane and the scenarios that test the static catalog itself. A
-# refund-profile corridor needs the Nodes on that profile (LEZ_ZEC_PROFILE,
+# public lane. A refund-profile corridor needs the Nodes on that profile (LEZ_ZEC_PROFILE,
 # regress.sh's ZEC profile group).
 ZEC_AGREEMENT = os.environ.get("LEZ_ZEC_AGREEMENT", "take-time")
 # LEZ_ZEC_CLAIM_AT_ONE_CONFIRMATION=1 (issue #130): zec-happy presses the Claim
@@ -3990,12 +3986,6 @@ ZEC_AGREEMENT = os.environ.get("LEZ_ZEC_AGREEMENT", "take-time")
 # mines the missing confirmation. Unset, the harness mines it before the press.
 # The scenario zec-claim-at-one-confirmation does the same without the variable.
 ZEC_CLAIM_AT_ONE = os.environ.get("LEZ_ZEC_CLAIM_AT_ONE_CONFIRMATION") == "1"
-ZEC_CATALOG_SCENARIOS = {"zec-regenerated-catalog", "zec-tampered-catalog"}
-# zec-maker-early-claim reads the dealer's corridor layout (the Taker's half,
-# the Maker's corridor signer and agreement); the take-time product path's
-# Maker holding no preimage is covered by zec_reserve_process.rs.
-ZEC_DEALER_LAYOUT_SCENARIOS = {"zec-maker-early-claim"}
-SCENARIO = ""  # the scenario run() is running
 
 
 def zec_current_refund_delay() -> int:
@@ -4027,8 +4017,6 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
         return zec_dynamic_corridor(swap_id, "")
     if not reuse and ZEC_AGREEMENT == "take-time":
         why = ("the public lane" if ZEC_PUBLIC else
-               f"{SCENARIO} tests the static catalog" if SCENARIO in ZEC_CATALOG_SCENARIOS else
-               f"{SCENARIO} reads the dealer's corridor layout" if SCENARIO in ZEC_DEALER_LAYOUT_SCENARIOS else
                f"the Nodes take under {zec_dynamic_profile()}, not {profile}" if profile and profile != zec_dynamic_profile()
                else None)
         if why is None:
@@ -4965,7 +4953,73 @@ def scenario_zec_dynamic_happy(stamp: str) -> dict:
     zec_dynamic_publish(stamp, [(f"e2e-zecdyn-publish-{stamp}", offer_id)])
     swap_id = zec_take_or_resume(offer_id, stamp)
     corridor = zec_dynamic_corridor(swap_id, offer_id)
-    return {**zec_happy_after_take(stamp, since, swap_id, corridor), "take_time_agreement": True}
+    custody = zec_take_time_secret_custody(swap_id)
+    return {**zec_happy_after_take(stamp, since, swap_id, corridor), "take_time_agreement": True,
+            "secret_custody": custody}
+
+
+# Runs in the Taker's container: what its reservation request (the one message
+# of the take that carries secret material, zec-taker-reserve.json) holds,
+# against the preimage in the Taker's own half. The preimage never leaves the
+# container; the reply carries digests and booleans only.
+ZEC_RESERVE_REQUEST_READER = r'''
+import hashlib, json, sys
+swap = sys.argv[1]
+record = json.load(open(swap + "/zec-taker-reserve.json"))
+request = record["request"]
+preimage = open(swap + "/zec/claim-preimage.key", "rb").read()
+def byte_fields(value):
+    if isinstance(value, list) and value and all(isinstance(item, int) for item in value):
+        yield bytes(item & 255 for item in value)
+    elif isinstance(value, list):
+        for item in value:
+            yield from byte_fields(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from byte_fields(item)
+text = json.dumps(record)
+carried = any(preimage in field for field in byte_fields(record)) or any(
+    spelling in text for spelling in (preimage.hex(), preimage.hex().upper()))
+digest = request.get("taker_secret_digest")
+print(json.dumps({"request_fields": sorted(request), "preimage_bytes": len(preimage),
+                  "preimage_sha256": hashlib.sha256(preimage).hexdigest(),
+                  "request_digest": bytes(digest).hex() if isinstance(digest, list) else None,
+                  "record_carries_preimage": carried}))
+'''
+
+
+def zec_take_time_secret_custody(swap_id: str) -> dict:
+    """After a take-time take (ADR 0216): the Taker's Node made the swap secret
+    and its reservation request carried the digest alone; the Maker's swap
+    directory holds its half of the agreement and no claim preimage (the file
+    names are those crates/maker-node/tests/zec_reserve_process.rs checks)."""
+    taker_swap, maker_swap = (zec_swap_directory(role, swap_id) for role in ("taker", "maker"))
+    read = subprocess.run(node_command("taker", ["python3", "-c", ZEC_RESERVE_REQUEST_READER, taker_swap]),
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if read.returncode != 0 or not read.stdout.strip():
+        raise Failure(f"the Taker's reservation record of swap {swap_id[:12]} is unreadable: {read.stderr.strip()[-300:]}")
+    taker = json.loads(read.stdout.strip().splitlines()[-1])
+    if taker["preimage_bytes"] != 32 or taker["request_digest"] != taker["preimage_sha256"]:
+        raise Failure(f"the Taker's reservation request does not carry the SHA-256 of its own preimage: {taker}")
+    if taker["record_carries_preimage"]:
+        raise Failure("the Taker's reservation record carries the preimage itself, not only its digest")
+    lister = ("import json, os, sys; root = sys.argv[1] + '/zec'; "
+              "print(json.dumps(sorted(os.listdir(root)) if os.path.isdir(root) else None))")
+    listed = subprocess.run(node_command("maker", ["python3", "-c", lister, maker_swap]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if listed.returncode != 0 or not listed.stdout.strip():
+        raise Failure(f"the Maker's swap directory {maker_swap} is unreadable: {listed.stderr.strip()[-300:]}")
+    maker_files = json.loads(listed.stdout.strip().splitlines()[-1])
+    if maker_files is None or "actor-config.json" not in maker_files:
+        raise Failure(f"the Maker's half of swap {swap_id[:12]} is not at {maker_swap}/zec ({maker_files}): "
+                      "the Maker's layout has moved and the check proves nothing")
+    if "claim-preimage.key" in maker_files:
+        raise Failure(f"the Maker's swap directory {maker_swap}/zec holds a claim-preimage.key (ADR 0216)")
+    log(f"  secret custody: the Taker's reservation request carried the digest {taker['request_digest'][:16]}… "
+        f"(SHA-256 of the preimage in its own {taker_swap}/zec) and no preimage; the Maker's {maker_swap}/zec "
+        f"holds {maker_files} and no claim-preimage.key")
+    return {"taker_request_fields": taker["request_fields"], "secret_digest": taker["request_digest"],
+            "taker_record_carries_preimage": False, "maker_swap_files": maker_files, "maker_holds_preimage": False}
 
 
 def zec_wait_all_until(swaps: list[tuple[str, str, dict]], states: set[str], timeout: int, describe: str = "") -> dict[str, dict]:
@@ -5825,11 +5879,12 @@ def scenario_zec_survivor(stamp: str) -> dict:
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "claim_confirmed_while_stopped": confirmed_while_stopped}
 
 
-def scenario_zec_regenerated_catalog(stamp: str) -> dict:
-    """ZEC analogue of `regenerated-config`: a swap taken under one rendering of
-    the live role configuration (which carries the prepared ZEC catalog)
-    survives a re-render and a Taker Node restart, reloads against its own
-    receipt and stays actionable to completion."""
+def scenario_zec_regenerated_config(stamp: str) -> dict:
+    """ZEC analogue of `regenerated-config`: a swap agreed at take time under one
+    rendering of the Node's configuration survives a re-render (gen-config.sh)
+    and a Taker Node restart: the Node reloads it from the swap's own directory
+    (zec-taker-prepared.json, its receipt and its copy of the actor
+    configuration) and it stays actionable to completion."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -5847,21 +5902,30 @@ def scenario_zec_regenerated_catalog(stamp: str) -> dict:
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "reloaded_state": listed[0]["state"]}
 
 
-def scenario_zec_tampered_catalog(stamp: str) -> dict:
-    """ZEC analogue of `tampered-config`: the actor configuration a swap was
-    taken under (the swap's own copy, pinned by its receipt) is altered; after
-    a Taker Node restart the swap is not actionable and a claim is refused.
-    The catalog source itself is not altered: its sha256 is pinned at the
-    Node's start and a mismatch keeps the whole catalog out, which the
-    entrypoint already reports."""
-    corridor = zec_provision()
-    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
-    config = zec_taker_actor_config(corridor["receipt_output"])
+def scenario_zec_tampered_config(stamp: str) -> dict:
+    """ZEC analogue of `tampered-config`: two swaps are agreed at take time; the
+    actor configuration the first one runs under (the swap's own copy, pinned
+    by its receipt) is altered by one byte. After a Taker Node restart that
+    swap is not actionable and a claim on it is refused, while the Node
+    starts, reports healthy and carries the second swap, whose files nobody
+    touched, to completion: one swap's altered file fails that swap closed and
+    nothing else."""
+    zec_provision(swaps=2)
+    corridors = list(ZEC_CORRIDORS)
+    if len(corridors) != 2:
+        raise Failure(f"expected two offers, the run has {len(corridors)}")
+    swaps = []
+    for index, corridor in enumerate(corridors):
+        swap_id = zec_take_or_resume(corridor["offer_id"], stamp, "-ab"[index:index + 1].join(["-", ""]))
+        swaps.append((swap_id, zec_taker_actor_config(corridor["receipt_output"]), corridor))
+    (swap_id, config, corridor), (other_id, other_config, other_corridor) = swaps
     node_run("taker", "sh", "-c", f"printf '\n' >> {config}")
-    log("  appended one byte to the swap's copied actor-config.json")
+    log(f"  appended one byte to the actor configuration of swap {swap_id[:12]} ({config}); "
+        f"swap {other_id[:12]} is left as it was taken")
     node_restart("taker")
     wait_healthy("taker")
-    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    listing = call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]
+    listed = [s for s in listing if s["swap_id"] == swap_id]
     state = listed[0]["state"] if listed else "absent"
     reply = rpc("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-tampered-{stamp}",
                                                  "swap_id": swap_id, "expected_generation": 0}, timeout=120)
@@ -5871,7 +5935,13 @@ def scenario_zec_tampered_catalog(stamp: str) -> dict:
         raise Failure(f"the altered swap still lists as {state} instead of attention_required")
     category = (reply["error"].get("data") or {}).get("category") if isinstance(reply["error"].get("data"), dict) else None
     log(f"  swap {swap_id[:12]} after the tamper: {state}; claim refused ({category or reply['error'].get('message')})")
-    return {"swap_id": swap_id, "corridor": corridor["run_id"], "state_after_tamper": state, "claim_refusal": category}
+    other = [s for s in listing if s["swap_id"] == other_id]
+    if len(other) != 1 or other[0]["state"] in TERMINAL:
+        raise Failure(f"the untouched swap {other_id[:12]} did not reload beside the altered one: {other}")
+    log(f"  the untouched swap {other_id[:12]} reloaded as {other[0]['state']}; carrying it to completion")
+    zec_finish(other_id, other_config, other_corridor, stamp, "-b")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "state_after_tamper": state, "claim_refusal": category,
+            "untouched_swap_id": other_id, "untouched_reloaded_state": other[0]["state"], "untouched_completed": True}
 
 
 def zec_export_tool(swap_id: str) -> bool:
@@ -6865,17 +6935,27 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
 
 # ---- TM-0030: the Maker cannot claim the Taker's LEZ with what it holds ----
 
-# The corridor entry 0 as both Node containers mount it (zec-catalog-fixture.sh):
-# shared/ (the signed agreement), and each role's own half.
-ZEC_CORRIDOR_ROOT = "/var/lib/lez/zec/corridor"
-# The Maker's files: its Node's swap store and state (maker_state), and its
-# ZEC volume (zec_maker: the corridor template and agreement, the per-swap
-# actor roots under actors/, the sidecar state and log), and its run directory.
+# Where a Node keeps the swaps it agreed at take time (zec_reserve_v1): one
+# directory per swap under the role's swaps root, named by the reservation id
+# both Nodes derive from the take; its zec/ holds the role's own half (the
+# actor template, the draft and, for the Taker only, claim-preimage.key).
+ZEC_SWAPS_ROOT = {"maker": "/var/lib/lez/maker/btc/swaps", "taker": "/var/lib/lez/taker/btc/swaps"}
+# The Maker's files: its Node's swap store and state (maker_state: the swap
+# directories with the Maker's half of each agreement), its ZEC volume
+# (zec_maker: the per-swap actor roots under actors/, each with the
+# countersigned agreement), and its run directory.
 ZEC_MAKER_SEARCH_ROOTS = ("/var/lib/lez/maker", "/var/lib/lez/zec", "/run/lez/maker")
 # Files the search must have read, or the Maker's layout has moved and the
-# search proves nothing: the Node's swap store and the signed agreement.
-ZEC_MAKER_REQUIRED_FILES = ("/var/lib/lez/maker/maker.sqlite3", f"{ZEC_CORRIDOR_ROOT}/shared/agreement-v2.borsh")
+# search proves nothing: the Node's swap store, the Maker's half of this swap
+# (its actor template) and the countersigned agreement of an actor root.
+ZEC_MAKER_REQUIRED_FILES = ("/var/lib/lez/maker/maker.sqlite3",)
 ZEC_MAKER_ACTOR_ROOT = "/var/lib/lez/zec/actors/"
+ZEC_MAKER_AGREEMENT_SUFFIX = "/shared/agreement-v2.borsh"
+# The Maker's LEZ key as compose mounts it (runtime/lez/maker at
+# /run-lez-identity/maker): the claimant key of the swap's escrow. The probe
+# reads an owner-private copy of it.
+ZEC_MAKER_OWNER_KEY = "/run-lez-identity/maker/lez-signer.key"
+ZEC_PROBE_SIGNER = "/tmp/zec-probe-lez-signer.key"
 # The test-only probe the devnet Maker image carries beside its package
 # (compat/lez-v0_2-sidecar/src/bin/lez-v02-escrow-claim-probe.rs).
 ZEC_ESCROW_CLAIM_PROBE = "/usr/local/bin/lez-v02-escrow-claim-probe"
@@ -6938,11 +7018,26 @@ def zec_secret_search(role: str, roots: tuple[str, ...], preimage: bytes, digest
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-def zec_taker_claim_preimage() -> bytes:
-    """The swap's preimage from the Taker's half of the preparation
-    (local_poc.rs material_paths: <corridor>/taker/claim-preimage.key, the 32
-    raw bytes). It stays in this process; the log carries its SHA-256 only."""
-    path = f"{ZEC_CORRIDOR_ROOT}/taker/claim-preimage.key"
+def zec_swap_directory(role: str, swap_id: str) -> str:
+    """The role's directory of a swap agreed at take time. The Taker's holds
+    zec-taker-prepared.json, which names the swap; the Maker's has the same
+    name (the reservation id both derive from the take)."""
+    found = subprocess.run(node_command("taker", ["sh", "-c",
+                            f"grep -l '\"{swap_id}\"' {ZEC_SWAPS_ROOT['taker']}/*/zec-taker-prepared.json"]),
+                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    paths = found.stdout.split()
+    if found.returncode != 0 or len(paths) != 1:
+        raise Failure(f"the Taker holds {len(paths)} take-time directories for swap {swap_id[:12]}, not one: "
+                      f"{found.stderr.strip()[-200:]}")
+    reservation = paths[0].rsplit("/", 2)[-2]
+    return f"{ZEC_SWAPS_ROOT[role]}/{reservation}"
+
+
+def zec_taker_claim_preimage(swap_id: str) -> bytes:
+    """The swap's preimage, which the Taker's Node made at take time and keeps
+    in its own half of the swap (<swap directory>/zec/claim-preimage.key, the
+    32 raw bytes). It stays in this process; the log carries its SHA-256 only."""
+    path = f"{zec_swap_directory('taker', swap_id)}/zec/claim-preimage.key"
     reader = "import sys; sys.stdout.write(open(sys.argv[1], 'rb').read().hex())"
     result = subprocess.run(node_command("taker", ["python3", "-c", reader, path]), capture_output=True, text=True,
                             check=False, stdin=subprocess.DEVNULL)
@@ -6950,36 +7045,38 @@ def zec_taker_claim_preimage() -> bytes:
         raise Failure(f"the Taker's preimage file {path} is unreadable: {result.stderr.strip()[-200:]}")
     raw = bytes.fromhex(result.stdout.strip())
     if len(raw) != 32:
-        text = raw.decode(errors="replace").strip()
-        if len(text) != 64:
-            raise Failure(f"the Taker's preimage file {path} holds {len(raw)} bytes, neither 32 raw bytes nor 64 hex characters")
-        raw = bytes.fromhex(text)
+        raise Failure(f"the Taker's preimage file {path} holds {len(raw)} bytes, not 32")
     return raw
 
 
-def zec_maker_escrow_program_id() -> str:
-    """The escrow program the Maker's corridor template names (the entrypoint
-    checks it against the chain's before it starts the Maker's sidecar)."""
+def zec_maker_escrow_program_id(swap_id: str) -> str:
+    """The escrow program the Maker's half of the swap names (its actor
+    template, written when the Maker accepted the agreement)."""
+    template = f"{zec_swap_directory('maker', swap_id)}/zec/actor-config.json"
     reader = "import json, sys; print(json.load(open(sys.argv[1]))['bridge']['runtime']['escrow_program_id'])"
-    result = subprocess.run(node_command("maker", ["python3", "-c", reader, f"{ZEC_CORRIDOR_ROOT}/maker/actor-config.json"]),
+    result = subprocess.run(node_command("maker", ["python3", "-c", reader, template]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if result.returncode != 0 or len(result.stdout.strip()) != 64:
-        raise Failure(f"the Maker's corridor template names no escrow program: {result.stderr.strip()[-200:]}")
+        raise Failure(f"the Maker's actor template {template} names no escrow program: {result.stderr.strip()[-200:]}")
     return result.stdout.strip()
 
 
 def zec_escrow_claim_probe(label: str, onchain_swap_id: str, program_id: str, preimage_hex: str) -> dict:
-    """One claim_native signed by the Maker's claimant key (the Maker's half of
-    the preparation: <corridor>/maker/lez-signer.key) with `preimage_hex`,
+    """One claim_native signed by the Maker's claimant key (the Maker's own LEZ
+    key, an owner-private copy of the lane identity's) with `preimage_hex`,
     submitted from inside the Maker's container over its sequencer route by the
     test-only probe. Logs the probe's whole evidence and fails unless the
     escrow kept the custody: still Funded, custody balance unchanged."""
+    node_run("maker", "install", "-m", "0600", ZEC_MAKER_OWNER_KEY, ZEC_PROBE_SIGNER)
     argv = [ZEC_ESCROW_CLAIM_PROBE, "--sequencer-url", "http://127.0.0.1:3040/", "--escrow-program-id", program_id,
-            "--swap-id", onchain_swap_id, "--private-key-file", f"{ZEC_CORRIDOR_ROOT}/maker/lez-signer.key",
+            "--swap-id", onchain_swap_id, "--private-key-file", ZEC_PROBE_SIGNER,
             "--preimage-hex", preimage_hex, "--observe-seconds", "30"]
     log(f"  claim_native as the Maker with {label}: {' '.join(argv)}")
-    result = subprocess.run(node_command("maker", argv), capture_output=True, text=True, check=False,
-                            stdin=subprocess.DEVNULL, timeout=300)
+    try:
+        result = subprocess.run(node_command("maker", argv), capture_output=True, text=True, check=False,
+                                stdin=subprocess.DEVNULL, timeout=300)
+    finally:
+        subprocess.run(node_command("maker", ["rm", "-f", ZEC_PROBE_SIGNER]), check=False, capture_output=True)
     for line in result.stderr.strip().splitlines():
         log(f"    probe stderr: {line}")
     if not result.stdout.strip():
@@ -7144,11 +7241,13 @@ def scenario_zec_maker_early_claim(stamp: str) -> dict:
     Maker (which held the preimage) could. Under the refund journeys' profile
     (-v8): the Taker's LEZ lock is taken to finality with the Maker's zebra
     route cut, as in zec-taker-refund, so the Maker observes the lock and
-    cannot fund Zcash. With the Maker's Node up, its files (swap store, ZEC
-    actor roots, corridor template and agreement, sidecar state) are searched
-    for the preimage read from the Taker's half of the preparation: no file
-    holds it, the agreement holds its digest; the same search over the Taker's
-    files finds it, so the search can find it. Then two claim_native
+    cannot fund Zcash. The swap is agreed at take time (zec_reserve_v1): the
+    Taker's Node made the preimage and sent its digest. With the Maker's Node
+    up, its files (swap store, its half of the swap, ZEC actor roots with the
+    countersigned agreement, sidecar state) are searched for the preimage read
+    from the Taker's own swap directory: no file holds it, the agreement holds
+    its digest; the same search over the Taker's swap directory finds it, so
+    the search can find it. Then two claim_native
     transactions signed by the Maker's claimant key go to the escrow from the
     Maker's container, one with a zero preimage and one with the digest as the
     preimage: the escrow stays Funded with its custody, and neither pays the
@@ -7160,7 +7259,7 @@ def scenario_zec_maker_early_claim(stamp: str) -> dict:
                       "the Taker is the LEZ claimant and the Maker holds no LEZ claim to attempt")
     corridor = zec_provision(profile=zec_refund_profile())
     if corridor["profile"] != "deterministic-local-devnet-v8":
-        raise Failure(f"the corridor runs under {corridor['profile']}, not deterministic-local-devnet-v8")
+        raise Failure(f"the swap would be agreed under {corridor['profile']}, not deterministic-local-devnet-v8")
     lez_accounts = {role: lez_owner_account(role) for role in ("maker", "taker")}
     lez_before = {role: lez_account_balance(account) for role, account in lez_accounts.items()}
     log(f"  LEZ accounts before the take: {lez_before}")
@@ -7195,9 +7294,10 @@ def scenario_zec_maker_early_claim(stamp: str) -> dict:
             "zebra's mempool empty")
 
         # (iii) what the Maker holds.
-        preimage = zec_taker_claim_preimage()
+        preimage = zec_taker_claim_preimage(swap_id)
         digest = hashlib.sha256(preimage).digest()
-        log(f"  the swap's preimage is read from the Taker's half ({ZEC_CORRIDOR_ROOT}/taker/claim-preimage.key, "
+        taker_swap, maker_swap = (zec_swap_directory(role, swap_id) for role in ("taker", "maker"))
+        log(f"  the swap's preimage is read from the Taker's own half ({taker_swap}/zec/claim-preimage.key, "
             f"32 bytes, kept in the harness and never logged); its SHA-256 is {digest.hex()}")
         log("  searching the Maker's files for the preimage (raw, hex, HEX, base64) and the digest (raw, hex, HEX)")
         found = zec_secret_search("maker", ZEC_MAKER_SEARCH_ROOTS, preimage, digest)
@@ -7209,10 +7309,17 @@ def scenario_zec_maker_early_claim(stamp: str) -> dict:
         for key, paths in sorted(found["hits"].items()):
             log(f"    {key}: {len(paths)} file(s){': ' + ', '.join(paths) if paths else ''}")
         searched = {path for path, _ in found["files"]}
-        missing = [path for path in ZEC_MAKER_REQUIRED_FILES if path not in searched]
-        if missing or not any(path.startswith(ZEC_MAKER_ACTOR_ROOT) for path in searched):
-            raise Failure(f"the search did not read the Maker's swap store, agreement and actor state "
-                          f"(missing {missing or [ZEC_MAKER_ACTOR_ROOT]}): the Maker's layout has moved")
+        missing = [path for path in (*ZEC_MAKER_REQUIRED_FILES, f"{maker_swap}/zec/actor-config.json")
+                   if path not in searched]
+        if not any(path.startswith(ZEC_MAKER_ACTOR_ROOT) and path.endswith(ZEC_MAKER_AGREEMENT_SUFFIX)
+                   for path in searched):
+            missing.append(f"{ZEC_MAKER_ACTOR_ROOT}*{ZEC_MAKER_AGREEMENT_SUFFIX}")
+        if missing:
+            raise Failure(f"the search did not read the Maker's swap store, its half of the swap and an actor "
+                          f"root's agreement (missing {missing}): the Maker's layout has moved")
+        if f"{maker_swap}/zec/claim-preimage.key" in searched:
+            raise Failure(f"the Maker's half of the swap holds a claim-preimage.key ({maker_swap}/zec): "
+                          "only the Taker's does (TM-0030)")
         if found["unreadable"]:
             raise Failure(f"the search could not read {len(found['unreadable'])} of the Maker's paths")
         leaked = sorted({path for key, paths in found["hits"].items() if key.startswith("preimage") for path in paths})
@@ -7222,16 +7329,16 @@ def scenario_zec_maker_early_claim(stamp: str) -> dict:
         if not digest_files:
             raise Failure("no Maker file holds the digest either: the search did not see the agreement it read")
         log(f"  the Maker's files hold the digest ({len(digest_files)} file(s)) and never the preimage")
-        control = zec_secret_search("taker", ("/var/lib/lez/zec",), preimage, digest)
+        control = zec_secret_search("taker", (taker_swap,), preimage, digest)
         control_hits = sorted({path for key, paths in control["hits"].items() if key.startswith("preimage") for path in paths})
-        log(f"  control: the same search over the Taker's /var/lib/lez/zec ({len(control['files'])} files, "
+        log(f"  control: the same search over the Taker's {taker_swap} ({len(control['files'])} files, "
             f"{control['bytes']} bytes) finds the preimage in {control_hits}")
         if not control_hits:
             raise Failure("the search does not find the preimage in the Taker's half either: it proves nothing")
 
         # (iv) a claim with what the Maker holds.
         onchain_swap_id = hashlib.sha256(LEZ_SWAP_ID_V1_DOMAIN + swap_id.encode()).hexdigest()
-        program_id = zec_maker_escrow_program_id()
+        program_id = zec_maker_escrow_program_id(swap_id)
         log(f"  the escrow of swap {swap_id}: on-chain swap id {onchain_swap_id} (derive_lez_swap_id_v1), "
             f"program {program_id}")
         probes = {}
@@ -10210,8 +10317,8 @@ ZEC_SCENARIOS = {
     "zec-kill-taker": lambda stamp: scenario_zec_kill_walk(stamp, "taker"),
     "zec-kill-maker": lambda stamp: scenario_zec_kill_walk(stamp, "maker"),
     "zec-survivor": scenario_zec_survivor,
-    "zec-regenerated-catalog": scenario_zec_regenerated_catalog,
-    "zec-tampered-catalog": scenario_zec_tampered_catalog,
+    "zec-regenerated-config": scenario_zec_regenerated_config,
+    "zec-tampered-config": scenario_zec_tampered_config,
     "zec-balance-refusal": scenario_zec_balance_refusal,
     "zec-bitcoin-down": scenario_zec_bitcoin_down,
     "zec-taker-cli": through_taker_cli(scenario_zec_happy),
@@ -10454,8 +10561,6 @@ def run(name: str) -> bool:
     # (zec-catalog-fixture.sh does the same): no two lanes may make the same one.
     if os.environ.get("LEZ_LANE", "1") != "1":
         stamp += f"{int(os.environ['LEZ_LANE']):02d}"
-    global SCENARIO
-    SCENARIO = name
     log(f"=== {name} (stamp {stamp})")
     started = time.time()
     summary = {"scenario": name, "pair": ROUTE["pair"], "direction": ROUTE["direction"], "stamp": stamp,

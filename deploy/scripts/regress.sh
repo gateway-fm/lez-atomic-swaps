@@ -95,7 +95,7 @@ tier_tests() { # tier_tests <tier>
       tier_tests refunds
       for d in "${directions[@]}"; do
         for s in zec-happy zec-dynamic-happy zec-replay zec-wrong-inputs zec-restart-taker zec-restart-maker zec-kill-taker zec-kill-maker \
-          zec-survivor zec-concurrent zec-concurrent-kill-maker zec-corrupt-state zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock \
+          zec-survivor zec-concurrent zec-concurrent-kill-maker zec-corrupt-state zec-regenerated-config zec-tampered-config zec-early-lock zec-offline-after-lock \
           zec-offline-after-second-lock zec-offline-after-claim zec-bitcoin-down zec-early-refund; do
           echo "node:zec:$s:$d"
         done
@@ -306,7 +306,8 @@ profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile t
   if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
     # as the refund journeys: the ones an operator CLI drives, and the refund path's kill points
     case "$scenario" in zec-maker-cli-refund|zec-taker-cli-refund|zec-kill-maker-refund|zec-kill-taker-refund) echo zec-v6; return 0 ;; esac
-    case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window|zec-custody-credit-refund) echo zec-v6 ;; *) echo fast ;; esac
+    # ... and zec-maker-early-claim, which ends in the Taker's refund (selling LEZ: -v8)
+    case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window|zec-custody-credit-refund|zec-maker-early-claim) echo zec-v6 ;; *) echo fast ;; esac
     return 0
   fi
   [[ "$pair" != xmr ]] || { echo fast; return 0; }

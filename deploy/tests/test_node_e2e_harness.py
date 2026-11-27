@@ -1013,6 +1013,117 @@ class ZecClaimAtOneConfirmation(unittest.TestCase):
                     self.assertEqual(mined, [], (depth, view))
 
 
+class TakeTimeSecretCustody(unittest.TestCase):
+    """zec-dynamic-happy's check after the take (ADR 0216): the Taker's
+    reservation request carried the digest alone, the Maker holds no preimage."""
+
+    def read(self, record, preimage):
+        with tempfile.TemporaryDirectory() as root:
+            swap = pathlib.Path(root)
+            (swap / 'zec').mkdir()
+            (swap / 'zec' / 'claim-preimage.key').write_bytes(preimage)
+            (swap / 'zec-taker-reserve.json').write_text(json.dumps(record))
+            ran = subprocess.run([sys.executable, '-c', e2e.ZEC_RESERVE_REQUEST_READER, root], capture_output=True,
+                                 text=True, check=True)
+        self.assertNotIn(preimage.hex(), ran.stdout)
+        return json.loads(ran.stdout)
+
+    def record(self, preimage, **request):
+        import hashlib
+        return {'schema_version': 1, 'tip_before': 110, 'response': {'unsigned_draft_wire': [1, 2, 3]},
+                'request': {'schema_version': 1, 'reservation_id': 'r', 'offer_id': 'o', 'foreign_units': 1,
+                            'signed_offer_envelope': [9] * 40, 'taker_zcash_public_key': [2] * 33,
+                            'taker_lez_account': [7] * 32, 'taker_funding': None,
+                            'taker_secret_digest': list(hashlib.sha256(preimage).digest()), **request}}
+
+    def test_the_reader_reports_the_digest_and_never_the_preimage(self):
+        import hashlib
+        preimage = bytes(range(1, 33))
+        seen = self.read(self.record(preimage), preimage)
+        self.assertEqual(seen['request_digest'], hashlib.sha256(preimage).hexdigest())
+        self.assertEqual(seen['preimage_sha256'], seen['request_digest'])
+        self.assertEqual(seen['preimage_bytes'], 32)
+        self.assertFalse(seen['record_carries_preimage'])
+        self.assertIn('taker_secret_digest', seen['request_fields'])
+
+    def test_the_reader_finds_a_preimage_in_any_form(self):
+        preimage = bytes(range(1, 33))
+        for leaked in ({'taker_secret': list(preimage)}, {'note': preimage.hex()},
+                       {'signed_offer_envelope': [0, 0] + list(preimage) + [0]}):
+            self.assertTrue(self.read(self.record(preimage, **leaked), preimage)['record_carries_preimage'], leaked)
+
+    def custody(self, taker, maker_files):
+        def fake_run(command, **_):
+            if command[2] == 'lez-taker-node' and command[3] == 'sh':
+                return unittest.mock.Mock(returncode=0, stderr='',
+                                          stdout='/var/lib/lez/taker/btc/swaps/abcd/zec-taker-prepared.json\n')
+            if command[2] == 'lez-taker-node':
+                self.assertEqual(command[-1], '/var/lib/lez/taker/btc/swaps/abcd')
+                return unittest.mock.Mock(returncode=0, stdout=json.dumps(taker) + '\n', stderr='')
+            self.assertEqual(command[-1], '/var/lib/lez/maker/btc/swaps/abcd')
+            return unittest.mock.Mock(returncode=0, stdout=json.dumps(maker_files) + '\n', stderr='')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'log', lambda *_: None):
+            return e2e.zec_take_time_secret_custody('zec-swap-1')
+
+    TAKER = {'request_fields': ['taker_secret_digest'], 'preimage_bytes': 32, 'preimage_sha256': 'ab' * 32,
+             'request_digest': 'ab' * 32, 'record_carries_preimage': False}
+
+    def test_it_passes_on_a_digest_only_request_and_a_maker_without_the_preimage(self):
+        seen = self.custody(self.TAKER, ['actor-config.json', 'draft.borsh'])
+        self.assertEqual(seen['secret_digest'], 'ab' * 32)
+        self.assertFalse(seen['maker_holds_preimage'])
+
+    def test_it_fails_on_a_maker_that_holds_the_preimage_file(self):
+        with self.assertRaisesRegex(e2e.Failure, 'claim-preimage.key'):
+            self.custody(self.TAKER, ['actor-config.json', 'claim-preimage.key'])
+
+    def test_it_fails_when_the_request_carried_the_preimage_or_another_digest(self):
+        with self.assertRaisesRegex(e2e.Failure, 'carries the preimage'):
+            self.custody({**self.TAKER, 'record_carries_preimage': True}, ['actor-config.json'])
+        with self.assertRaisesRegex(e2e.Failure, 'SHA-256 of its own preimage'):
+            self.custody({**self.TAKER, 'request_digest': 'cd' * 32}, ['actor-config.json'])
+        with self.assertRaisesRegex(e2e.Failure, 'SHA-256 of its own preimage'):
+            self.custody({**self.TAKER, 'request_digest': None}, ['actor-config.json'])
+
+    def test_it_fails_when_the_makers_layout_has_moved(self):
+        for files in (None, ['zec-reservation.json']):
+            with self.assertRaisesRegex(e2e.Failure, 'layout has moved'):
+                self.custody(self.TAKER, files)
+
+    def test_the_happy_scenario_runs_it_after_the_take(self):
+        source = inspect.getsource(e2e.scenario_zec_dynamic_happy)
+        self.assertLess(source.index('zec_take_or_resume('), source.index('zec_take_time_secret_custody(swap_id)'))
+        self.assertLess(source.index('zec_take_time_secret_custody(swap_id)'), source.index('zec_happy_after_take('))
+
+
+class TakeTimeConfigScenarios(unittest.TestCase):
+    """zec-regenerated-config and zec-tampered-config: the Zcash twins of the
+    Bitcoin regenerated-config and tampered-config, on swaps agreed at take time."""
+
+    def test_they_are_registered_under_the_bitcoin_names(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-regenerated-config'], e2e.scenario_zec_regenerated_config)
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-tampered-config'], e2e.scenario_zec_tampered_config)
+        self.assertFalse([name for name in e2e.ZEC_SCENARIOS if 'catalog' in name])
+        for name in ('regenerated-config', 'tampered-config'):
+            self.assertIn(name, e2e.SCENARIOS)
+
+    def test_the_regenerated_one_rerenders_restarts_and_finishes_the_swap(self):
+        source = inspect.getsource(e2e.scenario_zec_regenerated_config)
+        order = [source.index(step) for step in ('zec_provision()', 'zec_take_or_resume(', 'regenerate_runtime_config()',
+                                                 'node_restart("taker")', 'zec_finish(')]
+        self.assertEqual(order, sorted(order))
+
+    def test_the_tampered_one_alters_one_swap_and_finishes_the_other(self):
+        source = inspect.getsource(e2e.scenario_zec_tampered_config)
+        order = [source.index(step) for step in ('zec_provision(swaps=2)', "printf '\\n' >> {config}",
+                                                 'node_restart("taker")', '"taker_swap_claim_v1"',
+                                                 'zec_finish(other_id, other_config, other_corridor')]
+        self.assertEqual(order, sorted(order))
+        self.assertIn('attention_required', source)
+
+
 class MakerEarlyClaim(unittest.TestCase):
     """zec-maker-early-claim (TM-0030): what can be checked without a stack."""
 
@@ -1097,11 +1208,46 @@ class MakerEarlyClaim(unittest.TestCase):
     def test_the_claim_is_the_makers_through_its_own_sequencer_route(self):
         evidence, ran = self.probe(probe_evidence())
         self.assertTrue(evidence['escrow_kept_custody'])
-        command = ran[0]
+        # the Maker's own LEZ key, as an owner-private copy that is removed again
+        self.assertEqual(ran[0], ['docker', 'exec', 'lez-maker-node', 'install', '-m', '0600',
+                                  '/run-lez-identity/maker/lez-signer.key', '/tmp/zec-probe-lez-signer.key'])
+        command = ran[1]
         self.assertEqual(command[:4], ['docker', 'exec', 'lez-maker-node', f'/usr/local/bin/{PROBE}'])
-        self.assertEqual(command[command.index('--private-key-file') + 1],
-                         '/var/lib/lez/zec/corridor/maker/lez-signer.key')
+        self.assertEqual(command[command.index('--private-key-file') + 1], '/tmp/zec-probe-lez-signer.key')
         self.assertEqual(command[command.index('--sequencer-url') + 1], 'http://127.0.0.1:3040/')
+        self.assertEqual(ran[2], ['docker', 'exec', 'lez-maker-node', 'rm', '-f', '/tmp/zec-probe-lez-signer.key'])
+
+    def test_it_reads_the_take_time_layout_of_both_nodes(self):
+        source = inspect.getsource(e2e.scenario_zec_maker_early_claim)
+        for helper in ('zec_taker_claim_preimage(swap_id)', 'zec_maker_escrow_program_id(swap_id)',
+                       "zec_swap_directory(role, swap_id)", '/zec/actor-config.json', '/zec/claim-preimage.key'):
+            self.assertIn(helper, source)
+        self.assertNotIn('corridor/', inspect.getsource(e2e.zec_taker_claim_preimage))
+        self.assertEqual(e2e.ZEC_SWAPS_ROOT, {'maker': '/var/lib/lez/maker/btc/swaps',
+                                              'taker': '/var/lib/lez/taker/btc/swaps'})
+        # the file names the Nodes write (zec_dynamic.rs, zec_reserve_process.rs)
+        taker = (REPO / 'crates/taker-node/src/taker_service/zec_dynamic.rs').read_text()
+        self.assertIn('const PREPARED_FILE: &str = "zec-taker-prepared.json";', taker)
+        self.assertIn('const RESERVE_FILE: &str = "zec-taker-reserve.json";', taker)
+        self.assertIn('const ROLE_DIRECTORY: &str = "zec";', taker)
+        agreed = (REPO / 'crates/maker-node/tests/zec_reserve_process.rs').read_text()
+        self.assertIn('assert!(!maker_swap.join("zec/claim-preimage.key").exists());', agreed)
+        self.assertIn('assert!(taker_swap.join("zec/claim-preimage.key").is_file());', agreed)
+
+    def test_a_swap_directory_is_the_one_the_taker_names_the_swap_in(self):
+        def fake_run(command, **_):
+            self.assertEqual(command[:3], ['docker', 'exec', 'lez-taker-node'])
+            self.assertIn('zec-taker-prepared.json', command[-1])
+            return unittest.mock.Mock(returncode=0, stderr='',
+                                      stdout='/var/lib/lez/taker/btc/swaps/0123abcd/zec-taker-prepared.json\n')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run):
+            self.assertEqual(e2e.zec_swap_directory('taker', 'zec-swap-1'), '/var/lib/lez/taker/btc/swaps/0123abcd')
+            self.assertEqual(e2e.zec_swap_directory('maker', 'zec-swap-1'), '/var/lib/lez/maker/btc/swaps/0123abcd')
+        none = lambda command, **_: unittest.mock.Mock(returncode=1, stdout='', stderr='no such file')
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', none):
+            with self.assertRaisesRegex(e2e.Failure, 'not one'):
+                e2e.zec_swap_directory('maker', 'zec-swap-1')
 
     def test_a_claim_the_escrow_paid_fails_the_scenario(self):
         paid = probe_evidence(escrow_kept_custody=False, included=True, included_in_block=11,
