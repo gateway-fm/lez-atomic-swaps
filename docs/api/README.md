@@ -218,7 +218,10 @@ feed and a strategy transform inside the node.
 
 Both health methods carry `lez_chain` once the Node runs the Node-owned
 lifecycle, read from the indexer and sequencer its sidecars use (`lez.indexer_url`,
-`lez.sequencer_url` of the role configuration). It is an additive field of
+`lez.sequencer_url` of the role configuration, both checked against
+`lez.sequencer_route` when the configuration is loaded: literal-loopback HTTP
+under `local`, and under `official_public` the sequencer exactly
+`https://testnet.lez.logos.co/` with a loopback indexer). It is an additive field of
 schema 1: absent on a Node without the lifecycle and on older Nodes, and a
 client that does not know it ignores it.
 

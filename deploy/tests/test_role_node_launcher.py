@@ -11,6 +11,7 @@ its CLI, curl, socat, setpriv and uname are fakes; nothing here needs a chain.
 import json
 import os
 import pathlib
+import re
 import shutil
 import socket
 import stat
@@ -20,7 +21,8 @@ import tempfile
 import time
 import unittest
 
-LAUNCHER = pathlib.Path(__file__).resolve().parents[2] / 'modules/lez-role-node/node-entrypoint.sh'
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+LAUNCHER = ROOT / 'modules/lez-role-node/node-entrypoint.sh'
 PROGRAM = 'c' * 64
 GENESIS = 'd' * 64
 CHANNEL = 'e' * 64
@@ -154,10 +156,53 @@ class Launcher(unittest.TestCase):
         self.assertEqual(self.flag(node, '--delivery-directory'), str(root / 'delivery'))
         role = json.loads((root / 'state/btc/btc-role.json').read_text())
         self.assertEqual(role['bitcoin']['endpoint'], 'http://127.0.0.1:18443/')
-        self.assertEqual(role['lez']['sequencer_url'], 'http://sequencer:3040')
-        self.assertEqual(role['lez']['indexer_url'], 'http://indexer:8779')
+        # The forwards listen on loopback and the Node refuses a service name
+        # under the local route, so the URLs are the loopback ports (#175).
+        self.assertEqual(role['lez']['sequencer_url'], 'http://127.0.0.1:3040')
+        self.assertEqual(role['lez']['indexer_url'], 'http://127.0.0.1:8779')
+        self.assertNotIn('sequencer_route', role['lez'])
         self.assertEqual(role['actor']['program'], str(self.payload / 'lez-btc-maker-actor'))
         self.assertEqual((root / 'delivery/maker-delivery-identity.pub').read_text(), MAKER_KEY + '\n')
+
+    def test_the_official_public_route_names_the_official_origin_and_forwards_no_sequencer(self):
+        self.host('Linux', setpriv=False)
+        root = self.tmp / 'linux'
+        self.inputs(root / 'identity', root / 'manifest.env', root / 'cookie')
+        self.run_launcher(
+            shutil.which('bash'), 'maker',
+            LEZ_NODE_STATE_DIR=str(root / 'state'), LEZ_NODE_RUN_ROOT=str(root / 'run'),
+            LEZ_ZEC_STATE_DIR=str(root / 'zec'), LEZ_NODE_IDENTITY_DIR=str(root / 'identity'),
+            LEZ_MARKET_MANIFEST=str(root / 'manifest.env'), LEZ_BTC_RPC_COOKIE_FILE=str(root / 'cookie'),
+            LEZ_DELIVERY_DIR=str(root / 'delivery'), LEZ_LEZ_SEQUENCER_ROUTE='official_public')
+        role = json.loads((root / 'state/btc/btc-role.json').read_text())
+        self.assertEqual(role['lez']['sequencer_route'], 'official_public')
+        self.assertEqual(role['lez']['sequencer_url'], 'https://testnet.lez.logos.co/')
+        self.assertEqual(role['lez']['indexer_url'], 'http://127.0.0.1:8779')
+        calls = self.logged(3)
+        self.assertIn('socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779', calls)
+        self.assertNotIn('TCP-LISTEN:3040', calls)
+
+    def test_the_devnet_and_the_systemd_examples_name_loopback_endpoints_the_node_accepts(self):
+        # What the Node's configuration load accepts under the local route
+        # (crates/btc-role-lifecycle/src/lez_endpoint.rs): literal-loopback
+        # HTTP with a port; under official_public only the official origin.
+        loopback = re.compile(r'http://127\.0\.0\.1:\d+/?')
+        compose = (ROOT / 'deploy/compose.yaml').read_text()
+        # The two role Basecamps, each hosting its Node (the explorer's
+        # LEZ_INDEXER_URL is its own and is no Node's).
+        nodes = re.findall(r'^\s+LEZ_SEQUENCER_URL: (\S+)\n\s+LEZ_INDEXER_URL: (\S+)$', compose, re.M)
+        self.assertEqual(len(nodes), 2, nodes)
+        for url in (url for node in nodes for url in node):
+            self.assertTrue(loopback.fullmatch(url), url)
+        for role in ('maker', 'taker'):
+            example = (ROOT / f'packaging/systemd/lez-{role}-node.env.example').read_text()
+            urls = re.findall(r'^LEZ_(?:SEQUENCER|INDEXER)_URL=(\S+)$', example, re.M)
+            self.assertEqual(len(urls), 2, example)
+            for url in urls:
+                self.assertTrue(loopback.fullmatch(url), url)
+        testnet = (ROOT / 'deploy/compose.testnet.yaml').read_text()
+        self.assertIn('LEZ_LEZ_SEQUENCER_ROUTE: official_public', testnet)
+        self.assertEqual(re.findall(r'^\s+LEZ_SEQUENCER_URL: (\S+)$', testnet, re.M), ['https://testnet.lez.logos.co/'])
 
     def test_the_zebra_cookie_reaches_the_zcash_role_and_its_route_health(self):
         # The devnet's Zebra (zebrad_module) requires its cookie: the launcher

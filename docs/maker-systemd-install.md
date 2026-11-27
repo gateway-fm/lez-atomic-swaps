@@ -12,7 +12,11 @@ Linux with systemd 255 or later, as root; `jq` and `socat` (`apt install jq soca
 Core, the LEZ sequencer, the LEZ indexer and Zebra answering on `127.0.0.1:18443`, `:3040`, `:8779`
 and `:18232`
 (local nodes, or a loopback forward such as `socat TCP-LISTEN:18443,bind=127.0.0.1,fork
-TCP:<core>:18443`); a funded LEZ account and Core wallet per role. Binaries built from this
+TCP:<core>:18443`). `LEZ_SEQUENCER_URL` and `LEZ_INDEXER_URL` in the unit's environment file are
+literal-loopback HTTP with a port (`http://127.0.0.1:3040`, `http://127.0.0.1:8779`): a Node
+does not start with a host name there, `localhost` included, nor with credentials, a path or
+`https` (the `local` sequencer route; `crates/btc-role-lifecycle/src/lez_endpoint.rs`). A funded
+LEZ account and Core wallet per role. Binaries built from this
 checkout (`cargo build --locked -p lez-maker-node -p lez-taker-node --features
 lez-maker-node/pair-zec,lez-taker-node/pair-zec --bins`, `-p btc-reference-actor --bins`,
 `-p zec-reference-actor --bin lez-zec-maker-actor --bin lez-zec-taker-actor`,

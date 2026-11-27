@@ -32,7 +32,12 @@ How this route differs from the local devnet (`deploy/compose.yaml`):
   `LEZ_SEQUENCER_URL`, the launcher (`modules/lez-role-node/node-entrypoint.sh`)
   renders `sequencer_route: official_public` into the Node's configuration
   (`crates/btc-role-lifecycle/src/config.rs`, commit `64782d4a`) and starts
-  the ZEC sidecars with the same profile, and the signer's wallet
+  the ZEC sidecars with the same profile. Under that route the Node loads
+  its configuration only with `sequencer_url` exactly
+  `https://testnet.lez.logos.co/` (trailing slash included) and a
+  literal-loopback `indexer_url`, the rule the sidecars apply
+  (`crates/btc-role-lifecycle/src/lez_endpoint.rs`); with any other URL it
+  does not start. The signer's wallet
   (`LEZ_WALLET_SEQUENCER_URL`) speaks HTTPS itself (its sequencer client is
   jsonrpsee's HTTP client with its default rustls TLS). The proxy (section 4)
   is left only for the escrow deployment (section 7). This route has not been

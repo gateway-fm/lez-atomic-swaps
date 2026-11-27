@@ -207,20 +207,27 @@ manifest="${LEZ_MARKET_MANIFEST:-$default_manifest}"
 cookie_src="${LEZ_BTC_RPC_COOKIE_FILE:-$default_cookie}"
 delivery="${LEZ_DELIVERY_DIR:-$default_delivery}"
 sidecar_port_base="${LEZ_SIDECAR_PORT_BASE:?}"
-sequencer_url="${LEZ_SEQUENCER_URL:-http://${default_chain_host:-sequencer}:3040}"
 # How the Node and its sidecars reach the LEZ sequencer (LezSequencerRoute,
 # crates/btc-role-lifecycle/src/config.rs): "local", literal-loopback HTTP (the
 # devnet's forward below, or an operator's proxy), or "official_public", the
-# official testnet origin itself over HTTPS (LEZ_SEQUENCER_URL
-# https://testnet.lez.logos.co/), no proxy. The indexer stays loopback either
-# way: the official origin serves none.
+# official testnet origin itself over HTTPS, no proxy. The indexer stays
+# loopback either way: the official origin serves none.
+# The Node and the sidecars both refuse any other URL for the route
+# (crates/btc-role-lifecycle/src/lez_endpoint.rs): a name, a Compose service
+# name or localhost included, is not literal loopback, so the defaults are
+# the loopback ports the forwards below listen on, on every host.
 sequencer_route="${LEZ_LEZ_SEQUENCER_ROUTE:-local}"
 case "$sequencer_route" in
-  local) sidecar_route_args=(--node-profile local) ;;
-  official_public) sidecar_route_args=(--node-profile official_public --indexer-profile local) ;;
+  local)
+    sidecar_route_args=(--node-profile local)
+    default_sequencer_url=http://127.0.0.1:3040 ;;
+  official_public)
+    sidecar_route_args=(--node-profile official_public --indexer-profile local)
+    default_sequencer_url=https://testnet.lez.logos.co/ ;;
   *) echo "$role: LEZ_LEZ_SEQUENCER_ROUTE must be local or official_public, not $sequencer_route" >&2; exit 2 ;;
 esac
-indexer_url="${LEZ_INDEXER_URL:-http://${default_chain_host:-indexer}:8779}"
+sequencer_url="${LEZ_SEQUENCER_URL:-$default_sequencer_url}"
+indexer_url="${LEZ_INDEXER_URL:-http://127.0.0.1:8779}"
 channel_id="${LEZ_V02_CHANNEL_ID:?}"
 auth_transfer_program_id="${LEZ_AUTH_TRANSFER_PROGRAM_ID:-fe96c4228babbe8bc578e3e25b884cacb07f8c86541f27ed676789875eef875a}"
 

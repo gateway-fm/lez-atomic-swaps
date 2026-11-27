@@ -523,7 +523,20 @@ Compose:
 | market manifest | `LEZ_MARKET_MANIFEST` | `/run-market/market-bootstrap.env` | `market-bootstrap.env` |
 | Bitcoin RPC cookie | `LEZ_BTC_RPC_COOKIE_FILE` | `/run-config/btc-rpc-cookie` | `btc-rpc-cookie` |
 | Delivery directory | `LEZ_DELIVERY_DIR` | `/delivery` | `delivery` |
-| chain hosts, sequencer and indexer URLs | `LEZ_*_HOST`, `LEZ_SEQUENCER_URL`, `LEZ_INDEXER_URL` | the Compose service names | `127.0.0.1` |
+| chain hosts the loopback forwards reach | `LEZ_*_HOST` | the Compose service names | `127.0.0.1` |
+| sequencer and indexer URLs | `LEZ_SEQUENCER_URL`, `LEZ_INDEXER_URL` | `http://127.0.0.1:3040`, `http://127.0.0.1:8779` | the same |
+
+The Node checks the two LEZ URLs against its sequencer route when it loads its
+configuration and does not start on any other
+(`crates/btc-role-lifecycle/src/lez_endpoint.rs`), under the rule its sidecars
+apply to the same URLs. Under the `local` route (the default) both are
+literal-loopback HTTP with a port: a name is refused, a Compose service name
+and `localhost` included, as are credentials, a path, a query and another
+scheme; on Linux the launcher's forwards carry the loopback ports to the
+services named by `LEZ_SEQUENCER_HOST` and `LEZ_INDEXER_HOST`. Under
+`LEZ_LEZ_SEQUENCER_ROUTE=official_public` the sequencer URL is exactly
+`https://testnet.lez.logos.co/` (the launcher's default for that route) and
+the indexer stays literal loopback.
 
 Every setting the launcher reads (the paths above, `LEZ_SIDECAR_PORT_BASE`,
 `LEZ_WALLET_SIGNER_SOCKET`, `LEZ_BTC_WALLET`, `LEZ_BTC_CLAIM_DESTINATION`,
