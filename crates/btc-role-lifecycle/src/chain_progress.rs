@@ -32,6 +32,7 @@ use jsonrpsee_http_client::HttpClientBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::config::BtcRoleRuntime;
+use crate::lez_endpoint::LezNodeEndpoint;
 
 /// How long the finalized block id may stand still, while the tip moves,
 /// before a Node reports the stall: 10 minutes, ten blocks of a chain that
@@ -157,8 +158,8 @@ impl LezFinalityRule {
 /// Samples the role's indexer and sequencer for the health methods.
 #[derive(Debug)]
 pub struct LezFinalityWatch {
-    indexer_url: String,
-    sequencer_url: String,
+    indexer: LezNodeEndpoint,
+    sequencer: LezNodeEndpoint,
     state: tokio::sync::Mutex<WatchState>,
 }
 
@@ -169,12 +170,17 @@ struct WatchState {
 }
 
 impl LezFinalityWatch {
-    /// Watches the given indexer and sequencer endpoints.
+    /// Watches the given indexer and sequencer endpoints, each already
+    /// checked against its route.
     #[must_use]
-    pub fn new(indexer_url: String, sequencer_url: String, stall_threshold_seconds: u64) -> Self {
+    pub fn new(
+        indexer: LezNodeEndpoint,
+        sequencer: LezNodeEndpoint,
+        stall_threshold_seconds: u64,
+    ) -> Self {
         Self {
-            indexer_url,
-            sequencer_url,
+            indexer,
+            sequencer,
             state: tokio::sync::Mutex::new(WatchState {
                 rule: LezFinalityRule::new(stall_threshold_seconds),
                 last: None,
@@ -186,10 +192,9 @@ impl LezFinalityWatch {
     /// sidecars use.
     #[must_use]
     pub fn for_runtime(runtime: &BtcRoleRuntime, stall_threshold_seconds: u64) -> Self {
-        let lez = &runtime.config().lez;
         Self::new(
-            lez.indexer_url.clone(),
-            lez.sequencer_url.clone(),
+            runtime.lez_indexer().clone(),
+            runtime.lez_sequencer().clone(),
             stall_threshold_seconds,
         )
     }
@@ -205,8 +210,8 @@ impl LezFinalityWatch {
             return progress.clone();
         }
         let (finalized, tip) = tokio::join!(
-            read_block_id(&self.indexer_url, "getLastFinalizedBlockId"),
-            read_block_id(&self.sequencer_url, "getLastBlockId"),
+            read_block_id(&self.indexer, "getLastFinalizedBlockId"),
+            read_block_id(&self.sequencer, "getLastBlockId"),
         );
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -217,10 +222,10 @@ impl LezFinalityWatch {
     }
 }
 
-async fn read_block_id(url: &str, method: &str) -> Option<u64> {
+async fn read_block_id(endpoint: &LezNodeEndpoint, method: &str) -> Option<u64> {
     let client = HttpClientBuilder::default()
         .request_timeout(READ_TIMEOUT)
-        .build(url)
+        .build(endpoint.as_str())
         .ok()?;
     client.request::<u64, _>(method, rpc_params![]).await.ok()
 }
@@ -375,8 +380,9 @@ mod tests {
     async fn a_watch_on_endpoints_that_do_not_answer_reports_the_indexer_unreachable() {
         // Port 9 on loopback: nothing listens, the connection is refused.
         let watch = LezFinalityWatch::new(
-            "http://127.0.0.1:9/".to_owned(),
-            "http://127.0.0.1:9/".to_owned(),
+            LezNodeEndpoint::indexer("http://127.0.0.1:9/").unwrap(),
+            LezNodeEndpoint::sequencer(crate::LezSequencerRoute::Local, "http://127.0.0.1:9/")
+                .unwrap(),
             THRESHOLD,
         );
         let progress = watch.progress().await;

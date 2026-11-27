@@ -1300,7 +1300,7 @@ async fn sequenced(
     use jsonrpsee::core::client::ClientT as _;
     let client = jsonrpsee_http_client::HttpClientBuilder::default()
         .request_timeout(runtime.request_timeout())
-        .build(&runtime.config().lez.sequencer_url)
+        .build(runtime.lez_sequencer().as_str())
         .context("sequencer client")?;
     let found: Option<serde_json::Value> = client
         .request(

@@ -16,7 +16,7 @@ use lez_swap_core::{Participant, SwapDirection};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::lez;
+use crate::{lez, lez_endpoint::LezNodeEndpoint};
 
 /// The Bitcoin network the role settles on. Selected by configuration only.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -280,6 +280,7 @@ pub struct LezConfigV1 {
     #[serde(default)]
     pub network: LezNetworkName,
     /// Outbound route for the sequencer; the indexer is always loopback.
+    /// `sequencer_url` is checked against it when the configuration is loaded.
     #[serde(default)]
     pub sequencer_route: LezSequencerRoute,
     pub channel_id: String,
@@ -288,8 +289,15 @@ pub struct LezConfigV1 {
     pub authenticated_transfer_program_id: String,
     /// The role sidecar program (`lez-v02-bridge-poc`) the Node spawns per swap.
     pub sidecar_program: PathBuf,
-    /// Literal-loopback LEZ node endpoints the sidecars talk to.
+    /// The LEZ sequencer the sidecars and the Node itself talk to. Under the
+    /// `local` route: literal-loopback HTTP with a port
+    /// (`http://127.0.0.1:3040/`; a name, `localhost` included, is refused),
+    /// reached through a forward or an operator-run proxy when the sequencer
+    /// is elsewhere. Under the `official_public` route: exactly
+    /// `https://testnet.lez.logos.co/`. Any other URL fails the load, as the
+    /// sidecar would refuse it ([`LezNodeEndpoint`]).
     pub sequencer_url: String,
+    /// The LEZ indexer: literal-loopback HTTP with a port under both routes.
     pub indexer_url: String,
     /// Loopback ports the swaps' sidecars may listen on.
     pub sidecar_port_base: u16,
@@ -359,6 +367,8 @@ pub struct BtcRoleRuntime {
     bitcoin_policy: BtcChainPolicyV1,
     lez_identity: BtcLezChainIdentityV1,
     lez_owner_account: [u8; 32],
+    lez_sequencer: LezNodeEndpoint,
+    lez_indexer: LezNodeEndpoint,
     bitcoin_claim_destination: Option<Vec<u8>>,
 }
 
@@ -368,8 +378,9 @@ impl BtcRoleRuntime {
     ///
     /// # Errors
     ///
-    /// Fails on an unreadable or invalid file, a non-private swaps root, or an
-    /// invalid signer key.
+    /// Fails on an unreadable or invalid file, a non-private swaps root, an
+    /// invalid signer key, or a LEZ sequencer or indexer URL its route does
+    /// not accept.
     pub fn load(role: Participant, path: &Path) -> Result<Self> {
         crate::layout::vet_configured_path(path, "BTC role configuration")?;
         let bytes = crate::layout::read_private(path, MAX_CONFIG_BYTES)?;
@@ -412,6 +423,11 @@ impl BtcRoleRuntime {
             config.lez.request_timeout_millis > 0,
             "request_timeout_millis must be nonzero"
         );
+        // Before the signer key is read or anything connects: the two LEZ
+        // endpoints under the rule the sidecar applies to them.
+        let lez_sequencer =
+            LezNodeEndpoint::sequencer(config.lez.sequencer_route, &config.lez.sequencer_url)?;
+        let lez_indexer = LezNodeEndpoint::indexer(&config.lez.indexer_url)?;
         // Bitcoin hashes are configured as Core displays them (reversed); the
         // agreement and the actor compare internal byte order.
         let bitcoin_genesis: bitcoin::BlockHash = config
@@ -463,6 +479,8 @@ impl BtcRoleRuntime {
             bitcoin_policy,
             lez_identity,
             lez_owner_account,
+            lez_sequencer,
+            lez_indexer,
             bitcoin_claim_destination,
         })
     }
@@ -490,6 +508,19 @@ impl BtcRoleRuntime {
     #[must_use]
     pub const fn lez_owner_account(&self) -> [u8; 32] {
         self.lez_owner_account
+    }
+
+    /// The sequencer this role connects to, checked against its route. Every
+    /// reader takes this, never `config().lez.sequencer_url`.
+    #[must_use]
+    pub const fn lez_sequencer(&self) -> &LezNodeEndpoint {
+        &self.lez_sequencer
+    }
+
+    /// The indexer this role connects to, checked as literal loopback.
+    #[must_use]
+    pub const fn lez_indexer(&self) -> &LezNodeEndpoint {
+        &self.lez_indexer
     }
 
     /// `None` leaves the bootstrap to mint a per-swap key.

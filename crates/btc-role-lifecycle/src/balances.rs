@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::BtcRoleRuntime;
 use crate::funding::BitcoinWallet;
+use crate::lez_endpoint::LezNodeEndpoint;
 
 /// Whether a balance could be read.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,7 +75,7 @@ struct IndexerAccount {
 ///
 /// Fails when the indexer is unreachable or answers something else.
 pub async fn lez_owner_balance(runtime: &BtcRoleRuntime) -> Result<(u128, u64)> {
-    lez_owner_account_at(runtime, &runtime.config().lez.indexer_url, "indexer").await
+    lez_owner_account_at(runtime, runtime.lez_indexer(), "indexer").await
 }
 
 /// The LEZ owner account's balance and nonce from the configured sequencer:
@@ -85,17 +86,17 @@ pub async fn lez_owner_balance(runtime: &BtcRoleRuntime) -> Result<(u128, u64)> 
 ///
 /// Fails when the sequencer is unreachable or answers something else.
 pub async fn lez_owner_sequenced_balance(runtime: &BtcRoleRuntime) -> Result<(u128, u64)> {
-    lez_owner_account_at(runtime, &runtime.config().lez.sequencer_url, "sequencer").await
+    lez_owner_account_at(runtime, runtime.lez_sequencer(), "sequencer").await
 }
 
 async fn lez_owner_account_at(
     runtime: &BtcRoleRuntime,
-    url: &str,
+    endpoint: &LezNodeEndpoint,
     source: &'static str,
 ) -> Result<(u128, u64)> {
     let client = HttpClientBuilder::default()
         .request_timeout(runtime.request_timeout())
-        .build(url)
+        .build(endpoint.as_str())
         .with_context(|| format!("{source} client"))?;
     let account = bs58::encode(runtime.lez_owner_account()).into_string();
     // Both services answer `getAccount` with the balance and nonce; the

@@ -20,6 +20,7 @@ pub mod config;
 pub mod funding;
 pub mod layout;
 pub mod lez;
+pub mod lez_endpoint;
 pub mod sidecar;
 pub mod wire;
 
@@ -38,4 +39,5 @@ pub use config::{
 pub use funding::{BitcoinWallet, FundingPlan, FundingRequired, WalletBalances};
 pub use layout::SwapLayout;
 pub use lez::{LezRole, LezSidecar, PreparedEscrow};
+pub use lez_endpoint::{LezNodeEndpoint, OFFICIAL_PUBLIC_LEZ_ENDPOINT};
 pub use sidecar::{SwapSidecar, swap_run_id};
