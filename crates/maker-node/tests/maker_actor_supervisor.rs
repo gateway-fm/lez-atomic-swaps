@@ -3103,3 +3103,124 @@ fn a_submitted_lez_claim_holds_the_next_claim_for_its_hold_not_until_it_is_final
         "past its hold it holds nothing, an hour before its refund time"
     );
 }
+
+/// Records the Maker's acceptance of `swap_id`'s agreement (the one its
+/// deployment under `swap_root` was built with) at `accepted_at` in the
+/// Node's store, as the Chat completion does.
+fn accept_maker_agreement(database: &Path, swap_root: &Path, swap_id: &str, accepted_at: u64) {
+    let config: Value = serde_json::from_slice(
+        &fs::read(actor_deployment(swap_root, swap_id).source_config).unwrap(),
+    )
+    .unwrap();
+    let wire = fs::read(config["signed_agreement_file"].as_str().unwrap()).unwrap();
+    let accepted = lez_zec_swap_sdk::AcceptedZecAgreementV1::accept_wire_at(
+        &wire,
+        lez_swap_core::UnixSeconds::new(accepted_at),
+        lez_swap_core::Participant::Maker,
+        0,
+    )
+    .unwrap();
+    assert_eq!(accepted.agreement().coordinator().id().as_str(), swap_id);
+    let agreements =
+        lez_swap_store::SqliteZecRecoveryStore::open(database, lez_swap_core::Participant::Maker)
+            .unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(lez_zec_swap_sdk::RecoveryStore::create_agreement(
+            &agreements,
+            &accepted.durable_envelope().unwrap(),
+        ))
+        .unwrap();
+}
+
+#[test]
+fn a_taker_lock_confirmed_after_its_window_is_funded_only_once_a_place_is_free() {
+    // Issue #178, item 2: an accepted swap whose Taker has not locked gives
+    // its place up after the Taker-lock window (45 s under
+    // deterministic-local-v3, capacity 1). Its Taker locks late, while the
+    // place is another swap's: the Node does not run the funding drive, so no
+    // Zcash of the Maker's is committed beyond the capacity; once the other
+    // swap ends, the late lock is funded.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let owner = MakerActorLeaseOwner::new([0x97; 16]).unwrap();
+    let now = unix_now_ms() / 1000;
+    assert_eq!(
+        lez_maker_node::zec_taker_sells_lez_capacity(
+            lez_zec_swap_sdk::ZecProfileId::DeterministicLocalV3
+        ),
+        1
+    );
+
+    // The current swap: accepted now, its Taker's lock confirmed inside the
+    // window. Its funding is admitted and it holds the one place.
+    let current = "m5-fund-current";
+    let current_log = root.path().join("current-log");
+    register_gated_actor(&mut store, root.path(), current, |_| {
+        maker_lock_program(&current_log, "zcash", "zcash_fund")
+    });
+    accept_maker_agreement(&database, &root.path().join(current), current, now);
+    assert_eq!(
+        run_due(&mut store, owner, now),
+        (
+            current.to_owned(),
+            MakerActorSupervisorResolution::Requeued,
+            None
+        )
+    );
+    assert_eq!(drives(&current_log), 1);
+    assert!(
+        store
+            .maker_zec_funding_admitted(&SwapId::new(current).unwrap())
+            .unwrap()
+    );
+
+    // The late swap: accepted a minute ago, its Taker's lock confirmed only
+    // now, past its window.
+    let late = "m5-fund-late";
+    let late_log = root.path().join("late-log");
+    register_gated_actor(&mut store, root.path(), late, |_| {
+        maker_lock_program(&late_log, "zcash", "zcash_fund")
+    });
+    accept_maker_agreement(&database, &root.path().join(late), late, now - 60);
+    assert_eq!(
+        run_due(&mut store, owner, now),
+        (
+            late.to_owned(),
+            MakerActorSupervisorResolution::Backoff,
+            Some("zec_funding_waits_for_free_place".to_owned())
+        )
+    );
+    assert_eq!(drives(&late_log), 0, "no Zcash funded beyond the capacity");
+    assert!(
+        !store
+            .maker_zec_funding_admitted(&SwapId::new(late).unwrap())
+            .unwrap()
+    );
+
+    // The current swap ends: the place is free and the late lock is served.
+    let lease = store
+        .claim_maker_actor(&SwapId::new(current).unwrap(), owner, now + 6)
+        .unwrap()
+        .expect("the current swap is due again");
+    store
+        .resolve_maker_actor_attempt(&lease, MakerActorAttemptResolution::Terminal, now + 6)
+        .unwrap();
+    assert_eq!(
+        run_due(&mut store, owner, now + 31),
+        (
+            late.to_owned(),
+            MakerActorSupervisorResolution::Requeued,
+            None
+        )
+    );
+    assert_eq!(drives(&late_log), 1);
+    assert!(
+        store
+            .maker_zec_funding_admitted(&SwapId::new(late).unwrap())
+            .unwrap()
+    );
+}

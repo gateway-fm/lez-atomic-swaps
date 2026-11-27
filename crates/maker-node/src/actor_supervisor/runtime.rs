@@ -667,6 +667,10 @@ fn run_claimed_attempt_with_lock(
             attempted = command.name();
             return Ok(ClaimedAttempt::Backoff("test_hook_activation_held"));
         }
+        if let Err(class) = zec_funding_held_back(store, lease, command, &status) {
+            attempted = command.name();
+            return Ok(ClaimedAttempt::Backoff(class));
+        }
         let lock_admitted = match lez_lock_held_back(store, lease, config, command, &status) {
             Ok(lock_admitted) => lock_admitted,
             Err(class) => {
@@ -1649,6 +1653,57 @@ pub(crate) fn admit_prepared_lez_lock(
     account_gate::with_locks_in_flight(store, |locks| {
         locks.hold(swap_id.as_str(), now, account_gate::PREPARED_ESCROW_HOLD);
     });
+    Ok(())
+}
+
+/// Admits a Zcash Maker's funding step against its open-swap capacity
+/// (issue #178): the drive of a swap whose status names Zcash as the Maker's
+/// pending lock (`maker_lock: zcash`, `TakerSellsLez`). A swap whose
+/// Taker-lock window closed before the lock was confirmed gave its place up;
+/// its Zcash is funded only while a place is free, else the drive is not run
+/// (`zec_funding_waits_for_free_place`) and the swap is looked at again. The
+/// Taker's settlement is then its LEZ refund unless a place frees first.
+#[cfg(feature = "pair-zec")]
+fn zec_funding_held_back(
+    store: &SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    command: ActorEffectCommand,
+    status: &[u8],
+) -> Result<(), &'static str> {
+    if lease.record().manifest().kind() != MakerActorKindV1::Zcash
+        || command != ActorEffectCommand::Drive
+        || serde_json::from_slice::<Value>(status)
+            .ok()
+            .as_ref()
+            .and_then(|value| value.get("maker_lock"))
+            .and_then(Value::as_str)
+            != Some("zcash")
+    {
+        return Ok(());
+    }
+    match store.admit_maker_zec_funding(lease.record().swap_id(), unix_now(), &|profile| {
+        crate::zec_chat::zec_taker_sells_lez_capacity(profile)
+    }) {
+        Ok(lez_swap_store::MakerZecFundingAdmission::Admitted) => Ok(()),
+        Ok(lez_swap_store::MakerZecFundingAdmission::NoFreePlace { open, capacity }) => {
+            eprintln!(
+                "maker {}: the Taker's LEZ lock was confirmed after the swap's Taker-lock window and {open} of {capacity} TakerSellsLez places are taken; the Zcash funding is not sent (zec_funding_waits_for_free_place)",
+                lease.record().swap_id().as_str()
+            );
+            Err("zec_funding_waits_for_free_place")
+        }
+        Err(_) => Err("zec_funding_admission_unavailable"),
+    }
+}
+
+/// Without the Zcash pair no Maker actor funds Zcash.
+#[cfg(not(feature = "pair-zec"))]
+const fn zec_funding_held_back(
+    _store: &SqliteSwapStore,
+    _lease: &MakerActorLeaseV1,
+    _command: ActorEffectCommand,
+    _status: &[u8],
+) -> Result<(), &'static str> {
     Ok(())
 }
 
