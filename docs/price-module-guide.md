@@ -15,12 +15,12 @@ and from the stack scenario named in section 8; it was not re-run for this page.
 
 A price source answers one question: for this route, how many LEZ atomic units per how many
 foreign atomic units, now. The boundary is the `PriceSource` trait
-(`crates/maker-node/src/price_source.rs:276`), which returns a `PriceQuoteV1`: the price, a source
+(`crates/maker-node/src/price_source.rs`), which returns a `PriceQuoteV1`: the price, a source
 revision and an observation time. There are two implementations:
 
 - **local**: the price the owner saved with `lez-maker-cli set-local-price --pair … --direction …
-  --lez-units-per-lot N --foreign-units-per-lot M` (`LocalPriceSource`,
-  `price_source.rs:289-320`). Its revision is the stored row's revision; its observation time is
+  --lez-units-per-lot N --foreign-units-per-lot M` (`LocalPriceSource`, in the same file). Its
+  revision is the stored row's revision; its observation time is
   the moment of the call.
 - **logos-c-api**: a shared library with the C ABI of
   `crates/logos-price-c-api/include/lez_logos_price_api.h`, run by a separate worker process
@@ -31,10 +31,9 @@ Each route chooses its source in its pair configuration (`lez-maker-cli configur
 
 The Maker consults the source at two moments only (`crates/maker-node/src/lib.rs`):
 
-- `maker_price_quote` (`lez-maker-cli quote`), lib.rs:1606, through `quote_selected_price_source`
-  (lib.rs:1787). It only reads; it records nothing.
-- `maker_offer_publish` (`lez-maker-cli publish-offer`), lib.rs:1694, through `publish_offer`
-  (lib.rs:1822): the module is asked once, and its price, revision and observation time are
+- `maker_price_quote` (`lez-maker-cli quote`), through `quote_selected_price_source`. It only
+  reads; it records nothing.
+- `maker_offer_publish` (`lez-maker-cli publish-offer`), through `publish_offer`: the module is asked once, and its price, revision and observation time are
   written into the new offer by `publish_logos_offer` (`crates/swap-store/src/maker_offer.rs:1552`).
 
 After that the price is part of the signed offer. Reserving and taking an offer read the stored
@@ -175,7 +174,7 @@ sha256 (`update_external_price_head`, `crates/swap-store/src/maker_offer.rs:4176
   ("maker price source revision conflicts with durable quote history",
   `MakerPriceRevisionConflict`).
 
-Both answer RPC error -32009 (`application_store_error`, lib.rs:1990). The same revision with the
+Both answer RPC error -32009 (`application_store_error` in `crates/maker-node/src/lib.rs`). The same revision with the
 same observation and price is accepted. The head is stored in the Maker's SQLite database, so it
 survives restarts and is kept for as long as the module's sha256 stays the same; a rebuilt module
 with a different hash starts a new history. Only publish updates the head; `quote` does not.
@@ -191,8 +190,9 @@ price does not change twice within one second.
 
 **Freshness.** The observation must be no older than the Node's max age and not in the future.
 The bound is `--logos-price-max-age-seconds`, default 30, allowed 1-3600
-(`crates/maker-node/src/bin/lez-maker-node.rs:184-185, 888`; `MAX_QUOTE_AGE_SECONDS`,
-logos-price-c-api lib.rs:21). It is checked three times: in the worker (`validate_quote`, "quote
+(`logos_price_max_age_seconds` and `configured_logos_price_source` in
+`crates/maker-node/src/bin/lez-maker-node.rs`; `MAX_QUOTE_AGE_SECONDS`, logos-price-c-api
+lib.rs:21). It is checked three times: in the worker (`validate_quote`, "quote
 is stale" / "observation time is in the future"), in the Maker on the worker's answer
 (`logos_price_source.rs:150-159`), and at publish against the commit time, which is a little later
 than the quote time (`publish_logos_offer`, maker_offer.rs:1575-1586; a quote right at the limit
@@ -202,7 +202,7 @@ observed, not the time you were asked, and leave margin under 30 s.
 **Missing, unavailable, invalid.** The Maker fails closed in each case; there is no fallback to a
 local price and no zero price (`quote_selected_price_source`, `publish_offer`):
 
-| module answers | Maker error (lib.rs `price_source_error`, 2017) |
+| module answers | Maker error (`price_source_error` in the Maker's lib.rs) |
 |---|---|
 | MISSING | -32004 "price source has no quote for the requested route" |
 | UNAVAILABLE | -32003 "price source is temporarily unavailable" |
@@ -211,7 +211,7 @@ local price and no zero price (`quote_selected_price_source`, `publish_offer`):
 
 A refused publish leaves no offer behind. Offers already published keep their price and stay
 active: the Maker withdraws offers automatically only when a route's chain dependency is
-unavailable (`reconcile_unhealthy_route_offers`, lib.rs:1454, driven by route health, not by the
+unavailable (`reconcile_unhealthy_route_offers` in the Maker's lib.rs, driven by route health, not by the
 price source), when the owner withdraws them, or when they expire. The stack scenario checks this:
 with the module answering UNAVAILABLE, the offer already out is still listed active and still
 offered to the Taker (`scenario_maker_price_module`, `deploy/scripts/node-e2e.py`).
@@ -268,13 +268,13 @@ The Node checks the module file when it starts (`ProcessLogosPriceSource::new`,
 - at most 64 MiB (`MAX_NON_EXECUTABLE_BYTES`, secure_file.rs:249);
 - its parent directory is a directory owned by root or the Node's user and not group- or
   other-writable;
-- its sha256 equals the pinned `--logos-price-module-sha256` (64 hex characters,
-  `lez-maker-node.rs:879-884`).
+- its sha256 equals the pinned `--logos-price-module-sha256` (64 hex characters, decoded in
+  `configured_logos_price_source`, `lez-maker-node.rs`).
 
 The worker binary passes the same checks except the size and hash, and must be executable.
 
 The module path and its sha256 are read once, at start (`configured_logos_price_source`,
-`lez-maker-node.rs:862-897`). Replacing the file with a new build changes its hash, so every
+`lez-maker-node.rs`). Replacing the file with a new build changes its hash, so every
 quote and publish fails with -32603 until the Node is restarted with the new sha256. To switch
 modules: install the new file, restart the Node with its path and hash.
 
@@ -344,7 +344,8 @@ each: `FIXTURE_MISSING`, `FIXTURE_UNAVAILABLE`, `FIXTURE_ABORT`, `FIXTURE_STALE`
 `FIXTURE_RESERVED`, `FIXTURE_WRONG_ABI`, `FIXTURE_WRONG_VERSION_SYMBOL`, `FIXTURE_MISSING_SYMBOL`,
 and `FIXTURE_REVISION_FROM_TIME` (revision = request time, used by the stack scenario).
 
-Build, with the flags of the crate test (`crates/logos-price-c-api/tests/worker_process.rs:469-495`):
+Build, with the flags of the crate test (`compile_fixture` in
+`crates/logos-price-c-api/tests/worker_process.rs`):
 
 ```sh
 cc -shared -fPIC -std=c11 -Wall -Wextra -Werror \
@@ -377,10 +378,10 @@ sections 2-3; `FIXTURE_ABORT` ended the worker with signal 6 (exit 134).
 ## 7. Integrating it
 
 **In the role package / containers.** The launcher `modules/lez-role-node/node-entrypoint.sh`
-(471-479) adds `--logos-price-worker <package bin>/lez-logos-price-worker --logos-price-module
+(the block that tests `LEZ_LOGOS_PRICE_MODULE`) adds `--logos-price-worker <package bin>/lez-logos-price-worker --logos-price-module
 "$LEZ_LOGOS_PRICE_MODULE" --logos-price-module-sha256 "$LEZ_LOGOS_PRICE_MODULE_SHA256"` when
 either variable is set, and refuses to start with only one of them. `deploy/compose.yaml`
-(376-379) passes both to the `maker-node` service; empty means no module. The worker is in the
+passes both to the `maker-node` service; empty means no module. The worker is in the
 Maker's package (`deploy/scripts/package-role-node.sh:26`). The file must be inside the container
 and satisfy section 5 for the Node's user (`lez`, uid 4713, in the image). The stack scenario
 writes it into the Maker's state volume and recreates the service:
@@ -407,7 +408,7 @@ unit has `ProtectHome=yes`, so keep the module out of `/home`; a root-owned file
 directory such as `/usr/local/lib/lez/` satisfies section 5. Running `lez-maker-node` directly,
 pass `--logos-price-worker`, `--logos-price-module`, `--logos-price-module-sha256` and optionally
 `--logos-price-timeout-milliseconds`, `--logos-price-max-age-seconds`
-(`lez-maker-node.rs:171-185`); the three must be given together. (This systemd path was read, not
+(the `logos_price_*` fields of `Arguments`, `lez-maker-node.rs`); the three must be given together. (This systemd path was read, not
 run, for this page.)
 
 **Selecting it for a route and publishing** (in the container prefix with
@@ -427,7 +428,8 @@ lez-maker-cli offers
 ```
 
 A route set to `logos-c-api` on a Node started without a module answers -32003 to quote and
-publish (lib.rs:1809-1813, 1857-1862). The published offer records `price` (the module's ratio),
+publish (`quote_selected_price_source` and `publish_offer` map a missing source to
+`PriceSourceError::UnavailableQuote`). The published offer records `price` (the module's ratio),
 `price_source_identity_sha256` (the module's pinned sha256), `price_source_revision` and
 `price_observed_at_unix_seconds` (the module's revision and `as_of`), next to
 `created_at_unix_seconds` and `expires_at_unix_seconds` (maker_offer.rs:1613-1623). A local-price
@@ -478,15 +480,32 @@ The Maker discards the worker's stderr, so a -32603 does not say why. Run the wo
 | -32602 | chain dependency is unavailable for route | route health says the route's chain is down (not price related) | `lez-maker-cli health` |
 | Node does not start | "Logos price worker, module, and module SHA-256 must be configured together" / "validate Logos price source" | missing flag, bad hex, or the file fails section 5 at start | the three flags; file rules |
 
-## 10. What does not exist
+## 10. The boundary, and what does not exist
 
-- No real Logos price module is shipped, built or referenced anywhere in this repository. The
-  only module is the TEST fixture above; F8's evidence is that fixture.
+The external price source is a shared object that exports the two symbols of this repository's
+C ABI (`crates/logos-price-c-api/include/lez_logos_price_api.h`). The Maker never loads it:
+`lez-logos-price-worker`, a separate process started for one quote and then gone, does. A route
+selects it with `--price-source logos-c-api`, and the Node accepts only the one file whose
+SHA-256 it was started with.
+
+- **How a Logos module provides a price.** By being, or shipping, such a shared object. The
+  Maker does not call a price module through Logos core: there is no `logosAPI` call, no `.lidl`
+  interface and no `.lgx` package on this path. A Logos module that has prices exports
+  `lez_logos_price_abi_version_v1` and `lez_logos_price_quote_v1`, from its own library or from
+  a small adapter library built beside it, and the operator gives the Maker that file's absolute
+  path and SHA-256 (section 7). The object is loaded by `dlopen` in a process with an empty
+  environment that lives for one call (section 2), so it must answer on its own, from a file or
+  from its own I/O within the deadline; it cannot rely on a running Logos core or on state held
+  in memory.
+- **The only module exercised is the repository's fixture.** No real Logos price module is
+  shipped, built or referenced anywhere in this repository. The crate tests and the stack
+  scenario of section 8 run `crates/logos-price-c-api/tests/fixtures/logos_price_fixture.c`, and
+  the hand run of section 6 ran the example beside this page; F8's evidence is that fixture. No
+  real feed, its staleness or its failures are exercised.
 - The ABI is this repository's own definition (`crates/logos-price-c-api`). No Logos-side
   specification of a price module was found in the tree: `third_party/` (logos-execution-zone,
-  logos-execution-zone-module, lez-indexer-module) and `docs/research/` contain nothing about price
-  modules or oracles. The crate's own comments call the contract "provisional" (lib.rs:20, 217).
-- A module is a plain shared library loaded by `dlopen`, not a Basecamp/Logos `.lgx` module, and
-  it does not run inside Basecamp.
+  logos-execution-zone-module, lez-indexer-module, logos-zebrad-module) and `docs/research/`
+  contain nothing about price modules or oracles. The crate's own comments call the contract
+  "provisional" (lib.rs:20, 217).
 - There is no spread or strategy layer: the module's ratio is published as it is
   (`docs/api/README.md`, the paragraph on the legacy `maker_offer_publish`).
