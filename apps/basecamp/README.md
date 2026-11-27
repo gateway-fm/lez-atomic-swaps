@@ -332,22 +332,30 @@ export M6_BASECAMP_USER_DIR="$M6_MAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```
 
-In Basecamp, open **LEZ Maker**, select **Munich Vault 01**, and click
-**Publish offer** three times. Select **Basel Vault 02** and publish twice.
-Each click creates exactly one independently takeable offer. Inventory is
-indexed to each wallet; a pending offer can
-only be withdrawn from the wallet that created it. When the Taker accepts an
-offer, use **Fund 1,000 LEZ** and later **Claim Bitcoin** only when those actions
-appear on that Maker wallet's swap row.
+In Basecamp, open **LEZ Maker**. The desk settles as the Node's own identity,
+shown as its one account, **Munich Vault 01 · Maker Node**. Click **New
+offer**, set the pair, what you sell and what you receive, and click **Publish
+offer**; each publish creates exactly one independently takeable offer, listed
+under **Open offers** with a **Withdraw** button until a Taker reserves it.
+After a take the swap appears under **My orders**. The Maker has nothing to
+click there: the Node funds, claims and refunds by itself, and the row says
+what it is doing or waiting for. **Check Node** asks the Node for its health
+and **Refresh market** rereads offers, orders and balances.
 
-The route, history, monitor, claim, and refund controls below the primary desk
-are the advanced prepared-service lane.
+The desk's view has no history, monitor, claim or refund control. The backend
+keeps the slots `history`, `monitor`, `claim` and `refund`
+(`maker/src/lez_atomic_swap_maker.rep`), which the view does not call; a
+manual claim or refund is made with `lez-maker-cli claim` and `refund`
+([CLI reference](../../docs/cli-reference.md#manual-claims-and-refunds)). What
+each control sends to the Node is listed in
+[the Maker installation guide](../../docs/maker-install.md#what-the-maker-desk-controls).
 
-The backend reads the current pair and local-price revisions, then the route
-click writes through `maker_local_route_save_v1`. Policy, price, and its replay
-result commit in one SQLite transaction; a stale later write rolls the whole
-operation back. Saving already-current terms returns their durable revisions
-without manufacturing another mutation.
+On **Publish offer** the backend reads the current pair and local-price
+revisions, writes the route through `maker_local_route_save_v1`, and publishes
+through `maker_offer_publish_v1`. Policy, price, and its replay result commit
+in one SQLite transaction; a stale later write rolls the whole operation back.
+Saving already-current terms returns their durable revisions without
+manufacturing another mutation.
 
 ## Run the Taker package as a real user
 

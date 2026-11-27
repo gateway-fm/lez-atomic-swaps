@@ -4,6 +4,12 @@ Without this configuration a packaged Maker never reports an unreachable chain n
 route reads `disabled`, `maker_health` can only be degraded by Delivery or Chat, and an offer
 whose chain is down stays published. This file is what turns that on.
 
+Installing the units themselves is in
+[docs/maker-systemd-install.md](../../docs/maker-systemd-install.md);
+[docs/maker-install.md](../../docs/maker-install.md) compares the systemd service with the
+Maker hosted by Logos core, and [docs/cli-reference.md](../../docs/cli-reference.md) lists the
+operator commands.
+
 ## What a route is
 
 A route is a pair **and** a direction — `{"pair": "Zcash", "direction": "TakerSellsLez"}`. The
