@@ -848,24 +848,9 @@ async fn terminal_action(
     held_lock
         .validate_for_state(config.swap_id(), config.state_db())
         .map_err(|_| ActionError::DependencyUnavailable)?;
-    let LifecycleStatus::Active {
-        phase,
-        revision,
-        state,
-        available_action,
-        ..
-    } = status
-    else {
-        return Err(ActionError::Unavailable);
-    };
-    if revision != expected_generation {
-        return Err(ActionError::ProgressChanged);
-    }
-    if available_action != Some(action)
-        && !route_admits_claim_window_refund(&config, phase, state, action)
-    {
-        return Err(ActionError::Unavailable);
-    }
+    let phase = new_action_admissible(status, expected_generation, action, |phase, state| {
+        route_admits_claim_window_refund(&config, phase, state, action)
+    })?;
     if let Some(superseded) = superseded {
         retire_superseded_action(&initiation, &superseded).await?;
     }
@@ -1096,6 +1081,38 @@ fn route_admits_claim_window_refund(
 /// selling ZEC, Zcash selling LEZ).
 pub(super) fn revealing_claim_was_submitted(state_db: &Path) -> bool {
     revealing_claim_submitted_marker(state_db).is_some_and(|marker| marker.is_file())
+}
+
+/// Whether a new request for `action` is admitted against the actor's status,
+/// and the phase it is admitted in: the swap is active at the generation the
+/// caller saw, and the action is the one the row offers, or the Zcash route's
+/// refund of its claim window (`claim_window_refund`). Anything else is
+/// refused with nothing recorded: an action the row does not offer (a Zcash
+/// refund asked for before the Maker's lock while the Maker is still in time
+/// to fund, issue #182) answers `taker_action_unavailable`.
+fn new_action_admissible(
+    status: LifecycleStatus,
+    expected_generation: u64,
+    action: TakerTerminalActionV1,
+    claim_window_refund: impl FnOnce(Phase, TakerSwapStateV1) -> bool,
+) -> Result<Phase, ActionError> {
+    let LifecycleStatus::Active {
+        phase,
+        revision,
+        state,
+        available_action,
+        ..
+    } = status
+    else {
+        return Err(ActionError::Unavailable);
+    };
+    if revision != expected_generation {
+        return Err(ActionError::ProgressChanged);
+    }
+    if available_action != Some(action) && !claim_window_refund(phase, state) {
+        return Err(ActionError::Unavailable);
+    }
+    Ok(phase)
 }
 
 /// `replay_actor_effect_required` for the Zcash route, which also admits the
@@ -2159,6 +2176,16 @@ fn view_from_actor_status(
 }
 
 /// Maps the ZEC actor's durable phase to what the Taker desk may do next.
+///
+/// Refund is offered only when the actor's next action is the Taker's own
+/// refund (`RefundLez` selling LEZ, `RefundZcash` selling ZEC), as
+/// [`btc_actor_progress`] offers it only on `RecoverTakerLeg`. Between the
+/// Taker's lock and the Maker's the actor reports that once the Taker's
+/// claim window has closed; before it the Maker is still in time to lock,
+/// the swap reads as waiting for the second lock and nothing is offered, so
+/// a refund request is refused there (issue #182: every such phase used to
+/// read `refund_available`, and a refund admitted then waited for its time
+/// while the swap could still have completed).
 #[cfg(feature = "pair-zec")]
 pub(super) fn zec_actor_progress(
     phase: Phase,
@@ -2168,6 +2195,10 @@ pub(super) fn zec_actor_progress(
     Option<TakerTerminalActionV1>,
     Option<TakerPrivacyGuidanceV1>,
 ) {
+    let takers_refund = matches!(
+        next_action,
+        ZecLifecycleAction::RefundLez | ZecLifecycleAction::RefundZcash
+    );
     match phase {
         Phase::Offered => (TakerSwapStateV1::AwaitingFirstLock, None, None),
         // The Taker claims first in both directions: its revealing claim of
@@ -2185,16 +2216,34 @@ pub(super) fn zec_actor_progress(
                 None,
             )
         }
+        // The Taker's own refund is the actor's next action: before the
+        // Maker's lock once the claim window closed with none observed, and
+        // with both legs locked once it closed with no claim sent.
         Phase::AwaitingTakerConfirmations
         | Phase::TakerLockConfirmed
         | Phase::AwaitingMakerConfirmations
         | Phase::BothLegsLocked
         | Phase::TakerLockReorged
-        | Phase::MakerLockReorged => (
-            TakerSwapStateV1::RefundAvailable,
-            Some(TakerTerminalActionV1::Refund),
-            None,
-        ),
+        | Phase::MakerLockReorged
+            if takers_refund =>
+        {
+            (
+                TakerSwapStateV1::RefundAvailable,
+                Some(TakerTerminalActionV1::Refund),
+                None,
+            )
+        }
+        Phase::AwaitingTakerConfirmations => (TakerSwapStateV1::AwaitingFirstLock, None, None),
+        // The Maker is still in time to lock: nothing to press.
+        Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations => {
+            (TakerSwapStateV1::AwaitingSecondLock, None, None)
+        }
+        // A reorged lock, or both legs locked with neither the Taker's claim
+        // nor its refund next (a pair the Taker's actor never reports),
+        // needs attention until the actor names the Taker's refund.
+        Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged => {
+            (TakerSwapStateV1::AttentionRequired, None, None)
+        }
         Phase::Completed => (
             TakerSwapStateV1::Completed,
             None,
@@ -4067,21 +4116,14 @@ mod tests {
             zec_actor_progress(Phase::Offered, ZecLifecycleAction::CreateAndFundLez),
             (TakerSwapStateV1::AwaitingFirstLock, None, None)
         );
+        // Neither the claim nor the Taker's refund is next: nothing offered.
         assert_eq!(
             zec_actor_progress(Phase::BothLegsLocked, ZecLifecycleAction::Wait),
-            (
-                TakerSwapStateV1::RefundAvailable,
-                Some(TakerTerminalActionV1::Refund),
-                None,
-            )
+            (TakerSwapStateV1::AttentionRequired, None, None)
         );
         assert_eq!(
             zec_actor_progress(Phase::AwaitingMakerConfirmations, ZecLifecycleAction::Wait),
-            (
-                TakerSwapStateV1::RefundAvailable,
-                Some(TakerTerminalActionV1::Refund),
-                None,
-            )
+            (TakerSwapStateV1::AwaitingSecondLock, None, None)
         );
         // The Taker claims first in both directions and never after claim
         // evidence: a claim named there reads as needing attention.
@@ -4175,6 +4217,188 @@ mod tests {
                 Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
             )
         );
+    }
+
+    /// Issue #182, both directions (`RefundLez` selling LEZ, `RefundZcash`
+    /// selling ZEC): in every phase from the Taker's lock to both legs locked
+    /// and in the reorg phases, Refund is offered exactly when the actor's
+    /// next action is the Taker's refund.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn zec_refund_is_offered_only_when_the_actors_next_action_is_the_takers_refund() {
+        use TakerSwapStateV1 as State;
+        // What each phase reads while the Taker's refund is not next.
+        let waiting = [
+            (Phase::AwaitingTakerConfirmations, State::AwaitingFirstLock),
+            (Phase::TakerLockConfirmed, State::AwaitingSecondLock),
+            (Phase::AwaitingMakerConfirmations, State::AwaitingSecondLock),
+            (Phase::BothLegsLocked, State::AttentionRequired),
+            (Phase::TakerLockReorged, State::AttentionRequired),
+            (Phase::MakerLockReorged, State::AttentionRequired),
+        ];
+        for (phase, state) in waiting {
+            // The Taker's first lock (both directions), a wait, a completion:
+            // no action in any of these phases.
+            for not_a_refund in [
+                ZecLifecycleAction::Wait,
+                ZecLifecycleAction::CreateAndFundLez,
+                ZecLifecycleAction::FundZcash,
+                ZecLifecycleAction::Complete,
+            ] {
+                assert_eq!(
+                    zec_actor_progress(phase, not_a_refund),
+                    (state, None, None),
+                    "{phase:?} {not_a_refund:?}"
+                );
+            }
+            // Selling LEZ the Taker's refund is its LEZ, selling ZEC its Zcash.
+            for takers_refund in [
+                ZecLifecycleAction::RefundLez,
+                ZecLifecycleAction::RefundZcash,
+            ] {
+                assert_eq!(
+                    zec_actor_progress(phase, takers_refund),
+                    (
+                        State::RefundAvailable,
+                        Some(TakerTerminalActionV1::Refund),
+                        None
+                    ),
+                    "{phase:?} {takers_refund:?}"
+                );
+            }
+        }
+        // A claim named before both legs are locked is not offered either.
+        for claim in [ZecLifecycleAction::ClaimLez, ZecLifecycleAction::ClaimZcash] {
+            assert_eq!(
+                zec_actor_progress(Phase::TakerLockConfirmed, claim),
+                (State::AwaitingSecondLock, None, None)
+            );
+        }
+        // Before the Taker's own lock nothing is refundable, whatever is named.
+        for next_action in [
+            ZecLifecycleAction::RefundLez,
+            ZecLifecycleAction::RefundZcash,
+        ] {
+            assert_eq!(
+                zec_actor_progress(Phase::Offered, next_action),
+                (State::AwaitingFirstLock, None, None)
+            );
+        }
+    }
+
+    /// Issue #182 at the Taker Node's owner boundary: a refund asked for
+    /// between the Taker's lock and the Maker's, while the Maker is still in
+    /// time to fund, is refused as `taker_action_unavailable` with nothing
+    /// admitted; the supervisor keeps driving, the Maker's lock is observed,
+    /// the claim is admitted and the swap completes. Once the claim window
+    /// closed with no Maker lock, the refund is admitted and runs.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn an_early_zcash_refund_is_refused_and_the_swap_goes_on_to_its_claim() {
+        use super::super::zec_supervisor::{Decision, decide};
+        let status = |phase, revision, next_action| {
+            let (state, available_action, privacy_guidance) =
+                zec_actor_progress(phase, next_action);
+            LifecycleStatus::Active {
+                phase,
+                revision,
+                state,
+                available_action,
+                privacy_guidance,
+            }
+        };
+        let supervised = |phase, revision, next_action| ZecActorStatus::Active {
+            phase,
+            revision,
+            next_action,
+            lez_refund_at_ms: None,
+            revealing_claim_hold_attention_ms: None,
+        };
+        let admit = |status: LifecycleStatus, generation, action| {
+            new_action_admissible(status, generation, action, |phase, state| {
+                zec_claim_window_admits_refund(phase, state, action, false)
+            })
+        };
+        for (claim, refund) in [
+            // Selling LEZ: the Taker claims Zcash and refunds LEZ.
+            (
+                ZecLifecycleAction::ClaimZcash,
+                ZecLifecycleAction::RefundLez,
+            ),
+            // Selling ZEC: the Taker claims LEZ and refunds Zcash.
+            (
+                ZecLifecycleAction::ClaimLez,
+                ZecLifecycleAction::RefundZcash,
+            ),
+        ] {
+            // The Taker's lock is confirmed and the Maker is in time to fund.
+            let waiting = status(Phase::TakerLockConfirmed, 2, ZecLifecycleAction::Wait);
+            let refused = admit(waiting, 2, TakerTerminalActionV1::Refund)
+                .expect_err("an early refund must not be admitted");
+            assert!(matches!(refused, ActionError::Unavailable), "{refused:?}");
+            let error = map_action_error(refused);
+            assert_eq!(error.code(), ACTION_UNAVAILABLE_CODE);
+            assert!(
+                error
+                    .data()
+                    .is_some_and(|data| data.get().contains("taker_action_unavailable")),
+                "{error:?}"
+            );
+            // Nothing was admitted, so the supervisor goes on observing for
+            // the Maker's lock.
+            assert_eq!(
+                decide(
+                    supervised(Phase::TakerLockConfirmed, 2, ZecLifecycleAction::Wait),
+                    None
+                ),
+                Decision::Drive
+            );
+            // The Maker locks: the claim is offered and admitted, and runs.
+            let locked = status(Phase::BothLegsLocked, 3, claim);
+            assert_eq!(
+                admit(locked, 3, TakerTerminalActionV1::Claim).expect("the claim"),
+                Phase::BothLegsLocked
+            );
+            assert_eq!(
+                decide(
+                    supervised(Phase::BothLegsLocked, 3, claim),
+                    Some((TakerTerminalActionV1::Claim, 3))
+                ),
+                Decision::Claim
+            );
+            assert_eq!(
+                decide(
+                    supervised(Phase::Completed, 5, ZecLifecycleAction::Complete),
+                    Some((TakerTerminalActionV1::Claim, 3))
+                ),
+                Decision::ManualActionCompleted
+            );
+            // The other ending: no Maker lock by the close of the claim
+            // window. The actor names the Taker's refund, and the same
+            // request is now admitted and run as the recovery.
+            let due = status(Phase::TakerLockConfirmed, 2, refund);
+            assert_eq!(
+                admit(due, 2, TakerTerminalActionV1::Refund).expect("the refund once due"),
+                Phase::TakerLockConfirmed
+            );
+            assert_eq!(
+                decide(
+                    supervised(Phase::TakerLockConfirmed, 2, refund),
+                    Some((TakerTerminalActionV1::Refund, 2))
+                ),
+                Decision::Recover
+            );
+            // A claim is never admissible before both legs are locked.
+            assert!(matches!(
+                admit(waiting, 2, TakerTerminalActionV1::Claim),
+                Err(ActionError::Unavailable)
+            ));
+            // A stale generation is a progress conflict, not an admission.
+            assert!(matches!(
+                admit(waiting, 1, TakerTerminalActionV1::Refund),
+                Err(ActionError::ProgressChanged)
+            ));
+        }
     }
 
     #[test]

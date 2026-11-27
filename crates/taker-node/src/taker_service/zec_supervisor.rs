@@ -510,6 +510,20 @@ pub(super) fn decide_with(
             {
                 return Decision::Drive;
             }
+            // A refund recorded between the Taker's lock and the Maker's
+            // while the Maker was still in time to fund (a Node from before
+            // issue #182 admitted it there): it cannot be sent yet and is no
+            // longer offered, so it has no effect. The swap is driven on: the
+            // Maker's lock is still observed and the swap can complete; if
+            // none comes, the actor names the Taker's refund at this same
+            // generation once the claim window closes and the admission runs.
+            Ok(false) | Err(_)
+                if action == TakerTerminalActionV1::Refund
+                    && phase == Phase::TakerLockConfirmed
+                    && next_action == ZecLifecycleAction::Wait =>
+            {
+                return Decision::Drive;
+            }
             // Admitted and done, or admitted against a generation the actor
             // has left: the owner's paths say so; here there is only observing.
             Ok(false) | Err(_) => return Decision::Observe,
@@ -1561,12 +1575,37 @@ mod tests {
             decide(claimable, Some((TakerTerminalActionV1::Claim, 4))),
             Decision::Observe
         );
-        // A refund offered while the Maker's lock is awaited runs only once admitted.
-        let refundable = active(Phase::TakerLockConfirmed, 2, ZecLifecycleAction::Wait);
-        assert_eq!(decide(refundable, None), Decision::Drive);
+        // While the Maker's lock is awaited and the Maker is in time to fund
+        // no refund is offered (issue #182): the swap is driven, and a refund
+        // an earlier Node recorded there has no effect.
+        let awaited = active(Phase::TakerLockConfirmed, 2, ZecLifecycleAction::Wait);
+        assert_eq!(decide(awaited, None), Decision::Drive);
         assert_eq!(
-            decide(refundable, Some((TakerTerminalActionV1::Refund, 2))),
-            Decision::Recover
+            decide(awaited, Some((TakerTerminalActionV1::Refund, 2))),
+            Decision::Drive
+        );
+        // Once the claim window closed with no Maker lock the actor names the
+        // Taker's refund: it waits for the owner and runs once admitted, an
+        // earlier recorded admission at this generation included.
+        for refund in [
+            ZecLifecycleAction::RefundLez,
+            ZecLifecycleAction::RefundZcash,
+        ] {
+            let refundable = active(Phase::TakerLockConfirmed, 2, refund);
+            assert_eq!(decide(refundable, None), Decision::Observe);
+            assert_eq!(
+                decide(refundable, Some((TakerTerminalActionV1::Refund, 2))),
+                Decision::Recover
+            );
+        }
+        // The Maker locked after the early refund was recorded: the claim is
+        // the offered action and the old refund does not run.
+        assert_eq!(
+            decide(
+                active(Phase::BothLegsLocked, 3, ZecLifecycleAction::ClaimZcash),
+                Some((TakerTerminalActionV1::Refund, 2))
+            ),
+            Decision::Observe
         );
         // The Taker's leg is back, the Maker's refund still owed: the admitted refund keeps running.
         assert_eq!(
