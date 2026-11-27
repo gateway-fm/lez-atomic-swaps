@@ -237,6 +237,63 @@ class Launcher(unittest.TestCase):
                 for args in zcash:
                     self.assertEqual(args, ['tcp', '127.0.0.1:18232', 'getblockchaininfo', '[]'])
 
+    def test_a_testnet_zebra_route_reaches_the_zcash_role(self):
+        # The Zcash role on Zcash Testnet: the operator's own Zebra on
+        # loopback with its cookie, or the one provider origin the actors
+        # accept with an API key file. The launcher names the credential's
+        # file, never its contents, and refuses a route it does not know.
+        self.host('Linux', setpriv=True)
+        root = self.tmp / 'testnet'
+        self.inputs(root / 'identity', root / 'manifest.env', root / 'cookie')
+        base = dict(LEZ_NODE_RUN_ROOT=str(root / 'run'), LEZ_ZEC_STATE_DIR=str(root / 'zec'),
+                    LEZ_NODE_IDENTITY_DIR=str(root / 'identity'), LEZ_MARKET_MANIFEST=str(root / 'manifest.env'),
+                    LEZ_BTC_RPC_COOKIE_FILE=str(root / 'cookie'), LEZ_DELIVERY_DIR=str(root / 'delivery'),
+                    LEZ_ZEC_PROFILE='public-testnet-v2')
+
+        def zcash(name, **env):
+            self.record.unlink(missing_ok=True)
+            self.run_launcher(shutil.which('bash'), 'maker', LEZ_NODE_STATE_DIR=str(root / name), **base, **env)
+            health = json.loads((root / name / 'route-health.json').read_text())
+            return (json.loads((root / 'zec/zec-role.json').read_text()),
+                    [c['args'] for c in health['commands'] if c['route']['pair'] == 'Zcash'])
+
+        role, probes = zcash('own', LEZ_ZEC_ZEBRA_ROUTE='self_hosted_cookie',
+                             LEZ_ZEBRA_COOKIE_FILE='/var/lib/zebra/testnet/.cookie', LEZ_ZEC_FUNDING_SCAN_BLOCKS='2000')
+        self.assertEqual(role, {'schema_version': 1, 'profile': 'public-testnet-v2',
+                                'zebra_endpoint': 'http://127.0.0.1:18232', 'funding_scan_blocks': 2000,
+                                'zebra_route': {'kind': 'self_hosted_cookie',
+                                                'cookie_file': '/var/lib/zebra/testnet/.cookie'}})
+        self.assertEqual(probes, [['tcp', '127.0.0.1:18232', 'getblockchaininfo', '[]', '--cookie-file',
+                                   '/var/lib/zebra/testnet/.cookie']] * 2)
+
+        role, probes = zcash('provider', LEZ_ZEC_ZEBRA_ROUTE='tatum_testnet_x_api_key',
+                             LEZ_ZEBRA_API_KEY_FILE='/etc/lez/maker/tatum.key')
+        self.assertEqual(role, {'schema_version': 1, 'profile': 'public-testnet-v2',
+                                'zebra_endpoint': 'https://zcash-testnet-zebrad.gateway.tatum.io',
+                                'zebra_route': {'kind': 'tatum_testnet_x_api_key',
+                                                'api_key_file': '/etc/lez/maker/tatum.key'}})
+        self.assertEqual(probes, [], 'the loopback health check has nothing to ask a provider')
+        adapter = (ROOT / 'crates/zebra-node-adapter/src/rpc.rs').read_text()
+        self.assertIn('const TATUM_TESTNET_ZEBRA_ENDPOINT: &str = "https://zcash-testnet-zebrad.gateway.tatum.io";',
+                      adapter)
+
+        for env, said in (
+                (dict(LEZ_ZEC_ZEBRA_ROUTE='self_hosted_cookie'), 'needs LEZ_ZEBRA_COOKIE_FILE'),
+                (dict(LEZ_ZEC_ZEBRA_ROUTE='tatum_testnet_x_api_key', LEZ_ZEBRA_API_KEY_FILE='relative.key'),
+                 'needs LEZ_ZEBRA_API_KEY_FILE'),
+                (dict(LEZ_ZEC_ZEBRA_ROUTE='lightwalletd'), 'LEZ_ZEC_ZEBRA_ROUTE must be'),
+                (dict(LEZ_ZEC_FUNDING_SCAN_BLOCKS='0'), 'LEZ_ZEC_FUNDING_SCAN_BLOCKS must be')):
+            self.record.unlink(missing_ok=True)
+            refused = subprocess.run(
+                [shutil.which('bash'), str(self.payload / 'node-entrypoint.sh'), 'maker'],
+                env={'PATH': f'{self.fakes}:{self.tools}', 'HOME': str(self.tmp / 'home'), 'CALLS': str(self.calls),
+                     'RECORD': str(self.record), 'LEZ_SIDECAR_PORT_BASE': '19000', 'LEZ_V02_CHANNEL_ID': CHANNEL,
+                     'LEZ_NODE_STATE_DIR': str(root / 'refused'), **base, **env},
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(refused.returncode, 2, refused.stderr)
+            self.assertIn(said, refused.stderr)
+            self.assertFalse(self.record.exists(), 'the Node must not start')
+
     def linux_role(self, role, root, **env):
         """One role started as its container starts it, each role with its own
         state and Zcash directory, both with one run root and Delivery directory."""

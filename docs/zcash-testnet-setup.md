@@ -5,8 +5,8 @@ a manual/weekly workflow — and its preflight runs against public Zcash
 Testnet. Zcash Testnet moved to NU7 (consensus branch `77190ad9`) at height
 4,465,026 on 2026-10-04; the swap engine now signs for it (librustzcash 0.31,
 agreement profiles `public-testnet-v2` for `TakerSellsForeign` and
-`public-testnet-v3` for `TakerSellsLez`) and a Testnet corridor can be
-provisioned from a funded transparent key. On 2026-11-11 the self-hosted route
+`public-testnet-v3` for `TakerSellsLez`) and the two Nodes can agree a
+Testnet swap at take time, each from its own funded transparent key. On 2026-11-11 the self-hosted route
 below was walked from empty volumes: Zebra 7.0.0 synced to the Testnet tip, a
 project-owned transparent key was funded with 0.1 TAZ from a faucet, and the
 lane's preflight passed on NU7. **No public-testnet swap has run:** a swap
@@ -156,11 +156,9 @@ logosctl call zebrad_module status
 The cookie is `<cacheDir>/.cookie` (`logosctl call zebrad_module getConfig
 testnet` names `cacheDir`), owner-only and new at every start; a Node run by
 the same Basecamp runs as its user, so its Zcash role can name that file
-directly and its actors read the current cookie at each call. The public
-lane's dealer fixture instead copies the file it is given
-(`LEZ_ZEC_SELF_HOSTED_COOKIE_FILE`) beside each role's keys when it
-provisions a corridor; a corridor provisioned that way needs provisioning
-again after the Zebra restarts.
+directly (`LEZ_ZEBRA_COOKIE_FILE` with
+`LEZ_ZEC_ZEBRA_ROUTE=self_hosted_cookie`) and its actors read the current
+cookie at each call, also after the Zebra restarts.
 
 Generate a configuration into a run-specific directory:
 
@@ -409,7 +407,7 @@ delay plus the margin after funding, at the fastest pace Testnet has run —
 blocks through: 1,000 blocks took 3,922 s just before NU7. 3,700 × 3.9 s =
 14,430 s ≥ 14,400 s. At the 22.7 s average since NU7 the window is ~23 h; v1's
 192 blocks were ~73 min at that pace and ~12.5 min at the fastest. The
-provisioner states the Zcash refund's earliest time with the same 3.9 s
+agreement states the Zcash refund's earliest time with the same 3.9 s
 (`PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS`).
 
 `public-testnet-v3` (wire tag 13) is sized the other way round, because in
@@ -435,39 +433,55 @@ that is within about 33 minutes of the anchor. If Testnet stalls below
 75 s a block the Zcash refund can open later than the profile assumes; that
 residual risk is in the threat model (TM-0030).
 
-### Provisioning a Testnet corridor
+### How a Testnet swap is agreed
 
-`tests/fixtures/zec-catalog-fixture.sh --zcash-network test` (node-e2e.py
-calls it in public mode) builds one corridor under `public-testnet-v2`
-(`TakerSellsForeign`) or `public-testnet-v3` (`TakerSellsLez`). It is the
-devnet's dealer test fixture (it holds both parties' keys); this lane is
-pending conversion to the take-time agreement, the way swaps are set up now:
+A Testnet swap is set up as a devnet swap is: nothing is prepared ahead of
+the take and no one holds both parties' material. The Maker's CLI publishes
+an offer on its running Node, the lane's scenario takes it, and the two
+Nodes agree the swap at take time (`zec_reserve_v1`,
+[docs/sdk-lez-zec.md](sdk-lez-zec.md)): the Taker's Node makes the swap
+secret and sends its digest, each Node contributes the public key of its own
+Zcash key, and each signs with its own key. `node-e2e.py` in public mode
+(`LEZ_ZEC_PUBLIC_TESTNET=1`) does exactly that and nothing else: it mines
+nothing and pays no key.
 
-- the route from `LEZ_ZEBRA_URL` and exactly one of `LEZ_ZEBRA_COOKIE_FILE`
-  (self-hosted Zebra on loopback) or `LEZ_ZEBRA_API_KEY_FILE` (Tatum), as
-  `public-zec-testnet.sh` sets them; chain `test`, genesis `05a60a92…2c38` and
-  a chain tip on NU7 are checked before anything else;
-- the role keys `maker-zcash.key` and `taker-zcash.key` from
-  `LEZ_ZEC_TESTNET_KEY_DIR` (mode 0700, refused inside the repository). The
-  Maker's key is also its Delivery identity: install it as the testnet
-  stack's `runtime/lez/maker/zcash.key` before the Nodes start;
-- the Zcash funder spends an ordinary unspent output of its key, 10 blocks
-  deep, found from `LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT` (the height of the
-  owner's TAZ payment, first run) or from where the last corridor's funder
-  output was (`runtime/zec/testnet-funding-from`; its change lands after it);
-- a Taker-funded corridor (`TakerSellsForeign`) first pays the Taker's key
-  from the Maker's (`zec-local-poc-transfer --zcash-network test`) and waits
-  for that payment to be 10 blocks deep;
+What each Node needs before the lane starts, all of it its own operator's:
+
+- its Zcash role on Testnet. The role launcher writes it from
+  `LEZ_ZEC_PROFILE=public-testnet-v2` (a `TakerSellsLez` swap is then agreed
+  under its Taker-reveals-first twin `public-testnet-v3`) and the route:
+  `LEZ_ZEC_ZEBRA_ROUTE=self_hosted_cookie` with `LEZ_ZEBRA_COOKIE_FILE` (the
+  operator's own Testnet Zebra on loopback), or
+  `LEZ_ZEC_ZEBRA_ROUTE=tatum_testnet_x_api_key` with `LEZ_ZEBRA_API_KEY_FILE`
+  (Tatum's gateway, the one provider origin the actors accept). Both Nodes
+  name the same profile. The Node checks the chain (`test`, genesis
+  `05a60a92…2c38`) before it reserves anything;
+- its own Zcash key. The Taker's is the key its operator supplies
+  (`LEZ_ZCASH_KEY_SOURCE`, or `zcash.key` in its identity directory); the
+  Maker's Zcash key is its Delivery signing key;
+- coins on the key of whichever party funds Zcash: the Maker's when the
+  Taker sells LEZ, the Taker's when it sells ZEC. The funder spends one
+  ordinary unspent output of its own key, 10 blocks deep, that covers the
+  principal plus 10,000 zatoshis of fee and 1,000 of change; the Node finds
+  it within `LEZ_ZEC_FUNDING_SCAN_BLOCKS` below the tip (1,000 by default,
+  fewer than 2,880 on Testnet). `lez-taker-cli balances --zcash` and
+  `lez-maker-cli balances --zcash` print the address to pay and what the key can
+  fund from. Selling ZEC, the lane reads the Taker's balance through its
+  Node first and stops with that address when the key cannot fund the lot;
 - the principal is `LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS` (0.01 TAZ in the lane
-  profile) against the template's 50,000 LEZ units; fees are 10,000 zatoshis
-  per Zcash transaction;
-- each actor gets its own copy of the route's credential beside its keys,
-  and scans the whole Zcash refund window for the counterparty's lock.
+  profile) against 50,000 LEZ units; fees are 10,000 zatoshis per Zcash
+  transaction.
 
-Nothing is mined and nothing is broadcast before the actors run, except the
-Taker-funding payment. Zebra has no dry-run (`testmempoolaccept` answers
-"Method not found" on Zebra 7.0.0), so the first proof that a NU7 spend is
-accepted is a real one.
+Nothing is mined and nothing is broadcast before the actors run. Zebra has
+no dry-run (`testmempoolaccept` answers "Method not found" on Zebra 7.0.0),
+so the first proof that a NU7 spend is accepted is a real one.
+
+What has run on a public network: the route preflights of 2026-11-11 (the
+first is described below). No swap has been agreed or settled on a public
+network, with this lane or otherwise: the take-time flow the lane uses is
+the one the devnet's regression runs on Regtest (`zec-happy`,
+`zec-maker-refund`, `zec-dynamic-happy`), and it has not run against
+Testnet.
 
 What the lane does not record yet: LEZ transaction ids (node-e2e.py's ZEC
 summaries name only Zcash transactions; LEZ effects are visible on the
@@ -491,21 +505,24 @@ it holds no swap. Since then the swap engine:
 2. has the immutable profiles `public-testnet-v2` and `public-testnet-v3`
    (above), which the lane profile names per direction;
 3. lets the actor's `ConsensusBranchConfig` name `37a5165b` and `77190ad9`;
-4. provisions Testnet corridors (above).
+4. agrees a Testnet swap at take time under those profiles (above): the
+   Nodes' Zcash role names a Testnet route and its funder search reads
+   Testnet outputs.
 
 What is still missing, all of it the owner's or the host's:
 
-- transparent TAZ at the Maker funder key's `tm…` address (no faucet
+- transparent TAZ at the `tm…` address of the funder's own key (no faucet
   answered). One happy and one refund corridor on each of the two routes,
-  `TakerSellsLez`, spend 4 × (0.01 + 0.0001) TAZ from it, about 0.041 TAZ; the
-  same four `TakerSellsForeign` corridors add 4 × 0.0103 TAZ of payments to
-  the Taker; 0.1 TAZ covers both directions;
+  `TakerSellsLez`, spend 4 × (0.01 + 0.0001) TAZ from the Maker's key, about
+  0.041 TAZ; the same four `TakerSellsForeign` corridors spend as much from
+  the Taker's key, which its owner pays;
 - a keyed route: a Tatum Testnet API key as the secret
   `ZCASH_TESTNET_TATUM_API_KEY` (five keyless requests a minute cannot drive a
   corridor), or a synced self-hosted Testnet Zebra ≥ 7.0.0 (~16 GB) and the
   self-hosted runner `lez-zec-testnet`;
-- the testnet stack running the Maker under the funder key, with the LEZ
-  testnet side services (docs/testnet-run.md) and LEZ funds.
+- the testnet stack running both Nodes with their Zcash role on the Testnet
+  route, the Maker under the funded key, with the LEZ testnet side services
+  (docs/testnet-run.md) and LEZ funds.
 
 Public Testnet is inherently dependent on peer availability, initial sync,
 faucet or pre-funded-wallet availability, activation timing, and organic reorgs.
@@ -535,4 +552,4 @@ public lane's failures retain their bundle and are never silently ignored.
 | Zcash Discord funding request | Optional fallback | External support process | Manual response and availability |
 | Zallet alpha.4 | Optional funding wallet only | Local operator | Alpha compatibility; no arbitrary HTLC signing; NU6.3 must be reverified |
 | Project transparent signer | Exists (`zcash_key_file`, actor-signed claim and refund) | Independent maker/taker | Signs for NU6.2 (Regtest), NU6.3 and NU7; mined Testnet vectors verify, no NU7 spend broadcast yet |
-| Testnet corridor provisioner | Exists (the dealer test fixture `tests/fixtures/zec-catalog-fixture.sh --zcash-network test`; pending conversion to take-time) | Maker/taker setup | Needs funded TAZ and a public LEZ testnet this stack can talk to; untried end to end (postponed to the LEZ 0.4 port) |
+| Take-time agreement on Testnet | Exists (`zec_reserve_v1` between the two Nodes, each with its own key; the launcher's `LEZ_ZEC_ZEBRA_ROUTE`) | Maker and Taker, each its own Node | Needs funded TAZ on the funder's own key and a public LEZ testnet this stack can talk to; no swap run on a public network yet |

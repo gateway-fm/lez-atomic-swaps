@@ -18,16 +18,17 @@
 # every Zcash transaction the scenario names is looked up again on the route
 # (and on the other route, when both are supported, as an independent check).
 #
-# Nothing here mines. The Nodes must already run on the public networks
-# (docs/testnet-run.md: LEZ side services; this lane: the Zcash route), the
-# Maker under the owner-funded Testnet key: each corridor is provisioned by
-# zec-catalog-fixture.sh --zcash-network test (profile public-testnet-v3
-# selling LEZ, public-testnet-v2 selling ZEC; both NU7; the dealer test
-# fixture: this lane is pending conversion to take-time),
-# which spends an ordinary output of that key and reads the role keys from
-# LEZ_ZEC_TESTNET_KEY_DIR (outside the repository) and the funder search start
-# from LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT on its first run. Credentials are
-# files, named by LEZ_ZEC_PROVIDER_API_KEY_FILE and
+# Nothing here mines and nothing here pays a key. The Nodes must already run
+# on the public networks (docs/testnet-run.md: LEZ side services; this lane:
+# the Zcash route), each with its own Zcash key and its Zcash role on the
+# route (the launcher's LEZ_ZEC_ZEBRA_ROUTE and LEZ_ZEC_PROFILE=public-testnet-v2;
+# docs/zcash-testnet-setup.md, "How a Testnet swap is agreed"). A swap is set
+# up as on the devnet: the Maker's CLI publishes an offer on its running Node,
+# the scenario takes it and the two Nodes agree it at take time
+# (zec_reserve_v1; profile public-testnet-v3 selling LEZ, public-testnet-v2
+# selling ZEC; both NU7). The Zcash funder (the Maker selling LEZ, the Taker
+# selling ZEC) spends an ordinary output of its own key, which its owner
+# funded. Credentials are files, named by LEZ_ZEC_PROVIDER_API_KEY_FILE and
 # LEZ_ZEC_SELF_HOSTED_COOKIE_FILE; their contents never reach a log or the
 # bundle (zec-public-evidence.py checks).
 #
@@ -37,7 +38,7 @@
 # two Node images), LEZ_ZEC_ARTIFACT_FILES (release files to digest),
 # LEZ_ZEC_INTERVENTIONS_FILE (one manual intervention per line, appended).
 #
-# Exit: 0 every corridor passed (or, with --preflight-only, every route is usable), 3 blocked (no route or no provisioner can
+# Exit: 0 every corridor passed (or, with --preflight-only, every route is usable), 3 blocked (no route can
 # serve this Testnet), 1 a corridor failed or the bundle is invalid.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

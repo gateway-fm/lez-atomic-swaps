@@ -263,9 +263,6 @@ ROUTE = {"pair": "Bitcoin", "direction": "TakerSellsForeign"}  # --direction / -
 REVERSE = False  # True when the Taker sells LEZ (locks LEZ first, claims the foreign coin)
 FOREIGN_UNITS = 1_000_000
 LEZ_UNITS = 1_000
-# The ZEC corridor's template (zec-reference-actor local_poc.rs): 1 ZEC for 50 000 LEZ units.
-ZEC_FOREIGN_UNITS = 100_000_000
-ZEC_LEZ_UNITS = 50_000
 ZEBRA_URL = os.environ.get("LEZ_ZEBRA_URL", "http://127.0.0.1:18232/")  # Compose publishes zebra's RPC on the host loopback
 # The public Zcash Testnet lane (scripts/public-zec-testnet.sh): zebra is a
 # Testnet node or provider, so nothing is ever mined; a wait for blocks waits
@@ -273,6 +270,13 @@ ZEBRA_URL = os.environ.get("LEZ_ZEBRA_URL", "http://127.0.0.1:18232/")  # Compos
 # wait is LEZ_ZEC_TIMEOUT_SCALE times its devnet length. The route's credential
 # is a file (Zebra's .cookie, or a provider key sent as x-api-key), read per call.
 ZEC_PUBLIC = os.environ.get("LEZ_ZEC_PUBLIC_TESTNET") == "1"
+# The lot of a Zcash offer the harness publishes: 1 ZEC for 50 000 LEZ units
+# on the devnet; on the public lane LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS
+# (zec-public-testnet.env: 0.01 TAZ) for the same 50 000 LEZ units.
+ZEC_LEZ_UNITS = 50_000
+ZEC_FOREIGN_UNITS = int(os.environ.get("LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS", "1000000")) if ZEC_PUBLIC else 100_000_000
+if ZEC_FOREIGN_UNITS <= 0 or ZEC_FOREIGN_UNITS % ZEC_LEZ_UNITS:
+    raise SystemExit(f"LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS must be a positive multiple of {ZEC_LEZ_UNITS} zatoshis")
 ZEC_BLOCK_WAIT_SECONDS = int(os.environ.get("LEZ_ZEC_BLOCK_WAIT_SECONDS", "900"))
 ZEC_TIMEOUT_SCALE = int(os.environ.get("LEZ_ZEC_TIMEOUT_SCALE", "1")) if ZEC_PUBLIC else 1
 NODES = {"maker": (f"{PREFIX}-maker-node", "/run/lez/maker/node.sock"),
@@ -4617,14 +4621,18 @@ def zec_claim_queued_at_one_confirmation(swap_id: str, corridor: dict) -> None:
 
 # The profile the Nodes take under: node-entrypoint.sh's zec-role.json, from
 # LEZ_ZEC_PROFILE (compose.yaml; regress.sh's zec-v6 group switches it).
-ZEC_DYNAMIC_PROFILE = os.environ.get("LEZ_ZEC_PROFILE", "deterministic-local-devnet-v5")
+# On the public lane the Nodes run with public-testnet-v2 (selling LEZ its
+# twin public-testnet-v3).
+ZEC_DYNAMIC_PROFILE = os.environ.get("LEZ_ZEC_PROFILE", "public-testnet-v2" if ZEC_PUBLIC else "deterministic-local-devnet-v5")
 ZEC_PROFILE_REFUND_BLOCKS = {"deterministic-local-devnet-v5": 8, "deterministic-local-devnet-v6": 8,
-                             "deterministic-local-devnet-v7": 16, "deterministic-local-devnet-v8": 16}
+                             "deterministic-local-devnet-v7": 16, "deterministic-local-devnet-v8": 16,
+                             "public-testnet-v2": 3_700, "public-testnet-v3": 95}
 # Each ZEC profile admits one direction (ADR 0216): selling LEZ the Nodes take
 # under the Taker-reveals-first twin of the profile they run with
 # (local_poc.rs LocalPocProfile::for_direction).
 ZEC_SELLING_LEZ_TWIN = {"deterministic-local-devnet-v5": "deterministic-local-devnet-v7",
-                        "deterministic-local-devnet-v6": "deterministic-local-devnet-v8"}
+                        "deterministic-local-devnet-v6": "deterministic-local-devnet-v8",
+                        "public-testnet-v2": "public-testnet-v3"}
 
 
 def zec_dynamic_profile() -> str:
@@ -4642,12 +4650,40 @@ def zec_dynamic_profile_facts() -> dict:
             "zcash_reveal_margin_blocks": zec_profile_reveal_margin_blocks(profile)}
 
 
+# What the Zcash funder's output must cover beside the lot: the funding fee
+# and the smallest change (local_poc.rs FUNDING_FEE_ZATOSHIS, MINIMUM_CHANGE_ZATOSHIS).
+ZEC_FUNDING_OVERHEAD_ZATOSHIS = 11_000
+
+
+def zec_public_taker_funds() -> dict:
+    """The public lane moves no coins between the parties' keys: selling ZEC
+    the Taker funds from its own Zcash key, which its owner paid. The Node
+    says what that key can fund from (taker_wallet_balances_v1 {zcash: true});
+    without a mature output that covers the lot the lane stops here and names
+    the address to pay."""
+    view = call("taker", "taker_wallet_balances_v1", {"schema_version": 1, "zcash": True}).get("zcash") or {}
+    need = ZEC_FOREIGN_UNITS + ZEC_FUNDING_OVERHEAD_ZATOSHIS
+    usable = [o for o in view.get("outputs") or []
+              if o.get("mature") and not o.get("committed") and int(o.get("value_zatoshis", 0)) >= need]
+    if not usable:
+        raise Failure(f"the Taker's own Zcash key ({view.get('address') or 'its address is unread'}, funder search "
+                      f"{view.get('state', 'unanswered')}) holds no mature, uncommitted output of at least {need} "
+                      "zatoshis: its owner pays that address first; the public lane pays no key from another")
+    log(f"  the Taker's own Zcash key {view.get('address')} holds {len(usable)} output(s) that can fund the "
+        f"{ZEC_FOREIGN_UNITS}-zatoshi lot")
+    return view
+
+
 def zec_dynamic_fund_taker() -> None:
     """Selling ZEC the Taker funds from its own key. Zebra mines to the Maker's,
     so the Maker's key pays the Taker's once (zec-local-poc-transfer in the
     Taker's container, the Maker key there only for the payment), and 100
     blocks make the payment a funder output (local_poc.rs: every Regtest
-    candidate waits out coinbase maturity)."""
+    candidate waits out coinbase maturity). On the public lane nothing is
+    paid: the Taker's key must already hold the lot (zec_public_taker_funds)."""
+    if ZEC_PUBLIC:
+        zec_public_taker_funds()
+        return
     container = NODES["taker"][0]
     # The test payer (feature test-payer) is in every Taker image, a release
     # one too: an image without it is older than that, or built by hand.

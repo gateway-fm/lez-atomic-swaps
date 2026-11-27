@@ -494,19 +494,49 @@ if [[ "$role" == taker && -s "$zec_key_source" ]]; then
   fi
   zec_key_field="$(jq -n --arg key "$zec_role_root/zcash.key" '{zcash_key_file:$key}')"
 fi
-# The Regtest Zebra's JSON-RPC cookie, where Zebra writes it (the devnet's
-# zebra service: zebrad_module, LEZ_ZEBRA_COOKIE_FILE): the actors read it at
-# each call, since Zebra writes a new one at every start. Unset: a Zebra
-# without cookie authentication.
+# The Zebra the role's Zcash actors use (LEZ_ZEC_ZEBRA_ROUTE, the route kinds
+# of crates/zec-reference-actor/src/local_poc.rs LocalPocZebraRoute), with the
+# profile that goes with its network (LEZ_ZEC_PROFILE):
+#   deterministic_local (the default): the Regtest Zebra on loopback. Its
+#     JSON-RPC cookie where Zebra writes it (the devnet's zebra service:
+#     zebrad_module, LEZ_ZEBRA_COOKIE_FILE): the actors read it at each call,
+#     since Zebra writes a new one at every start. Unset: a Zebra without
+#     cookie authentication.
+#   self_hosted_cookie: the operator's own Zcash Testnet Zebra on loopback,
+#     with its .cookie (LEZ_ZEBRA_COOKIE_FILE), under a public-testnet profile.
+#   tatum_testnet_x_api_key: Tatum's Testnet Zebrad gateway, the one provider
+#     origin the actors accept, with the owner-private key file
+#     LEZ_ZEBRA_API_KEY_FILE names (sent as x-api-key).
+zec_zebra_route="${LEZ_ZEC_ZEBRA_ROUTE:-deterministic_local}"
+zec_zebra_endpoint=http://127.0.0.1:18232
 zec_cookie_file="${LEZ_ZEBRA_COOKIE_FILE:-}"
 zec_route_field='{}'
-if [[ -n "$zec_cookie_file" ]]; then
-  [[ "$zec_cookie_file" == /* ]] || { echo "$role: LEZ_ZEBRA_COOKIE_FILE must be an absolute path" >&2; exit 1; }
-  zec_route_field="$(jq -n --arg cookie "$zec_cookie_file" '{zebra_route:{kind:"deterministic_local", cookie_file:$cookie}}')"
+case "$zec_zebra_route" in
+  deterministic_local)
+    if [[ -n "$zec_cookie_file" ]]; then
+      [[ "$zec_cookie_file" == /* ]] || { echo "$role: LEZ_ZEBRA_COOKIE_FILE must be an absolute path" >&2; exit 1; }
+      zec_route_field="$(jq -n --arg cookie "$zec_cookie_file" '{zebra_route:{kind:"deterministic_local", cookie_file:$cookie}}')"
+    fi ;;
+  self_hosted_cookie)
+    [[ "$zec_cookie_file" == /* ]] || { echo "$role: LEZ_ZEC_ZEBRA_ROUTE=self_hosted_cookie needs LEZ_ZEBRA_COOKIE_FILE, the absolute path of the Testnet Zebra's .cookie" >&2; exit 2; }
+    zec_route_field="$(jq -n --arg cookie "$zec_cookie_file" '{zebra_route:{kind:"self_hosted_cookie", cookie_file:$cookie}}')" ;;
+  tatum_testnet_x_api_key)
+    [[ "${LEZ_ZEBRA_API_KEY_FILE:-}" == /* ]] || { echo "$role: LEZ_ZEC_ZEBRA_ROUTE=tatum_testnet_x_api_key needs LEZ_ZEBRA_API_KEY_FILE, the absolute path of the owner-private key file" >&2; exit 2; }
+    zec_zebra_endpoint=https://zcash-testnet-zebrad.gateway.tatum.io
+    zec_cookie_file=
+    zec_route_field="$(jq -n --arg key "$LEZ_ZEBRA_API_KEY_FILE" '{zebra_route:{kind:"tatum_testnet_x_api_key", api_key_file:$key}}')" ;;
+  *) echo "$role: LEZ_ZEC_ZEBRA_ROUTE must be deterministic_local, self_hosted_cookie or tatum_testnet_x_api_key, not '$zec_zebra_route'" >&2; exit 2 ;;
+esac
+# How many blocks below the mature tip the funder search reads (the Node's
+# default when unset; on Testnet the Node bounds it).
+zec_scan_field='{}'
+if [[ -n "${LEZ_ZEC_FUNDING_SCAN_BLOCKS:-}" ]]; then
+  [[ "$LEZ_ZEC_FUNDING_SCAN_BLOCKS" =~ ^[1-9][0-9]{0,5}$ ]] || { echo "$role: LEZ_ZEC_FUNDING_SCAN_BLOCKS must be a positive number of blocks" >&2; exit 2; }
+  zec_scan_field="$(jq -n --argjson blocks "$LEZ_ZEC_FUNDING_SCAN_BLOCKS" '{funding_scan_blocks:$blocks}')"
 fi
 jq -n --arg profile "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" --argjson key "$zec_key_field" \
-  --argjson route "$zec_route_field" '
-  {schema_version:1, profile:$profile, zebra_endpoint:"http://127.0.0.1:18232"} + $route + $key' >"$zec_role_config"
+  --argjson route "$zec_route_field" --arg endpoint "$zec_zebra_endpoint" --argjson scan "$zec_scan_field" '
+  {schema_version:1, profile:$profile, zebra_endpoint:$endpoint} + $route + $key + $scan' >"$zec_role_config"
 chmod 0600 "$zec_role_config"
 
 # The Monero role a Node takes swaps under at take time (xmr_reserve_v1,
@@ -573,18 +603,21 @@ fi
 # publish on it, the Taker refuses a new take on it, and both report
 # themselves degraded. Bitcoin is asked with the role's cookie
 # (probe-bitcoin, above), Zcash with the package's health check (with Zebra's
-# cookie when LEZ_ZEBRA_COOKIE_FILE names one); both are the
-# package's own files beside the Node. Monero, where the role has its logins,
+# cookie when LEZ_ZEBRA_COOKIE_FILE names one; over the provider route the
+# check, which speaks to loopback only, has nothing to ask, so Zcash has no
+# probe: health lists no Zcash route and no take is refused on its account);
+# both are the package's own files beside the Node. Monero, where the role has its logins,
 # is asked for its one route (TakerSellsLez) with probe-monero, above.
 launcher="$bin/${BASH_SOURCE[0]##*/}"
 jq -n --arg launcher "$launcher" --arg launcher_sha "$(sha256_of "$launcher")" \
   --arg cookie "$btc_state/btc-rpc-cookie" --arg check "$bin/lez-runtime-healthcheck" \
   --arg check_sha "$(sha256_of "$bin/lez-runtime-healthcheck")" \
   --argjson monero "$monero_ready" --arg monerod_login "$monero_state/monerod.login" \
-  --arg zec_cookie "$zec_cookie_file" '
-  [{pair:"Bitcoin", program:$launcher, program_sha256:$launcher_sha, args:["probe-bitcoin", $cookie]},
-   {pair:"Zcash", program:$check, program_sha256:$check_sha, args:(["tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]
-      + if $zec_cookie == "" then [] else ["--cookie-file", $zec_cookie] end)}]
+  --arg zec_cookie "$zec_cookie_file" --arg zec_route "$zec_zebra_route" '
+  ([{pair:"Bitcoin", program:$launcher, program_sha256:$launcher_sha, args:["probe-bitcoin", $cookie]}]
+   + if $zec_route == "tatum_testnet_x_api_key" then [] else
+     [{pair:"Zcash", program:$check, program_sha256:$check_sha, args:(["tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]
+        + if $zec_cookie == "" then [] else ["--cookie-file", $zec_cookie] end)}] end)
   | {schema_version:1, commands:([.[] as $probe | ("TakerSellsForeign", "TakerSellsLez") as $direction
       | {route:{pair:$probe.pair, direction:$direction}} + ($probe | del(.pair)) + {timeout_milliseconds:5000}]
       + if $monero == 1 then [{route:{pair:"Monero", direction:"TakerSellsLez"}, program:$launcher,

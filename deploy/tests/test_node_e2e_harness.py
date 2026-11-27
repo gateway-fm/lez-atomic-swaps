@@ -1154,6 +1154,65 @@ class TakeTimeOffers(unittest.TestCase):
         self.assertNotIn('zec/current', desk)
 
 
+class PublicLaneTakesAtTakeTime(unittest.TestCase):
+    """The public Zcash Testnet lane (LEZ_ZEC_PUBLIC_TESTNET=1) sets a swap up
+    as the devnet does: the Maker's CLI publishes, the Nodes agree at the take.
+    It mines nothing and pays no key from another."""
+
+    def test_its_offers_are_published_and_the_taker_is_never_paid(self):
+        published = []
+        with patch.object(e2e, 'ZEC_PUBLIC', True), patch.object(e2e, 'ZEC_DYNAMIC_PROFILE', 'public-testnet-v2'), \
+                patch.dict(e2e.ROUTE, {'direction': 'TakerSellsForeign'}), \
+                patch.object(e2e, 'zec_public_taker_funds', lambda: published.append('funds checked')), \
+                patch.object(e2e, 'zec_dynamic_publish', lambda stamp, offers: published.append(len(offers))), \
+                patch.object(e2e.subprocess, 'run', lambda *a, **k: self.fail('nothing runs in a container')), \
+                patch.object(e2e, 'zebra', lambda *a, **k: self.fail('the public lane mines nothing')):
+            os.environ.pop('LEZ_ZEC_REUSE_CORRIDOR', None)
+            corridor = e2e.zec_provision()
+        self.assertEqual(published, ['funds checked', 1])
+        self.assertEqual(corridor['profile'], 'public-testnet-v2')
+        self.assertEqual(corridor['receipt_output'], f"take-time:{corridor['offer_id']}")
+
+    def test_selling_lez_it_is_agreed_under_the_taker_reveals_first_twin(self):
+        with patch.object(e2e, 'ZEC_DYNAMIC_PROFILE', 'public-testnet-v2'):
+            with patch.dict(e2e.ROUTE, {'direction': 'TakerSellsLez'}):
+                self.assertEqual(e2e.zec_dynamic_profile(), 'public-testnet-v3')
+                self.assertEqual(e2e.zec_dynamic_profile_facts()['lez_refund_delay_seconds'], 14400)
+            with patch.dict(e2e.ROUTE, {'direction': 'TakerSellsForeign'}):
+                self.assertEqual(e2e.zec_dynamic_profile(), 'public-testnet-v2')
+        # the refund windows are the SDK's and the lane profile's
+        self.assertEqual(e2e.ZEC_PROFILE_REFUND_BLOCKS['public-testnet-v3'], 95)
+        self.assertEqual(e2e.ZEC_PROFILE_REFUND_BLOCKS['public-testnet-v2'], 3_700)
+        lane = (REPO / 'deploy/zec-public-testnet.env').read_text()
+        self.assertIn('LEZ_ZEC_SWAP_PROFILE_REFUND_BLOCKS=95\n', lane)
+        self.assertIn('LEZ_ZEC_SWAP_PROFILE_FOREIGN_REFUND_BLOCKS=3700\n', lane)
+
+    def test_a_taker_key_that_cannot_fund_the_lot_stops_the_lane_with_its_address(self):
+        need = e2e.ZEC_FOREIGN_UNITS + e2e.ZEC_FUNDING_OVERHEAD_ZATOSHIS
+        output = {'value_zatoshis': need, 'mature': True, 'committed': False}
+
+        def funds(outputs):
+            view = {'zcash': {'state': 'available', 'address': 'tmTakerAddress', 'outputs': outputs}}
+            with patch.object(e2e, 'call', lambda role, method, params: (
+                    self.assertEqual((role, method, params),
+                                     ('taker', 'taker_wallet_balances_v1', {'schema_version': 1, 'zcash': True})),
+                    view)[1]), patch.object(e2e, 'log', lambda *_: None):
+                return e2e.zec_public_taker_funds()
+
+        self.assertEqual(funds([output])['address'], 'tmTakerAddress')
+        for outputs in ([], [{**output, 'value_zatoshis': need - 1}], [{**output, 'mature': False}],
+                        [{**output, 'committed': True}]):
+            with self.assertRaisesRegex(e2e.Failure, 'tmTakerAddress.*pays no key from another'):
+                funds(outputs)
+
+    def test_the_lane_script_names_no_tool_that_holds_both_keys(self):
+        lane = (REPO / 'deploy/scripts/public-zec-testnet.sh').read_text()
+        for gone in ('zec-catalog-fixture', 'dealer', 'zec-provision', 'LEZ_ZEC_TESTNET_KEY_DIR'):
+            self.assertNotIn(gone, lane, gone)
+        self.assertIn('LEZ_ZEC_PUBLIC_TESTNET=1', lane)
+        self.assertIn('zec_reserve_v1', lane)
+
+
 class TakeTimeConfigScenarios(unittest.TestCase):
     """zec-regenerated-config and zec-tampered-config: the Zcash twins of the
     Bitcoin regenerated-config and tampered-config, on swaps agreed at take time."""
