@@ -268,6 +268,15 @@ impl BtcMakerLifecycle {
                 let settled = revision.is_some_and(|revision| revision >= 2)
                     || matches!(phase.as_str(), "completed" | "refunded");
                 if !settled && now < cutoff {
+                    // Still in flight: it goes on holding the account's
+                    // other locks (ADR 0219).
+                    let _ = crate::actor_supervisor::admit_prepared_lez_lock(
+                        &*store
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("swap store lock poisoned"))?,
+                        agreement.coordinator().id(),
+                        true,
+                    );
                     return Ok(());
                 }
                 continue;
@@ -283,6 +292,20 @@ impl BtcMakerLifecycle {
         let (_, sidecar) = self
             .sidecar(&layout, &reservation_id)
             .map_err(|error| anyhow::anyhow!("{error}"))?;
+        // The escrow is planned at the account's live nonce: not while a LEZ
+        // claim of this account is pending or another lock is in flight
+        // (ADR 0219). The next pass looks again.
+        if crate::actor_supervisor::admit_prepared_lez_lock(
+            &*store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("swap store lock poisoned"))?,
+            agreement.coordinator().id(),
+            false,
+        )
+        .is_err()
+        {
+            return Ok(());
+        }
         let escrow = sidecar.prepare_escrow(terms).await?;
         store_escrow(&layout, &escrow).map_err(|error| anyhow::anyhow!("{error}"))?;
         eprintln!(

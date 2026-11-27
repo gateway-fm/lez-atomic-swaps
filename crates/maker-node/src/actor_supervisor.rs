@@ -1,5 +1,6 @@
 //! Pair-specific validation for pair-neutral maker actor scheduling.
 
+mod account_gate;
 mod runtime;
 
 pub use runtime::{
@@ -9,6 +10,10 @@ pub use runtime::{
     supervise_one_abandoned_maker_actor_until, supervise_one_due_maker_actor,
     supervise_one_due_maker_actor_until,
 };
+
+pub(crate) use runtime::admit_prepared_lez_lock;
+#[cfg(feature = "pair-zec")]
+pub(crate) use runtime::lez_claim_hold_bound_ms;
 
 use btc_reference_actor::validate_maker_manifest_config_bytes as validate_btc_config;
 use lez_swap_store::{

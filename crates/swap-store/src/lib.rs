@@ -721,6 +721,13 @@ pub struct SqliteSwapStore {
 }
 
 impl SqliteSwapStore {
+    /// The database file this store is open on (empty for one in memory): one
+    /// Maker Node is one such file.
+    #[must_use]
+    pub fn database_path(&self) -> Option<String> {
+        self.connection.path().map(str::to_owned)
+    }
+
     /// Opens or creates a store and applies the current schema.
     ///
     /// # Errors

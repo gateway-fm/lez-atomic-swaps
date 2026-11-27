@@ -6,6 +6,8 @@ use anyhow::Context as _;
 
 use lez_zec_swap_sdk::ZecProfileId;
 
+use crate::actor_supervisor::lez_claim_hold_bound_ms;
+
 use super::{zec_reserve::Materialized, *};
 
 const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
@@ -576,53 +578,95 @@ const LEZ_CLAIM_SLOT_SAFETY_FACTOR: u64 = 2;
 /// 4.5–5.5 s). The devnet's LEZ blocks are about 1.5 s apart.
 const DEVNET_LEZ_CLAIM_WORST_MS: u64 = 7_000;
 
-/// LEZ v0.2 public testnet finality, which a claim waits out before the next
-/// one is planned. No LEZ testnet claim latency has been measured; this is
-/// the recorded LEZ funding finality: about an hour (docs/api/README.md) and
-/// about two hours on 2026-09-19 (docs/evidence/testnet4-20260919). The
-/// longer is taken.
+/// LEZ v0.2 public testnet finality. No LEZ testnet claim latency has been
+/// measured; this is the recorded LEZ funding finality: about an hour
+/// (docs/api/README.md) and about two hours on 2026-09-19
+/// (docs/evidence/testnet4-20260919). The longer is taken. A claim does not
+/// hold the next one that long: the gate's hold ends first
+/// ([`lez_claim_hold_bound_ms`]).
 const PUBLIC_TESTNET_LEZ_CLAIM_WORST_MS: u64 = 2 * 3_600_000;
 
 /// How long a claim held at the gate can wait after the claim before it is
-/// final: the holder's next attempt (requeue delay) that clears its in-flight
-/// marker and the held claim's retry (failure backoff). The devnet runs the
-/// Maker at 2 s / 10 s (`LEZ_MAKER_ACTOR_REQUEUE_SECONDS`,
+/// released: the holder's next attempt (requeue delay) that clears its
+/// in-flight marker and the held claim's retry (failure backoff). The devnet
+/// runs the Maker at 2 s / 10 s (`LEZ_MAKER_ACTOR_REQUEUE_SECONDS`,
 /// `LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS`), every other Node at the
 /// defaults, 5 s / 30 s.
 const DEVNET_HELD_CLAIM_RETRY_MS: u64 = 12_000;
 const DEFAULT_HELD_CLAIM_RETRY_MS: u64 = 35_000;
 
+/// The open `TakerSellsLez` swaps a Maker holds under a profile on whose
+/// network no LEZ claim latency has been measured: one. The queue bound
+/// ([`lez_claim_queue_capacity`]) says how many claims the gate's timing
+/// fits in the margin; how many swaps' worth of Zcash a Maker exposes to a
+/// network it has no claim measurement of is a separate limit, and it stays
+/// at one until a claim is measured there (ADR 0216: the public profile is
+/// not retuned without measurements).
+const UNMEASURED_NETWORK_CAPACITY: usize = 1;
+
+/// How many follow-up LEZ claims revealed together the gate settles inside
+/// the margin `margin_ms`, when one claim lands in `landing_ms` and a held
+/// claim retries after `held_retry_ms`:
+///
+/// `slot = SAFETY (2) * (landing + retry)`: what each claim ahead costs the
+/// next one;
+///
+/// `capacity = 0` when `SAFETY * landing > M` (not even a claim alone lands
+/// in the margin: the direction is refused), else
+/// `1 + floor((M - SAFETY * landing) / slot)`: the last of `N` claims waits
+/// `N - 1` slots and then needs its own landing time. A claim alone waits
+/// for no slot, so the held-claim retry is not charged to it.
+const fn lez_claim_queue_capacity(margin_ms: u64, landing_ms: u64, held_retry_ms: u64) -> usize {
+    let own_ms = LEZ_CLAIM_SLOT_SAFETY_FACTOR * landing_ms;
+    if own_ms > margin_ms {
+        return 0;
+    }
+    let slot_ms = LEZ_CLAIM_SLOT_SAFETY_FACTOR * (landing_ms + held_retry_ms);
+    let queued = (margin_ms - own_ms) / slot_ms;
+    if queued >= usize::MAX as u64 {
+        usize::MAX
+    } else {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "bounded by the comparison above"
+        )]
+        let queued = queued as usize;
+        queued + 1
+    }
+}
+
 /// How many open ZEC `TakerSellsLez` swaps a Maker holds at once under
-/// `profile` (FINDING 3). The Taker chooses when to reveal, up to the claim
-/// window's close at `T_lez - M`; the Maker's follow-up LEZ claims go one at
-/// a time (one LEZ account nonce), earliest refund first. `N` swaps revealed
-/// together leave the last claim `N` slots after the reveal, so
-/// `N * slot <= M` with
+/// `profile` (FINDING 3; issue #176). The Taker chooses when to reveal, up to
+/// the claim window's close at `T_lez - M`; the Maker's follow-up LEZ claims
+/// go one at a time (one LEZ account nonce), earliest refund first.
 ///
-/// `slot = SAFETY (2) * (worst LEZ claim submit-to-final + held-claim retry)`
+/// One claim holds the next for its landing time: until it is final, and at
+/// most for the gate's hold ([`lez_claim_hold_bound_ms`]: half the margin,
+/// five minutes at most, and the stop grace), after which the next claim is
+/// planned whether or not the first is final. So
 ///
-/// and `capacity = floor(M / slot)`:
+/// `landing = min(worst submit-to-final, the gate's hold)`
 ///
-/// | profile | M | worst claim | retry | slot | capacity |
-/// |---|---|---|---|---|---|
-/// | devnet v7, v8 | 120 s | 7 s (measured) | 12 s | 38 s | 3 |
-/// | deterministic-local v3 (test lane) | 30 s | 7 s (devnet bound) | 35 s | 84 s | 0 → 1 |
-/// | public-testnet v3 | 7 200 s | 7 200 s (LEZ funding finality; no claim measured) | 35 s | 14 470 s | 0 → 1 |
+/// and the capacity is [`lez_claim_queue_capacity`]`(M, landing, retry)`,
+/// capped at [`UNMEASURED_NETWORK_CAPACITY`] where no claim was measured:
 ///
-/// A profile whose margin does not hold one slot keeps a capacity of one:
-/// the cap bounds how many claims queue behind each other, and the single
-/// claim's own fit in `M` is the profile's timing check (ADR 0216, I3),
-/// which public-testnet v3 does not meet at the recorded LEZ finality.
+/// | profile | M | worst final | hold | landing | retry | slot | queue bound | capacity |
+/// |---|---|---|---|---|---|---|---|---|
+/// | devnet v7, v8 | 120 s | 7 s (measured) | 62 s | 7 s | 12 s | 38 s | 1 + ⌊106/38⌋ = 3 | 3 |
+/// | deterministic-local v3 (test lane) | 30 s | 7 s (devnet bound) | 17 s | 7 s | 35 s | 84 s | 1 + ⌊16/84⌋ = 1 | 1 |
+/// | public-testnet v3 | 7 200 s | 7 200 s (funding finality; no claim measured) | 302 s | 302 s | 35 s | 674 s | 1 + ⌊6596/674⌋ = 10 | 1 (unmeasured) |
 ///
 /// The count and the gate agree on which swaps compete: a swap past its LEZ
 /// refund time is not counted, and its claim, waiting or in flight, holds no
 /// other (it can no longer be included; its actor waits for the Taker's LEZ
-/// refund, then recovers its Zcash or stops by name, `lez_claim_cannot_land`). A claim whose attempt failed before submission
-/// does not hold the others either, so a failing swap delays the queue by
-/// at most its own attempt, not until its refund time.
+/// refund, then recovers its Zcash or stops by name, `lez_claim_cannot_land`).
+/// A swap whose Taker has not locked inside its Taker-lock window is not
+/// counted either, and is funded later only while a place is free (issue
+/// #178). A claim whose attempt failed before submission does not hold the
+/// others, so a failing swap delays the queue by at most its own attempt.
 #[must_use]
 pub fn zec_taker_sells_lez_capacity(profile: ZecProfileId) -> usize {
-    let (claim_worst_ms, held_retry_ms) = match profile {
+    let (claim_worst_ms, held_retry_ms, measured) = match profile {
         ZecProfileId::DeterministicLocalDevnetV1
         | ZecProfileId::DeterministicLocalDevnetV2
         | ZecProfileId::DeterministicLocalDevnetV3
@@ -631,28 +675,36 @@ pub fn zec_taker_sells_lez_capacity(profile: ZecProfileId) -> usize {
         | ZecProfileId::DeterministicLocalDevnetV6
         | ZecProfileId::DeterministicLocalDevnetV7
         | ZecProfileId::DeterministicLocalDevnetV8 => {
-            (DEVNET_LEZ_CLAIM_WORST_MS, DEVNET_HELD_CLAIM_RETRY_MS)
+            (DEVNET_LEZ_CLAIM_WORST_MS, DEVNET_HELD_CLAIM_RETRY_MS, true)
         }
         ZecProfileId::PublicTestnetV1
         | ZecProfileId::PublicTestnetV2
         | ZecProfileId::PublicTestnetV3 => (
             PUBLIC_TESTNET_LEZ_CLAIM_WORST_MS,
             DEFAULT_HELD_CLAIM_RETRY_MS,
+            false,
         ),
         ZecProfileId::DeterministicLocalV1
         | ZecProfileId::DeterministicLocalV2
         | ZecProfileId::DeterministicLocalV3 => {
-            (DEVNET_LEZ_CLAIM_WORST_MS, DEFAULT_HELD_CLAIM_RETRY_MS)
+            (DEVNET_LEZ_CLAIM_WORST_MS, DEFAULT_HELD_CLAIM_RETRY_MS, true)
         }
     };
-    let slot_ms = LEZ_CLAIM_SLOT_SAFETY_FACTOR * (claim_worst_ms + held_retry_ms);
     let margin_ms = ZecRefundProfile::for_id(profile)
         .required_margin()
         .value()
         .saturating_mul(1_000);
-    usize::try_from(margin_ms / slot_ms)
-        .unwrap_or(usize::MAX)
-        .max(1)
+    let landing_ms = if claim_worst_ms < lez_claim_hold_bound_ms(margin_ms) {
+        claim_worst_ms
+    } else {
+        lez_claim_hold_bound_ms(margin_ms)
+    };
+    let queue = lez_claim_queue_capacity(margin_ms, landing_ms, held_retry_ms);
+    if measured {
+        queue
+    } else {
+        queue.min(UNMEASURED_NETWORK_CAPACITY)
+    }
 }
 
 fn validate_zec_chat_shape(request: &ZecChatProposeRequestV1) -> RpcResult<()> {
@@ -710,6 +762,35 @@ mod capacity_tests {
         let slot_ms =
             LEZ_CLAIM_SLOT_SAFETY_FACTOR * (DEVNET_LEZ_CLAIM_WORST_MS + DEVNET_HELD_CLAIM_RETRY_MS);
         assert!(3 * slot_ms <= 120_000);
+    }
+
+    #[test]
+    fn the_capacity_is_the_queue_bound_and_never_a_zero_raised_to_one() {
+        // Issue #176: the public profile's formula gave zero (its slot was
+        // sized by two hours of LEZ finality) and was raised to one. A claim
+        // holds the next one for the gate's hold at most, and a claim alone
+        // waits for no slot.
+        assert_eq!(lez_claim_hold_bound_ms(120_000), 62_000);
+        assert_eq!(lez_claim_hold_bound_ms(30_000), 17_000);
+        assert_eq!(lez_claim_hold_bound_ms(7_200_000), 302_000);
+        // Devnet: 1 + floor((120 - 14) / 38).
+        assert_eq!(lez_claim_queue_capacity(120_000, 7_000, 12_000), 3);
+        // The test lane: one claim fits (14 s of 30 s), a second would not.
+        assert_eq!(lez_claim_queue_capacity(30_000, 7_000, 35_000), 1);
+        // Public testnet: the hold, not finality, sizes the slot; ten claims
+        // would queue inside the margin.
+        assert_eq!(lez_claim_queue_capacity(7_200_000, 302_000, 35_000), 10);
+        // A margin that does not hold one claim's landing admits none.
+        assert_eq!(lez_claim_queue_capacity(13_999, 7_000, 12_000), 0);
+        assert_eq!(lez_claim_queue_capacity(14_000, 7_000, 12_000), 1);
+        // Sized by finality the public profile would admit none; it is one
+        // because no claim was measured there, not because zero was raised.
+        assert_eq!(lez_claim_queue_capacity(7_200_000, 7_200_000, 35_000), 0);
+        assert_eq!(UNMEASURED_NETWORK_CAPACITY, 1);
+        assert_eq!(
+            zec_taker_sells_lez_capacity(ZecProfileId::PublicTestnetV3),
+            UNMEASURED_NETWORK_CAPACITY
+        );
     }
 
     #[test]

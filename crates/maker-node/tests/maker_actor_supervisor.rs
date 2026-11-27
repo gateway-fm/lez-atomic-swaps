@@ -2803,3 +2803,303 @@ fn a_maker_lez_claim_admitted_elsewhere_holds_the_next_one() {
         "nothing signed while another claim is admitted"
     );
 }
+
+/// A Zcash Maker actor script at `taker_lock_confirmed` whose status names
+/// `leg` as the Maker's pending lock and whose drive sends `operation`
+/// (`submitted`); each command is appended to `log`.
+fn maker_lock_program(log: &Path, leg: &str, operation: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         printf '%s\\n' \"$3\" >> '{log}'\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"taker_lock_confirmed\",\"revision\":1,\"next_action\":\"wait\",\"maker_lock\":\"{leg}\"}}' ;;\n\
+           drive) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"drive\",\"outcome\":\"submitted\",\"operation\":\"{operation}\",\"phase\":\"taker_lock_confirmed\",\"revision\":1,\"next_action\":\"wait\"}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n",
+        log = log.display()
+    )
+}
+
+fn drives(log: &Path) -> usize {
+    fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|command| *command == "drive")
+        .count()
+}
+
+/// The text of a LEZ claim's in-flight marker as the actor writes it.
+fn in_flight_marker(lez_refund_at_ms: u64, submitted_at_ms: u64) -> String {
+    format!(
+        "follow-up LEZ claim submitted\nlez_refund_at_ms={lez_refund_at_ms}\nsubmitted_at_ms={submitted_at_ms}\n"
+    )
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one journey: lock behind lock, locks behind a claim, a claim past a lock"
+)]
+fn the_makers_lez_locks_wait_for_a_pending_lez_claim_and_for_each_other_and_no_claim_waits_for_a_lock()
+ {
+    // Issue #176: the Maker's LEZ locks (a Zcash swap the Taker sells Zcash
+    // in: the escrow's initialization and funding) are signed by the account
+    // that signs its follow-up LEZ claims, and went past the one-claim gate.
+    // A lock planned while a claim was pending took the claim's nonce. Now
+    // no lock is planned or sent while a claim waits, is admitted or is
+    // submitted and within its hold; locks go one at a time; and a claim
+    // never waits for a lock.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let owner = MakerActorLeaseOwner::new([0x91; 16]).unwrap();
+    let now = unix_now_ms() / 1000;
+    let now_ms = unix_now_ms();
+
+    // The first lock is admitted and sends its initialization.
+    let first_log = root.path().join("first-lock-log");
+    register_gated_actor(&mut store, root.path(), "m5-lock-first", |_| {
+        maker_lock_program(&first_log, "lez", "lez_initialize")
+    });
+    assert_eq!(
+        run_due(&mut store, owner, now),
+        (
+            "m5-lock-first".to_owned(),
+            MakerActorSupervisorResolution::Requeued,
+            None
+        )
+    );
+    assert_eq!(drives(&first_log), 1);
+
+    // A second swap's lock waits while the first is in flight, and is looked
+    // at again after the requeue delay (5 s), not the failure backoff (30 s).
+    let second_log = root.path().join("second-lock-log");
+    register_gated_actor(&mut store, root.path(), "m5-lock-second", |_| {
+        maker_lock_program(&second_log, "lez", "lez_initialize")
+    });
+    assert_eq!(
+        run_due(&mut store, owner, now),
+        (
+            "m5-lock-second".to_owned(),
+            MakerActorSupervisorResolution::Backoff,
+            Some("lez_lock_waits_for_lock".to_owned())
+        )
+    );
+    assert_eq!(drives(&second_log), 0, "nothing planned beside a lock");
+    let due = |at| {
+        store
+            .list_due_maker_actor_ids(at, 8)
+            .unwrap()
+            .iter()
+            .any(|id| id.as_str() == "m5-lock-second")
+    };
+    assert!(!due(now + 4) && due(now + 5));
+
+    // A follow-up LEZ claim of a third swap is submitted (its attempt runs on
+    // another worker: leased). Both locks wait for it, the one in flight too.
+    let claim_state = register_gated_actor(&mut store, root.path(), "m5-lock-claim", |_| {
+        claim_logging_program(
+            &root.path().join("claim-log"),
+            "claim_evidence_available",
+            "claim_lez",
+        )
+    });
+    let claim_marker = zec_reference_actor::revealing_claim_in_flight_marker(&claim_state).unwrap();
+    fs::write(&claim_marker, in_flight_marker(now_ms + 3_600_000, now_ms)).unwrap();
+    store
+        .claim_maker_actor(
+            &SwapId::new("m5-lock-claim").unwrap(),
+            MakerActorLeaseOwner::new([0x92; 16]).unwrap(),
+            now,
+        )
+        .unwrap()
+        .expect("the claiming swap's lease");
+    let mut held = Vec::new();
+    for _ in 0..2 {
+        let (swap, resolution, class) = run_due(&mut store, owner, now + 6);
+        assert_eq!(
+            resolution,
+            MakerActorSupervisorResolution::Backoff,
+            "{swap}"
+        );
+        assert_eq!(class.as_deref(), Some("lez_lock_waits_for_claim"), "{swap}");
+        held.push(swap);
+    }
+    held.sort();
+    assert_eq!(held, ["m5-lock-first", "m5-lock-second"]);
+    assert_eq!((drives(&first_log), drives(&second_log)), (1, 0));
+
+    // The claim was submitted longer ago than its hold: it holds no lock any
+    // more, though it is not final and its refund time is an hour away. One
+    // lock goes, the other waits behind it.
+    fs::write(
+        &claim_marker,
+        in_flight_marker(now_ms + 3_600_000, now_ms - 600_000),
+    )
+    .unwrap();
+    let mut after = Vec::new();
+    for _ in 0..2 {
+        let (swap, resolution, class) = run_due(&mut store, owner, now + 12);
+        after.push((swap, resolution, class));
+    }
+    after.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(
+        after,
+        [
+            (
+                "m5-lock-first".to_owned(),
+                MakerActorSupervisorResolution::Requeued,
+                None
+            ),
+            (
+                "m5-lock-second".to_owned(),
+                MakerActorSupervisorResolution::Backoff,
+                Some("lez_lock_waits_for_lock".to_owned())
+            ),
+        ]
+    );
+    assert_eq!((drives(&first_log), drives(&second_log)), (2, 0));
+
+    // A claim arriving while that lock is in flight does not wait for it.
+    let claims = root.path().join("lez-claims-submitted");
+    let late_claim = "m5-lock-late-claim";
+    register_gated_actor(&mut store, root.path(), late_claim, |state| {
+        gated_lez_claim_program(
+            late_claim,
+            state,
+            &root.path().join("late-claim-log"),
+            &claims,
+            now_ms + 1_800_000,
+        )
+    });
+    assert_eq!(
+        run_due(&mut store, owner, now + 12),
+        (
+            late_claim.to_owned(),
+            MakerActorSupervisorResolution::Requeued,
+            None
+        )
+    );
+    assert_eq!(
+        fs::read_to_string(&claims).unwrap(),
+        format!("{late_claim}\n")
+    );
+}
+
+#[test]
+fn a_makers_zcash_funding_drive_passes_the_lez_account_gate() {
+    // Selling LEZ the Maker's lock is its Zcash funding: no LEZ transaction,
+    // so a pending LEZ claim does not hold it.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    let now = unix_now_ms() / 1000;
+    let claim_state = register_gated_actor(&mut store, root.path(), "m5-zfund-claim", |_| {
+        claim_logging_program(
+            &root.path().join("claim-log"),
+            "claim_evidence_available",
+            "claim_lez",
+        )
+    });
+    fs::write(
+        zec_reference_actor::revealing_claim_in_flight_marker(&claim_state).unwrap(),
+        in_flight_marker(unix_now_ms() + 3_600_000, unix_now_ms()),
+    )
+    .unwrap();
+    store
+        .claim_maker_actor(
+            &SwapId::new("m5-zfund-claim").unwrap(),
+            MakerActorLeaseOwner::new([0x94; 16]).unwrap(),
+            now,
+        )
+        .unwrap()
+        .expect("the claiming swap's lease");
+    let log = root.path().join("funding-log");
+    register_gated_actor(&mut store, root.path(), "m5-zfund", |_| {
+        maker_lock_program(&log, "zcash", "zcash_fund")
+    });
+    assert_eq!(
+        run_due(
+            &mut store,
+            MakerActorLeaseOwner::new([0x93; 16]).unwrap(),
+            now
+        ),
+        (
+            "m5-zfund".to_owned(),
+            MakerActorSupervisorResolution::Requeued,
+            None
+        )
+    );
+    assert_eq!(drives(&log), 1);
+}
+
+#[test]
+fn a_submitted_lez_claim_holds_the_next_claim_for_its_hold_not_until_it_is_final() {
+    // Issue #176, related point: a claim submitted in a swap that is neither
+    // failed nor ended held every other follow-up LEZ claim until its LEZ
+    // refund time. It holds them for one admission bound from its
+    // submission: time to be included, which is what takes the nonce.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let now = unix_now_ms() / 1000;
+    let now_ms = unix_now_ms();
+    let next_after = |name: &str, submitted_ago_ms: u64| {
+        let mut store = SqliteSwapStore::open(root.path().join(format!("{name}.sqlite3"))).unwrap();
+        let holder = format!("{name}-holder");
+        let holder_state = register_gated_actor(&mut store, root.path(), &holder, |_| {
+            claim_logging_program(
+                &root.path().join(format!("{name}-holder-log")),
+                "claim_evidence_available",
+                "claim_lez",
+            )
+        });
+        fs::write(
+            zec_reference_actor::revealing_claim_in_flight_marker(&holder_state).unwrap(),
+            in_flight_marker(now_ms + 3_600_000, now_ms - submitted_ago_ms),
+        )
+        .unwrap();
+        // Mid-attempt on another worker: neither failed nor ended.
+        store
+            .claim_maker_actor(
+                &SwapId::new(holder).unwrap(),
+                MakerActorLeaseOwner::new([0x96; 16]).unwrap(),
+                now,
+            )
+            .unwrap()
+            .expect("the holder's lease");
+        let next = format!("{name}-next");
+        let claims = root.path().join(format!("{name}-claims"));
+        register_gated_actor(&mut store, root.path(), &next, |state| {
+            gated_lez_claim_program(
+                &next,
+                state,
+                &root.path().join(format!("{name}-next-log")),
+                &claims,
+                now_ms + 1_800_000,
+            )
+        });
+        let (swap, resolution, class) = run_due(
+            &mut store,
+            MakerActorLeaseOwner::new([0x95; 16]).unwrap(),
+            now,
+        );
+        assert_eq!(swap, next);
+        (resolution, class)
+    };
+    assert_eq!(
+        next_after("m5-hold-fresh", 1_000),
+        (
+            MakerActorSupervisorResolution::Backoff,
+            Some("lez_revealing_claim_in_flight".to_owned())
+        ),
+        "inside its hold a submitted claim holds the next"
+    );
+    // The attempt bound here is 20 s and the stop grace 2 s.
+    assert_eq!(
+        next_after("m5-hold-old", 23_000),
+        (MakerActorSupervisorResolution::Requeued, None),
+        "past its hold it holds nothing, an hour before its refund time"
+    );
+}

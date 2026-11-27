@@ -245,7 +245,25 @@ impl ActorStatusV1 {
                 lez_refund_at_ms,
                 revealing_claim_hold_attention_ms,
                 required_margin_ms,
+                maker_lock: None,
             },
+        }
+    }
+
+    /// Names the leg the Maker's next drive locks.
+    fn with_maker_lock(mut self, leg: Option<ActorMakerLockLegV1>) -> Self {
+        if let ActorStateV1::Active { maker_lock, .. } = &mut self.state {
+            *maker_lock = leg;
+        }
+        self
+    }
+
+    /// The leg the Maker's next drive locks, while its lock is the next step.
+    #[must_use]
+    pub const fn maker_lock(&self) -> Option<ActorMakerLockLegV1> {
+        match &self.state {
+            ActorStateV1::NotActivated => None,
+            ActorStateV1::Active { maker_lock, .. } => *maker_lock,
         }
     }
 
@@ -333,7 +351,41 @@ enum ActorStateV1 {
         /// Node bounds a LEZ claim admission by half of it.
         #[serde(skip_serializing_if = "Option::is_none")]
         required_margin_ms: Option<u64>,
+        /// The leg the Maker's next drive locks, while its lock is the next
+        /// step (the Taker's lock confirmed): a Maker Node coordinates a LEZ
+        /// lock with its account's other LEZ transactions and admits a Zcash
+        /// funding against its open-swap capacity. Absent otherwise.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        maker_lock: Option<ActorMakerLockLegV1>,
     },
+}
+
+/// The leg a Maker locks second.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorMakerLockLegV1 {
+    /// `TakerSellsForeign`: the Maker creates and funds the LEZ escrow, two
+    /// transactions of its LEZ account.
+    Lez,
+    /// `TakerSellsLez`: the Maker funds the Zcash HTLC.
+    Zcash,
+}
+
+/// The leg the Maker's drive locks next, if its lock is the next step.
+const fn pending_maker_lock(
+    local: Participant,
+    phase: Phase,
+    direction: SwapDirection,
+) -> Option<ActorMakerLockLegV1> {
+    match (local, phase, direction) {
+        (Participant::Maker, Phase::TakerLockConfirmed, SwapDirection::TakerSellsForeign) => {
+            Some(ActorMakerLockLegV1::Lez)
+        }
+        (Participant::Maker, Phase::TakerLockConfirmed, SwapDirection::TakerSellsLez) => {
+            Some(ActorMakerLockLegV1::Zcash)
+        }
+        _ => None,
+    }
 }
 
 /// One re-plan of the LEZ first lock: both nonces and both transaction ids.
@@ -1938,6 +1990,42 @@ pub fn revealing_claim_in_flight_refund_at_ms(role_state_db: &Path) -> Option<u6
         .ok()
 }
 
+/// When the claim bytes an in-flight marker stands for were first submitted
+/// (Unix milliseconds; a line `submitted_at_ms=<ms>`), when the marker exists
+/// and records it. A re-planned claim is new bytes at a new nonce and records
+/// its own time; sending the same bytes again keeps the time. A Maker Node
+/// holds its other LEZ claims behind a submitted one for a bounded time from
+/// it, not until the claim is final (issue #176).
+#[must_use]
+pub fn revealing_claim_in_flight_submitted_at_ms(role_state_db: &Path) -> Option<u64> {
+    fs::read_to_string(revealing_claim_in_flight_marker(role_state_db)?)
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("submitted_at_ms="))?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// The in-flight marker's text: [`claim_marker_text`] and the time the
+/// current claim bytes were first submitted.
+fn in_flight_marker_text(step: ClaimStepV1, lez_refund_at_ms: u64, submitted_at_ms: u64) -> String {
+    format!(
+        "{}submitted_at_ms={submitted_at_ms}\n",
+        claim_marker_text(step, lez_refund_at_ms)
+    )
+}
+
+/// The time an in-flight marker written now records: the one it already
+/// records when the same claim bytes are sent again, `now_ms` for a first
+/// submission, a re-planned claim (`replanned`), or a marker without one.
+fn in_flight_submitted_at_ms(recorded: Option<u64>, replanned: bool, now_ms: u64) -> u64 {
+    match recorded {
+        Some(recorded) if !replanned => recorded,
+        _ => now_ms,
+    }
+}
+
 /// How near its own LEZ refund time a revealing LEZ claim held behind another
 /// swap's (one in flight per Node) is surfaced as needing attention with the
 /// holder named, so a stuck holder cannot make it miss its claim in silence
@@ -2262,7 +2350,12 @@ where
                 replans.push(ActorReplanV1::from_claim(&supersession, step));
             }
             ClaimDriveOutcome::Submitted(step) => {
-                mark_claim_submitted(config, step, active.agreement().lez_refund_at_ms());
+                mark_claim_submitted(
+                    config,
+                    step,
+                    active.agreement().lez_refund_at_ms(),
+                    !replans.is_empty(),
+                );
                 return Ok(ActorEffectOutcomeV1::Submitted {
                     operation: claim_operation(step),
                     replans,
@@ -2533,20 +2626,28 @@ where
 /// claim, the Maker's follow-up LEZ claim). The Maker's follow-up Zcash claim
 /// leaves neither. Each records the swap's LEZ refund time
 /// ([`revealing_claim_in_flight_refund_at_ms`]).
-fn mark_claim_submitted(config: &ActorConfig, step: ClaimStepV1, lez_refund_at_ms: u64) {
+fn mark_claim_submitted(
+    config: &ActorConfig,
+    step: ClaimStepV1,
+    lez_refund_at_ms: u64,
+    replanned: bool,
+) {
     let (submitted, in_flight) = claim_markers(step);
-    let markers = [
-        submitted
-            .then(|| revealing_claim_submitted_marker(config.role_state_db()))
-            .flatten(),
-        in_flight
-            .then(|| revealing_claim_in_flight_marker(config.role_state_db()))
-            .flatten(),
-    ];
-    for marker in markers.into_iter().flatten() {
+    if submitted && let Some(marker) = revealing_claim_submitted_marker(config.role_state_db()) {
         let _ = fs::write(marker, claim_marker_text(step, lez_refund_at_ms));
     }
     if in_flight {
+        if let Some(marker) = revealing_claim_in_flight_marker(config.role_state_db()) {
+            let submitted_at_ms = in_flight_submitted_at_ms(
+                revealing_claim_in_flight_submitted_at_ms(config.role_state_db()),
+                replanned,
+                wall_clock_unix_ms(),
+            );
+            let _ = fs::write(
+                marker,
+                in_flight_marker_text(step, lez_refund_at_ms, submitted_at_ms),
+            );
+        }
         record_revealing_claim_holder(config.role_state_db(), None);
         // The in-flight marker now holds the gate; the claim no longer waits.
         record_lez_claim_waiting(config.role_state_db(), None);
@@ -2956,6 +3057,11 @@ async fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError
                     .saturating_mul(1000),
                 ),
             )
+            .with_maker_lock(pending_maker_lock(
+                active.local_participant(),
+                active.status(),
+                active.agreement().direction(),
+            ))
         }
         None => ActorStatusV1::not_activated(config.role()),
     })
@@ -3096,6 +3202,62 @@ mod tests {
                 "next_action": "claim_lez"
             })
         );
+    }
+
+    #[test]
+    fn the_status_names_the_makers_pending_lock_leg_only_while_it_is_next() {
+        // Issues #176 and #178: at `taker_lock_confirmed` the Maker's next
+        // action reads `wait` in both directions; the Node must know whether
+        // the next drive signs LEZ transactions or funds Zcash.
+        assert_eq!(
+            pending_maker_lock(
+                Participant::Maker,
+                Phase::TakerLockConfirmed,
+                SwapDirection::TakerSellsForeign
+            ),
+            Some(ActorMakerLockLegV1::Lez)
+        );
+        assert_eq!(
+            pending_maker_lock(
+                Participant::Maker,
+                Phase::TakerLockConfirmed,
+                SwapDirection::TakerSellsLez
+            ),
+            Some(ActorMakerLockLegV1::Zcash)
+        );
+        for (local, phase) in [
+            (Participant::Taker, Phase::TakerLockConfirmed),
+            (Participant::Maker, Phase::Offered),
+            (Participant::Maker, Phase::BothLegsLocked),
+            (Participant::Maker, Phase::ClaimEvidenceAvailable),
+        ] {
+            assert_eq!(
+                pending_maker_lock(local, phase, SwapDirection::TakerSellsLez),
+                None
+            );
+        }
+        let status = |leg| {
+            serde_json::to_value(
+                ActorStatusV1::active(
+                    ActorRole::Maker,
+                    Phase::TakerLockConfirmed,
+                    1,
+                    ZecLifecycleAction::Wait,
+                    Vec::new(),
+                    None,
+                    None,
+                    None,
+                )
+                .with_maker_lock(leg),
+            )
+            .unwrap()
+        };
+        assert_eq!(status(Some(ActorMakerLockLegV1::Lez))["maker_lock"], "lez");
+        assert_eq!(
+            status(Some(ActorMakerLockLegV1::Zcash))["maker_lock"],
+            "zcash"
+        );
+        assert!(status(None).get("maker_lock").is_none());
     }
 
     #[test]
@@ -3705,6 +3867,49 @@ mod tests {
         // A marker written before the time was recorded names none.
         fs::write(&marker, "follow-up LEZ claim submitted\n").unwrap();
         assert_eq!(revealing_claim_in_flight_refund_at_ms(&state), None);
+    }
+
+    #[test]
+    fn the_in_flight_marker_records_when_the_current_claim_bytes_were_first_submitted() {
+        // Issue #176: a Maker Node holds its other LEZ claims behind a
+        // submitted one for a bounded time from its submission. The same
+        // bytes sent again keep the time; a re-planned claim starts its own.
+        let root = tempfile::tempdir().expect("tempdir");
+        let state = root
+            .path()
+            .join("actor")
+            .join("maker")
+            .join("state.sqlite3");
+        fs::create_dir_all(state.parent().unwrap()).unwrap();
+        let marker = revealing_claim_in_flight_marker(&state).unwrap();
+        assert_eq!(revealing_claim_in_flight_submitted_at_ms(&state), None);
+        fs::write(
+            &marker,
+            in_flight_marker_text(ClaimStepV1::FollowupLez, 1_800_000, 1_000),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(&marker).unwrap(),
+            "follow-up LEZ claim submitted\nlez_refund_at_ms=1800000\nsubmitted_at_ms=1000\n"
+        );
+        assert_eq!(
+            revealing_claim_in_flight_refund_at_ms(&state),
+            Some(1_800_000)
+        );
+        assert_eq!(
+            revealing_claim_in_flight_submitted_at_ms(&state),
+            Some(1_000)
+        );
+        assert_eq!(in_flight_submitted_at_ms(Some(1_000), false, 9_000), 1_000);
+        assert_eq!(in_flight_submitted_at_ms(Some(1_000), true, 9_000), 9_000);
+        assert_eq!(in_flight_submitted_at_ms(None, false, 9_000), 9_000);
+        // A marker written before the time was recorded names none.
+        fs::write(
+            &marker,
+            claim_marker_text(ClaimStepV1::FollowupLez, 1_800_000),
+        )
+        .unwrap();
+        assert_eq!(revealing_claim_in_flight_submitted_at_ms(&state), None);
     }
 
     #[test]

@@ -33,7 +33,7 @@ use xmr_reference_actor::{
     XMR_MAKER_ACTOR_ABI_V1, XMR_MAKER_ACTOR_NEXT_ACTION, XMR_MAKER_ACTOR_PROGRAM_ID,
 };
 
-use super::prepare_maker_actor;
+use super::{account_gate, prepare_maker_actor};
 
 const MAX_ATTEMPT_TIMEOUT: Duration = Duration::from_mins(5);
 const CHILD_WAIT_POLL: Duration = Duration::from_millis(20);
@@ -423,9 +423,16 @@ fn resolve_claimed_attempt(
                 "maker actor {}: attempt backs off ({failure_class})",
                 lease.record().swap_id().as_str()
             );
+            // A lock held at the account's gate did not fail: it is looked
+            // at again at the Node's own pace.
+            let delay = if LEZ_LOCK_GATE_CLASSES.contains(&failure_class) {
+                config.requeue_delay_seconds
+            } else {
+                config.failure_backoff_seconds
+            };
             (
                 MakerActorAttemptResolution::Backoff {
-                    not_before: now.saturating_add(config.failure_backoff_seconds),
+                    not_before: now.saturating_add(delay),
                     failure_class: failure_class.into(),
                 },
                 MakerActorSupervisorResolution::Backoff,
@@ -660,6 +667,13 @@ fn run_claimed_attempt_with_lock(
             attempted = command.name();
             return Ok(ClaimedAttempt::Backoff("test_hook_activation_held"));
         }
+        let lock_admitted = match lez_lock_held_back(store, lease, config, command, &status) {
+            Ok(lock_admitted) => lock_admitted,
+            Err(class) => {
+                attempted = command.name();
+                return Ok(ClaimedAttempt::Backoff(class));
+            }
+        };
         let admitted = match effect_held_back(store, lease, config, command, &status) {
             Ok(admitted) => admitted,
             Err(class) => return Ok(ClaimedAttempt::Backoff(class)),
@@ -683,6 +697,9 @@ fn run_claimed_attempt_with_lock(
         match (&run, admitted.as_ref()) {
             (Err(ChildRunError::Retry("actor_timeout")), Some(admitted)) => admitted.renew_now(),
             _ => release_lez_claim_admission(lease),
+        }
+        if lock_admitted {
+            settle_lez_lock(store, lease, config, run.as_ref().ok().map(Vec::as_slice));
         }
         let effect = match run {
             Ok(output) => output,
@@ -1201,7 +1218,7 @@ fn revealing_claim_held_back(
     // The supervisor's workers are threads of this process: one gate decision
     // and its admission write at a time, so two workers can never both read
     // the others before either announced its admission (review 4, L1).
-    let _gate = LEZ_CLAIM_GATE
+    let _gate = account_gate::LEZ_ACCOUNT_GATE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let gate_started = Instant::now();
@@ -1263,37 +1280,17 @@ fn revealing_claim_held_back(
     // profile's margin (review 4, L2), plus the time to stop the child.
     let bound_ms = admission_bound_ms(attempt_timeout, read("required_margin_ms"));
     let own_hold_ms = bound_ms.saturating_add(ADMISSION_STOP_GRACE_MS);
-    // A submitted claim holds the nonce until its swap's LEZ refund time. A
-    // failed swap is driven no more, so nothing removes its marker once its
-    // claim lands: its marker holds for one admission bound after the failure
-    // (review 5, item 1), time for a claim it left pending to be included,
-    // and an old-format marker without a time not at all (review 3, item 3).
-    // A claim of a failed swap still pending after that costs the next claim
-    // one re-plan at the nonce, never funds. The actor removes its marker
-    // itself where its claim can no longer land.
-    let in_flight = peers().find(|record| {
-        let state = record.manifest().state_database_path();
-        let failed = record.schedule_state() == lez_swap_store::MakerActorScheduleState::Failed;
-        // Admitted on another worker and not submitted yet: it is about to sign at the
-        // nonce (review 3, item 4), for a bounded time. A failed swap's attempt is over.
-        if !failed
-            && zec_reference_actor::lez_claim_admission(state)
-                .is_some_and(|admission| admission_holds(admission, own_hold_ms, now_ms))
-        {
-            return true;
-        }
-        let refund_at_ms = zec_reference_actor::revealing_claim_in_flight_refund_at_ms(state);
-        zec_reference_actor::revealing_claim_in_flight_marker(state)
-            .is_some_and(|marker| marker.is_file())
-            && !(failed
-                && (refund_at_ms.is_none()
-                    || record
-                        .updated_at()
-                        .saturating_mul(1000)
-                        .saturating_add(own_hold_ms)
-                        <= now_ms))
-            && in_flight_claim_holds(refund_at_ms, now_ms)
-    });
+    // A submitted claim holds the others for one admission bound from its
+    // submission, and no longer than its swap's LEZ refund time: time for it
+    // to be included, which is what takes the nonce. It is not held until
+    // the claim is final (issue #176): on a network whose finality takes
+    // longer than the margin the next claim would miss its own window. A
+    // claim still pending after the bound costs the next claim one re-plan
+    // at the nonce, never funds. A failed swap is driven no more: its marker
+    // holds for the same bound after the failure (review 5, item 1), and an
+    // old-format marker without a time not at all (review 3, item 3). The
+    // actor removes its marker itself where its claim can no longer land.
+    let in_flight = peers().find(|record| other_lez_claim_holds(record, own_hold_ms, now_ms));
     let earlier = in_flight.is_none().then(|| {
         peers().find(|record| {
             waiting_claim_orders(record.schedule_state(), record.last_failure_class())
@@ -1376,9 +1373,284 @@ fn revealing_claim_held_back(
     RevealingClaimHold::HeldNearRefund
 }
 
-/// One gate decision at a time in this process (review 4, L1).
+/// Whether another Zcash swap's LEZ claim holds this Node's next LEZ
+/// transaction at `now_ms`: admitted on another worker and about to be
+/// signed (review 3, item 4), or submitted and within its hold
+/// ([`submitted_claim_holds`]).
 #[cfg(feature = "pair-zec")]
-static LEZ_CLAIM_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn other_lez_claim_holds(
+    record: &lez_swap_store::MakerActorProcessRecordV1,
+    default_hold_ms: u64,
+    now_ms: u64,
+) -> bool {
+    let state = record.manifest().state_database_path();
+    let failed = record.schedule_state() == lez_swap_store::MakerActorScheduleState::Failed;
+    // A failed swap's attempt is over: its admission holds nothing.
+    if !failed
+        && zec_reference_actor::lez_claim_admission(state)
+            .is_some_and(|admission| admission_holds(admission, default_hold_ms, now_ms))
+    {
+        return true;
+    }
+    zec_reference_actor::revealing_claim_in_flight_marker(state)
+        .is_some_and(|marker| marker.is_file())
+        && submitted_claim_holds(
+            failed,
+            zec_reference_actor::revealing_claim_in_flight_refund_at_ms(state),
+            zec_reference_actor::revealing_claim_in_flight_submitted_at_ms(state),
+            record.updated_at().saturating_mul(1000),
+            default_hold_ms,
+            now_ms,
+        )
+}
+
+/// Whether a submitted LEZ claim (its in-flight marker present) holds the
+/// account's next transaction at `now_ms`: until the LEZ refund time its
+/// marker records (past it the block builder drops the claim without taking
+/// the nonce), and for `hold_ms` from when its current bytes were first
+/// submitted (`submitted_at_ms`), or, in a failed swap, from the failure
+/// (`failed_at_ms`). A marker that records no submission time (written before
+/// issue #176) holds until the refund time, one without a refund time until
+/// it is removed, and neither holds anything once its swap failed.
+#[cfg(feature = "pair-zec")]
+const fn submitted_claim_holds(
+    failed: bool,
+    refund_at_ms: Option<u64>,
+    submitted_at_ms: Option<u64>,
+    failed_at_ms: u64,
+    hold_ms: u64,
+    now_ms: u64,
+) -> bool {
+    if !in_flight_claim_holds(refund_at_ms, now_ms) {
+        return false;
+    }
+    if failed {
+        return refund_at_ms.is_some() && failed_at_ms.saturating_add(hold_ms) > now_ms;
+    }
+    match submitted_at_ms {
+        Some(submitted_at_ms) => submitted_at_ms.saturating_add(hold_ms) > now_ms,
+        None => true,
+    }
+}
+
+/// The longest a submitted LEZ claim holds the account's next transaction
+/// under a profile whose required margin is `required_margin_ms`: the
+/// longest attempt bound ([`admission_bound_ms`] at the longest attempt
+/// timeout a Node accepts) and the stop grace. The capacity is sized with it.
+#[cfg(feature = "pair-zec")]
+pub(crate) fn lez_claim_hold_bound_ms(required_margin_ms: u64) -> u64 {
+    admission_bound_ms(MAX_ATTEMPT_TIMEOUT, Some(required_margin_ms))
+        .saturating_add(ADMISSION_STOP_GRACE_MS)
+}
+
+/// Whether a LEZ claim of another Zcash swap is waiting at the gate,
+/// admitted, or submitted and within its hold: no lock is planned or sent
+/// then (ADR 0219). Unknown peers read as a claim pending.
+#[cfg(feature = "pair-zec")]
+fn lez_claim_pending(store: &SqliteSwapStore, swap_id: &SwapId, attempt_timeout: Duration) -> bool {
+    let Ok(records) = store.list_maker_actor_processes() else {
+        return true;
+    };
+    let now_ms = unix_now_ms();
+    let default_hold_ms =
+        admission_bound_ms(attempt_timeout, None).saturating_add(ADMISSION_STOP_GRACE_MS);
+    records
+        .iter()
+        .filter(|record| {
+            record.swap_id() != swap_id
+                && record.manifest().kind() == MakerActorKindV1::Zcash
+                && record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal
+        })
+        .any(|record| {
+            other_lez_claim_holds(record, default_hold_ms, now_ms)
+                || (waiting_claim_orders(record.schedule_state(), record.last_failure_class())
+                    && zec_reference_actor::lez_claim_waiting_refund_at_ms(
+                        record.manifest().state_database_path(),
+                    )
+                    .is_some_and(|refund_at_ms| refund_at_ms > now_ms))
+        })
+}
+
+/// Without the Zcash pair no Maker actor submits a LEZ claim.
+#[cfg(not(feature = "pair-zec"))]
+const fn lez_claim_pending(
+    _store: &SqliteSwapStore,
+    _swap_id: &SwapId,
+    _attempt_timeout: Duration,
+) -> bool {
+    false
+}
+
+/// The classes the account's gate holds a lock back with. Neither is a
+/// failure: the swap is looked at again after the requeue delay.
+const LEZ_LOCK_GATE_CLASSES: [&str; 2] = ["lez_lock_waits_for_claim", "lez_lock_waits_for_lock"];
+
+/// How long past the requeue delay a lock that sent a transaction holds the
+/// other locks: its next attempt, which sees the transaction in a block or
+/// sends the next one, comes after the delay.
+const LEZ_LOCK_REQUEUE_SLACK: Duration = Duration::from_secs(2);
+
+/// Whether this effect plans or sends a lock signed by the Maker's LEZ
+/// account, as far as the actor's status tells:
+/// - a Zcash drive whose status names the LEZ escrow as the Maker's pending
+///   lock (`maker_lock: lez`, `TakerSellsForeign`: initialization and
+///   funding, planned and sent by the drive);
+/// - a Monero recovery that punishes (`punish_lez`, tag 17);
+/// - a Bitcoin drive at `taker_lock_confirmed` of a swap whose LEZ escrow the
+///   Node prepared and still records in flight (`prepared_in_flight`): the
+///   drive sends the prepared pair.
+///
+/// The Zcash follow-up claim is the gate's other class
+/// ([`submits_maker_lez_claim`]). A Bitcoin and a Monero LEZ claim and every
+/// LEZ refund are signed by the swap's own authority, not this account.
+fn signs_lez_lock(
+    kind: MakerActorKindV1,
+    command: ActorEffectCommand,
+    status: Option<&Value>,
+    prepared_in_flight: bool,
+) -> bool {
+    let field = |key: &str| {
+        status
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_str)
+    };
+    match (kind, command) {
+        (MakerActorKindV1::Zcash, ActorEffectCommand::Drive) => field("maker_lock") == Some("lez"),
+        (MakerActorKindV1::Monero, ActorEffectCommand::Recover) => {
+            field("next_action") == Some("punish_lez")
+        }
+        (MakerActorKindV1::Bitcoin, ActorEffectCommand::Drive) => {
+            prepared_in_flight && field("phase") == Some("taker_lock_confirmed")
+        }
+        _ => false,
+    }
+}
+
+/// The account gate's answer for a lock (ADR 0219): `Ok(true)` admits it and
+/// records it in flight for this attempt, `Ok(false)` is an effect that signs
+/// no lock (or a Bitcoin drive, whose escrow the preparer recorded).
+///
+/// A lock waits (`lez_lock_waits_for_claim`) while a follow-up LEZ claim of
+/// another swap waits, is admitted, or is submitted and within its hold: a
+/// claim has a deadline and funds behind it, a lock neither, so no lock is
+/// planned or sent from the moment a claim reaches the gate. It waits
+/// (`lez_lock_waits_for_lock`) while another swap's lock is in flight. A
+/// claim never waits for a lock.
+fn lez_lock_held_back(
+    store: &SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    config: &MakerActorSupervisorConfig,
+    command: ActorEffectCommand,
+    status: &[u8],
+) -> Result<bool, &'static str> {
+    let kind = lease.record().manifest().kind();
+    let swap_id = lease.record().swap_id();
+    let status = serde_json::from_slice::<Value>(status).ok();
+    let _gate = account_gate::LEZ_ACCOUNT_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = Instant::now();
+    let prepared_in_flight =
+        account_gate::with_locks_in_flight(store, |locks| locks.in_flight(swap_id.as_str(), now));
+    if !signs_lez_lock(kind, command, status.as_ref(), prepared_in_flight) {
+        return Ok(false);
+    }
+    if lez_claim_pending(store, swap_id, config.attempt_timeout) {
+        return Err("lez_lock_waits_for_claim");
+    }
+    account_gate::with_locks_in_flight(store, |locks| {
+        if locks.holder(swap_id.as_str(), now).is_some() {
+            return Err("lez_lock_waits_for_lock");
+        }
+        if kind == MakerActorKindV1::Bitcoin {
+            return Ok(false);
+        }
+        locks.hold(
+            swap_id.as_str(),
+            now,
+            config.attempt_timeout + LEZ_LOCK_REQUEUE_SLACK,
+        );
+        Ok(true)
+    })
+}
+
+/// Ends an admitted lock's attempt: a lock that sent a transaction and is not
+/// done stays in flight until its next attempt, any other is forgotten.
+fn settle_lez_lock(
+    store: &SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    config: &MakerActorSupervisorConfig,
+    effect: Option<&[u8]>,
+) {
+    let kind = lease.record().manifest().kind();
+    let in_flight = effect
+        .and_then(|effect| serde_json::from_slice::<Value>(effect).ok())
+        .is_some_and(|effect| lock_still_in_flight(kind, &effect));
+    account_gate::with_locks_in_flight(store, |locks| {
+        if in_flight {
+            locks.hold(
+                lease.record().swap_id().as_str(),
+                Instant::now(),
+                Duration::from_secs(config.requeue_delay_seconds) + LEZ_LOCK_REQUEUE_SLACK,
+            );
+        } else {
+            locks.release(lease.record().swap_id().as_str());
+        }
+    });
+}
+
+/// Whether a lock's effect leaves a transaction of the account on its way
+/// to a block, or the pair half sent: a Zcash drive that submitted a step
+/// (`submitted`), or waits for the initialization before it sends the funding
+/// (`awaiting_observation` of `lez_initialize`); a Monero punishment not yet
+/// observed. A funding awaiting observation, a projection and every other
+/// outcome have nothing more to send.
+fn lock_still_in_flight(kind: MakerActorKindV1, effect: &Value) -> bool {
+    let field = |key: &str| effect.get(key).and_then(Value::as_str);
+    match (kind, field("outcome")) {
+        (MakerActorKindV1::Zcash, Some("submitted")) => true,
+        (MakerActorKindV1::Zcash, Some("awaiting_observation")) => {
+            field("operation") == Some("lez_initialize")
+        }
+        (MakerActorKindV1::Monero, Some("awaiting_observation")) => true,
+        _ => false,
+    }
+}
+
+/// Admits the preparation of a Bitcoin swap's LEZ escrow (the Node plans it,
+/// the swap's actor sends it) at the account's gate, and records it in
+/// flight for [`account_gate::PREPARED_ESCROW_HOLD`]. With `renew` the escrow
+/// is already prepared and only its hold is renewed.
+///
+/// # Errors
+///
+/// Names why the escrow is not prepared now: a LEZ claim is pending
+/// (`lez_lock_waits_for_claim`) or another lock is in flight
+/// (`lez_lock_waits_for_lock`).
+pub(crate) fn admit_prepared_lez_lock(
+    store: &SqliteSwapStore,
+    swap_id: &SwapId,
+    renew: bool,
+) -> Result<(), &'static str> {
+    let _gate = account_gate::LEZ_ACCOUNT_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = Instant::now();
+    if !renew {
+        if lez_claim_pending(store, swap_id, MAX_ATTEMPT_TIMEOUT) {
+            return Err("lez_lock_waits_for_claim");
+        }
+        if account_gate::with_locks_in_flight(store, |locks| {
+            locks.holder(swap_id.as_str(), now).is_some()
+        }) {
+            return Err("lez_lock_waits_for_lock");
+        }
+    }
+    account_gate::with_locks_in_flight(store, |locks| {
+        locks.hold(swap_id.as_str(), now, account_gate::PREPARED_ESCROW_HOLD);
+    });
+    Ok(())
+}
 
 /// Whether a claim admitted at `own` (admission time in ms, swap id) yields to
 /// another swap's admission at `other`: the earlier admission goes, ties by
