@@ -7699,6 +7699,61 @@ where
     }
 }
 
+/// Which send of an exact LEZ claim the journal authorized.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExactLezClaimSend {
+    /// The effect's first send.
+    First,
+    /// The same bytes once more, after a send that did not land (#174).
+    Again,
+}
+
+impl ExactLezClaimSend {
+    const fn trace_label(self) -> &'static str {
+        match self {
+            Self::First => "sending",
+            Self::Again => "sending again",
+        }
+    }
+}
+
+/// Reconciles one exact LEZ claim with what the chain shows and decides
+/// whether this drive sends it.
+///
+/// The first send is the journal's single `Prepared` to `Started` step. A
+/// claim whose send was already authorized and that the same evidence still
+/// shows absent (complete absence, or the exact-idempotent admission of a
+/// prefix) is sent again: the earlier call failed before it reached the
+/// sequencer, had an ambiguous outcome, or stopped with the process, and
+/// observation alone would wait for a transaction that may never have
+/// arrived. Every send is the journal's same signed bytes, which the chain
+/// includes at most once.
+fn authorize_exact_lez_claim_send(
+    journal: &mut SqlitePublicEffectJournal,
+    key: &PublicEffectKey,
+    observation: PublicEffectObservation,
+) -> Result<Option<ExactLezClaimSend>, ActorCommandError> {
+    let resend_evidence = matches!(
+        observation,
+        PublicEffectObservation::Absent
+            | PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe { .. }
+    )
+    .then(|| observation.clone());
+    let decision = journal
+        .reconcile(key, observation)
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    if matches!(decision, PublicEffectDecision::SubmitOnce(_)) {
+        return Ok(Some(ExactLezClaimSend::First));
+    }
+    let Some(evidence) = resend_evidence else {
+        return Ok(None);
+    };
+    Ok(journal
+        .resend_exact_lez_claim(key, &evidence)
+        .map_err(|_| ActorCommandError::StateUnavailable)?
+        .map(|_| ExactLezClaimSend::Again))
+}
+
 struct LezClaimObserver<'a, P> {
     config: &'a ActorConfig,
     chain: P,
@@ -7914,15 +7969,17 @@ where
         let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
-        let decision = journal
-            .reconcile(effect.effect.key(), observation)
-            .map_err(|_| ActorCommandError::StateUnavailable)?;
-        let PublicEffectDecision::SubmitOnce(_) = decision else {
+        let Some(send) =
+            authorize_exact_lez_claim_send(&mut journal, effect.effect.key(), observation)?
+        else {
             trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
-        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
+        trace_note(
+            "effect_reconcile",
+            &format!("{observation_kind}: {}", send.trace_label()),
+        );
 
         let request = submit_lez_claim_request(self.config, agreement, transition, effect)?;
         let expected_context = request.context.clone();
@@ -8118,15 +8175,17 @@ where
         let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
-        let decision = journal
-            .reconcile(effect.effect.key(), observation)
-            .map_err(|_| ActorCommandError::StateUnavailable)?;
-        let PublicEffectDecision::SubmitOnce(_) = decision else {
+        let Some(send) =
+            authorize_exact_lez_claim_send(&mut journal, effect.effect.key(), observation)?
+        else {
             trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
-        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
+        trace_note(
+            "effect_reconcile",
+            &format!("{observation_kind}: {}", send.trace_label()),
+        );
 
         let request = submit_lez_claim_request(self.config, agreement, transition, effect)?;
         let expected_context = request.context.clone();

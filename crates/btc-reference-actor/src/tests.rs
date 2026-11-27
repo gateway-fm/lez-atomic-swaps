@@ -7333,134 +7333,8 @@ async fn lez_claim_prefix_uncertainty_authorizes_only_the_owned_exact_effect_onc
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn lez_claim_post_authority_error_is_unknown_and_never_rearms() {
-    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
-    activate_and_project_both_locks(&fixture).await;
+async fn lez_claim_missing_activation_never_observes_or_sends() {
     let transition = ClaimTransition::RevealingClaim;
-    let effect = prepare_lez_claim_effect(
-        &fixture.config,
-        &fixture.agreement,
-        transition,
-        &durable_status(&fixture),
-        &placeholder_lez_port(),
-    )
-    .await
-    .expect("prepare LEZ claim")
-    .expect("taker owns LEZ claim");
-    let failing_port = FixedLezClaimPort::with_presence(
-        effect.transaction.clone(),
-        not_found_lez_claim_presence(
-            &fixture.config,
-            &fixture.agreement,
-            transition,
-            Some(&effect),
-        ),
-        Err(ActorCommandError::ObservationUnavailable),
-    );
-    let failing_observer = LezClaimObserver {
-        config: &fixture.config,
-        chain: failing_port.clone(),
-        effect: Some(effect.clone()),
-        prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
-        state_db: fixture.config.state_db.clone(),
-    };
-    assert_eq!(
-        drive_claim_with_observer(
-            &fixture.config,
-            fixture.agreement.clone(),
-            fixture.agreement_wire.clone(),
-            &failing_observer,
-        )
-        .await
-        .expect_err("post-authority failure is surfaced after Unknown"),
-        ActorCommandError::ObservationUnavailable
-    );
-    assert_eq!(failing_port.submit_calls(), 1);
-
-    let restarted_port = FixedLezClaimPort::with_presence(
-        effect.transaction.clone(),
-        not_found_lez_claim_presence(
-            &fixture.config,
-            &fixture.agreement,
-            transition,
-            Some(&effect),
-        ),
-        Ok(SubmissionOutcome::Accepted),
-    );
-    let restarted_observer = LezClaimObserver {
-        config: &fixture.config,
-        chain: restarted_port.clone(),
-        effect: Some(effect),
-        prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
-        state_db: fixture.config.state_db.clone(),
-    };
-    drive_claim_with_observer(
-        &fixture.config,
-        fixture.agreement.clone(),
-        fixture.agreement_wire.clone(),
-        &restarted_observer,
-    )
-    .await
-    .expect("Unknown restart remains observe-only");
-    assert_eq!(restarted_port.submit_calls(), 0);
-}
-
-#[tokio::test(flavor = "current_thread")]
-#[allow(clippy::too_many_lines)] // Crash and activation gates share one exact owned-effect setup.
-async fn lez_claim_started_restart_and_missing_activation_never_send() {
-    let started_fixture =
-        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
-    activate_and_project_both_locks(&started_fixture).await;
-    let transition = ClaimTransition::RevealingClaim;
-    let started_effect = prepare_lez_claim_effect(
-        &started_fixture.config,
-        &started_fixture.agreement,
-        transition,
-        &durable_status(&started_fixture),
-        &placeholder_lez_port(),
-    )
-    .await
-    .expect("prepare LEZ claim")
-    .expect("taker owns LEZ claim");
-    let mut journal = SqlitePublicEffectJournal::open(&started_fixture.config.state_db)
-        .expect("open effect journal");
-    let _ = journal
-        .record_prepared(&started_effect.effect)
-        .expect("persist exact public bytes");
-    assert!(matches!(
-        journal
-            .reconcile(started_effect.effect.key(), PublicEffectObservation::Absent,)
-            .expect("consume send authority before simulated crash"),
-        PublicEffectDecision::SubmitOnce(_)
-    ));
-    drop(journal);
-    let restarted_port = FixedLezClaimPort::with_presence(
-        started_effect.transaction.clone(),
-        not_found_lez_claim_presence(
-            &started_fixture.config,
-            &started_fixture.agreement,
-            transition,
-            Some(&started_effect),
-        ),
-        Ok(SubmissionOutcome::Accepted),
-    );
-    let restarted_observer = LezClaimObserver {
-        config: &started_fixture.config,
-        chain: restarted_port.clone(),
-        effect: Some(started_effect),
-        prepared_claim: prepared_lez_claim(&started_fixture.config, &started_fixture.agreement),
-        state_db: started_fixture.config.state_db.clone(),
-    };
-    drive_claim_with_observer(
-        &started_fixture.config,
-        started_fixture.agreement.clone(),
-        started_fixture.agreement_wire.clone(),
-        &restarted_observer,
-    )
-    .await
-    .expect("Started restart remains observe-only");
-    assert_eq!(restarted_port.submit_calls(), 0);
-
     let gated_fixture =
         ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
     activate_and_project_both_locks(&gated_fixture).await;
@@ -9932,3 +9806,6 @@ fn every_actor_error_has_a_distinct_failure_class_in_the_shared_alphabet() {
 
 #[path = "issue156_tests.rs"]
 mod issue156;
+
+#[path = "issue174_tests.rs"]
+mod issue174;
