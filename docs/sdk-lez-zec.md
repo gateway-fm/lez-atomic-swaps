@@ -121,11 +121,14 @@ leg with the preimage it extracts, and the Maker-funded leg refunds first.
 | Earlier refund (Maker) | LEZ, at the LEZ refund time | Zcash, at the Zcash refund height |
 | Later refund (Taker) | Zcash, at the Zcash refund height | LEZ (`RefundLez`), at the LEZ refund time |
 
-Who holds the secret: the per-swap preparation generates the preimage and
-gives it to the Taker's half only. `activate_with_claim_preimage` is accepted
+Who holds the secret: the Taker's Node generates the preimage when it takes
+the offer and keeps it in its own half; the Maker receives its SHA-256. `activate_with_claim_preimage` is accepted
 for the Taker and refused for the Maker in both directions; the Maker's store
 first holds the preimage when it commits the observed revealing claim, whose
-transition carries the extracted preimage checked against the digest. The prepared ZEC setup is single-operator: the preparation ceremony (`deploy/tests/fixtures/zec-catalog-fixture.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner); it remains as the catalog tests' fixture. Swaps are set up at take time instead (`zec_reserve_v1`, [below](#this-sdk-and-the-owner-json-rpc)): the Taker's Node creates the secret and each Node uses its own Zcash key.
+transition carries the extracted preimage checked against the digest. Swaps are agreed at take time by the two Nodes
+(`zec_reserve_v1`, [below](#this-sdk-and-the-owner-json-rpc)): each Node uses
+its own Zcash key and signs with it, and nothing is prepared ahead of the
+take by anyone.
 
 The Taker's revealing claim is gated. In `TakerSellsLez`, before it stages or
 submits its Zcash claim, the Taker requires the Maker's funding output to be
@@ -325,17 +328,16 @@ crate. The two map like this:
 | --- | --- |
 | `maker_offer_publish` / `maker_offer_publish_v1` | offer discovery (publish) |
 | `taker_offer_list_v1` | offer discovery (discover) |
-| `taker_swap_initiate_v1` (a `prepared_zec` catalog entry, or any live Zcash offer with `zec_role_config`) | negotiation over the Maker's Chat socket (`zec_reserve_v1` for a take-time agreement, then `zec_chat_propose_v1`, `zec_chat_complete_v1`), then actor provisioning |
+| `taker_swap_initiate_v1` (any live Zcash offer; the Node's `zec_role_config`) | negotiation over the Maker's Chat socket (`zec_reserve_v1` for a take-time agreement, then `zec_chat_propose_v1`, `zec_chat_complete_v1`), then actor provisioning |
 | the Taker actor's `drive` (no desk button; driven on the Node host) | escrow creation — first lock |
 | the Maker Node's supervisor | escrow creation — second lock, then the Maker's follow-up claim |
 | `taker_swap_claim_v1` | claim (the Taker's revealing claim: Zcash in `TakerSellsLez`, LEZ in `TakerSellsForeign`) |
 | `taker_swap_refund_v1`, `maker_actor_refund_v1` | refund (the Taker's LEZ or Zcash leg; the Maker's Zcash or LEZ leg) |
 
 A ZEC take on the Nodes is composed at take time: the Maker publishes an
-offer, the Taker takes it. (The Taker still accepts a prepared catalog entry,
-looked up first, which only the devnet test fixture
-`deploy/tests/fixtures/zec-catalog-fixture.sh` makes for the catalog tests: it
-holds both parties' keys.) With a Zcash role config on both Nodes (`--zec-role-config`
+offer, the Taker takes it. The Taker Node reads no swap from its startup
+configuration; one that still names `initiation.prepared_zec` is refused at
+load by that name. With a Zcash role config on both Nodes (`--zec-role-config`
 on the Maker, `initiation.zec_role_config` on the Taker: profile, Zebra
 endpoint, the Taker's Zcash key) any live Zcash offer is taken by one more
 Chat round before the existing two:
@@ -367,7 +369,7 @@ Neither side sends a private key or preimage. Each side then writes only its
 own material and actor template around the draft (the Taker at once, the Maker
 at `zec_chat_complete_v1`, which refuses a body other than the reserved one,
 as `zec_chat_propose_v1` does) and starts its own sidecar; propose and
-complete sign as for a catalog swap. The Maker checks the final agreement
+complete then sign the draft, each role with its own key. The Maker checks the final agreement
 before it writes anything: it must validate now and countersign exactly the
 reserved draft, or the completion is refused with no template and no
 sidecar. A completion refused after that retires the sidecar it started.
@@ -399,7 +401,9 @@ This document describes the ZEC/LEZ pair on `main` (version 0.4.0), where a
 ZEC swap is agreed at take time. Logos accepted Milestone 2 at
 [`v0.3.6`](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.6)
 (`f6d5866a`) on 2026-11-24 ([acceptance comment](https://github.com/logos-co/rfp/issues/122#issuecomment-7136329275)); in 0.3.x one operator
-prepares each ZEC swap (the prepared setup [above](#directions)),
+prepared each ZEC swap (a ceremony that signed the agreement with both roles'
+keys and held the preimage while it ran, safe only where the Taker trusted
+the preparer; removed since),
 and the public-testnet parts of deliverables 1 and 2 are deferred to the LEZ
 0.4 port (#107). Conditional atomicity holds as the M6 service certificates state it:
 under canonical local-chain observations, secret-gated claiming, durable

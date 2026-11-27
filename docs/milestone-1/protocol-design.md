@@ -362,9 +362,14 @@ are in the traceability matrix, row F3.
 
 ## Transparent ZEC–LEZ
 
-The per-swap preparation generates a 32-byte preimage, commits
-`SHA256(preimage)` in both locks, and gives the preimage to the taker's half
-only; the maker's Node and actor refuse material that carries one. The prepared ZEC setup is single-operator: the preparation ceremony (`zec-provision.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner). Node-side take-time preparation, in which the Taker's Node creates the secret and each Node its own Zcash key, is tracked in issue #162 for M5.
+The two Nodes agree a swap when the Taker takes the Maker's offer
+(`zec_reserve_v1`, [docs/sdk-lez-zec.md](../sdk-lez-zec.md)). The Taker's
+Node generates a 32-byte preimage and keeps it in its own half; it sends the
+Maker only `SHA256(preimage)`, which both locks commit to. Each Node
+contributes the public key of its own Zcash key and signs the agreement with
+its own key; the Maker's Node and actor refuse material that carries a
+preimage. No swap is prepared ahead of the take and no party holds both
+halves.
 The Zcash transparent output follows BIP-199 with `OP_SHA256` and a consensus
 timelock refund branch; under the Taker-reveals-first profiles its claim branch
 starts with `OP_SIZE 32 OP_EQUALVERIFY`, so only a 32-byte preimage, the size

@@ -1,6 +1,11 @@
 # ADR 0135: Complete prepared ZEC acceptance before service response
 
-- Status: Accepted and implemented at `5536dd0`
+- Status: Accepted and implemented at `5536dd0`. Superseded in part (issue
+  #162): no catalog entry is configured ahead of the take, and
+  `execute_prepared_zec` is no longer a spelling of `execute_prepared`. The
+  acceptance below runs on the entry the Node persists when it agrees the
+  swap with the Maker at take time
+  ([ADR 0216](0216-zec-taker-reveals-first-in-both-directions.md)).
 - Date: 2026-08-03
 - Scope: M6 nonvisual Taker ZEC happy path
 - Extends: ADRs 0092, 0093, 0132, 0133, and 0134

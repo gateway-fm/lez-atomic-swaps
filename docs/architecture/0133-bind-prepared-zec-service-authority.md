@@ -1,6 +1,11 @@
 # ADR 0133: bind prepared ZEC service authority before admission
 
-- Status: Accepted at `28006dc`; service-wired by ADR 0134 at `1664c41`
+- Status: Accepted at `28006dc`; service-wired by ADR 0134 at `1664c41`.
+  Superseded in part (issue #162): the list of entries configured ahead of
+  the take, `initiation.prepared_zec`, is removed and refused at load. The
+  binding below now applies to the one entry a Taker Node persists in a
+  swap's directory when it agrees the swap with the Maker at take time
+  (`zec_reserve_v1`, [ADR 0216](0216-zec-taker-reveals-first-in-both-directions.md)).
 - Date: 2026-08-03
 - Scope: M6 nonvisual Taker authority loading
 

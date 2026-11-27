@@ -264,10 +264,10 @@ Option A1 with lez_swap_node kept as the one lifecycle owner, and the parts of
   whose executables lost their execute bit (lgx 0.1.0 keeps file modes;
   observation 9). One variant per build host; Linux only (swap-store). The
   Maker package names no Taker executable and vice versa
-  (`scripts/check-runtime-profiles.py`). The ZEC dealer tools
-  (`executables.json` class `fixture`) are not in the package; they stay in the
-  Taker image for the catalog tests' devnet fixture
-  `tests/fixtures/zec-catalog-fixture.sh`.
+  (`scripts/check-runtime-profiles.py`). The Zcash test payer
+  `zec-local-poc-transfer` (`executables.json` class `fixture`) is not in the
+  package; it stays in the Taker image, beside `zec-local-poc-identity`, for
+  the devnet harness.
 - **Graph.** desk → `chat_module`, `delivery_module`, `lez_core`,
   `lez_swap_node`, `lez_<role>_node`; `lez_<role>_node` → `lez_swap_node`;
   `lez_swap_node` → `lez_core`. Still bare names (observation 3).
@@ -478,7 +478,8 @@ each step assumes Linux or a container.
    `zcash.key`, which is also its Delivery signing key), the market bootstrap
    manifest (`/run-market/market-bootstrap.env`: escrow program and LEZ
    genesis), the Bitcoin Core RPC cookie (`/run-config/btc-rpc-cookie`), and
-   the prepared ZEC corridor under `/var/lib/lez/zec`. It writes owner-private
+   the role's Zcash directory `/var/lib/lez/zec` (its Zcash role
+   configuration, the Taker's own Zcash key, the Maker's actor roots). It writes owner-private
    copies and the Node's configuration (`btc/runtime.json`,
    `btc/btc-role.json`, the Taker's `role.json`) under the state directory
    `/var/lib/lez/<role>`, and the Maker's public Delivery identity into
@@ -489,9 +490,9 @@ each step assumes Linux or a container.
 4. **The launcher starts helpers.** Four `socat` forwards from
    `127.0.0.1:{18443,3040,8779,18232}` to the Compose hosts `bitcoin-core`,
    `sequencer`, `indexer` and `zebra` (the Bitcoin adapter and the sidecars
-   accept only loopback endpoints), and one LEZ sidecar
-   (`lez-v02-bridge-poc`) per prepared ZEC corridor, each under
-   `setpriv --pdeathsig TERM` where `setpriv` exists. It waits for Bitcoin
+   accept only loopback endpoints), each under
+   `setpriv --pdeathsig TERM` where `setpriv` exists. The launcher starts no
+   LEZ sidecar: the Node starts one per swap, Zcash swaps included. It waits for Bitcoin
    Core's `getblockcount`, asks it for the genesis hash and, with
    `LEZ_BTC_CLAIM_DESTINATION=wallet`, for a claim address.
 5. **The launcher becomes the Node.** `exec lez-<role>-node`: the Node keeps
@@ -517,8 +518,7 @@ Compose:
 |---|---|---|---|
 | state (0700) | `LEZ_NODE_STATE_DIR` | `/var/lib/lez/<role>` | `<role>` |
 | sockets, ready file | `LEZ_NODE_RUN_ROOT` | `/run/lez` | `run` |
-| prepared ZEC corridor | `LEZ_ZEC_STATE_DIR` | `/var/lib/lez/zec` (the role's own volume) | `zec` (both roles; each reads its half) |
-| ZEC sidecars' state, log `<dir>.log` | `LEZ_ZEC_SIDECAR_DIR` | `<ZEC dir>/sidecar` | `zec/sidecar-<role>` |
+| the role's Zcash files (role configuration, the Taker's own key, the Maker's actor roots) | `LEZ_ZEC_STATE_DIR` | `/var/lib/lez/zec` (the role's own volume) | `zec` (both roles; each role's own files in `zec/role-<role>`) |
 | identity | `LEZ_NODE_IDENTITY_DIR` | `/run-lez-identity` | `identity/<role>` |
 | market manifest | `LEZ_MARKET_MANIFEST` | `/run-market/market-bootstrap.env` | `market-bootstrap.env` |
 | Bitcoin RPC cookie | `LEZ_BTC_RPC_COOKIE_FILE` | `/run-config/btc-rpc-cookie` | `btc-rpc-cookie` |
@@ -650,9 +650,8 @@ since the native Nodes take the same identities):
   deploy/scripts/node-e2e.py <scenario>`: the harness reaches the native
   Nodes' owner sockets with the host's curl, runs what it would run in a
   Node's container beside the Node, stops a Node with its supervisor's hold
-  file and restarts one by ending it; ZEC corridors come from
-  `tests/fixtures/zec-catalog-fixture.sh --native-home $LEZ_NODE_HOME` (the
-  dealer test fixture: LEZ_ZEC_AGREEMENT=dealer and the catalog tests). The scenarios that cut a
+  file and restarts one by ending it; a Zcash swap is agreed by the two
+  native Nodes at take time, as on the devnet. The scenarios that cut a
   loopback forward or the Chat socket in a container are refused: a native
   Node has none. `LEZ_UI_NATIVE_RUN_ROOT=$LEZ_NODE_HOME/run
   deploy/scripts/ui-e2e.sh happy` drives the two desks of one native
@@ -779,8 +778,7 @@ Basecamp under `umask 022`.
 **Harness.** With `LEZ_CHAINS_RPC_ONLY=1`, `node-e2e.py` sends its
 `bitcoin-cli` calls to Bitcoin Core as JSON-RPC (`LEZ_E2E_BTC_RPC_URL`, the
 cookie in `LEZ_BTC_RPC_COOKIE_FILE`), a scenario that stops or starts a
-chain's container fails saying so, and the dealer test fixture
-`tests/fixtures/zec-catalog-fixture.sh` checks Zebra by its RPC. The harness finds a native
+chain's container fails saying so. The harness finds a native
 Node's package through `/proc/<pid>/exe` on Linux.
 
 ### Catalog packages with darwin-arm64

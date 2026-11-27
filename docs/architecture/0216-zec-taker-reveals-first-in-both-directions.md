@@ -219,7 +219,16 @@ direction's agreements are byte-identical to those signed before.
   Taker's Zcash claim is seen: its store has no claim material and no claim
   intent after the Taker's lock or after its own funding, the first preimage
   it stores is the one read from the Taker's claim, and the Maker's Node and
-  actor refuse material that carries one. The prepared ZEC setup is single-operator: the preparation ceremony (`zec-provision.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner). Node-side take-time preparation, in which the Taker's Node creates the secret and each Node its own Zcash key, is tracked in issue #162 for M5.
+  actor refuse material that carries one.
+- The swap is agreed by the two Nodes when the Taker takes the offer
+  (`zec_reserve_v1`, issue #162): the Taker's Node creates the swap secret
+  and sends only its SHA-256, each Node contributes the public key of its
+  own Zcash key, the Maker recomposes its template around the Taker's
+  digest, and each signs the agreement with its own key. No party and no
+  tool holds both halves. When this ADR was accepted a ZEC swap was still
+  prepared by one operator, whose ceremony signed the agreement with both
+  roles' keys and held the preimage while it ran; that ceremony, its tools
+  and the prepared catalog it filled are removed.
 - The LEZ escrow program is unchanged (ImageID unchanged). It still pays
   whoever signs as the stored claimant and presents the preimage; safety in
   `TakerSellsLez` rests on the first locker holding the secret, as it does in

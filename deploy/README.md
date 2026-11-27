@@ -447,8 +447,8 @@ account nonce moved by seven or more, and the LEZ lot paid to the Maker less
 the six units. Not run yet: it was written without a stack.
 
 The hooks are files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, which the
-entrypoint exports before it starts the ZEC sidecars), counts read by the
-sidecar on its next use. They exist only in a sidecar built with the feature
+entrypoint exports before it starts the Node, which starts each swap's
+sidecar), counts read by the sidecar on its next use. They exist only in a sidecar built with the feature
 `test-hooks`: `LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh` builds it so,
 the default build does not, and `zec-kill-maker-claim`,
 `zec-maker-claim-collision` and `claim-send-fails` fail at once, before any
@@ -1232,7 +1232,8 @@ LEZ identity (`runtime/lez/<role>`, the Maker is wallet `maker-munich-01`, the
 Taker `taker-zurich-01`; beside it `zcash.key`, the role's Zcash key that
 `gen-config.sh` mints once — the Maker's is also its Delivery signing key and
 the address zebra mines to, rendered into `runtime/zebra/zebrad-module.json`; the
-Taker's funds Zcash when it sells it), the Bitcoin RPC cookie and, once
+Taker's funds Zcash when it sells it; a launcher that is given no Zcash key
+creates the role's own on its first start and never replaces it), the Bitcoin RPC cookie and, once
 `market-bootstrap.sh` has recorded the escrow deployment in
 `runner-work/market/market-bootstrap.env`, the `btc-role.json` that names the
 Bitcoin network, endpoints, wallet, policy, LEZ chain identity and the sidecar

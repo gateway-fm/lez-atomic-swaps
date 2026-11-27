@@ -70,8 +70,19 @@ cp /etc/lez/maker/env.example /etc/lez/maker/env   # then set the wallet and LEZ
 `market-bootstrap.env` holds the LEZ escrow program id and genesis hash; the Core cookie copy
 must be renewed when Core restarts. In `env`, `LEZ_ZEC_STATE_DIR` (`/var/lib/lez/<role>/zec`) keeps
 the launcher's Zcash state inside the unit's state directory. For Zcash, the Maker's Zcash key
-is its Delivery key (the funder needs mature transparent outputs on it) and its long-lived
-claim-recovery key is the `maker-claim-recovery.key` credential.
+is its Delivery key and its long-lived claim-recovery key is the `maker-claim-recovery.key`
+credential. The Delivery key is also the Maker's Zcash funding key: when a Taker sells LEZ the
+Maker funds Zcash from a mature transparent output of it, so a freshly made key holds no coins
+until its address (`lez-maker-cli balances --zcash`) has been paid.
+
+The units supply every key as a credential, made by its own operator as above. A role started
+without one is not left without a Zcash key: the launcher creates the Taker's Zcash key
+(`zec/zcash.key`, when the environment names no `LEZ_ZCASH_KEY_SOURCE` and the identity
+directory holds no `zcash.key`) and the Maker's Delivery key (when
+`LEZ_DELIVERY_SIGNING_KEY_FILE` is unset and none exists) on the first start, owner-only, says so
+in the journal, and refuses to start rather than replace a key it created with one supplied
+later. No key of one role is ever needed on the other role's machine: only public keys cross
+between the Nodes, when a swap is agreed at take time.
 
 **What stays in plaintext for Zcash** (`lez-swap` mode 0600 under `/var/lib/lez/<role>/`): the
 Taker's Zcash key as one role-level copy, `zec/zcash.key` (32 raw bytes, written from its

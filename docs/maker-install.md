@@ -27,7 +27,7 @@ both.
 | What is installed | the packages `lez_maker_node` (the Node, its CLI, its actors, the launcher), `lez_swap_node` and `lez_core`, and for the desk `lez_atomic_swap_maker` | binaries and the launcher in `/usr/bin`, the unit in `/usr/lib/systemd/system/` (`scripts/install-maker-node-service.sh`) |
 | Configuration | the environment the host (Basecamp or the `logosctl` daemon) was started with | `/etc/lez/maker/env`, read by the unit |
 | The LEZ account key | in Basecamp's LEZ wallet (`lez_core`). `lez_swap_node` answers the Node's signing requests on an owner-only socket; the key does not reach the Node | the encrypted credential `lez-signer.key`, decrypted by systemd at each start and read where it is |
-| The Maker's other keys | owner-private files in the role's identity and state directories | encrypted credentials (`delivery-signing.key`, `maker-claim-recovery.key`) |
+| The Maker's other keys | owner-private files in the role's identity and state directories. The launcher creates the Delivery signing key (`delivery-signing.key` in the state directory) and the Zcash claim-recovery key on its first start when none exists, and never replaces a key it created | encrypted credentials (`delivery-signing.key`, `maker-claim-recovery.key`) |
 | Stop and start | the role's hold file, or `stop_node` and `start_node` of `lez_swap_node`; `lez-maker-cli stop` does not apply | `lez-maker-cli stop` and `start` as root, or `systemctl` |
 | Logs | the file named by `LEZ_MAKER_NODE_LOG` (in the role container, the container's log) | the journal: `journalctl -u lez-maker-node` |
 | Remote control | the Maker desk, and anything else that opens the owner socket | anything that opens the owner socket; no desk |
@@ -124,6 +124,17 @@ container the defaults are the container's mounts; a native host names the paths
 | the Node's files | on macOS `LEZ_NODE_HOME` holds them all; on Linux `LEZ_MAKER_NODE_STATE_DIR`, `LEZ_NODE_RUN_ROOT`, `LEZ_MAKER_NODE_IDENTITY_DIR`, `LEZ_MARKET_MANIFEST`, `LEZ_BTC_RPC_COOKIE_FILE`, `LEZ_DELIVERY_DIR`, `LEZ_ZEC_STATE_DIR` |
 | the Node | `LEZ_V02_CHANNEL_ID`, `LEZ_MAKER_SIDECAR_PORT_BASE`, `LEZ_MAKER_WALLET_SIGNER_SOCKET`, `LEZ_MAKER_BTC_WALLET`, `LEZ_BTC_CLAIM_DESTINATION`, the timing profile |
 | the chains | `LEZ_SEQUENCER_URL`, `LEZ_INDEXER_URL`, and the chain hosts when they are not on loopback |
+
+The Maker's Zcash key is its Delivery signing key: one key signs its offers,
+signs its side of every Zcash agreement and is the key it funds Zcash from when
+a Taker sells LEZ. A Maker may supply it (`zcash.key` in its identity
+directory, as the devnet does); otherwise the launcher creates it on the
+first start and says so in the Node's log. A key the launcher has just
+created holds no coins: `lez-maker-cli balances --zcash` prints its address,
+and a Zcash offer in which the Taker sells LEZ can be funded only once that
+address has been paid. Each Zcash swap is agreed with the Taker's Node when
+the offer is taken: nothing is prepared for a swap ahead of the take, and the
+Maker never holds the swap's secret before the Taker reveals it by claiming.
 
 Every setting, its default and the platform differences are in
 [logos-native-packaging.md](architecture/logos-native-packaging.md) ("The Node on macOS",
