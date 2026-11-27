@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [coordinator, offer_announcement, chat_frame, zec_agreement_wire, xmr_reserve_wire]
+        target: [coordinator, coordinator_store, offer_announcement, chat_frame, zec_agreement_wire, xmr_reserve_wire]
     env:
       FUZZ_JOBS: "2"
     steps:

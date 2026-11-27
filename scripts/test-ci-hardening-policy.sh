@@ -509,7 +509,7 @@ for required in \
   'permissions:' \
   'contents: read' \
   'timeout-minutes: 45' \
-  'target: [coordinator, offer_announcement, chat_frame, zec_agreement_wire, xmr_reserve_wire]' \
+  'target: [coordinator, coordinator_store, offer_announcement, chat_frame, zec_agreement_wire, xmr_reserve_wire]' \
   './scripts/run-fuzz.sh "${{ matrix.target }}" 120 ' \
   'persist-credentials: false' \
   'if: failure()'; do

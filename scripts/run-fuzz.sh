@@ -16,8 +16,15 @@ readonly target="${1:-}"
 readonly seconds="${2:-}"
 jobs="${FUZZ_JOBS:-6}"
 
+# libFuzzer's per-input timeout in seconds. coordinator_store opens a SqliteSwapStore (the whole
+# schema migration) up to ten times per input, which takes over a second on a loaded host.
+timeout=2
 case "$target" in
   coordinator) max_len=512 ;;             # one profile byte and the 511 actions the harness reads
+  coordinator_store)                      # two profile bytes and the 32 two-byte operations read
+    max_len=66
+    timeout=10
+    ;;
   offer_announcement) max_len=32769 ;;    # one byte over the announcement bound
   chat_frame) max_len=16384 ;;            # frames may reach 1 MiB; mutation stays far below it
   zec_agreement_wire) max_len=16385 ;;    # one byte over the agreement record bound
@@ -25,8 +32,8 @@ case "$target" in
   *) max_len=0 ;;
 esac
 (( max_len > 0 )) && [[ "$seconds" =~ ^[1-9][0-9]{0,5}$ ]] || {
-  echo "usage: $0 coordinator|offer_announcement|chat_frame|zec_agreement_wire|xmr_reserve_wire <seconds> [work-dir]" >&2
-  echo "       (FUZZ_JOBS, default 6, sets the parallel jobs)" >&2
+  echo "usage: $0 coordinator|coordinator_store|offer_announcement|chat_frame|zec_agreement_wire|xmr_reserve_wire <seconds> [work-dir]" >&2
+  echo "       (FUZZ_JOBS, default 6, sets the parallel jobs; CARGO_BUILD_JOBS, when set, bounds the build)" >&2
   exit 2
 }
 [[ "$jobs" =~ ^[1-9][0-9]?$ ]] || {
@@ -50,6 +57,7 @@ docker run --rm \
   --env HOME=/work \
   --env RUSTUP_HOME=/work/rustup \
   --env CARGO_TARGET_DIR=/work/target \
+  --env CARGO_BUILD_JOBS \
   --env PATH=/work/cargo/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin \
   --volume "$(pwd -P):/workspace:ro" \
   --volume "$work_dir:/work" \
@@ -67,7 +75,7 @@ docker run --rm \
     cargo fuzz --version
     status=0
     cargo fuzz run --fuzz-dir fuzz --target-dir /work/target "$6" /work/corpus -- \
-      "-fork=$3" "-max_total_time=$4" "-max_len=$5" -timeout=2 -print_final_stats=1 \
+      "-fork=$3" "-max_total_time=$4" "-max_len=$5" "-timeout=$7" -print_final_stats=1 \
       -artifact_prefix=/work/artifacts/ 2>&1 | tee /work/fuzz.log || status=$?
     if (( status != 0 )); then
       echo "$6 fuzz failed with status $status; artifacts in /work/artifacts" >&2
@@ -77,4 +85,4 @@ docker run --rm \
     cp -a /work/corpus /work/corpus-min
     cargo fuzz cmin --fuzz-dir fuzz --target-dir /work/target "$6" /work/corpus-min \
       -- "-max_len=$5" 2>&1 | tee /work/cmin.log
-  ' bash "$nightly" "$cargo_fuzz_version" "$jobs" "$seconds" "$max_len" "$target"
+  ' bash "$nightly" "$cargo_fuzz_version" "$jobs" "$seconds" "$max_len" "$target" "$timeout"
