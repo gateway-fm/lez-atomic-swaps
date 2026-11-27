@@ -744,6 +744,15 @@ fn wall_clock_ms() -> lez_zec_swap_sdk::LezUnixMilliseconds {
 ///   refund); before the window closes it waits while its drive observes the
 ///   Taker's Zcash claim.
 ///
+/// Before the Maker's lock is observed the Taker waits while that window is
+/// open: the Maker is still in time to lock, and a refund asked for then
+/// would only be admitted to wait for its time while the swap could still
+/// complete (issue #182). Once the window has closed no claim of the Maker's
+/// leg can land any more (selling LEZ the Maker no longer funds either), so
+/// the Taker is told to refund its own leg
+/// ([`taker_refund_before_second_lock`]); its recovery sends the refund at
+/// its own deadline, the LEZ refund time or the Zcash refund height.
+///
 /// The Maker of `TakerSellsLez` is also told to refund its Zcash from the
 /// agreement's refund height `H_z` on, whatever the clock (ADR 0216: it
 /// refunds between `H_z` and `T_lez - M`): its Node then alternates the refund
@@ -811,7 +820,17 @@ const fn claimant_next_action(
     ) {
         return ZecLifecycleAction::RefundLez;
     }
-    if !window_closed || !matches!(phase, Phase::BothLegsLocked) {
+    if !window_closed {
+        return sdk_next;
+    }
+    if matches!(
+        (local, sdk_next),
+        (Participant::Taker, ZecLifecycleAction::Wait)
+    ) && let Some(refund) = taker_refund_before_second_lock(direction, phase)
+    {
+        return refund;
+    }
+    if !matches!(phase, Phase::BothLegsLocked) {
         return sdk_next;
     }
     match (direction, local, sdk_next) {
@@ -829,6 +848,35 @@ const fn claimant_next_action(
             ZecLifecycleAction::RefundZcash
         }
         _ => sdk_next,
+    }
+}
+
+/// The Taker's refund path in a phase before both legs are locked, where the
+/// SDK's recovery admits one (`next_refund_step`): its LEZ escrow selling LEZ,
+/// its Zcash HTLC selling ZEC. In the reorg phases selling ZEC the recovery
+/// first observes the Maker's LEZ refund, then refunds the Zcash; with the
+/// Maker's lock confirming selling ZEC it admits none, and the Taker waits.
+const fn taker_refund_before_second_lock(
+    direction: SwapDirection,
+    phase: Phase,
+) -> Option<ZecLifecycleAction> {
+    match (direction, phase) {
+        (
+            SwapDirection::TakerSellsLez,
+            Phase::AwaitingTakerConfirmations
+            | Phase::TakerLockConfirmed
+            | Phase::AwaitingMakerConfirmations
+            | Phase::TakerLockReorged
+            | Phase::MakerLockReorged,
+        ) => Some(ZecLifecycleAction::RefundLez),
+        (
+            SwapDirection::TakerSellsForeign,
+            Phase::AwaitingTakerConfirmations
+            | Phase::TakerLockConfirmed
+            | Phase::TakerLockReorged
+            | Phase::MakerLockReorged,
+        ) => Some(ZecLifecycleAction::RefundZcash),
+        _ => None,
     }
 }
 
@@ -3409,6 +3457,120 @@ mod tests {
                 closes
             ));
         }
+    }
+
+    /// Issue #182: before the Maker's lock the Taker's refund is reported
+    /// only once its claim window has closed; while it is open the Maker is
+    /// still in time to lock and the Taker waits.
+    #[test]
+    fn before_the_makers_lock_the_taker_is_told_to_refund_only_once_its_claim_window_closed() {
+        use Participant::{Maker, Taker};
+        use SwapDirection::{TakerSellsForeign, TakerSellsLez};
+        use ZecLifecycleAction::{RefundLez, RefundZcash, Wait};
+        let next = |direction, local, phase, window_closed, height_reached| {
+            claimant_next_action(
+                Wait,
+                phase,
+                direction,
+                local,
+                false,
+                window_closed,
+                height_reached,
+            )
+        };
+        // Selling LEZ: every phase before both legs in which the recovery
+        // admits the Taker's LEZ refund.
+        for phase in [
+            Phase::AwaitingTakerConfirmations,
+            Phase::TakerLockConfirmed,
+            Phase::AwaitingMakerConfirmations,
+            Phase::TakerLockReorged,
+            Phase::MakerLockReorged,
+        ] {
+            assert_eq!(
+                next(TakerSellsLez, Taker, phase, false, false),
+                Wait,
+                "{phase:?}"
+            );
+            // The Maker's Zcash refund height does not open the Taker's refund.
+            assert_eq!(
+                next(TakerSellsLez, Taker, phase, false, true),
+                Wait,
+                "{phase:?}"
+            );
+            assert_eq!(
+                next(TakerSellsLez, Taker, phase, true, false),
+                RefundLez,
+                "{phase:?}"
+            );
+        }
+        // Selling ZEC: the Taker's Zcash refund, except while the Maker's
+        // lock is confirming, where the recovery admits none.
+        for phase in [
+            Phase::AwaitingTakerConfirmations,
+            Phase::TakerLockConfirmed,
+            Phase::TakerLockReorged,
+            Phase::MakerLockReorged,
+        ] {
+            assert_eq!(
+                next(TakerSellsForeign, Taker, phase, false, false),
+                Wait,
+                "{phase:?}"
+            );
+            assert_eq!(
+                next(TakerSellsForeign, Taker, phase, false, true),
+                Wait,
+                "{phase:?}"
+            );
+            assert_eq!(
+                next(TakerSellsForeign, Taker, phase, true, false),
+                RefundZcash,
+                "{phase:?}"
+            );
+        }
+        assert_eq!(
+            next(
+                TakerSellsForeign,
+                Taker,
+                Phase::AwaitingMakerConfirmations,
+                true,
+                false
+            ),
+            Wait
+        );
+        // Before its own lock there is nothing to refund, window or not.
+        for direction in [TakerSellsLez, TakerSellsForeign] {
+            assert_eq!(next(direction, Taker, Phase::Offered, true, false), Wait);
+        }
+        // The Maker's actions in these phases are not the Taker's rule.
+        for direction in [TakerSellsLez, TakerSellsForeign] {
+            for phase in [
+                Phase::AwaitingTakerConfirmations,
+                Phase::TakerLockConfirmed,
+                Phase::AwaitingMakerConfirmations,
+                Phase::TakerLockReorged,
+                Phase::MakerLockReorged,
+            ] {
+                assert_eq!(
+                    next(direction, Maker, phase, true, false),
+                    Wait,
+                    "{phase:?}"
+                );
+            }
+        }
+        // A first lock the Taker still has to send is never replaced.
+        assert_eq!(
+            claimant_next_action(
+                ZecLifecycleAction::CreateAndFundLez,
+                Phase::Offered,
+                TakerSellsLez,
+                Taker,
+                false,
+                true,
+                false
+            ),
+            ZecLifecycleAction::CreateAndFundLez
+        );
     }
 
     #[test]
