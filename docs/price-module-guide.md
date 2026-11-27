@@ -459,6 +459,20 @@ completes a swap on one, then installs the `UNAVAILABLE` build and checks quote 
 cd deploy && bash scripts/regress.sh run node:btc:maker-price-module:TakerSellsForeign
 ```
 
+`node:btc:maker-price-module-stale:TakerSellsForeign` (`scenario_maker_price_module_stale`) is
+the staleness bound of section 4 on the stack, and a second pair. With the same build it selects
+`logos-c-api` for the Bitcoin route and for Zcash `taker-sells-lez`, checks each route's quote and
+publishes one offer on each, which the Taker lists at the module's price. Then it installs the
+`STALE` build (`FIXTURE_STALE`, a quote 61 s old against the Node's default 30 s) and checks that
+`quote` and `publish-offer` on both routes answer -32603 "external price source failed
+validation", that a refused publish leaves no offer and that the two offers already out stay
+active at their price. With the first build back the quote answers again. It completes no swap;
+the scenario above does. It puts the Zcash route back as it found it:
+
+```sh
+cd deploy && bash scripts/regress.sh run node:btc:maker-price-module-stale:TakerSellsForeign
+```
+
 To try your own module on the stack, follow section 7 by hand; the scenario only runs the
 fixture.
 

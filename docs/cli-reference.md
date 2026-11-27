@@ -222,8 +222,9 @@ moment. Calls `maker_offer_publish`. Prints `{revision, was_replay}`.
 | `--pair`, `--direction` | the route | `--direction taker-sells-foreign` |
 
 The Node records the signed offer, then hands it to Delivery. With Delivery unavailable the
-command fails with -32603 although the offer is already recorded; `offers` shows it, and the
-same request repeated once Delivery is back completes it
+command fails with -32603 although the offer is already recorded; `offers` shows it. Once
+Delivery is back the Node hands it over at its next `health` call, and the same request
+repeated answers `was_replay: true`
 ([Delivery and Chat outages](delivery-chat-outage.md)). An offer id that exists
 answers -32009; a route whose chain the Node reads as down is refused. Replaying the request
 after the offer expired, was withdrawn or was taken does not bring it back.
@@ -592,11 +593,15 @@ acceptance result as one JSON line.
 
 | what | where |
 |---|---|
-| every Maker call of a Bitcoin swap made by `lez-maker-cli`, and the wrong-uid refusal of every owner-RPC command | devnet scenario `maker-cli` (`scenario_maker_cli`) |
-| a Bitcoin swap with the Taker driven by `lez-taker-cli`, and the wrong-uid refusal | `taker-cli` (`scenario_taker_cli`) |
+| every Maker call of a Bitcoin swap made by `lez-maker-cli`, its `health` and `balances` read as the owner, and the wrong-uid refusal of every owner-RPC command | devnet scenario `maker-cli` (`scenario_maker_cli`) |
+| `lez-maker-cli refund` on a swap whose Taker never claims, followed with `monitor` and `history` | `maker-cli-refund` (Bitcoin), `zec-maker-cli-refund` (Zcash, the Taker selling ZEC) |
+| `lez-maker-cli claim` asked while the Maker's own LEZ claim is held by a devnet test hook | `zec-maker-cli-claim` (`LEZ_TEST_HOOKS=1`) |
+| a Bitcoin swap with the Taker driven by `lez-taker-cli`, in both directions, its `swap list`, `health` and `balances` read as the owner, and the wrong-uid refusal | `taker-cli` (`scenario_taker_cli`) |
 | a Bitcoin refund driven by `lez-taker-cli` | `taker-cli-refund` |
-| Zcash swaps driven by `lez-taker-cli` | `zec-taker-cli`, `zec-dynamic-happy` |
-| Monero offers configured and published through `lez-maker-cli` | the `xmr-*` scenarios; their Taker side uses the owner RPC |
+| Zcash swaps driven by `lez-taker-cli` | `zec-taker-cli`, `zec-dynamic-happy`; a Zcash refund, `zec-taker-cli-refund` |
+| a Monero swap driven by `lez-taker-cli` (`balances --monero`, `swap take`, `swap claim`) | `xmr-taker-cli` |
+| `health` of both CLIs and `lez-maker-cli publish-offer` while Delivery and Chat are unavailable | `outage-before-take`, `zec-outage-before-take`, `xmr-outage-before-take` |
+| Monero offers configured and published through `lez-maker-cli` | the `xmr-*` scenarios; except in `xmr-taker-cli` their Taker side uses the owner RPC |
 | the Maker's full CLI journey against a real daemon (configuration, pricing, offers, history, manual claim and refund, `start`/`stop` refusals) | `crates/maker-node/tests/operator_journey.rs` |
 | `start` and `stop` on the real units | `scripts/run-maker-node-systemd-vm.sh` ([systemd guide](maker-systemd-install.md)) |
 | the words the Taker CLI prints for Monero rows | unit tests in `lez-taker-cli.rs` |

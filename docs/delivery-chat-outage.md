@@ -307,8 +307,8 @@ tier in `deploy/scripts/regress.sh`):
 
 | Scenario | Pair | What it asserts |
 |---|---|---|
-| `outage-before-take` | Bitcoin | `take_after_outage`, below; then lock, claim, both Nodes completed |
-| `zec-outage-before-take` | Zcash | `take_after_outage`; then the swap completes |
+| `outage-before-take` | Bitcoin, both directions | `take_after_outage`, below; then lock, claim, both Nodes completed |
+| `zec-outage-before-take` | Zcash, both directions | `take_after_outage`; then the swap completes |
 | `xmr-outage-before-take` | Monero | `take_after_outage`; then the swap completes as `xmr-happy` does |
 | `offline-after-lock` | Bitcoin | take and lock, then the cut; claim and completion under the cut; `assert_cut_held`; `assert_restored` |
 | `offline-after-second-lock` | Bitcoin | the cut with both legs locked; the Taker's container killed under the cut; it claims after its restart |
@@ -341,15 +341,26 @@ Taker-side probe still refused.
 `take_after_outage` discovers the offer and builds the take request before the cut, records the
 Maker's offer record and swap history, cuts, and then asserts:
 
-1. `taker_swap_initiate_v1` answers no result, code `-32010` and category
+1. `lez-maker-cli health` and `lez-taker-cli health` exit 0 and each read `ready: true`,
+   `degraded: true`, `delivery: "unavailable"` and `chat: "unavailable"` (`assert_cli_health`).
+2. `lez-maker-cli publish-offer` of a second offer on the same route fails with `-32603` and the
+   message `Delivery directory must be an owner-owned non-symlink directory with mode 0700`;
+   `lez-maker-cli offers` lists that offer once, `active`; `taker_offer_list_v1` for the route is
+   refused with `-32010` and category `authenticated_delivery_unavailable`
+   (`publish_under_outage`).
+3. `taker_swap_initiate_v1` answers no result, code `-32010` and category
    `authenticated_delivery_unavailable`.
-2. No swap in `taker_swap_list_v1` names the offer.
-3. The Maker's offer record (`maker_offer_list`) and its `swap_history` are equal to what they
-   were before the cut.
-4. The cut held for at least two samples of the Maker's Chat socket (`assert_cut_held`).
-5. After the modes are restored, `assert_restored`: the probe connects and lists again and
+4. No swap in `taker_swap_list_v1` names the offer.
+5. The Maker's record of the offer under take (`maker_offer_list`) and its `swap_history` are
+   equal to what they were before the cut.
+6. The cut held for at least two samples of the Maker's Chat socket (`assert_cut_held`).
+7. After the modes are restored, `assert_restored`: the probe connects and lists again and
    neither Node is `degraded`.
-6. The same request, with the same request id, takes the offer.
+8. The offer published under the cut is in the Taker's offer list within 120 s, with no second
+   publish; its record on the Maker has the status and revision it was committed with; the same
+   `publish-offer` request repeated answers `was_replay: true`. The scenario then withdraws it
+   (`assert_outage_offer_recovered`).
+9. The same take request, with the same request id, takes the offer.
 
 The refusal these scenarios observe is the Delivery one. Chat is cut as well, but the Taker
 refuses before it sends a round; the scenarios show that no connection reached the Maker.
