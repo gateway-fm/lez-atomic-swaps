@@ -337,6 +337,32 @@ class Launcher(unittest.TestCase):
         for gone in ('prepared_zec', 'prepared.json', '--zec-source-maker-config', 'zec-catalog-fixture'):
             self.assertNotIn(gone, text, gone)
 
+    def test_the_packaged_maker_configuration_names_what_the_launcher_gives_a_maker(self):
+        # packaging/systemd/lez-maker-node.json.example is the Maker Node's
+        # argument list for a start without the launcher. It names only flags
+        # the Node declares, the take-time Zcash role and no actor template,
+        # and each of its flags is one the launcher gives a Maker too, with
+        # the same claim key id (a different id would not open the Maker's
+        # Zcash recovery store again).
+        example = json.loads((ROOT / 'packaging/systemd/lez-maker-node.json.example').read_text())
+        self.assertEqual(sorted(example), ['arguments', 'schema_version'])
+        named = [argument for argument in example['arguments'] if argument.startswith('--')]
+        self.assertEqual(len(named), len(set(named)), 'a flag named twice')
+        source = (ROOT / 'crates/maker-node/src/bin/lez-maker-node.rs').read_text()
+        declared = {'--' + field.replace('_', '-') for field in re.findall(
+            r'#\[arg\(\s*long\b(?:(?!#\[arg\().)*?\)\]\s*([a-z_0-9]+):', source, re.S)}
+        self.assertIn('--zec-role-config', declared)
+        self.assertNotIn('--zec-source-maker-config', declared)
+        self.assertEqual(sorted(set(named) - declared), [], 'flags the Maker Node does not declare')
+        self.assertIn('--zec-role-config', named)
+        self.host('Linux', setpriv=True)
+        root = self.tmp / 'linux'
+        self.inputs(root / 'identity-maker', root / 'market/market-bootstrap.env', root / 'config/btc-rpc-cookie')
+        maker = self.linux_role('maker', root)
+        self.assertEqual(sorted(set(named) - set(maker['args'])), [], 'flags the launcher does not give a Maker')
+        claim_key_id = example['arguments'][example['arguments'].index('--maker-claim-key-id') + 1]
+        self.assertEqual(claim_key_id, self.flag(maker, '--maker-claim-key-id'))
+
     # Each Node creates its own Zcash key (issue #162): the Taker's is a file
     # of its own, the Maker's is its Delivery signing key.
     def start(self, role, root, **env):

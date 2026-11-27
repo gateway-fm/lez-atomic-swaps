@@ -22,14 +22,14 @@ use std::{
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     DeliveryOfferQueryV1, LocalPriceSetRequest, PairConfigureRequest, RunLocalDelivery,
-    TakerMakerIdentityV1, ZecChatCompleteRequestV1, ZecChatCompleteResponseV1, ZecReserveRequestV1,
-    ZecReserveResponseV1, call_local_rpc,
+    TakerMakerIdentityV1, ZecChatCompleteRequestV1, ZecChatCompleteResponseV1,
+    ZecChatProposeRequestV1, ZecReserveRequestV1, ZecReserveResponseV1, call_local_rpc,
 };
 use lez_swap_core::{Pair, Participant, SwapDirection, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
     LocalPriceV1, MakerOfferId, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
-    SqliteTakerFacadeStore,
+    SqliteSwapStore, SqliteTakerFacadeStore,
 };
 use lez_taker_node::{
     TakerInitiationCommitV1, TakerSwapInitiateRequestV1, load_taker_service_context,
@@ -41,9 +41,9 @@ use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use take_time::{
-    FOREIGN_UNITS, FUNDER_KEY, LEZ_UNITS, OTHER_KEY, btc_role_config, derived_request_id,
-    fake_sidecar_program, only_child, private_dir, start_fake_zebra, write_private,
-    zec_role_config,
+    FOREIGN_UNITS, FUNDER_KEY, LEZ_UNITS, OTHER_KEY, TakeTimeMaker, btc_role_config,
+    derived_request_id, fake_sidecar_program, only_child, private_dir, start_fake_zebra,
+    write_private, zec_role_config,
 };
 use tempfile::tempdir;
 
@@ -460,6 +460,162 @@ async fn a_bad_completion_makes_no_template_and_starts_no_sidecar() {
         "no actor is provisioned"
     );
     stop(&mut daemon);
+}
+
+/// The Maker signs and completes only what it reserved. A proposal or a
+/// completion that names a reservation this Maker does not hold is refused by
+/// that name and leaves nothing behind: there is no other source of a Zcash
+/// swap on the Maker (a template named at its start was one once).
+#[tokio::test(flavor = "multi_thread")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the Maker's setup, one reservation and the two refused rounds read in order"
+)]
+async fn a_round_for_a_reservation_the_maker_does_not_hold_is_refused() {
+    let run = tempdir().unwrap();
+    let root = fs::canonicalize(run.path()).unwrap();
+    let zebra = start_fake_zebra().await;
+    let sidecar_program = fake_sidecar_program(&root);
+    let port_base = 20_000 + u16::try_from(std::process::id() % 400).unwrap() * 50 + 30;
+    let runtime = private_dir(&root.join("run"));
+    let socket = runtime.join("maker.sock");
+    let chat_socket = runtime.join("chat.sock");
+    let ready = runtime.join("ready");
+    let database = root.join("maker.sqlite3");
+    let delivery = root.join("delivery");
+    let delivery_key = root.join("delivery-signing.key");
+    write_private(&delivery_key, &[FUNDER_KEY; 32]);
+    let maker_home = root.join("maker");
+    let authority = TakeTimeMaker::new(&maker_home, &zebra, &sidecar_program, port_base, None);
+    let mut daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
+            .args([
+                "--socket",
+                path(&socket),
+                "--chat-socket",
+                path(&chat_socket),
+            ])
+            .args(["--database", path(&database)])
+            .args(["--ready-file", path(&ready)])
+            .args(["--delivery-directory", path(&delivery)])
+            .args(["--delivery-signing-key-file", path(&delivery_key)])
+            .args(authority.arguments())
+            .spawn()
+            .expect("start the Maker daemon"),
+    );
+    wait_ready(&mut daemon, &ready);
+    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+    configure_live_route(&socket, route).await;
+    let offer_id = MakerOfferId::new("zec-reserve-offer-003").unwrap();
+    let published = Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
+        .args(["--socket", path(&socket), "publish-offer"])
+        .args(["--request-id", "zec-reserve-publish-003"])
+        .args(["--offer-id", offer_id.as_str(), "--pair", "zcash"])
+        .args(["--direction", "taker-sells-lez"])
+        .output()
+        .unwrap();
+    assert!(published.status.success());
+    let maker_key = PublicKey::from_secret_key(
+        &Secp256k1::signing_only(),
+        &SecretKey::from_slice(&[FUNDER_KEY; 32]).unwrap(),
+    );
+    let authenticated = RunLocalDelivery::subscriber(&delivery, maker_key)
+        .unwrap()
+        .discover(&DeliveryOfferQueryV1::for_route(route, now()))
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the published offer is discoverable");
+    let taker_key = PublicKey::from_secret_key(
+        &Secp256k1::signing_only(),
+        &SecretKey::from_slice(&[OTHER_KEY; 32]).unwrap(),
+    );
+    let reservation_id = RequestId::new("zec-forgotten-reservation").unwrap();
+    let reserved: ZecReserveResponseV1 = call_local_rpc(
+        &chat_socket,
+        "zec_reserve_v1",
+        &ZecReserveRequestV1 {
+            schema_version: 1,
+            reservation_id: reservation_id.clone(),
+            offer_id: offer_id.clone(),
+            signed_offer_envelope: authenticated.signed_envelope().to_vec(),
+            foreign_units: FOREIGN_UNITS,
+            taker_zcash_public_key: taker_key.serialize().to_vec(),
+            taker_lez_account: [0x55; 32],
+            taker_funding: None,
+            taker_secret_digest: Some([0x09; 32]),
+        },
+    )
+    .await
+    .expect("the Maker reserves");
+
+    // A completion for an id the Maker never answered.
+    let never_reserved = RequestId::new("zec-never-reserved").unwrap();
+    let refused = call_local_rpc::<_, ZecChatCompleteResponseV1>(
+        &chat_socket,
+        "zec_chat_complete_v1",
+        &ZecChatCompleteRequestV1 {
+            schema_version: 1,
+            request_id: derived_request_id(&never_reserved, b"complete"),
+            offer_id: offer_id.clone(),
+            expected_offer_revision: 2,
+            reservation_id: never_reserved.clone(),
+            final_agreement_wire: reserved.unsigned_draft_wire.clone(),
+        },
+    )
+    .await
+    .expect_err("a completion for a reservation the Maker never answered is refused");
+    assert!(
+        format!("{refused:#}").contains("the ZEC reservation is unknown"),
+        "{refused:#}"
+    );
+    assert!(
+        !maker_home
+            .join("swaps")
+            .join(never_reserved.as_str())
+            .exists()
+    );
+
+    // The draft the Maker composed is bound to its reservation; once the
+    // Maker no longer holds that reservation it does not sign the draft.
+    fs::remove_dir_all(maker_home.join("swaps").join(reservation_id.as_str())).unwrap();
+    let refused = call_local_rpc::<_, Value>(
+        &chat_socket,
+        "zec_chat_propose_v1",
+        &ZecChatProposeRequestV1 {
+            schema_version: 1,
+            request_id: derived_request_id(&reservation_id, b"propose"),
+            offer_id: offer_id.clone(),
+            expected_offer_revision: 1,
+            reservation_id,
+            foreign_units: FOREIGN_UNITS,
+            signed_offer_envelope: authenticated.signed_envelope().to_vec(),
+            unsigned_draft_wire: reserved.unsigned_draft_wire,
+        },
+    )
+    .await
+    .expect_err("a proposal for a reservation the Maker does not hold is refused");
+    assert!(
+        format!("{refused:#}").contains("the ZEC reservation is unknown"),
+        "{refused:#}"
+    );
+    stop(&mut daemon);
+    assert!(
+        SqliteSwapStore::open(&database)
+            .unwrap()
+            .load_zec_maker_negotiation(&offer_id)
+            .unwrap()
+            .is_none(),
+        "a refused proposal stages no negotiation"
+    );
+    assert!(
+        fs::read_dir(&authority.actor_root)
+            .unwrap()
+            .next()
+            .is_none(),
+        "no actor is provisioned"
+    );
 }
 
 /// The swap sidecar the Nodes spawn (`take_time::fake_sidecar_program`).

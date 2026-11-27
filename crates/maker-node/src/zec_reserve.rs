@@ -183,15 +183,19 @@ fn holds_outpoint(
     }
 }
 
-/// What a completion found for its reservation id.
+/// What a completion found for its reservation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Materialized {
-    /// No take-time reservation: a swap of a template named at start.
-    NotTakeTime,
-    /// A take-time reservation not yet completed; its template is ready.
+    /// A reservation not yet completed; its template is ready.
     Open,
-    /// A take-time reservation already completed (a replay).
+    /// A reservation already completed (a replay).
     Completed,
+}
+
+/// The refusal of a Chat round that names a reservation this Maker never
+/// answered: the Maker signs and completes only what it reserved.
+fn unknown_reservation() -> ErrorObjectOwned {
+    invalid_request("the ZEC reservation is unknown; reserve with zec_reserve_v1 first")
 }
 
 /// The LEZ refund time of a countersigned agreement, in Unix seconds.
@@ -351,21 +355,20 @@ impl ZecMakerReservations {
         self.config.funder_balance(&owner, &committed).await
     }
 
-    /// Refuses a proposal for a take-time reservation unless it is exactly
-    /// the draft this Maker answered with and the reservation still holds.
-    /// A reservation id this Maker never reserved is a start-time template's.
+    /// Refuses a proposal unless it is exactly the draft this Maker answered
+    /// its reservation with and the reservation still holds. A reservation
+    /// id this Maker never reserved is refused.
     pub(super) fn check_proposal(
         &self,
         reservation_id: &RequestId,
         draft_wire: &[u8],
         now: u64,
     ) -> RpcResult<()> {
-        let Ok(layout) = self.layout(reservation_id) else {
-            return Ok(());
-        };
-        let Ok(record) = ZecReservationRecordV1::load(layout.root()) else {
-            return Ok(());
-        };
+        let layout = self
+            .layout(reservation_id)
+            .map_err(|_| unknown_reservation())?;
+        let record =
+            ZecReservationRecordV1::load(layout.root()).map_err(|_| unknown_reservation())?;
         if record.response.unsigned_draft_wire != draft_wire {
             return Err(invalid_request(
                 "the proposed ZEC draft is not the reserved draft",
@@ -379,8 +382,8 @@ impl ZecMakerReservations {
 
     /// Before a completion: starts the reservation's sidecar, writes the
     /// Maker's actor template around the reserved draft and registers it, so
-    /// the existing completion provisions the actor from it. A completion of
-    /// a swap of a start-time template, or a replay, finds nothing to do.
+    /// the completion provisions the actor from it. A replay finds nothing to
+    /// do; a reservation id this Maker never reserved is refused.
     ///
     /// Until the completion is recorded as completed, the final agreement is
     /// checked first: it must validate now and countersign exactly the draft
@@ -394,12 +397,11 @@ impl ZecMakerReservations {
         final_agreement_wire: &[u8],
     ) -> RpcResult<Materialized> {
         let _serial = self.rounds.blocking_lock();
-        let Ok(layout) = self.layout(reservation_id) else {
-            return Ok(Materialized::NotTakeTime);
-        };
-        let Ok(record) = ZecReservationRecordV1::load(layout.root()) else {
-            return Ok(Materialized::NotTakeTime);
-        };
+        let layout = self
+            .layout(reservation_id)
+            .map_err(|_| unknown_reservation())?;
+        let record =
+            ZecReservationRecordV1::load(layout.root()).map_err(|_| unknown_reservation())?;
         let template = template_file(&layout);
         let completed = Self::completed(&layout);
         if !completed {

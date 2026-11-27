@@ -340,15 +340,17 @@ impl MakerRpc {
     ///
     /// The Maker holds no claim preimage in either direction: the Taker holds
     /// the swap secret and reveals it with its claim of the Maker-funded leg.
-    /// A completion whose pinned template carries a preimage is refused.
+    /// A Maker template that carries a preimage is never registered. The
+    /// Chat rounds refuse every request until
+    /// [`Self::with_zec_reservations`] attaches the take-time agreement.
     #[must_use]
     pub fn with_directional_zec_chat_authority(
         mut self,
         completion_store: SqliteZecRecoveryStore,
-        actor_provisioner: Option<ZecMakerActorProvisioner>,
+        actor_provisioner: ZecMakerActorProvisioner,
     ) -> Self {
         self.zec_completion_store = Some(Arc::new(completion_store));
-        self.zec_actor_provisioner = actor_provisioner.map(Arc::new);
+        self.zec_actor_provisioner = Some(Arc::new(actor_provisioner));
         self
     }
 

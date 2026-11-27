@@ -7,11 +7,13 @@
     "--delivery-directory", "/var/lib/lez/maker/delivery",
     "--delivery-signing-key-file", "/run/credentials/lez-maker-node.service/delivery-signing.key",
     "--chat-socket", "/run/lez/maker/chat.sock",
-    "--maker-claim-key-id", "systemd-v1",
-    "--maker-claim-key-file", "/run/credentials/lez-maker-node.service/maker-claim-recovery.key",
+    "--btc-maker-signing-key-file", "/var/lib/lez/maker/btc-chat-signing.key",
     "--actor-supervisor",
-    "--zec-source-maker-config", "/var/lib/lez/maker/authority/zec-maker.json",
-    "--zec-maker-actor-root", "/var/lib/lez/maker/actors",
+    "--btc-role-config", "/var/lib/lez/maker/btc/btc-role.json",
+    "--maker-claim-key-id", "devnet-zec-claim-v1",
+    "--maker-claim-key-file", "/run/credentials/lez-maker-node.service/maker-claim-recovery.key",
+    "--zec-role-config", "/var/lib/lez/maker/zec/zec-role.json",
+    "--zec-maker-actor-root", "/var/lib/lez/maker/zec/actors",
     "--zec-actor-program", "/usr/bin/lez-zec-maker-actor",
     "--zec-actor-program-sha256", "REPLACE_WITH_64_HEX_CHARACTERS"
   ]

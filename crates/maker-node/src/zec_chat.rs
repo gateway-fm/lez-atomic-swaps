@@ -10,8 +10,6 @@ use crate::actor_supervisor::lez_claim_hold_bound_ms;
 
 use super::{zec_reserve::Materialized, *};
 
-const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
-
 #[allow(
     clippy::too_many_lines,
     reason = "the propose handler reads in order: offer, draft, capacity, signature, staging"
@@ -73,13 +71,17 @@ pub(super) fn register_zec_chat_methods(module: &mut RpcModule<MakerRpc>) -> any
                     "unsigned ZEC draft is not bound to the selected offer",
                 ));
             }
-            if let Some(reservations) = &context.zec_reservations {
-                reservations.check_proposal(
+            // The only draft this Maker signs is the one it composed and
+            // answered a reservation with (`zec_reserve_v1`).
+            context
+                .zec_reservations
+                .as_ref()
+                .ok_or_else(|| invalid_request("maker ZEC reservations are unavailable"))?
+                .check_proposal(
                     &request.reservation_id,
                     &request.unsigned_draft_wire,
                     now_unix_seconds,
                 )?;
-            }
             if validated.body().direction() == SwapDirection::TakerSellsLez
                 && let Some(completion_store) = context.zec_completion_store.as_ref()
             {
@@ -165,33 +167,30 @@ fn complete_zec_chat(
         .zec_actor_provisioner
         .as_ref()
         .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker actor provisioning is unavailable"))?;
-    // A take-time reservation's template is made now, before the lookup
-    // below, and only for a final agreement that countersigns its draft.
-    let materialized = match &context.zec_reservations {
-        Some(reservations) => reservations.materialize(
-            &request.reservation_id,
-            provisioner,
-            now_unix_seconds,
-            &request.final_agreement_wire,
-        )?,
-        None => Materialized::NotTakeTime,
-    };
-    let take_time = materialized == Materialized::Open;
+    let reservations = context
+        .zec_reservations
+        .as_ref()
+        .ok_or_else(|| invalid_request("maker ZEC reservations are unavailable"))?;
+    // The reservation's template is made now, before the lookup below, and
+    // only for a final agreement that countersigns its draft.
+    let open = reservations.materialize(
+        &request.reservation_id,
+        provisioner,
+        now_unix_seconds,
+        &request.final_agreement_wire,
+    )? == Materialized::Open;
     let completed = complete_materialized_zec_chat(
         request,
-        context,
+        reservations,
         completion_store,
         provisioner,
         now_unix_seconds,
-        take_time,
+        open,
     );
     // A refusal after the template was made frees what the attempt took: the
     // sidecar is retired and the outpoint is held only inside the grace. A
     // swap completed before this attempt (a refused replay) is left alone.
-    if completed.is_err()
-        && take_time
-        && let Some(reservations) = &context.zec_reservations
-    {
+    if completed.is_err() && open {
         reservations.refuse(&request.reservation_id);
     }
     completed
@@ -199,27 +198,14 @@ fn complete_zec_chat(
 
 fn complete_materialized_zec_chat(
     request: &ZecChatCompleteRequestV1,
-    context: &MakerRpc,
+    reservations: &ZecMakerReservations,
     completion_store: &SqliteZecRecoveryStore,
     provisioner: &ZecMakerActorProvisioner,
     now_unix_seconds: u64,
     // The reservation was open when this attempt began: it records the
     // completion before the commit.
-    take_time: bool,
+    open: bool,
 ) -> RpcResult<ZecChatCompleteResponseV1> {
-    // The Taker holds the swap secret in both directions and reveals it with
-    // its claim of the Maker-funded leg; the Maker reads it from that claim.
-    // A pinned template that carries a preimage is refused before the replay
-    // check, and without the transcript's expiry, so a replay is refused for
-    // the same reason after it.
-    if provisioner
-        .template_carries_claim_preimage(&request.final_agreement_wire)
-        .map_err(|_| rpc_error(INTERNAL_ERROR, "maker claim authority is unavailable"))?
-    {
-        return Err(invalid_request(
-            "maker template carries a claim preimage; the Taker holds the swap secret",
-        ));
-    }
     if let Some(replay) = completion_store
         .preflight_maker_zec_scheduled_completion_replay_for_role(
             &request.request_id,
@@ -231,7 +217,7 @@ fn complete_materialized_zec_chat(
         )
         .map_err(application_store_error)?
     {
-        if take_time && let Some(reservations) = &context.zec_reservations {
+        if open {
             reservations.mark_completed(&request.reservation_id, &request.final_agreement_wire)?;
         }
         return Ok(ZecChatCompleteResponseV1 {
@@ -254,7 +240,7 @@ fn complete_materialized_zec_chat(
     let swap_id: Box<str> = accepted.agreement().coordinator().id().as_str().into();
     // Recorded before the commit: a crash between the two holds the outpoint
     // until the refund time, never frees it under a completed swap.
-    if take_time && let Some(reservations) = &context.zec_reservations {
+    if open {
         reservations.mark_completed(&request.reservation_id, &request.final_agreement_wire)?;
     }
     let commit = completion_store
@@ -277,13 +263,14 @@ fn complete_materialized_zec_chat(
     })
 }
 
-/// Validated deployment inputs for daemon-owned ZEC actor creation. The
-/// template registry holds the templates named at start
-/// (`--zec-source-maker-config`, none on a Node the role launcher starts) and
-/// grows at run time by one template per take-time reservation (`zec_reserve.rs`).
+/// Validated deployment inputs for daemon-owned ZEC actor creation, and the
+/// registry of Maker actor templates. The registry is empty at start and
+/// grows by one template per take-time reservation whose completion the
+/// Maker accepts (`zec_reserve.rs`); after a restart the completed
+/// reservations' templates are registered again from their swap directories.
 #[derive(Clone)]
 pub struct ZecMakerActorProvisioner {
-    source_maker_configs: Arc<std::sync::RwLock<Vec<ActorConfig>>>,
+    templates: Arc<std::sync::RwLock<Vec<ActorConfig>>>,
     actor_root: PathBuf,
     actor_program: PathBuf,
     actor_program_sha256: [u8; 32],
@@ -294,11 +281,8 @@ impl std::fmt::Debug for ZecMakerActorProvisioner {
         formatter
             .debug_struct("ZecMakerActorProvisioner")
             .field(
-                "source_maker_config_count",
-                &self
-                    .source_maker_configs
-                    .read()
-                    .map_or(0, |sources| sources.len()),
+                "template_count",
+                &self.templates.read().map_or(0, |templates| templates.len()),
             )
             .field("actor_root", &"[REDACTED]")
             .field("actor_program", &"[REDACTED]")
@@ -317,89 +301,18 @@ impl ZecMakerActorProvisioner {
         self.actor_program_sha256
     }
 
-    /// Validates a bounded per-swap Maker authority registry and exact actor program.
-    ///
-    /// # Errors
-    ///
-    /// Rejects an empty/oversized registry, duplicate swap or state identities,
-    /// non-Maker templates, and unsafe or mismatched actor executables.
-    pub fn new(
-        source_maker_configs: &[PathBuf],
-        actor_root: PathBuf,
-        actor_program: PathBuf,
-        actor_program_sha256: [u8; 32],
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            !source_maker_configs.is_empty(),
-            "ZEC Maker authority registry is empty or oversized"
-        );
-        Self::with_templates(
-            source_maker_configs,
-            actor_root,
-            actor_program,
-            actor_program_sha256,
-        )
-    }
-
-    /// The same deployment without a static template: every template comes
-    /// from a take-time reservation ([`Self::insert`]).
+    /// Validates the actor root and the exact actor program. The registry
+    /// starts empty: every template comes from a take-time reservation
+    /// ([`Self::insert`]).
     ///
     /// # Errors
     ///
     /// Rejects an unsafe actor root or a mismatched actor executable.
-    pub fn new_dynamic(
+    pub fn new(
         actor_root: PathBuf,
         actor_program: PathBuf,
         actor_program_sha256: [u8; 32],
     ) -> anyhow::Result<Self> {
-        Self::with_templates(&[], actor_root, actor_program, actor_program_sha256)
-    }
-
-    fn with_templates(
-        source_maker_configs: &[PathBuf],
-        actor_root: PathBuf,
-        actor_program: PathBuf,
-        actor_program_sha256: [u8; 32],
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            source_maker_configs.len() <= MAX_ZEC_MAKER_AUTHORITY_TEMPLATES,
-            "ZEC Maker authority registry is empty or oversized"
-        );
-        let mut sources: Vec<ActorConfig> = Vec::with_capacity(source_maker_configs.len());
-        for source_maker_config in source_maker_configs {
-            let source_parent = source_maker_config
-                .parent()
-                .context("source maker config has no parent")?;
-            let source_parent_metadata = fs::symlink_metadata(source_parent)
-                .context("inspect source maker config parent")?;
-            anyhow::ensure!(
-                source_maker_config.is_absolute()
-                    && source_parent_metadata.file_type().is_dir()
-                    && source_parent_metadata.uid() == rustix::process::geteuid().as_raw()
-                    && source_parent_metadata.mode() & 0o7777 == 0o700
-                    && fs::canonicalize(source_parent)
-                        .context("canonicalize source maker config parent")?
-                        == source_parent,
-                "source maker config parent is unsafe"
-            );
-            let source = ActorConfig::load_private(source_maker_config)
-                .map_err(|_| anyhow::anyhow!("source maker config is unavailable"))?;
-            anyhow::ensure!(
-                source.role() == ActorRole::Maker,
-                "source actor config is not Maker"
-            );
-            anyhow::ensure!(
-                sources
-                    .iter()
-                    .all(|existing| existing.swap_id() != source.swap_id()
-                        && existing.role_state_db() != source.role_state_db()),
-                "ZEC Maker authority registry contains duplicate swap or state identity"
-            );
-            source
-                .load_activate_material()
-                .map_err(|_| anyhow::anyhow!("source maker authority is unavailable"))?;
-            sources.push(source);
-        }
         let root_metadata =
             fs::symlink_metadata(&actor_root).context("inspect ZEC maker actor root")?;
         anyhow::ensure!(
@@ -414,27 +327,31 @@ impl ZecMakerActorProvisioner {
         validate_maker_actor_program(&actor_program, actor_program_sha256)
             .map_err(|_| anyhow::anyhow!("ZEC actor program is unavailable"))?;
         Ok(Self {
-            source_maker_configs: Arc::new(std::sync::RwLock::new(sources)),
+            templates: Arc::default(),
             actor_root,
             actor_program,
             actor_program_sha256,
         })
     }
 
-    /// How many pinned Maker templates this registry holds.
+    /// How many Maker templates this registry holds.
     #[must_use]
     pub fn template_count(&self) -> usize {
-        self.source_maker_configs
-            .read()
-            .map_or(0, |sources| sources.len())
+        self.templates.read().map_or(0, |templates| templates.len())
     }
 
     /// Adds one take-time reservation's template; adding it again is a no-op.
     ///
+    /// The Taker holds the swap secret in both directions and reveals it with
+    /// its claim of the Maker-funded leg; the Maker reads it from that claim.
+    /// A Maker template that carries a claim preimage is therefore never
+    /// registered, and no completion can provision an actor from one.
+    ///
     /// # Errors
     ///
-    /// Rejects a non-Maker or unloadable template, or one whose swap or state
-    /// identity another template already holds.
+    /// Rejects a non-Maker or unloadable template, one that carries a claim
+    /// preimage, or one whose swap or state identity another template
+    /// already holds.
     pub fn insert(&self, source_maker_config: &Path) -> anyhow::Result<()> {
         let source = ActorConfig::load_private(source_maker_config)
             .map_err(|_| anyhow::anyhow!("source maker config is unavailable"))?;
@@ -442,11 +359,16 @@ impl ZecMakerActorProvisioner {
             source.role() == ActorRole::Maker,
             "source actor config is not Maker"
         );
-        source
-            .load_activate_material()
-            .map_err(|_| anyhow::anyhow!("source maker authority is unavailable"))?;
+        anyhow::ensure!(
+            source
+                .load_activate_material()
+                .map_err(|_| anyhow::anyhow!("source maker authority is unavailable"))?
+                .claim_preimage()
+                .is_none(),
+            "maker template carries a claim preimage; the Taker holds the swap secret"
+        );
         let mut sources = self
-            .source_maker_configs
+            .templates
             .write()
             .map_err(|_| anyhow::anyhow!("ZEC Maker authority registry lock poisoned"))?;
         if sources.iter().any(|existing| existing == &source) {
@@ -464,47 +386,12 @@ impl ZecMakerActorProvisioner {
     }
 
     fn template_for(&self, swap_id: &str) -> Option<ActorConfig> {
-        self.source_maker_configs
+        self.templates
             .read()
             .ok()?
             .iter()
             .find(|source| source.swap_id().as_str() == swap_id)
             .cloned()
-    }
-
-    /// Whether the pinned template for this agreement carries a claim
-    /// preimage. None may: the Taker holds the swap secret in both directions
-    /// (the preparation gives it to the Taker's half only), and the Maker
-    /// learns it from the Taker's revealing claim.
-    ///
-    /// The agreement is decoded and checked here only to find its template,
-    /// so the transcript's expiry is not applied (the wire is validated at
-    /// time zero, before any transcript expires): an exact replay of a
-    /// completion is answered after the transcript expired, and a fresh
-    /// completion is refused for expiry by its own acceptance at the current
-    /// time.
-    ///
-    /// # Errors
-    ///
-    /// Returns the agreement decoding or the material loading failure.
-    pub fn template_carries_claim_preimage(
-        &self,
-        final_agreement_wire: &[u8],
-    ) -> anyhow::Result<bool> {
-        let accepted = AcceptedZecAgreementV1::accept_wire_at(
-            final_agreement_wire,
-            lez_swap_core::UnixSeconds::new(0),
-            Participant::Maker,
-            0,
-        )?;
-        let Some(source) = self.template_for(accepted.agreement().application_swap_id()) else {
-            return Ok(false);
-        };
-        Ok(source
-            .load_activate_material()
-            .context("load the template's activation material")?
-            .claim_preimage()
-            .is_some())
     }
 
     fn provision(
@@ -521,7 +408,7 @@ impl ZecMakerActorProvisioner {
         )?;
         let source = self
             .template_for(accepted.agreement().application_swap_id())
-            .context("accepted ZEC swap has no pinned Maker authority template")?;
+            .context("accepted ZEC swap has no registered Maker actor template")?;
         let mut digest = Sha256::new();
         digest.update(b"lez-atomic-swaps/maker-actor-root/v1\0");
         digest.update(final_agreement_wire);

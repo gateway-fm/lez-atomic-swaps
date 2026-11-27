@@ -218,6 +218,7 @@ struct ZecArguments {
         requires_all = [
             "delivery_directory",
             "maker_claim_key_file",
+            "zec_role_config",
             "zec_maker_actor_root",
             "zec_actor_program",
             "zec_actor_program_sha256"
@@ -227,22 +228,9 @@ struct ZecArguments {
     /// Owner-only file containing one raw 32-byte claim-recovery key.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id"])]
     maker_claim_key_file: Option<PathBuf>,
-    /// Existing owner-private per-swap Maker configs used as authority templates.
-    #[arg(
-        long,
-        action = clap::ArgAction::Append,
-        requires_all = [
-            "delivery_directory",
-            "maker_claim_key_id",
-            "maker_claim_key_file",
-            "zec_maker_actor_root",
-            "zec_actor_program",
-            "zec_actor_program_sha256"
-        ]
-    )]
-    zec_source_maker_config: Vec<PathBuf>,
-    /// Owner-private Zcash role config (profile, Zebra): compose each Zcash
-    /// agreement at take time (`zec_reserve_v1`) instead of from a template.
+    /// Owner-private Zcash role config (profile, Zebra): each Zcash agreement
+    /// is composed at take time (`zec_reserve_v1`). The Node has no other
+    /// source of a Zcash swap.
     #[arg(long, requires_all = ["btc_role_config", "maker_claim_key_id", "zec_maker_actor_root"])]
     zec_role_config: Option<PathBuf>,
     /// Existing owner-private mode-0700 base for deterministic per-swap actor bundles.
@@ -885,15 +873,15 @@ fn configured_zec_actor_provisioner(
         arguments.zec.zec_actor_program.as_ref(),
         arguments.zec.zec_actor_program_sha256.as_deref(),
     );
-    if arguments.zec.zec_source_maker_config.is_empty() && arguments.zec.zec_role_config.is_none() {
+    if arguments.zec.zec_role_config.is_none() {
         ensure!(
             deployment == (None, None, None),
-            "ZEC actor templates, root, program, and SHA-256 must be configured together"
+            "ZEC role config, actor root, program, and SHA-256 must be configured together"
         );
         return Ok(None);
     }
     let (Some(root), Some(program), Some(program_sha256)) = deployment else {
-        bail!("ZEC actor templates, root, program, and SHA-256 must be configured together");
+        bail!("ZEC role config, actor root, program, and SHA-256 must be configured together");
     };
     validate_runtime_directory(root).context("validate ZEC maker actor root")?;
     ensure!(
@@ -908,19 +896,9 @@ fn configured_zec_actor_provisioner(
     let mut identity = [0_u8; 32];
     hex::decode_to_slice(program_sha256, &mut identity)
         .context("decode ZEC actor program SHA-256")?;
-    if arguments.zec.zec_source_maker_config.is_empty() {
-        return ZecMakerActorProvisioner::new_dynamic(root.clone(), program.clone(), identity)
-            .context("validate ZEC maker actor deployment")
-            .map(Some);
-    }
-    ZecMakerActorProvisioner::new(
-        &arguments.zec.zec_source_maker_config,
-        root.clone(),
-        program.clone(),
-        identity,
-    )
-    .context("validate ZEC maker actor deployment")
-    .map(Some)
+    ZecMakerActorProvisioner::new(root.clone(), program.clone(), identity)
+        .context("validate ZEC maker actor deployment")
+        .map(Some)
 }
 
 fn configured_btc_chat_authority(
@@ -1123,7 +1101,7 @@ fn configured_zec_authority(
             Ok(Some((recovery_store, provisioner)))
         }
         _ => bail!(
-            "ZEC claim, templates, root, program, and SHA-256 authority must be configured together"
+            "ZEC claim, role config, actor root, program, and SHA-256 authority must be configured together"
         ),
     }
 }
@@ -1199,7 +1177,7 @@ fn maker_context(
     #[cfg(feature = "pair-zec")]
     let context = match zec_authority {
         Some((recovery_store, provisioner)) => {
-            context.with_directional_zec_chat_authority(recovery_store, Some(provisioner))
+            context.with_directional_zec_chat_authority(recovery_store, provisioner)
         }
         None => context,
     };
@@ -1294,10 +1272,45 @@ mod tests {
             "serving Chat without actor authority must fail during CLI parsing"
         );
 
+        let deployment = [
+            "--zec-maker-actor-root",
+            "/tmp/actors",
+            "--zec-actor-program",
+            "/usr/bin/true",
+            "--zec-actor-program-sha256",
+            "00f5ba0b54bda7a48c9380b740fc38a8710a23c0f3f948cdcc9b7d5e712d1f8f",
+        ];
+        let mut without_role = chat_arguments();
+        without_role.extend(deployment);
+        assert_cli_error(without_role, ErrorKind::MissingRequiredArgument);
+
         let mut complete = chat_arguments();
+        complete.extend(deployment);
         complete.extend([
-            "--zec-source-maker-config",
-            "/tmp/actor.json",
+            "--btc-maker-signing-key-file",
+            "/tmp/btc.key",
+            "--btc-role-config",
+            "/tmp/btc-role.json",
+            "--zec-role-config",
+            "/tmp/zec-role.json",
+        ]);
+        Arguments::try_parse_from(complete).expect("complete Chat deployment parses");
+    }
+
+    /// The Node took static Zcash actor templates at start until Zcash swaps
+    /// were agreed at take time only. A command line or a configuration that
+    /// still names the flag is refused at start, by the flag's name.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn the_removed_static_zec_template_flag_is_refused_by_name() {
+        let mut arguments = chat_arguments();
+        arguments.extend([
+            "--btc-maker-signing-key-file",
+            "/tmp/btc.key",
+            "--btc-role-config",
+            "/tmp/btc-role.json",
+            "--zec-role-config",
+            "/tmp/zec-role.json",
             "--zec-maker-actor-root",
             "/tmp/actors",
             "--zec-actor-program",
@@ -1305,9 +1318,32 @@ mod tests {
             "--zec-actor-program-sha256",
             "00f5ba0b54bda7a48c9380b740fc38a8710a23c0f3f948cdcc9b7d5e712d1f8f",
         ]);
-        Arguments::try_parse_from(complete.clone()).expect("complete Chat deployment parses");
-        complete.extend(["--zec-source-maker-config", "/tmp/second-actor.json"]);
-        Arguments::try_parse_from(complete).expect("per-swap source registry parses");
+        Arguments::try_parse_from(arguments.clone()).expect("the take-time deployment parses");
+        arguments.extend(["--zec-source-maker-config", "/tmp/actor.json"]);
+
+        let Err(refused) = Arguments::try_parse_from(arguments.clone()) else {
+            panic!("the removed flag must be refused on the command line");
+        };
+        assert_eq!(refused.kind(), ErrorKind::UnknownArgument, "{refused}");
+        assert!(
+            refused.to_string().contains("'--zec-source-maker-config'"),
+            "{refused}"
+        );
+
+        let configuration = serde_json::json!({
+            "schema_version": 1,
+            "arguments": &arguments[1..],
+        });
+        let Err(refused) = parse_daemon_config(
+            configuration.to_string().as_bytes(),
+            OsString::from("lez-maker-node"),
+        ) else {
+            panic!("the removed flag must be refused in a configuration");
+        };
+        assert!(
+            format!("{refused:#}").contains("'--zec-source-maker-config'"),
+            "{refused:#}"
+        );
     }
 
     #[cfg(feature = "pair-xmr")]

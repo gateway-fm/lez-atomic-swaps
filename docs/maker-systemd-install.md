@@ -40,6 +40,14 @@ units to `/usr/lib/systemd/system/`, `env.example` and an empty mode-0700 `crede
 `/etc/lez/<role>/`. Each unit runs the launcher, which renders the Node's configuration from
 `/etc/lez/<role>/env` and execs the Node.
 
+The install also leaves `/etc/lez/<role>/node.json.example`: the Node's own argument list, for a
+start without the launcher (`lez-maker-node --config /etc/lez/maker/node.json`). The Maker's
+example names the files the launcher writes under `/var/lib/lez/maker/` and the flags it passes
+for Bitcoin and Zcash, with the same claim key id, so a Maker moved from one start to the other
+opens the same state. Zcash is configured by `--zec-role-config` alone: each Zcash swap is agreed
+at take time, the Node takes no actor template at start, and a configuration that still names
+`--zec-source-maker-config` is refused at start as an unexpected argument.
+
 ## Keys and inputs
 
 Every role key reaches the Nodes as an encrypted credential, decrypted at each start into
