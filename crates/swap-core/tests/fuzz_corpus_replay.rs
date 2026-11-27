@@ -4,6 +4,8 @@
 
 #[path = "../../../fuzz/fuzz_targets/coordinator_harness.rs"]
 mod coordinator_harness;
+#[path = "../../../fuzz/fuzz_targets/coordinator_model.rs"]
+mod coordinator_model;
 
 #[test]
 fn coordinator_fuzz_corpus_replays_on_stable() {
