@@ -59,6 +59,7 @@ here.
 | [0216](0216-zec-taker-reveals-first-in-both-directions.md) | ZEC follows the common flow: the Taker holds the preimage and claims the Maker-funded leg first in both directions; supersedes ADR 0008's ZEC order |
 | [0217](0217-xmr-taker-sells-lez-deviates-from-the-common-flow.md) | XMR `TakerSellsLez` keeps the COMIT order (the Taker authorises, the Maker claims LEZ first) as the one exception to the common flow; XMR offers no `TakerSellsForeign` |
 | [0218](0218-resend-an-exact-lez-claim-that-did-not-land.md) | A BTC swap's exact LEZ claim still absent after a failed or ambiguous send is sent again as the same bytes, the revealing claim only inside its claim window; amends the no-rearm rule of ADRs 0033 and 0036 for that one effect (issue #174) |
+| [0219](0219-one-gate-for-the-maker-accounts-lez-transactions.md) | One gate for every LEZ transaction of the Maker's account: follow-up claims first and never behind a lock, locks one at a time, a submitted claim's hold bounded, the capacity as the queue bound |
 
 The [system architecture](system-architecture.md) and
 [deployment/RPC map](deployment-components-and-rpcs.md) are the detailed M3

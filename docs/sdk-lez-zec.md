@@ -161,21 +161,36 @@ re-plans is the point past which an actor reports the contention, and
 `MAX_REVEALING_CLAIM_REPLANS` (16,384) the protocol's bound, which no
 profile's LEZ refund window reaches at one re-plan per attempt.
 
-A Maker Node signs every LEZ claim with one account, so its follow-up LEZ
-claims go one at a time (a submitted claim holds the next until it is final
-or its swap's LEZ refund time passes; a failed swap's claim for one
-admission bound after the failure), the swap with the earliest LEZ refund
-time first,
-and it accepts at most `zec_taker_sells_lez_capacity(profile)` open
+A Maker Node signs every LEZ transaction with one account, and all of them
+pass one gate in its supervisor
+([ADR 0219](architecture/0219-one-gate-for-the-maker-accounts-lez-transactions.md)).
+Its follow-up LEZ claims go one at a time, the swap with the earliest LEZ
+refund time first. A submitted claim holds the next for one admission bound
+from its submission (the attempt timeout, half the margin at most, and two
+seconds; its in-flight marker records the time as `submitted_at_ms`), and no
+longer than its swap's LEZ refund time: time to be included, not to be final.
+A failed swap's claim holds for the same bound after the failure. The Node's
+LEZ locks (a ZEC swap's escrow selling ZEC, a BTC swap's prepared escrow, an
+XMR punishment) are neither planned nor sent while a claim waits, is
+admitted or is within its hold (`lez_lock_waits_for_claim`), and go one at a
+time (`lez_lock_waits_for_lock`, two minutes at most behind one lock); a
+claim never waits for a lock. The actor's status names the Maker's pending
+lock leg for this (`maker_lock`: `lez` or `zcash`, present while the Taker's
+lock is confirmed and the Maker's is next).
+
+The Maker accepts at most `zec_taker_sells_lez_capacity(profile)` open
 `TakerSellsLez` ZEC swaps (refused with `zec_taker_sells_lez_capacity_reached`):
-3 under `deterministic-local-devnet-v7`/`-v8`, where `M = 120 s` holds three
-38 s slots (a LEZ claim measured at most 6.3 s from submission to final on
-the devnet, three samples on 2026-11-18, doubled with the held-claim retry),
-and 1 under `deterministic-local-v3` and `public-testnet-v3`. On the LEZ
-testnet the escrow takes the claim if it is included before the refund
-time, but the Node holds the next claim until the previous one is final,
-which is the reason for 1 there; no LEZ testnet claim latency has been
-measured.
+`1 + ⌊(M − 2 × landing) / slot⌋`, where a claim holds the next for
+`landing = min(worst submit-to-final, the gate's hold)` and
+`slot = 2 × (landing + held-claim retry)`, and none when one claim's
+`2 × landing` exceeds `M`. That is 3 under
+`deterministic-local-devnet-v7`/`-v8` (`M = 120 s`, a LEZ claim measured at
+most 6.3 s from submission to final on the devnet, three samples on
+2026-11-18, a 38 s slot) and 1 under `deterministic-local-v3`. Under
+`public-testnet-v3` the queue bound is 10 (a 302 s hold, a 674 s slot,
+`M = 7,200 s`), and the Maker accepts 1: no LEZ testnet claim latency has
+been measured, and the swaps whose Zcash a Maker exposes to an unmeasured
+network are limited separately from the queue.
 
 A Node refuses to start while it holds an open `TakerSellsLez` ZEC swap under
 a legacy profile and names the swaps: finish or refund them with the previous
