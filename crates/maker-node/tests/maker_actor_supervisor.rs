@@ -2693,16 +2693,24 @@ fn a_superseded_lez_claim_past_the_old_replan_limit_is_retried_not_failed() {
     );
 }
 
-/// The Maker's Zcash refund after its LEZ claim was lost, as the actor's
-/// claim command reports it (`lost_claim_refund_output`): outcome
-/// `refunded`, phase `refunded`, next action `complete`.
+/// The claim command's output for the Maker's Zcash refund after its LEZ
+/// claim was lost, as the actor serializes it: the file the actor's own test
+/// `the_lost_claim_refund_output_is_the_one_the_maker_node_is_tested_with`
+/// compares its output with, byte for byte.
+const LOST_CLAIM_REFUND_OUTPUT: &str =
+    include_str!("../../zec-reference-actor/tests/fixtures/lost-claim-refund-claim-output.json");
+
+/// An actor at its follow-up LEZ claim whose claim command prints
+/// [`LOST_CLAIM_REFUND_OUTPUT`].
 fn lost_claim_refund_program(at: u64) -> String {
+    let output = LOST_CLAIM_REFUND_OUTPUT.trim_end();
+    assert!(!output.contains('\''), "the output is quoted for the shell");
     format!(
         "#!/bin/sh\n\
          test \"$1\" = \"--config-fd\" || exit 91\n\
          case \"$3\" in\n\
            status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{at},\"revealing_claim_hold_attention_ms\":60000}}' ;;\n\
-           claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"refunded\",\"phase\":\"refunded\",\"revision\":5,\"next_action\":\"complete\"}}' ;;\n\
+           claim) printf '%s\\n' '{output}' ;;\n\
            *) exit 95 ;;\n\
          esac\n"
     )

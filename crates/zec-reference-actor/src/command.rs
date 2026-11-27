@@ -3993,6 +3993,30 @@ mod tests {
     }
 
     #[test]
+    fn the_lost_claim_refund_output_is_the_one_the_maker_node_is_tested_with() {
+        // Issue #178, item 1: the claim command's whole output for the
+        // Maker's recorded Zcash refund after a lost LEZ claim, byte for
+        // byte. The Maker Node's supervisor test
+        // (`a_maker_zcash_refund_after_a_lost_lez_claim_ends_the_swap_refunded`)
+        // runs an actor that prints this file, so the two sides cannot drift
+        // apart again.
+        let output = ActorEffectOutputV1 {
+            schema_version: STATUS_SCHEMA_VERSION,
+            role: ActorRole::Maker,
+            command: ActorEffectCommandV1::Claim,
+            outcome: lost_claim_refunded_outcome(),
+            phase: Phase::Refunded.into(),
+            revision: 5,
+            next_action: ZecLifecycleAction::Complete.into(),
+            wait: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&output).expect("output"),
+            include_str!("../tests/fixtures/lost-claim-refund-claim-output.json").trim_end()
+        );
+    }
+
+    #[test]
     fn the_makers_zcash_refund_after_a_lost_lez_claim_reports_by_name() {
         // Review 5, items 2 and 5: the observe-only branch's refund result.
         assert_eq!(
