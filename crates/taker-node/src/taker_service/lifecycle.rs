@@ -2195,12 +2195,31 @@ pub(super) fn zec_actor_progress(
     Option<TakerTerminalActionV1>,
     Option<TakerPrivacyGuidanceV1>,
 ) {
-    let takers_refund = matches!(
+    // The Taker's own refund is the actor's next action: before the Maker's
+    // lock once the claim window closed with none observed, and with both
+    // legs locked once it closed with no claim sent.
+    if matches!(
         next_action,
         ZecLifecycleAction::RefundLez | ZecLifecycleAction::RefundZcash
-    );
+    ) && matches!(
+        phase,
+        Phase::AwaitingTakerConfirmations
+            | Phase::TakerLockConfirmed
+            | Phase::AwaitingMakerConfirmations
+            | Phase::BothLegsLocked
+            | Phase::TakerLockReorged
+            | Phase::MakerLockReorged
+    ) {
+        return (
+            TakerSwapStateV1::RefundAvailable,
+            Some(TakerTerminalActionV1::Refund),
+            None,
+        );
+    }
     match phase {
-        Phase::Offered => (TakerSwapStateV1::AwaitingFirstLock, None, None),
+        Phase::Offered | Phase::AwaitingTakerConfirmations => {
+            (TakerSwapStateV1::AwaitingFirstLock, None, None)
+        }
         // The Taker claims first in both directions: its revealing claim of
         // the Maker-funded leg (LEZ in TakerSellsForeign, Zcash in
         // TakerSellsLez) is the owner's action once both legs are locked.
@@ -2216,33 +2235,9 @@ pub(super) fn zec_actor_progress(
                 None,
             )
         }
-        // The Taker's own refund is the actor's next action: before the
-        // Maker's lock once the claim window closed with none observed, and
-        // with both legs locked once it closed with no claim sent.
-        Phase::AwaitingTakerConfirmations
-        | Phase::TakerLockConfirmed
-        | Phase::AwaitingMakerConfirmations
-        | Phase::BothLegsLocked
-        | Phase::TakerLockReorged
-        | Phase::MakerLockReorged
-            if takers_refund =>
-        {
-            (
-                TakerSwapStateV1::RefundAvailable,
-                Some(TakerTerminalActionV1::Refund),
-                None,
-            )
-        }
-        Phase::AwaitingTakerConfirmations => (TakerSwapStateV1::AwaitingFirstLock, None, None),
         // The Maker is still in time to lock: nothing to press.
         Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations => {
             (TakerSwapStateV1::AwaitingSecondLock, None, None)
-        }
-        // A reorged lock, or both legs locked with neither the Taker's claim
-        // nor its refund next (a pair the Taker's actor never reports),
-        // needs attention until the actor names the Taker's refund.
-        Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged => {
-            (TakerSwapStateV1::AttentionRequired, None, None)
         }
         Phase::Completed => (
             TakerSwapStateV1::Completed,
@@ -2284,10 +2279,15 @@ pub(super) fn zec_actor_progress(
         ),
         // The Taker never claims after claim evidence (it claims first in
         // both directions); such a pair, like the Maker-only phases, reads as
-        // needing attention.
-        Phase::ClaimEvidenceAvailable | Phase::MakerLegRefunded | Phase::MakerRecoveryAvailable => {
-            (TakerSwapStateV1::AttentionRequired, None, None)
-        }
+        // needing attention. So does a reorged lock, and both legs locked
+        // with neither the Taker's claim nor its refund next (a pair the
+        // Taker's actor never reports), until the actor names the refund.
+        Phase::BothLegsLocked
+        | Phase::TakerLockReorged
+        | Phase::MakerLockReorged
+        | Phase::ClaimEvidenceAvailable
+        | Phase::MakerLegRefunded
+        | Phase::MakerRecoveryAvailable => (TakerSwapStateV1::AttentionRequired, None, None),
     }
 }
 
