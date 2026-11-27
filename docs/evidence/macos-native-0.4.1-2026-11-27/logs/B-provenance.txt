@@ -1,0 +1,20 @@
+bundle lez-swap-stack-sha-2373e28735b7-arm64.tar.gz sha256 64cc333eff1d3702b9db9feb9843201955e3eebec430a9a1c5972d2150c2a31d (run 45887200123)
+image maker-node:sha-2373e28735b7 build-source 2373e28735b732d2183bb4ce2b494c95ff8d42a1 ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node@sha256:5ae98bfb80d5afa39bf7cb03390306975148cb9458fa7b86bb2817d00b300480
+image taker-node:sha-2373e28735b7 build-source 2373e28735b732d2183bb4ce2b494c95ff8d42a1 ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node@sha256:8504d90c08ace6813485555862b54948230c2b647bee4b054fe62da95fca6885
+image monerod:sha-2373e28735b7 ghcr.io/gateway-fm/lez-atomic-swaps/lez-monerod@sha256:fdb240113fc3a795e820f0f13eaac1b331a99044bab4c811d6b623d7b1c66e3d
+image services:sha-2373e28735b7 ghcr.io/gateway-fm/lez-atomic-swaps/lez-services@sha256:3537c5d982c4b717036853ccf693fb72a22ec55477fa745d1bee6e800a6c0501
+image network-module:sha-2373e28735b7 ghcr.io/gateway-fm/lez-atomic-swaps/lez-network-module@sha256:b38573e7e8e67bc232f87a87051759b18c47d38df3f2cff0552ca3b66701bf21
+image wallet-module:sha-2373e28735b7 ghcr.io/gateway-fm/lez-atomic-swaps/lez-wallet-module@sha256:febffef6a858742ac5f44e4908e4d86bb8b1eba70f200be555341e17f1b29587
+image bitcoin-core:sha-2373e28735b7 ghcr.io/gateway-fm/lez-atomic-swaps/lez-bitcoin-core@sha256:d8891a6877d36dd0894d37d65b419ef53080feb3b93701dafe2f7f37c62e52e3
+image zebra-module:sha-2373e28735b7 ghcr.io/gateway-fm/lez-atomic-swaps/lez-zebra-module@sha256:58637277db21be5c4835c772d30155c5b8d351c2fb44ed64402ecfa898cf8941
+image btc-miner:sha-2373e28735b7 ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-miner@sha256:14036fa2ea034e9372897f8449def56a763bbf9f81bf9411ffde98eb2e5e2a60
+packages (run 45887203856, artifact catalog-packages-test-2373e28735b732d2183bb4ce2b494c95ff8d42a1):
+b2b0f12899792a69e60d709914a87d52266ccc3f3181dc4ab0c190ce796df29e  chat_module/chat_module-0.2.2-delivery.1.lgx
+deefe8c08f3d003dd5bfcb2f3225b4ccef422d786f7634f1160d982278b80a72  lez_atomic_swap_maker/lez_atomic_swap_maker-0.4.1.lgx
+92f758c409e5c562f7a784444a22341e673a714c37c4adf82b94cfe6b87d13b6  lez_atomic_swap_taker/lez_atomic_swap_taker-0.4.1.lgx
+af28f4b5299392aae9c0d26a1d6bc22d5e764b53d5e283b23a1eac8c1f2c3b48  lez_core/lez_core-0.4.1-sign.4.lgx
+86dcd4e73b70faf11682a34cf720360ea6399bd8a54fc28c3f5948675ae2ac0c  lez_indexer_module/lez_indexer_module-1.1.1-rpc.4.lgx
+900e4ada819f633379978be69525df8abef6a4687f855294f2b7e0e006bf7d96  lez_maker_node/lez_maker_node-0.4.1.lgx
+5fa50825c33936cc580c94b5074712a3be7d9537c5bd1e24f615f35eb37ffb1c  lez_network/lez_network-0.4.1.lgx
+9ca47a9ac6ce3df2af4f546732e1f3a1dcbf11b548e3c6f026ef1ca936dc6e86  lez_swap_node/lez_swap_node-0.4.1.lgx
+ce80f6b1e532a4862243888d885ed34e431b982ad12386415ec72b4ccbc3d4f3  lez_taker_node/lez_taker_node-0.4.1.lgx

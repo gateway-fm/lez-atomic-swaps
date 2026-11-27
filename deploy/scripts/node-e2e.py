@@ -7232,27 +7232,57 @@ for root, _, files in os.walk(sys.argv[2]):
     try:
         if json.load(open(os.path.join(root, "xmr-reservation.json")))["response"]["swap_id"] != swap_id:
             continue
-        print(json.load(open(os.path.join(root, "xmr-effect", "evidence", "monero-funding.json")))["shared_address"])
     except (OSError, ValueError, KeyError, TypeError):
-        print("")
+        continue
+    try:
+        evidence = json.load(open(os.path.join(root, "xmr-effect", "evidence", "monero-funding.json")))
+        print(json.dumps({"attempt_state": evidence.get("attempt_state"), "shared_address": evidence.get("shared_address")}))
+    except (OSError, ValueError, AttributeError) as error:
+        print(json.dumps({"missing": f"{type(error).__name__}: {error}"}))
     sys.exit(0)
-print("")
+print(json.dumps({"missing": "no Maker swap directory answers this swap id"}))
 """
+# How long xmr_shared_address waits for the Maker's funding evidence. The
+# Taker can see the funding at depth before the Maker's funding tool has
+# written its evidence (2 s apart on 2026-11-27), so the first read may find
+# none.
+XMR_FUNDING_EVIDENCE_TIMEOUT_SECONDS = 120
+XMR_FUNDING_EVIDENCE_POLL_SECONDS = 2
 
 
-def xmr_shared_address(swap_id: str) -> str:
-    """The swap's shared Monero address, from the Maker's funding evidence
-    (xmr-effect/evidence/monero-funding.json, written once its funding is at
-    depth) in the Maker's swap directory whose xmr-reservation.json answered
-    this swap id (the directory is named by another id)."""
+def xmr_read_funding_evidence(swap_id: str) -> dict:
+    """One read of the Maker's funding evidence for the swap (XMR_FUNDING_EVIDENCE_READER's answer)."""
     result = subprocess.run(node_command("maker", ["python3", "-c", XMR_FUNDING_EVIDENCE_READER, swap_id,
                                                    XMR_NODE_STATE["maker"]]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
-    address = result.stdout.strip()
-    if result.returncode != 0 or not address:
-        raise Failure(f"no Maker funding evidence names the shared address of {swap_id[:12]}: "
-                      f"{(result.stdout + result.stderr).strip()[-200:]}")
-    return address
+    try:
+        answer = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        answer = None
+    if result.returncode != 0 or not isinstance(answer, dict):
+        return {"missing": f"exit {result.returncode}: {(result.stdout + result.stderr).strip()[-200:]}"}
+    return answer
+
+
+def xmr_shared_address(swap_id: str, timeout: float = XMR_FUNDING_EVIDENCE_TIMEOUT_SECONDS,
+                       poll: float = XMR_FUNDING_EVIDENCE_POLL_SECONDS) -> str:
+    """The swap's shared Monero address, from the Maker's funding evidence
+    (xmr-effect/evidence/monero-funding.json, written once its funding is at
+    depth) in the Maker's swap directory whose xmr-reservation.json answered
+    this swap id (the directory is named by another id). The Taker's
+    claim_available can come before the Maker's tool writes that file, so it
+    is read again every `poll` seconds until it says `attempt_state:
+    confirmed` and names an address, for at most `timeout` seconds."""
+    deadline = time.time() + timeout
+    while True:
+        seen = xmr_read_funding_evidence(swap_id)
+        address = seen.get("shared_address")
+        if seen.get("attempt_state") == "confirmed" and isinstance(address, str) and address:
+            return address
+        if time.time() >= deadline:
+            raise Failure(f"no Maker funding evidence names the shared address of {swap_id[:12]} "
+                          f"after {timeout:.0f} s: last seen {seen}")
+        time.sleep(poll)
 
 
 def scenario_xmr_shared_address_dust(stamp: str) -> dict:

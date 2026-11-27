@@ -1,0 +1,73 @@
+{
+ "swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16",
+ "swap_dir": "9df5c08876aee2d8973057b3b3be55d2ef9802d159ce98203844d4d84d01e266",
+ "evidence": {
+  "maker-claim-activation.json": {
+   "swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16"
+  },
+  "maker-claim-completed-signature.json": {
+   "kind": "final_signature"
+  },
+  "maker-claim-signature.json": {
+   "kind": "final_signature"
+  },
+  "maker-lez-scan.json": {},
+  "monero-funding-receipt.json": {
+   "transaction_id": "cef3397fc325b4210ee62392fac2a1bdfe98c19b6dd4b3d6cd5c9b3ff31c848f",
+   "destination_address": "42qsoxuKDQgMZ3Y4VdL4akP93WbDiufgnGmfZXyJLkeCYdx8gDQkf3JMwSienKxCNPg6fHVfh2zVwWsmBcxbksoT8a1KxzN",
+   "amount_piconero": 1000000000000,
+   "containing_block_hash": "b22ed2e44e44c1b564ff41691a4232ecbe76ac3511c5a3ad3a50634f15ef434e",
+   "containing_block_height": 481,
+   "confirmations": 10,
+   "network_scope": "isolated_official_monero_regtest"
+  },
+  "monero-funding.json": {
+   "attempt_state": "confirmed",
+   "shared_address": "42qsoxuKDQgMZ3Y4VdL4akP93WbDiufgnGmfZXyJLkeCYdx8gDQkf3JMwSienKxCNPg6fHVfh2zVwWsmBcxbksoT8a1KxzN",
+   "amount_piconero": 1000000000000,
+   "transaction_id": "cef3397fc325b4210ee62392fac2a1bdfe98c19b6dd4b3d6cd5c9b3ff31c848f",
+   "network_scope": "isolated_official_monero_regtest"
+  },
+  "tag13-funding-finalized.json": {
+   "outcome.finalized_clock.height": 22908,
+   "outcome.finalized_clock.timestamp_ms": 1795759086828,
+   "outcome.facts.transaction.transaction_id": "7d394c217df7e0f0f18a78271e7b6bc358ca4ccec3d88a069fb00986607ca282",
+   "outcome.facts.transaction.position.height": 22906,
+   "outcome.facts.instruction.swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16",
+   "outcome.facts.containing_block.block_id": 22906,
+   "outcome.facts.containing_block.timestamp_ms": 1795759084105,
+   "outcome.facts.metadata.swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16",
+   "outcome.facts.metadata.state": "funded"
+  },
+  "tag14-finalized.json": {
+   "outcome.finalized_clock.height": 22936,
+   "outcome.finalized_clock.timestamp_ms": 1795759123546,
+   "outcome.facts.transaction.transaction_id": "814278897dc7459fa4cdb7c29b8f4f18a723ae4fee3d76ef97a5466d52e973ec",
+   "outcome.facts.transaction.position.height": 22936,
+   "outcome.facts.instruction.swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16",
+   "outcome.facts.containing_block.block_id": 22936,
+   "outcome.facts.containing_block.timestamp_ms": 1795759123546,
+   "outcome.facts.metadata.swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16",
+   "outcome.facts.metadata.state": "claim_authorized"
+  },
+  "tag15-claim-submission.json": {
+   "swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16",
+   "transaction_id": "d007009b75e6ce16cc2d5d9ce0a059aa080cb40461bd78f0f77762a79f6affb3",
+   "exact_transaction.transaction_id": "d007009b75e6ce16cc2d5d9ce0a059aa080cb40461bd78f0f77762a79f6affb3",
+   "submission_outcome": "accepted"
+  },
+  "tag15-finalized.json": {
+   "target.transaction.transaction_id": "d007009b75e6ce16cc2d5d9ce0a059aa080cb40461bd78f0f77762a79f6affb3",
+   "outcome.finalized_clock.height": 22945,
+   "outcome.finalized_clock.timestamp_ms": 1795759135147,
+   "outcome.facts.transaction.transaction_id": "d007009b75e6ce16cc2d5d9ce0a059aa080cb40461bd78f0f77762a79f6affb3",
+   "outcome.facts.transaction.position.height": 22945,
+   "outcome.facts.instruction.swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16",
+   "outcome.facts.containing_block.block_id": 22945,
+   "outcome.facts.containing_block.timestamp_ms": 1795759135147,
+   "outcome.facts.metadata.swap_id": "3398e57228cd8c3d50b82c9be53f456d76052cee02968838147113c83b553f16",
+   "outcome.facts.metadata.state": "claimed"
+  },
+  "tag15-scan-cursor.json": {}
+ }
+}

@@ -1,0 +1,10 @@
+# Compose override (stack-compose.sh, COMPOSE_EXTRA): the Maker's container
+# with the Taker native on this Mac. The Maker writes its Delivery directory
+# into the native Taker's LEZ_NODE_HOME (a bind mount in place of the
+# delivery_dir volume), where the native Taker reads it; its Chat socket stays
+# in the maker_socket volume, reached by the native Taker through the chat
+# forwarder container and chat-bridge.py unix-to-tcp.
+services:
+  maker-node:
+    volumes:
+      - ${MIXED_NATIVE_HOME:?}/delivery:/delivery

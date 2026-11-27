@@ -1301,6 +1301,88 @@ class XmrKillMakerClaimHolds(unittest.TestCase):
         self.assertTrue(any('could not clear' in line and 'hold-claim-preparations' in line for line in logged))
 
 
+class XmrSharedAddressWaitsForFundingEvidence(unittest.TestCase):
+    """xmr-shared-address-dust reads the shared address from the Maker's
+    monero-funding.json. The Taker's claim_available can come before the
+    Maker's tool writes it (2026-11-27), so the read waits for it."""
+
+    SWAP = 'ab' * 32
+
+    def maker_tree(self, root, evidence=None, swap_id=SWAP, raw=None):
+        swap = pathlib.Path(root) / 'swaps' / 'cd'
+        (swap / 'xmr-effect' / 'evidence').mkdir(parents=True, exist_ok=True)
+        (swap / 'xmr-reservation.json').write_text(json.dumps({'response': {'swap_id': swap_id}}))
+        if raw is not None:
+            (swap / 'xmr-effect' / 'evidence' / 'monero-funding.json').write_text(raw)
+        elif evidence is not None:
+            (swap / 'xmr-effect' / 'evidence' / 'monero-funding.json').write_text(json.dumps(evidence))
+
+    def read(self, root):
+        return json.loads(subprocess.run([sys.executable, '-I', '-c', e2e.XMR_FUNDING_EVIDENCE_READER, self.SWAP, root],
+                                         capture_output=True, text=True, check=True).stdout)
+
+    def test_the_reader_says_what_it_found_in_the_makers_swap_directory(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIn('missing', self.read(root))
+            self.maker_tree(root)
+            self.assertIn('FileNotFoundError', self.read(root)['missing'])
+            self.maker_tree(root, raw='{"attempt_state": "conf')
+            self.assertIn('JSONDecodeError', self.read(root)['missing'])
+            self.maker_tree(root, {'attempt_state': 'confirmed', 'shared_address': '5shared'})
+            self.assertEqual(self.read(root), {'attempt_state': 'confirmed', 'shared_address': '5shared'})
+
+    def test_another_swaps_directory_is_not_read(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.maker_tree(root, {'attempt_state': 'confirmed', 'shared_address': '5other'}, swap_id='ef' * 32)
+            self.assertNotIn('shared_address', self.read(root))
+
+    def answers(self, *answers):
+        calls = []
+
+        def run(command, **_):
+            calls.append(command)
+            answer = answers[min(len(calls), len(answers)) - 1]
+            return subprocess.CompletedProcess(command, 0, json.dumps(answer) + '\n', '')
+        return run, calls
+
+    def test_it_waits_until_the_evidence_is_confirmed(self):
+        run, calls = self.answers({'missing': 'FileNotFoundError'}, {'attempt_state': 'submitted', 'shared_address': '5x'},
+                                  {'attempt_state': 'confirmed', 'shared_address': '5shared'})
+        clock, slept = Clock(), []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            clock.now += seconds
+        with patch.object(e2e.subprocess, 'run', run), patch.object(e2e.time, 'time', clock), \
+                patch.object(e2e.time, 'sleep', sleep):
+            self.assertEqual(e2e.xmr_shared_address(self.SWAP), '5shared')
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(slept, [e2e.XMR_FUNDING_EVIDENCE_POLL_SECONDS] * 2)
+        self.assertIn(self.SWAP, calls[0])
+
+    def test_it_gives_up_after_its_timeout_and_says_what_it_saw_last(self):
+        run, calls = self.answers({'missing': 'FileNotFoundError: monero-funding.json'})
+        clock = Clock()
+
+        def sleep(seconds):
+            clock.now += seconds
+        with patch.object(e2e.subprocess, 'run', run), patch.object(e2e.time, 'time', clock), \
+                patch.object(e2e.time, 'sleep', sleep):
+            with self.assertRaises(e2e.Failure) as raised:
+                e2e.xmr_shared_address(self.SWAP, timeout=10, poll=2)
+        self.assertIn('after 10 s', str(raised.exception))
+        self.assertIn('monero-funding.json', str(raised.exception))
+        self.assertEqual(len(calls), 6)
+
+    def test_a_failed_read_is_read_again(self):
+        answers = iter([subprocess.CompletedProcess([], 1, '', 'Error: no such container'),
+                        subprocess.CompletedProcess([], 0, json.dumps({'attempt_state': 'confirmed',
+                                                                       'shared_address': '5shared'}), '')])
+        with patch.object(e2e.subprocess, 'run', lambda command, **_: next(answers)), \
+                patch.object(e2e.time, 'sleep', lambda s: None):
+            self.assertEqual(e2e.xmr_shared_address(self.SWAP), '5shared')
+
+
 class CustodyCredit(unittest.TestCase):
     """The *-custody-credit scenarios (TM-0032): what can be checked without a stack."""
 

@@ -1,0 +1,69 @@
+{
+  "scenario": "xmr-cut-after-lock",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "1795737754",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "62a1f7e7f4792eb4aef5d0eaefc52a0cdbaa7595169bb9a0c717731117404ae8",
+  "offer_id": "offer-e2e-xmr-1795737754",
+  "cut": {
+    "chat_samples": 45,
+    "chat_connections_seen": 0,
+    "taker_probe_at_end": {
+      "chat": "EACCES",
+      "delivery": "EACCES",
+      "delivery_fds": 0,
+      "uid": 4713
+    }
+  },
+  "lez_before": {
+    "maker": 2601000,
+    "taker": 1399000
+  },
+  "lez_deltas": {
+    "maker": 50000,
+    "taker": -50000
+  },
+  "outcome": "completed",
+  "taker_monero_before": {
+    "address": "49GJrTiApgeUMmACM1S2ujNEFtXghVn2pTPCCsrGB6TXe45z7fcGx2fbVnnAzWtcUiDYrgV7ngXDgPzChs8cE4faM18TJ6V",
+    "balance_piconero": 3526994683897037,
+    "daemon_height": 400,
+    "state": "available",
+    "unlocked_piconero": 3526994683897037
+  },
+  "taker_monero_after": {
+    "address": "49GJrTiApgeUMmACM1S2ujNEFtXghVn2pTPCCsrGB6TXe45z7fcGx2fbVnnAzWtcUiDYrgV7ngXDgPzChs8cE4faM18TJ6V",
+    "balance_piconero": 3879560012934720,
+    "daemon_height": 420,
+    "state": "available",
+    "unlocked_piconero": 3527992875497037
+  },
+  "taker_monero_sweep": {
+    "txid": "e0cb9ef6faf1b1af3220f9b4ce03d98899d399045e36b8808557a1bc1fc5a1cf",
+    "amount": 998191600000,
+    "height": 411
+  },
+  "result": "passed",
+  "seconds": 177
+}

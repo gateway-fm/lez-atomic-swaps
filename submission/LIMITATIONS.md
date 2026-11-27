@@ -302,10 +302,23 @@ The launcher and the desks:
   on these copies against fake RPC servers and the Maker's actor supervisor
   with fake tools; and the SDK's `full-lifecycle` example against a Monero
   regtest `monerod` and wallet-rpc in a container (funding, view-only
-  verification, both sweeps with rebuilt keys). Not run on macOS: the
-  Maker's effect tools against a live `monerod`, and any swap through two
-  Nodes; the pinned Monero release is verified and staged for Linux only,
-  and the fixed ports above allow one role's wallet-rpc per host.
+  verification, both sweeps with rebuilt keys). On 2026-11-27, on an
+  Apple-silicon Mac, four XMR/LEZ swaps ran with one role's Node native from
+  its darwin-arm64 0.4.1 package (CI-built from `2373e287`) in a `logosctl`
+  session and the other role in its container from the release bundle,
+  against Monero regtest: with the Maker native, a completed swap, a Taker
+  refund and a punishment, the Maker's own effect tools funding and
+  verifying the Monero, claiming with tag 15, sweeping the refund and
+  punishing with tag 17 against a live `monerod`; with the Taker native, a
+  completed swap. Each passed on its first try
+  ([macos-native-0.4.1-2026-11-27](../docs/evidence/macos-native-0.4.1-2026-11-27/README.md)).
+  The native role ran the official macOS `monero-wallet-rpc` 0.18.5.1,
+  checked against Monero's signed hash manifest by that set's script. Not
+  run on macOS: a Monero swap with both Nodes native (the fixed ports above
+  allow one role's wallet-rpc per host), a Taker refund or a punishment with
+  the Taker native, the other Monero scenarios and the Monero desk journeys
+  with a native Node; the repository's pinned Monero release is verified
+  and staged for Linux only.
 
 The Logos transport:
 

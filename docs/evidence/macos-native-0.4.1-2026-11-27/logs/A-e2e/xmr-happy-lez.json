@@ -1,0 +1,64 @@
+{
+  "scenario": "xmr-happy",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "1795724001",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "bf291132dd33b9b2b199e6498448983ce0eaa748ae98bbc7b74b01f18d87e9df",
+  "offer_id": "offer-e2e-xmr-1795724001",
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "lez_before": {
+    "maker": 2101000,
+    "taker": 1899000
+  },
+  "lez_deltas": {
+    "maker": 50000,
+    "taker": -50000
+  },
+  "outcome": "completed",
+  "taker_monero_before": {
+    "address": "49jMXGUMGB9gYxgb798LQA5bFBfnLKxrF6E48BjHKdu1eABHbrBUXdnbQ4TzYwSNztfJsMP7LvGXjYz1AKfTiX1GMhvfMMn",
+    "balance_piconero": 0,
+    "daemon_height": 110,
+    "state": "available",
+    "unlocked_piconero": 0
+  },
+  "taker_monero_after": {
+    "address": "49jMXGUMGB9gYxgb798LQA5bFBfnLKxrF6E48BjHKdu1eABHbrBUXdnbQ4TzYwSNztfJsMP7LvGXjYz1AKfTiX1GMhvfMMn",
+    "balance_piconero": 352759844732978,
+    "daemon_height": 130,
+    "state": "available",
+    "unlocked_piconero": 998191600000
+  },
+  "taker_monero_sweep": {
+    "txid": "c2c656e699bb7e605204b1f6673275b1b5ff786235bc9ce3abdf93ed8ecdb0f5",
+    "amount": 998191600000,
+    "height": 121
+  },
+  "result": "passed",
+  "seconds": 178
+}

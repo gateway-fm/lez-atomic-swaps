@@ -1,0 +1,8 @@
+tors 26 nov. 2026 20:08:32 UTC
+ Container lez040n-xmr-funding-wallet Recreate 
+ Container lez040n-xmr-funding-wallet Recreated 
+ Container lez040n-xmr-funding-wallet Starting 
+ Container lez040n-xmr-funding-wallet Started 
+lez040n-xmr-funding-wallet 127.0.0.1:18183->18083/tcp
+lez040n-maker-node
+staged maker home (prefix lez040n): ./btc-rpc-cookie ./identity/maker/identity.json ./identity/maker/lez-signer.key ./identity/maker/monero-wallet-rpc.login ./identity/maker/monerod.login ./identity/maker/zcash.key ./market-bootstrap.env ./xmr/wallet-rpc.conf ./zebra-cookie 

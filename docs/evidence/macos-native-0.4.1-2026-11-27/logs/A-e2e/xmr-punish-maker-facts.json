@@ -1,0 +1,53 @@
+{
+ "swap_id": "2496978ef6eced49c82be25419d2227fd50ad2212eb8d0a81541f5000ee9e514",
+ "swap_dir": "1eb60948fa523474a72129cd7ecc35de60665cbe2671ea3ce5ac0e4a4e39ec35",
+ "evidence": {
+  "maker-lez-scan.json": {},
+  "maker-punish-activation.json": {
+   "swap_id": "2496978ef6eced49c82be25419d2227fd50ad2212eb8d0a81541f5000ee9e514"
+  },
+  "monero-funding-receipt.json": {
+   "transaction_id": "1f257adbc271d6b0cf483a680a74263d987793d6db4ff4f84591706f009a9180",
+   "destination_address": "44nvbNjpby2CB9h1btL4SEdNqnq7suEkz6NbcMJUdaeWjEKXYTX2biU9aL5z8jEQcQgz4MhyvZb8tA6jdUrAnDVA9rAvtKR",
+   "amount_piconero": 1000000000000,
+   "containing_block_hash": "8814d84378b419ffaf6b2eff8ac7c8ece4abc0a75ddbc0686bdab517887447eb",
+   "containing_block_height": 151,
+   "confirmations": 10,
+   "network_scope": "isolated_official_monero_regtest"
+  },
+  "monero-funding.json": {
+   "attempt_state": "confirmed",
+   "shared_address": "44nvbNjpby2CB9h1btL4SEdNqnq7suEkz6NbcMJUdaeWjEKXYTX2biU9aL5z8jEQcQgz4MhyvZb8tA6jdUrAnDVA9rAvtKR",
+   "amount_piconero": 1000000000000,
+   "transaction_id": "1f257adbc271d6b0cf483a680a74263d987793d6db4ff4f84591706f009a9180",
+   "network_scope": "isolated_official_monero_regtest"
+  },
+  "tag13-funding-finalized.json": {
+   "outcome.finalized_clock.height": 8150,
+   "outcome.finalized_clock.timestamp_ms": 1795725064080,
+   "outcome.facts.transaction.transaction_id": "32f05e69ff6b292cfd7bfa7b1fae3c62bad368c14eb49d3f7e95597f2f4c8117",
+   "outcome.facts.transaction.position.height": 8150,
+   "outcome.facts.instruction.swap_id": "2496978ef6eced49c82be25419d2227fd50ad2212eb8d0a81541f5000ee9e514",
+   "outcome.facts.containing_block.block_id": 8150,
+   "outcome.facts.containing_block.timestamp_ms": 1795725064080,
+   "outcome.facts.metadata.swap_id": "2496978ef6eced49c82be25419d2227fd50ad2212eb8d0a81541f5000ee9e514",
+   "outcome.facts.metadata.state": "funded"
+  },
+  "tag17-finalized.json": {
+   "outcome.finalized_clock.height": 8960,
+   "outcome.finalized_clock.timestamp_ms": 1795726074577,
+   "outcome.facts.transaction.transaction_id": "28fa9235c93c6eaaea00da7cd7bcf7ef89efc09755ea5c4b413ae85154a0894d",
+   "outcome.facts.transaction.position.height": 8956,
+   "outcome.facts.instruction.swap_id": "2496978ef6eced49c82be25419d2227fd50ad2212eb8d0a81541f5000ee9e514",
+   "outcome.facts.containing_block.block_id": 8956,
+   "outcome.facts.containing_block.timestamp_ms": 1795726069582,
+   "outcome.facts.metadata.swap_id": "2496978ef6eced49c82be25419d2227fd50ad2212eb8d0a81541f5000ee9e514",
+   "outcome.facts.metadata.state": "claimed"
+  },
+  "tag17-punishment-submission.json": {
+   "transaction_id": "28fa9235c93c6eaaea00da7cd7bcf7ef89efc09755ea5c4b413ae85154a0894d",
+   "submission_outcome": "already_known"
+  },
+  "tag17-scan-cursor.json": {}
+ }
+}

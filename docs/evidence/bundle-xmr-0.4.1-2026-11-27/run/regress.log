@@ -1,0 +1,51 @@
+[22:07:24] regression run: 22 tests on the release images ghcr.io/gateway-fm/lez-atomic-swaps/lez-*:sha-2373e28735b7 of 2373e28735b7 (release.env), results in /Users/mandrigin/tmp/lez-m4/release-041/bundle-xmr/run
+[22:07:24] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[22:07:24] lanes: 2 (lane 1 is the stack; lanes 2..2: scripts/lanes.sh up)
+[22:09:02] group fast
+[22:09:03]     [lane 1] node:xmr:xmr-kill-taker:TakerSellsLez (try 1) starts: LEZ finalized 163, tip 176
+[22:09:03]     [lane 2] node:xmr:xmr-unfunded-punish:TakerSellsLez (try 1) starts: LEZ finalized 163, tip 176
+[22:33:25] === node:xmr:xmr-kill-taker:TakerSellsLez (try 1, lane 1): PASSED in 1451 s; LEZ finalized 1305, tip 1310
+[22:33:25]     [lane 1] node:xmr:xmr-monerod-down:TakerSellsLez (try 1) starts: LEZ finalized 1305, tip 1310
+[22:40:21] === node:xmr:xmr-monerod-down:TakerSellsLez (try 1, lane 1): PASSED in 411 s; LEZ finalized 1639, tip 1647
+[22:40:21]     [lane 1] node:xmr:mixed-three-pair:TakerSellsLez (try 1) starts: LEZ finalized 1639, tip 1647
+[22:42:47] === node:xmr:mixed-three-pair:TakerSellsLez (try 1, lane 1): PASSED in 141 s; LEZ finalized 1762, tip 1764
+[22:42:47]     [lane 1] node:xmr:xmr-maker-early-punish:TakerSellsLez (try 1) starts: LEZ finalized 1762, tip 1764
+[22:46:02] === node:xmr:xmr-unfunded-punish:TakerSellsLez (try 1, lane 2): PASSED in 2208 s; LEZ finalized 1919, tip 1922
+[22:46:02]     [lane 2] node:xmr:xmr-punish:TakerSellsLez (try 1) starts: LEZ finalized 1919, tip 1923
+[23:00:50] === node:xmr:xmr-maker-early-punish:TakerSellsLez (try 1, lane 1): PASSED in 1079 s; LEZ finalized 2638, tip 2643
+[23:00:50]     [lane 1] ui:xmr:xmr-punish:TakerSellsLez (try 1) starts: LEZ finalized 2638, tip 2643
+[23:03:43] === node:xmr:xmr-punish:TakerSellsLez (try 1, lane 2): PASSED in 1056 s; LEZ finalized 2775, tip 2782
+[23:03:43]     [lane 2] node:xmr:xmr-maker-claim-without-authorization:TakerSellsLez (try 1) starts: LEZ finalized 2775, tip 2782
+[23:16:35] === node:xmr:xmr-maker-claim-without-authorization:TakerSellsLez (try 1, lane 2): PASSED in 768 s; LEZ finalized 3401, tip 3406
+[23:16:35]     [lane 2] node:xmr:xmr-custody-credit-refund:TakerSellsLez (try 1) starts: LEZ finalized 3401, tip 3406
+[23:18:37] === ui:xmr:xmr-punish:TakerSellsLez (try 1, lane 1): PASSED in 1062 s; LEZ finalized 3501, tip 3504
+[23:18:37]     [lane 1] node:xmr:xmr-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 3501, tip 3504
+[23:31:22] === node:xmr:xmr-custody-credit-refund:TakerSellsLez (try 1, lane 2): PASSED in 883 s; LEZ finalized 4117, tip 4121
+[23:31:22]     [lane 2] node:xmr:xmr-maker-never-funds:TakerSellsLez (try 1) starts: LEZ finalized 4117, tip 4121
+[23:32:39] === node:xmr:xmr-taker-refund:TakerSellsLez (try 1, lane 1): PASSED in 838 s; LEZ finalized 4180, tip 4183
+[23:32:39]     [lane 1] node:xmr:xmr-taker-refund-kill:TakerSellsLez (try 1) starts: LEZ finalized 4180, tip 4183
+[23:44:46] === node:xmr:xmr-maker-never-funds:TakerSellsLez (try 1, lane 2): PASSED in 799 s; LEZ finalized 4765, tip 4771
+[23:44:46]     [lane 2] node:xmr:xmr-wallet-restart:TakerSellsLez (try 1) starts: LEZ finalized 4765, tip 4771
+[23:46:37] === node:xmr:xmr-taker-refund-kill:TakerSellsLez (try 1, lane 1): PASSED in 833 s; LEZ finalized 4852, tip 4859
+[23:46:37]     [lane 1] ui:xmr:xmr-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 4852, tip 4859
+[23:50:45] === node:xmr:xmr-wallet-restart:TakerSellsLez (try 1, lane 2): PASSED in 355 s; LEZ finalized 5047, tip 5057
+[23:50:45]     [lane 2] node:xmr:xmr-custody-credit:TakerSellsLez (try 1) starts: LEZ finalized 5047, tip 5057
+[23:54:27] === node:xmr:xmr-custody-credit:TakerSellsLez (try 1, lane 2): PASSED in 217 s; LEZ finalized 5231, tip 5235
+[23:54:27]     [lane 2] node:xmr:xmr-happy:TakerSellsLez (try 1) starts: LEZ finalized 5231, tip 5235
+[23:57:22] === node:xmr:xmr-happy:TakerSellsLez (try 1, lane 2): PASSED in 170 s; LEZ finalized 5367, tip 5374
+[23:57:22]     [lane 2] node:xmr:xmr-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 5367, tip 5374
+[00:01:22] === node:xmr:xmr-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 236 s; LEZ finalized 5561, tip 5566
+[00:01:22]     [lane 2] node:xmr:xmr-outage-before-take:TakerSellsLez (try 1) starts: LEZ finalized 5561, tip 5566
+[00:02:29] === ui:xmr:xmr-taker-refund:TakerSellsLez (try 1, lane 1): PASSED in 948 s; LEZ finalized 5614, tip 5620
+[00:02:29]     [lane 1] node:xmr:xmr-cut-after-lock:TakerSellsLez (try 1) starts: LEZ finalized 5614, tip 5620
+[00:04:49] === node:xmr:xmr-outage-before-take:TakerSellsLez (try 1, lane 2): PASSED in 203 s; LEZ finalized 5726, tip 5732
+[00:04:49]     [lane 2] node:xmr:xmr-shared-address-dust:TakerSellsLez (try 1) starts: LEZ finalized 5726, tip 5732
+[00:05:31] === node:xmr:xmr-cut-after-lock:TakerSellsLez (try 1, lane 1): PASSED in 177 s; LEZ finalized 5763, tip 5766
+[00:05:31]     [lane 1] ui:xmr:xmr-happy:TakerSellsLez (try 1) starts: LEZ finalized 5763, tip 5766
+[00:06:01] === node:xmr:xmr-shared-address-dust:TakerSellsLez (try 1, lane 2): FAILED in 68 s; LEZ finalized 5786, tip 5790
+      [01:05:56] FAILED: no Maker funding evidence names the shared address of 02aa73bb1408: 
+[00:06:01]     [lane 2] ui:xmr:xmr-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 5786, tip 5790
+[00:08:09] === ui:xmr:xmr-happy:TakerSellsLez (try 1, lane 1): PASSED in 154 s; LEZ finalized 5886, tip 5889
+[00:09:48] === ui:xmr:xmr-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 222 s; LEZ finalized 5961, tip 5966
+[00:09:48] regression run: 21 of 22 passed in 122 min, 0 new chains, 0 profile switches,        0 frozen tries
+[00:09:48]   not passed: node:xmr:xmr-shared-address-dust:TakerSellsLez
