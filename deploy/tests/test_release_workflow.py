@@ -46,8 +46,8 @@ class ReleaseWorkflow(unittest.TestCase):
         for context in ('maker-node', 'taker-node', 'lez-services', 'zebra-module'):
             self.assertIn(context, roles, context)
         # the published Taker image carries zec-local-poc-identity and the
-        # test-only payer zec-local-poc-transfer (feature test-payer), and none
-        # of the dealer test fixture's tools
+        # test-only payer zec-local-poc-transfer (feature test-payer), the two
+        # zec-local-poc tools there are
         self.assertIn('cp deploy/images/taker-node/zec-local-poc-identity '
                       'deploy/images/taker-node/zec-local-poc-transfer _out/images/taker-node/', collect)
         self.assertIn('install -m 0755 _in/node/images/taker-node/zec-local-poc-identity '
@@ -219,25 +219,35 @@ class NoTestHooksInARelease(unittest.TestCase):
         # The release mark reaches both build containers.
         self.assertEqual(text.count('${release_build_env[@]+"${release_build_env[@]}"}'), 2)
 
-    def test_the_crash_hooks_and_the_dealer_fixture_never_reach_a_release(self):
-        # The release path builds neither feature, and under the release
-        # mark neither compiles (the same const assert as test-hooks').
+    def test_the_crash_hooks_never_reach_a_release(self):
+        # The release path does not build the feature, and under the release
+        # mark it does not compile (the same const assert as test-hooks').
         for path in self.RELEASE_WORKFLOWS + self.PACKAGERS:
             text = (ROOT / path).read_text()
-            for word in ('test-crash-hooks', '--features dealer-fixture'):
-                self.assertNotIn(word, text, f'{path} names {word}')
+            self.assertNotIn('test-crash-hooks', text, f'{path} names test-crash-hooks')
         lib = (ROOT / 'crates/zec-reference-actor/src/lib.rs').read_text()
-        for feature in ('test-crash-hooks', 'dealer-fixture'):
-            self.assertRegex(
-                lib,
-                r'#\[cfg\(feature = "' + feature + r'"\)\]\nconst _: \(\) = assert!\(\n'
-                r'    option_env!\("LEZ_RELEASE_BUILD"\)\.is_none\(\),',
-                feature)
-        # from-scratch.sh builds the dealer's tools only outside a release.
-        text = self.FROM_SCRATCH.read_text()
-        build = text.index('--features dealer-fixture')
-        guard = text.rindex('if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then', 0, build)
-        self.assertNotIn('\n      fi\n', text[guard:build])
+        self.assertRegex(
+            lib,
+            r'#\[cfg\(feature = "test-crash-hooks"\)\]\nconst _: \(\) = assert!\(\n'
+            r'    option_env!\("LEZ_RELEASE_BUILD"\)\.is_none\(\),')
+
+    def test_no_tool_prepares_a_zcash_swap_for_both_parties(self):
+        # The dealer fixture (one operator holding both parties' keys and the
+        # swap secret) is gone from the crate, the builds and the images: the
+        # two Nodes agree a Zcash swap at take time.
+        manifest = (ROOT / 'crates/zec-reference-actor/Cargo.toml').read_text()
+        self.assertNotIn('dealer', manifest)
+        self.assertEqual(sorted(re.findall(r'name = "(zec-local-poc-[a-z-]+)"', manifest)),
+                         ['zec-local-poc-identity', 'zec-local-poc-transfer'])
+        self.assertEqual(sorted(p.name for p in (ROOT / 'crates/zec-reference-actor/src/bin').glob('zec-local-poc-*')),
+                         ['zec-local-poc-identity.rs', 'zec-local-poc-transfer.rs'])
+        for path in ('crates/zec-reference-actor/src/lib.rs', 'crates/zec-reference-actor/src/local_poc.rs',
+                     'deploy/scripts/from-scratch.sh', 'deploy/images/taker-node/Dockerfile', '.github/workflows/ci.yml',
+                     *self.RELEASE_WORKFLOWS, *self.PACKAGERS):
+            text = (ROOT / path).read_text()
+            for word in ('dealer', 'zec-local-poc-provision', 'zec-local-poc-chat-'):
+                self.assertNotIn(word, text, f'{path} names {word}')
+        self.assertFalse((ROOT / 'deploy/tests/fixtures/zec-catalog-fixture.sh').exists())
 
     def test_from_scratch_refuses_the_hooks_in_a_release_build(self):
         import os
@@ -283,14 +293,12 @@ class TestPayerInTheTakerImage(unittest.TestCase):
     which the harness funds the Taker's Zcash key; no role package does.
 
     It is built in a cargo invocation of its own, so the feature never reaches
-    the zec-reference-actor library the Nodes and actors link, and the dealer
-    fixture, which enables it, still never builds in a release."""
+    the zec-reference-actor library the Nodes and actors link."""
 
     FROM_SCRATCH = (ROOT / 'deploy/scripts/from-scratch.sh').read_text()
     MANIFEST = (ROOT / 'crates/zec-reference-actor/Cargo.toml').read_text()
 
-    def test_the_payer_is_its_own_feature_and_needs_no_dealer(self):
-        self.assertIn('dealer-fixture = ["test-payer"]\n', self.MANIFEST)
+    def test_the_payer_is_its_own_feature(self):
         self.assertIn('test-payer = []\n', self.MANIFEST)
         payer = self.MANIFEST.split('name = "zec-local-poc-transfer"', 1)[1].split('[[bin]]', 1)[0]
         self.assertIn('required-features = ["test-payer"]', payer)
@@ -298,7 +306,7 @@ class TestPayerInTheTakerImage(unittest.TestCase):
         for manifest in sorted(ROOT.glob('crates/*/Cargo.toml')):
             if manifest.parent.name != 'zec-reference-actor':
                 self.assertNotIn('test-payer', manifest.read_text(), manifest)
-        # and a release build does not refuse it as it refuses the dealer
+        # and a release build does not refuse it as it refuses the crash hooks
         lib = (ROOT / 'crates/zec-reference-actor/src/lib.rs').read_text()
         self.assertNotRegex(lib, r'#\[cfg\(feature = "test-payer"\)\]\nconst _: \(\) = assert!')
 
@@ -306,13 +314,12 @@ class TestPayerInTheTakerImage(unittest.TestCase):
         payer = 'cargo build --locked -p zec-reference-actor --features test-payer --bin zec-local-poc-transfer'
         self.assertEqual(self.FROM_SCRATCH.count(payer), 1)
         products = self.FROM_SCRATCH.index('cargo build --locked --bins --features "lez-maker-node/pair-zec')
-        guard = self.FROM_SCRATCH.index('if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then', products)
         at = self.FROM_SCRATCH.index(payer)
         self.assertLess(products, at)
-        self.assertLess(at, guard)  # before the release-only guard: in every build
-        dealer = self.FROM_SCRATCH[guard:self.FROM_SCRATCH.index('\n      fi\n', guard)]
-        self.assertNotIn('zec-local-poc-transfer', dealer)
-        self.assertIn('taker-node/zec-local-poc-identity|taker-node/zec-local-poc-transfer) ;;', self.FROM_SCRATCH)
+        # in every build: nothing of the rust phase depends on the release mark
+        staged = self.FROM_SCRATCH.index("for b in '\"${bins[*]}\"'; do", at)
+        self.assertNotIn('LEZ_RELEASE_BUILD', self.FROM_SCRATCH[products:staged])
+        self.assertIn('taker-node/zec-local-poc-identity taker-node/zec-local-poc-transfer\n', self.FROM_SCRATCH)
         # the Taker image's context copies every zec-local-poc tool it is given
         self.assertIn('COPY zec-local-poc-* /payload/', (ROOT / 'deploy/images/taker-node/Dockerfile').read_text())
 

@@ -141,7 +141,7 @@ QString LezAtomicSwapMakerBackend::btcSwapAction(
 {
     // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the
     // desk only refreshes. Manual claim and refund stay on the swap panel.
-    // 64 hex for Bitcoin; a prepared ZEC swap keeps its catalog id.
+    // 64 hex for Bitcoin; a ZEC swap id is zec-<64 hex>.
     static const QRegularExpression swapPattern(QStringLiteral("^[A-Za-z0-9._-]{8,128}$"));
     if (!marketRequest(requestId) || !makerWallet(walletId)
         || !swapPattern.match(swapId).hasMatch()

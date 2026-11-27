@@ -1,5 +1,5 @@
 # Only what the Dockerfile copies: the payload package, the source receipts
-# and (Taker) the ZEC provisioners. The debug executables staged here are
+# and (Taker) the two zec-local-poc tools. The debug executables staged here are
 # inputs of scripts/package-role-node.sh, not of the image.
 *
 !Dockerfile

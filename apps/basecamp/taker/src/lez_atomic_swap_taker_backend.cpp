@@ -171,9 +171,9 @@ QString LezAtomicSwapTakerBackend::btcSwapAction(
     QString requestId, QString walletId, QString swapId, QString action)
 {
     // A swap action is named after its swap, not the clock, so a retry replays.
-    // A Bitcoin swap id is 64 hex; a prepared ZEC swap keeps the catalog's
-    // id (`zec-devnet-swap-…`), so the id and its 16-character prefix in the
-    // request id take the Node's identifier charset.
+    // A Bitcoin swap id is 64 hex; a ZEC swap id is the one the Nodes derive
+    // at take time (`zec-<64 hex>`), so the id and its 16-character tag in
+    // the request id take the Node's identifier charset.
     static const QRegularExpression requestPattern(
         QStringLiteral("^ui-taker-[a-z-]{2,24}-[A-Za-z0-9._-]{1,16}$"));
     static const QRegularExpression swapPattern(QStringLiteral("^[A-Za-z0-9._-]{8,128}$"));

@@ -25,8 +25,7 @@ if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
 }
 const reverseDirection = uiDirection === "TakerSellsLez";
 const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
-// Zcash rows are the Maker's offers, agreed at take time (or, in the catalog
-// tests, a corridor of tests/fixtures/zec-catalog-fixture.sh), one lot each
+// Zcash rows are the Maker's offers, agreed at take time, one lot each
 // (amounts below), in either direction. The Taker's first lock
 // (the LEZ escrow, or the Zcash HTLC when it sells ZEC) is driven by the
 // Taker Node's supervisor, so a fresh Zcash swap shows no button.
@@ -154,22 +153,19 @@ const btcAmount = process.env.LEZ_UI_BTC_AMOUNT || "0.01";
 const lezText = `${Number(lezAmount).toLocaleString("en-US")} LEZ`;
 const btcText = `${Number(btcAmount).toFixed(8)} BTC`;
 const btcShort = `${btcAmount} BTC`;
-// A Zcash row shows the prepared corridor's lot: ui-e2e.sh reads it from the
-// corridor's prepared.json and passes LEZ_UI_ZEC_AMOUNT (ZEC) and
-// LEZ_UI_ZEC_LEZ_AMOUNT (LEZ units), so a price change in the lot
-// cannot silently break the journey.
+// A Zcash row shows the offer's lot: ui-e2e.sh passes LEZ_UI_ZEC_AMOUNT (ZEC)
+// and LEZ_UI_ZEC_LEZ_AMOUNT (LEZ units), the lot node-e2e.py publishes, so a
+// price change in the lot cannot silently break the journey.
 const zecAmount = process.env.LEZ_UI_ZEC_AMOUNT || "1";
 const zecLezAmount = process.env.LEZ_UI_ZEC_LEZ_AMOUNT || "50000";
 const zecText = `${Number(zecAmount).toFixed(8)} ZEC`;
 const zecLezText = `${Number(zecLezAmount).toLocaleString("en-US")} LEZ`;
 // A Zcash journey publishes its offer from the Maker desk's form when
-// LEZ_UI_PUBLISH_ZEC is 1 (a take-time agreement, no corridor); otherwise its
-// offer came from a prepared corridor and nothing is published.
+// LEZ_UI_PUBLISH_ZEC is 1; otherwise the Maker's CLI published it on the
+// running Maker Node (ui-e2e.sh zec_publish_offers) and the desk publishes
+// nothing. Either way the two Nodes agree the swap when the desk takes the
+// offer, and the Taker Node makes the swap secret.
 const publishZec = zcash && process.env.LEZ_UI_PUBLISH_ZEC === "1";
-// A Zcash offer published on the running Maker Node (ui-e2e.sh
-// zec_publish_offers, LEZ_UI_ZEC_TAKE_TIME=1) is agreed at take time as well:
-// the Taker Node makes the swap secret, and no corridor exists.
-const zecTakeTime = publishZec || (zcash && process.env.LEZ_UI_ZEC_TAKE_TIME === "1");
 // A Monero journey's lot is node-e2e.py's (XMR_FOREIGN_UNITS, XMR_LEZ_UNITS),
 // 12 decimals; its offer always comes from the Maker desk's form.
 const xmrAmount = process.env.LEZ_UI_XMR_AMOUNT || "1";
@@ -564,8 +560,8 @@ if (role === "maker") {
     // The Node publishes one offer per click; two open offers prove the
     // inventory is indexed to this Node's identity and survives a refresh.
     // A Zcash journey publishes nothing from the desk unless it is the desk-offer
-    // journey: its offer was published on the Maker Node (or came from a
-    // corridor), and a Bitcoin offer has no place in a ZEC recording.
+    // journey: its offer was published on the Maker Node, and a Bitcoin offer
+    // has no place in a ZEC recording.
     while ((!zcash || publishZec) && pending < 2) {
       const target = pending + 1;
       narrate(monero
@@ -587,9 +583,7 @@ if (role === "maker") {
     }
     console.log(`  inventory: Munich Vault 01 (Maker Node) open offers=${pending} · market=${munich.summary.pending_offers}`);
     narrate(zcash && !publishZec
-      ? (zecTakeTime
-        ? `Inventory refreshed: the Maker Node indexes its offers; the Zcash offer was published on the running Maker Node, nothing is published from the desk`
-        : `Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk`)
+      ? `Inventory refreshed: the Maker Node indexes its offers; the Zcash offer was published on the running Maker Node, nothing is published from the desk`
       : `Inventory: ${pending} open ${reverseDirection ? (monero ? "sell-XMR" : zcash ? "sell-ZEC" : "sell-BTC") : "sell-LEZ"} offers indexed by the Maker Node`);
   });
 
@@ -702,10 +696,8 @@ if (role === "maker") {
       const before = await property(app, "takerOutput", "text");
       narrate(monero
         ? "Take offer on the Monero row: the Taker Node agrees the swap with the Maker over Chat (xmr_reserve_v1 and the signing ceremony) and locks its LEZ on its own"
-        : zcash && zecTakeTime
-        ? "Take offer on the Zcash row: the Taker Node agrees the swap with the Maker over Chat (zec_reserve_v1 and the signing ceremony), makes the swap secret itself and provisions its Taker actor"
         : zcash
-        ? "Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor"
+        ? "Take offer on the Zcash row: the Taker Node agrees the swap with the Maker over Chat (zec_reserve_v1 and the signing ceremony), makes the swap secret itself and provisions its Taker actor"
         : reverseDirection
           ? "Take offer on a sell-BTC row: the Taker Node reserves the lot, runs the signing ceremony with the Maker and activates the swap"
           : "Take offer on a sell-LEZ row: the Taker Node reserves the lot, plans its Bitcoin funding, runs the signing ceremony with the Maker and activates the swap");
@@ -737,7 +729,7 @@ if (role === "maker") {
           const row = rowsFor(await deskSwaps(app), swapId)[0];
           if (firstAction === null ? zcashTakenStates.includes(row?.state) : row?.action_required === firstAction) { taken = swapId; break; }
           if (Date.now() > deadline) {
-            throw new Error(`swap ${swapId.slice(0, 12)} is ${row?.state ?? "missing"}, not ready to ${firstAction ?? "show as the prepared Zcash swap"}`);
+            throw new Error(`swap ${swapId.slice(0, 12)} is ${row?.state ?? "missing"}, not ready to ${firstAction ?? "show as the taken Zcash swap"}`);
           }
         } else if (Date.now() > deadline) {
           throw new Error("the Taker Node did not answer the take in time");

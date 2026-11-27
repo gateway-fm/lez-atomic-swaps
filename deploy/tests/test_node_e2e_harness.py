@@ -779,9 +779,10 @@ class ZecKillMakerClaim(unittest.TestCase):
         self.assertEqual(e2e.ZEC_MAKER_STATE, '/var/lib/lez/maker')
         entrypoint = (REPO / 'modules/lez-role-node/node-entrypoint.sh').read_text()
         self.assertIn('export LEZ_TEST_HOOKS_DIR="$state/test-hooks"', entrypoint)
-        # before the ZEC sidecars start, which read it
+        # before the Node starts: it spawns each swap's sidecar, which reads it
         self.assertLess(entrypoint.index('export LEZ_TEST_HOOKS_DIR'),
-                        entrypoint.index('node_helper "$bin/lez-v02-bridge-poc"'))
+                        entrypoint.index('exec "$bin/lez-maker-node" "${args[@]}"'))
+        self.assertNotIn('node_helper "$bin/lez-v02-bridge-poc"', entrypoint)
 
 
 class ClaimSendFails(unittest.TestCase):
@@ -1096,6 +1097,61 @@ class TakeTimeSecretCustody(unittest.TestCase):
         source = inspect.getsource(e2e.scenario_zec_dynamic_happy)
         self.assertLess(source.index('zec_take_or_resume('), source.index('zec_take_time_secret_custody(swap_id)'))
         self.assertLess(source.index('zec_take_time_secret_custody(swap_id)'), source.index('zec_happy_after_take('))
+
+
+class TakeTimeOffers(unittest.TestCase):
+    """zec_provision: every Zcash scenario takes an offer the Maker's CLI
+    published; no swap is prepared ahead and there is no other way to set one up."""
+
+    def test_it_publishes_offers_and_nothing_else(self):
+        seen = []
+        with patch.dict(os.environ, {}, clear=False), patch.object(e2e, 'ZEC_DYNAMIC_PROFILE', 'deterministic-local-devnet-v5'), \
+                patch.dict(e2e.ROUTE, {'direction': 'TakerSellsLez'}), \
+                patch.object(e2e, 'zec_take_time_offers', lambda swaps, add: seen.append((swaps, add)) or {'offer_id': 'o'}):
+            os.environ.pop('LEZ_ZEC_REUSE_CORRIDOR', None)
+            self.assertEqual(e2e.zec_provision(), {'offer_id': 'o'})
+            e2e.zec_provision(swaps=2)
+            e2e.zec_provision(add=True)
+            e2e.zec_provision(profile='deterministic-local-devnet-v7')
+        self.assertEqual(seen, [(1, False), (2, False), (1, True), (1, False)])
+        source = inspect.getsource(e2e.zec_provision)
+        for gone in ('subprocess', 'fixture', 'prepared.json', 'LEZ_ZEC_AGREEMENT'):
+            self.assertNotIn(gone, source)
+        self.assertFalse(hasattr(e2e, 'ZEC_AGREEMENT'))
+
+    def test_a_scenario_that_needs_another_profile_says_how_the_nodes_are_started(self):
+        with patch.object(e2e, 'ZEC_DYNAMIC_PROFILE', 'deterministic-local-devnet-v5'), \
+                patch.object(e2e, 'zec_take_time_offers', lambda *_: self.fail('nothing may be published')):
+            os.environ.pop('LEZ_ZEC_REUSE_CORRIDOR', None)
+            with patch.dict(e2e.ROUTE, {'direction': 'TakerSellsLez'}):
+                with self.assertRaisesRegex(e2e.Failure, 'LEZ_ZEC_PROFILE=deterministic-local-devnet-v6'):
+                    e2e.zec_provision(profile='deterministic-local-devnet-v8')
+            with patch.dict(e2e.ROUTE, {'direction': 'TakerSellsForeign'}):
+                with self.assertRaisesRegex(e2e.Failure, 'LEZ_ZEC_PROFILE=deterministic-local-devnet-v6'):
+                    e2e.zec_provision(profile='deterministic-local-devnet-v6')
+
+    def test_reuse_reads_the_taken_swap_and_publishes_nothing(self):
+        with patch.dict(os.environ, {'LEZ_ZEC_REUSE_CORRIDOR': '1'}), \
+                patch.object(e2e, 'zec_take_time_offers', lambda *_: self.fail('nothing may be published')), \
+                patch.object(e2e, 'zec_dynamic_corridor', lambda swap_id, offer_id: {'swap_id': swap_id}):
+            self.assertEqual(e2e.zec_provision(swap_id='zec-swap-1'), {'swap_id': 'zec-swap-1'})
+            with self.assertRaisesRegex(e2e.Failure, 'needs its swap id'):
+                e2e.zec_provision()
+
+    def test_the_desk_journeys_wait_for_the_lez_refund_time_of_the_swap_itself(self):
+        self.assertIn('lez-refund-time', e2e.ZEC_STEPS)
+        waited = []
+        taken = {'run_id': 'take-time-1700000000', 'lez_refund_delay_seconds': 240}
+        with patch.object(e2e, 'zec_dynamic_corridor', lambda swap_id, offer_id: taken), \
+                patch.object(e2e, 'wait_until', lambda when, why: waited.append(when)), \
+                patch.object(e2e, 'log', lambda *_: None):
+            for direction in ('TakerSellsLez', 'TakerSellsForeign'):
+                with patch.dict(e2e.ROUTE, {'direction': direction}):
+                    self.assertTrue(e2e.zec_step_tool('zec-swap-1', 'lez-refund-time', 60))
+        self.assertEqual(waited, [1700000000 + 240 + 15] * 2)
+        desk = (REPO / 'deploy/scripts/ui-e2e.sh').read_text()
+        self.assertIn('zec_step "$swap" lez-refund-time', desk)
+        self.assertNotIn('zec/current', desk)
 
 
 class TakeTimeConfigScenarios(unittest.TestCase):
@@ -1874,17 +1930,6 @@ class RuntimePaths(unittest.TestCase):
         for name in ['', '.', '..', '../x', '../../etc/passwd', '/abs', 'a/b', 'a\\b', 'a\0b', 'x/..']:
             with self.assertRaises(e2e.Failure, msg=repr(name)):
                 e2e.runtime_child(root, name)
-
-    def test_the_current_run_id_is_one_plain_name(self):
-        with tempfile.TemporaryDirectory() as directory:
-            lane = pathlib.Path(directory)
-            (lane / 'zec').mkdir()
-            with patch.object(e2e, 'LANE_RUNTIME', lane):
-                (lane / 'zec' / 'current').write_text('run-0001\n')
-                self.assertEqual(e2e.zec_current_run_id(), 'run-0001')
-                (lane / 'zec' / 'current').write_text('../../outside\n')
-                with self.assertRaises(e2e.Failure):
-                    e2e.zec_current_run_id()
 
     def test_a_configured_credential_file_must_not_walk_the_tree(self):
         with patch.dict(os.environ, {'LEZ_ZEBRA_API_KEY_FILE': '/run/secrets/zebra.key'}):

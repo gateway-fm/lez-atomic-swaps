@@ -158,10 +158,10 @@ role_files() {
   done
   # Each role's Zcash key, minted once beside its LEZ identity and kept across
   # reruns: the Maker's is also its Delivery signing key (the entrypoint installs
-  # it; the ZEC ceremony binds Delivery identity, Chat key and Zcash key into one
+  # it; a Zcash agreement binds Delivery identity, Chat key and Zcash key into one
   # key) and zebra mines to its transparent address, so the Maker owns the
-  # coinbase the ZEC provisioner spends; the Taker's key funds Zcash in
-  # TakerSellsForeign (tests/fixtures/zec-catalog-fixture.sh pays it once from the Maker's).
+  # coinbase outputs it funds Zcash from; the Taker's key funds Zcash in
+  # TakerSellsForeign (node-e2e.py pays it from the Maker's before such a take).
   # Nothing here is a constant: a fresh runtime mints fresh keys. The address
   # comes from zec-local-poc-identity, staged on the host by from-scratch.sh
   # --only rust or, once the stage is gone, run from the Taker image.

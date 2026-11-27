@@ -86,7 +86,11 @@ class Launcher(unittest.TestCase):
                 (self.tools / tool).symlink_to(real)
         self.fakes = self.tmp / 'fakes'
         self.fakes.mkdir()
+        # The launcher hands curl its login on stdin (`curl -K -`): the fake
+        # reads it to the end, as curl does, so the writer never meets a
+        # closed pipe however the two are scheduled.
         executable(self.fakes / 'curl', '#!/bin/sh\n'
+                   'case " $* " in *" -K - "*) cat >/dev/null ;; esac\n'
                    'for a in "$@"; do case "$a" in\n'
                    '  *getblockhash*) echo \'{"result":"0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"}\'; exit 0;;\n'
                    '  *getnewaddress*) echo \'{"result":"bcrt1pclaim"}\'; exit 0;;\n'
@@ -233,6 +237,49 @@ class Launcher(unittest.TestCase):
                 for args in zcash:
                     self.assertEqual(args, ['tcp', '127.0.0.1:18232', 'getblockchaininfo', '[]'])
 
+    def linux_role(self, role, root, **env):
+        """One role started as its container starts it, each role with its own
+        state and Zcash directory, both with one run root and Delivery directory."""
+        return self.run_launcher(
+            shutil.which('bash'), role,
+            LEZ_NODE_STATE_DIR=str(root / f'state-{role}'), LEZ_NODE_RUN_ROOT=str(root / 'run'),
+            LEZ_ZEC_STATE_DIR=str(root / f'zec-{role}'), LEZ_NODE_IDENTITY_DIR=str(root / f'identity-{role}'),
+            LEZ_MARKET_MANIFEST=str(root / 'market/market-bootstrap.env'),
+            LEZ_BTC_RPC_COOKIE_FILE=str(root / 'config/btc-rpc-cookie'), LEZ_DELIVERY_DIR=str(root / 'delivery'), **env)
+
+    def test_nothing_prepared_ahead_of_a_take_reaches_either_node(self):
+        # A Zcash swap is agreed by the two Nodes at take time. Files a dealer
+        # once left in a role's Zcash directory (a corridor's actor templates,
+        # a Taker's prepared.json) are not read: the Maker gets no actor
+        # template, the Taker's configuration names no prepared swap.
+        self.host('Linux', setpriv=True)
+        root = self.tmp / 'linux'
+        self.inputs(root / 'identity-maker', root / 'market/market-bootstrap.env', root / 'config/btc-rpc-cookie')
+        self.inputs(root / 'identity-taker', root / 'market/market-bootstrap.env', root / 'config/btc-rpc-cookie',
+                    role='taker')
+        (root / 'identity-taker/taker').mkdir()
+        (root / 'identity-taker/taker/zcash.key').write_text('44' * 32)
+        for role in ('maker', 'taker'):
+            corridor = root / f'zec-{role}/corridor/{role}'
+            corridor.mkdir(parents=True)
+            (corridor / 'actor-config.json').write_text(json.dumps({
+                'run_id': 'left-over', 'bridge': {'endpoint': 'http://127.0.0.1:19999/', 'runtime': {
+                    'channel_id': CHANNEL, 'genesis_block_hash': GENESIS, 'escrow_program_id': PROGRAM}}}))
+            (root / f'zec-{role}/prepared.json').write_text(json.dumps([{'offer_id': 'left-over'}]))
+        maker = self.linux_role('maker', root)
+        self.assertNotIn('--zec-source-maker-config', maker['args'])
+        self.assertEqual(self.flag(maker, '--zec-role-config'), str(root / 'zec-maker/zec-role.json'))
+        self.assertEqual(self.flag(maker, '--zec-maker-actor-root'), str(root / 'zec-maker/actors'))
+        self.assertFalse((root / 'zec-maker/sidecar').exists(), 'no sidecar is started for a left-over corridor')
+        self.linux_role('taker', root)
+        config = json.loads((root / 'state-taker/role.json').read_text())
+        self.assertEqual(sorted(config['initiation']),
+                         ['btc_role_config', 'execute_prepared', 'registry_database', 'zec_role_config'])
+        self.assertEqual(config['initiation']['zec_role_config'], str(root / 'zec-taker/zec-role.json'))
+        text = LAUNCHER.read_text()
+        for gone in ('prepared_zec', 'prepared.json', '--zec-source-maker-config', 'zec-catalog-fixture'):
+            self.assertNotIn(gone, text, gone)
+
     def test_no_rpc_login_reaches_a_command_line(self):
         # A recording curl: each call's arguments and the config it reads on
         # its standard input (-K -), then the answers of the plain fake.
@@ -290,7 +337,7 @@ class Launcher(unittest.TestCase):
         text = LAUNCHER.read_text()
         linux = text[text.index('\nelse\n  default_state='):text.index('\nfi\n', text.index('\nelse\n  default_state='))]
         for line in ('default_state="/var/lib/lez/$role"', 'default_run_root=/run/lez',
-                     'default_zec_state=/var/lib/lez/zec', 'default_zec_sidecar=\n', 'default_identity=/run-lez-identity',
+                     'default_zec_state=/var/lib/lez/zec', 'default_identity=/run-lez-identity',
                      'default_manifest=/run-market/market-bootstrap.env',
                      'default_cookie=/run-config/btc-rpc-cookie', 'default_delivery=/delivery',
                      'default_chain_host=\n'):

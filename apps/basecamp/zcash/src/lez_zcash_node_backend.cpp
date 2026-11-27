@@ -28,7 +28,7 @@ QString LezZcashNodeBackend::restartNode()
 QString LezZcashNodeBackend::resetChain()
 {
     // A new Regtest chain under the same settings (a worn chain, or one on
-    // another consensus branch: tests/fixtures/zec-catalog-fixture.sh).
+    // another consensus branch).
     started_ = lez_zcash_host::resetChain(modules().zebrad_module);
     return started_;
 }

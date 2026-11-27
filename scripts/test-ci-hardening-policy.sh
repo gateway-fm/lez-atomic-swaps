@@ -145,11 +145,12 @@ require_fixed "readonly release_shaped='^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z
 require_fixed "readonly namespaced='^(sha|branch)-[A-Za-z0-9][A-Za-z0-9_.-]*\$'" "$image_tag_script"
 require_fixed "name: \${{ github.ref_type == 'tag' && 'catalog-packages' || format('catalog-packages-test-{0}', github.sha) }}" \
   .github/workflows/release-packages.yml
-# The release Taker image carries the test payer and no dealer tool (#190),
+# The release Taker image carries the test payer and no other zec-local-poc
+# tool but -identity (#190, #162),
 # and the smoke job runs a short regression from the bundle after start.sh.
 require_fixed 'cp deploy/images/taker-node/zec-local-poc-identity deploy/images/taker-node/zec-local-poc-transfer _out/images/taker-node/' "$images_workflow"
 ! rg -q 'zec-local-poc-(provision|chat-draft|chat-finalize)|zec-local-poc-\*' "$images_workflow" \
-  || fail "$images_workflow ships a dealer test fixture tool"
+  || fail "$images_workflow ships a zec-local-poc tool other than -identity and -transfer"
 images_smoke="$(awk '/^  smoke:$/ { on = 1 } /^  publish:$/ { on = 0 } on' "$images_workflow")"
 for required in './scripts/start.sh' 'LEZ_TIMING_PROFILE=fast SKIP_UI_VERIFY=1 LEZ_NO_BANNER=1 bash scripts/up.sh' \
   'bash scripts/regress.sh run' 'node:zec:zec-happy:TakerSellsLez node:zec:zec-happy:TakerSellsForeign' \
@@ -225,9 +226,12 @@ require_fixed 'cargo test --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo run --locked -p lez-xmr-swap-sdk --example full-lifecycle' "$ci_workflow"
 require_fixed 'cargo run --locked -p xmr-reference-actor --example full-lifecycle' "$ci_workflow"
 require_fixed 'cargo test --locked --manifest-path compat/lez-v0.2-provisional/Cargo.toml -p lez-zec-escrow-v02 --lib' "$ci_workflow"
-require_fixed 'cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings' "$ci_workflow"
 # The test payer the release Taker image carries is linted and tested under
-# the release mark, without the dealer fixture (#190).
+# the release mark (#190). No workflow builds a tool that prepares a Zcash
+# swap for both parties: the two Nodes agree it at take time (#162).
+if grep -R -n -F -e 'dealer-fixture' -e 'zec-local-poc-provision' .github/workflows >/dev/null; then
+  fail "a workflow names a tool that prepares a Zcash swap for both parties"
+fi
 require_fixed 'cargo clippy --locked -p zec-reference-actor --features test-payer --all-targets -- -D warnings' "$ci_workflow"
 require_fixed 'cargo test --locked -p zec-reference-actor --features test-payer' "$ci_workflow"
 require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"

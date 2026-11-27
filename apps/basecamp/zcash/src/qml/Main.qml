@@ -5,8 +5,7 @@ import QtQuick.Controls
 // Basecamp hosts as its backend reports it, refreshed every five seconds.
 // Restart node stops the node and starts it again (its chain stays). On
 // Regtest, Reset chain stops the node, deletes its chain and starts a new one
-// (tests/fixtures/zec-catalog-fixture.sh presses it for a worn chain or one on
-// another consensus branch).
+// (the devnet harness presses it for a worn chain).
 Item {
     id: root
 

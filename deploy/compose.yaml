@@ -514,7 +514,8 @@ services:
       - maker_state:/var/lib/lez/maker
       # The Node's sockets; the Taker Node reaches the Maker's Chat socket here.
       - maker_socket:/run/lez/maker
-      # The Maker half of the prepared ZEC corridor (tests/fixtures/zec-catalog-fixture.sh).
+      # The Maker's Zcash files: its role configuration and the actor root of
+      # each Zcash swap it agreed at take time.
       - zec_maker:/var/lib/lez/zec
       # The zebra service's volume, read-only: its cookie (LEZ_ZEBRA_COOKIE_FILE).
       - zebra_module_data:/var/lib/zebra:ro
@@ -626,7 +627,7 @@ services:
       LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
     volumes:
       - taker_state:/var/lib/lez/taker
-      # The Taker half of the prepared ZEC corridor plus its catalog.
+      # The Taker's Zcash files: its role configuration and its own Zcash key.
       - zec_taker:/var/lib/lez/zec
       # The zebra service's volume, read-only: its cookie (LEZ_ZEBRA_COOKIE_FILE).
       - zebra_module_data:/var/lib/zebra:ro

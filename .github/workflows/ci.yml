@@ -311,14 +311,9 @@ jobs:
           --test maker_xmr_tag17_supervisor
       - name: Run the ZEC actor's crash-hook test file
         run: cargo test --locked -p zec-reference-actor --features test-crash-hooks --test crash_hook
-      # The workspace runs above build the product without the dealer; the
-      # devnet's dealer test fixture (feature dealer-fixture) is linted and tested here.
-      - name: Lint and test the ZEC dealer test fixture
-        run: |
-          cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings
-          cargo test --locked -p zec-reference-actor --features dealer-fixture
-      # The test payer alone (feature test-payer, zec-local-poc-transfer), as a
-      # release build makes it: under LEZ_RELEASE_BUILD, without the dealer.
+      # The workspace runs above build the product without the test payer
+      # (feature test-payer, zec-local-poc-transfer); it is linted and tested
+      # here as a release build makes it: under LEZ_RELEASE_BUILD.
       - name: Lint and test the ZEC test payer as a release build makes it
         env:
           LEZ_RELEASE_BUILD: "1"

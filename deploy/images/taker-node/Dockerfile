@@ -7,13 +7,11 @@
 # (lez_taker_node.lgx, scripts/package-role-node.sh) carries the Node, its
 # CLI, its actors, the LEZ sidecar and the launcher; this image installs it,
 # and compose.yaml configures it. Only the Taker's executables are here
-# (deploy/role-symmetry.json). The zec-local-poc tools are not part of the
-# package: whichever the context holds are copied. Every context holds
-# -identity (gen-config.sh: zebra's miner address) and the test-only payer
-# -transfer (feature test-payer: node-e2e.py funds the Taker's Zcash key with
-# it); the devnet's (from-scratch.sh) also the dealer test fixture's (feature
-# dealer-fixture, run by tests/fixtures/zec-catalog-fixture.sh), the published
-# image's (release-images.yml) not.
+# (deploy/role-symmetry.json). The two zec-local-poc tools are not part of
+# the package; the context holds both, the devnet's (from-scratch.sh) and the
+# published image's (release-images.yml) alike: -identity (gen-config.sh:
+# zebra's miner address) and the test-only payer -transfer (feature
+# test-payer: node-e2e.py funds the Taker's Zcash key with it).
 #
 # The staged tools are debug builds; their debug sections are most of the
 # bytes. Strip them here so the image ships only what runs.

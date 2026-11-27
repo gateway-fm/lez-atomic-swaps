@@ -340,8 +340,9 @@ phase_nix() {
 phase_rust() {
   PHASE=rust
   # Each role's Node and what it runs, packaged by the stage phase
-  # (package-role-node.sh); the Taker image keeps the ZEC provisioners, which
-  # tests/fixtures/zec-catalog-fixture.sh runs from it.
+  # (package-role-node.sh); the Taker image also takes the two zec-local-poc
+  # tools: -identity (gen-config.sh: zebra's miner address) and the test payer
+  # -transfer (node-e2e.py pays the Taker's Zcash key with it).
   local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway maker-node/lez-logos-price-worker
     maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor maker-node/lez-zec-maker-actor
     maker-node/lez-xmr-maker-actor maker-node/xmr-reference-monero-fund maker-node/xmr-reference-tag15
@@ -350,7 +351,6 @@ phase_rust() {
     taker-node/lez-taker-node taker-node/lez-taker-cli taker-node/lez-taker-chat-gateway
     taker-node/lez-taker-registry-init
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
-    taker-node/zec-local-poc-provision taker-node/zec-local-poc-chat-draft taker-node/zec-local-poc-chat-finalize
     taker-node/zec-local-poc-identity taker-node/zec-local-poc-transfer
     zebra-module/lez-runtime-healthcheck
     lez-services/lez-runtime-healthcheck)
@@ -377,17 +377,7 @@ phase_rust() {
       # built with the others, feature unification would put it into the
       # zec-reference-actor library the Nodes and actors link.
       cargo build --locked -p zec-reference-actor --features test-payer --bin zec-local-poc-transfer 2>&1 | tail -3
-      # the dealer test fixture tools, alone, for the same reason. Never in a
-      # release build (LEZ_RELEASE_BUILD), where they do not compile.
-      if [[ -z "${LEZ_RELEASE_BUILD:-}" ]]; then
-        cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
-          --bin zec-local-poc-chat-finalize 2>&1 | tail -3
-      fi
       for b in '"${bins[*]}"'; do
-        case "$b" in
-          taker-node/zec-local-poc-identity|taker-node/zec-local-poc-transfer) ;;
-          taker-node/zec-local-poc-*) [[ -z "${LEZ_RELEASE_BUILD:-}" ]] || continue ;;
-        esac
         install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"
       done
       chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'

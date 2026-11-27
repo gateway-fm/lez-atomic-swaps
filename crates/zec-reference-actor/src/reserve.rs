@@ -2,7 +2,7 @@
 //!
 //! The Bitcoin model (ADR 0213, S1.3): the Taker reserves at take time and the
 //! Maker answers with the facts only it holds. Each role contributes its own
-//! public facts and both compose the identical unsigned body with the dealer's
+//! public facts and both compose the identical unsigned body with
 //! [`compose_agreement_body`]: the Maker returns the draft, the Taker
 //! recomposes it from the offer, its own facts and the Maker's few and
 //! requires byte equality. Each role writes only its own material; no private
@@ -1179,10 +1179,10 @@ mod tests {
     }
 
     /// The draft both halves agree on, signed the way Chat signs it (Maker
-    /// proposal, Taker countersignature), is byte for byte the agreement the
-    /// dealer signs in one step for the same facts.
+    /// proposal, Taker countersignature), is byte for byte the agreement one
+    /// signer holding both keys would sign in one step for the same facts.
     #[tokio::test]
-    async fn both_halves_compose_the_dealers_agreement_in_either_direction() {
+    async fn both_halves_compose_the_one_step_agreement_in_either_direction() {
         for direction in [
             SwapDirection::TakerSellsLez,
             SwapDirection::TakerSellsForeign,
@@ -1230,8 +1230,8 @@ mod tests {
                 .unwrap()
                 .body()
                 .clone();
-            let dealer = sign_agreement_body(body, &maker_key, &taker_key, NOW + 5).unwrap();
-            assert_eq!(chat, dealer.as_slice(), "{direction:?}");
+            let one_step = sign_agreement_body(body, &maker_key, &taker_key, NOW + 5).unwrap();
+            assert_eq!(chat, one_step.as_slice(), "{direction:?}");
             let agreement = ZecAgreementV1::from_wire_at(&chat, at).unwrap();
             assert_eq!(
                 agreement.lez_claimant() == Participant::Maker,

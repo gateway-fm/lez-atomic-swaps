@@ -107,7 +107,7 @@ bash -c 'printf "child=%s\\n" "${{LEZ_MARKET_ROOT:-}}"'
         self.assertIn('export LEZ_MARKET_ROOT="${LEZ_MARKET_ROOT:-$DEPLOY_ROOT/market}"',
                       (SCRIPTS / 'start.sh').read_text())
         deploy = self.deploy_dir(RELEASE_ENV)
-        for script in ('lane.sh', 'release-env.sh'):  # up.sh and the fixtures; gen-config.sh and regress.sh
+        for script in ('lane.sh', 'release-env.sh'):  # up.sh and the harness; gen-config.sh and regress.sh
             seen = self.market_probe(deploy, script)
             self.assertEqual(seen['market'], f'{deploy}/market', script)
             self.assertEqual(seen['identities'], f'{deploy}/market/identities', script)
@@ -141,7 +141,7 @@ bash -c 'printf "child=%s\\n" "${{LEZ_MARKET_ROOT:-}}"'
         # in a subshell (regress.sh) or only for a lane >= 2 (gen-config.sh).
         sources = {'regress.sh': 'source scripts/release-env.sh',
                    'gen-config.sh': 'source "$DEPLOY_ROOT/scripts/release-env.sh"'}
-        for name in ('up.sh', 'ui-e2e.sh', '../tests/fixtures/zec-catalog-fixture.sh', 'bootstrap-market.sh', 'start.sh',
+        for name in ('up.sh', 'ui-e2e.sh', 'bootstrap-market.sh', 'start.sh',
                      'reset-swaps.sh', 'regress.sh', 'gen-config.sh'):
             code = [line for line in (SCRIPTS / name).read_text().splitlines()
                     if not line.lstrip().startswith('#')]
@@ -364,7 +364,7 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         harness, environment = self.load_harness(self.tree)
         self.assertTrue(harness.RELEASE_BUNDLE)
         self.assertEqual(harness.escrow_program_id(), 'ab' * 32)
-        # what it passes to compose, gen-config.sh and the fixtures it starts
+        # what it passes to compose and gen-config.sh
         self.assertEqual(environment['LEZ_IMAGE_PREFIX'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez')
         self.assertEqual(environment['LEZ_IMAGE_TAG'], 'v0.5.0')
         self.assertEqual(environment['LEZ_ESCROW_PROGRAM_ID'], 'ab' * 32)
@@ -390,7 +390,7 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         self.assertEqual(listed.returncode, 0, listed.stderr)
         return [tuple(line.split('\t', 1)) for line in listed.stdout.splitlines()]
 
-    def test_release_unavailable_names_every_scenario_that_needs_the_hooks_or_the_dealer(self):
+    def test_release_unavailable_names_every_scenario_that_needs_the_hooks_or_the_sources(self):
         entries = self.release_unavailable(self.tree)
         patterns = [pattern for pattern, _ in entries]
         harness, _ = self.load_harness(self.tree)
@@ -427,9 +427,16 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         self.assertIn('The Zcash tests selling ZEC run from a bundle', section)
         self.assertIn('`zec-local-poc-transfer`', section)
 
-    def test_dealer_agreements_make_every_zcash_test_unavailable(self):
-        patterns = [p for p, _ in self.release_unavailable(self.tree, LEZ_ZEC_AGREEMENT='dealer')]
-        self.assertIn('*:zec:*:*', patterns)
+    def test_no_zcash_test_is_left_out_for_how_its_swap_is_agreed(self):
+        # Every Zcash swap is agreed by the two Nodes at take time, on release
+        # images as on the devnet's: no variable selects another way, and a
+        # Zcash test is left out of a bundle only for the devnet test hooks.
+        for extra in ({}, {'LEZ_ZEC_AGREEMENT': 'dealer'}):
+            entries = self.release_unavailable(self.tree, **extra)
+            self.assertFalse([p for p, _ in entries if p.split(':')[2] == '*'], entries)
+            for pattern, why in entries:
+                if pattern.split(':')[1] == 'zec':
+                    self.assertIn('LEZ_TEST_HOOKS=1', why, pattern)
 
     def regress_list(self, cwd, tier='full'):
         listed = self.run_in(cwd, 'bash', 'scripts/regress.sh', 'list', tier)
@@ -481,15 +488,14 @@ class BundleRegressionEntryPoints(unittest.TestCase):
 def bundle_harness_files():
     removed = {'from-scratch.sh', 'stage-assets.sh', 'stage-basecamp-package.sh', 'package-dist.sh'}
     files = [p for p in sorted(SCRIPTS.iterdir()) if p.suffix in ('.sh', '.py') and p.name not in removed]
-    return files + sorted((DEPLOY / 'tests' / 'fixtures').glob('*.sh'))
+    return files
 
 
 class BundleHarnessBuildsNothing(unittest.TestCase):
     """No `docker compose up` the harness reaches builds, and none of its `compose
     run`s is of a service built on another service (#190). For those, compose builds
     before every up and every run; the bundle has no images/ to build from.
-    zec-catalog-fixture.sh recreated the Nodes without --no-build (its error went
-    to /dev/null), and ui-e2e.sh joined its videos with `compose run maker-node`."""
+    ui-e2e.sh joined its videos with `compose run maker-node`."""
 
     def commands(self, path):
         """The file's commands: comments and here-documents (a banner) dropped,

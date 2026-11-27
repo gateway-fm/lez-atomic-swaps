@@ -19,17 +19,11 @@ mod secure_file;
 mod test_crash_hook;
 
 // A release build (the release workflows and packagers set LEZ_RELEASE_BUILD)
-// carries neither the crash hooks nor the dealer test fixture, which holds
-// both parties' keys: with either feature it does not compile.
+// does not carry the crash hooks: with the feature it does not compile.
 #[cfg(feature = "test-crash-hooks")]
 const _: () = assert!(
     option_env!("LEZ_RELEASE_BUILD").is_none(),
     "the crash hooks (feature test-crash-hooks) are never part of a release build (LEZ_RELEASE_BUILD)"
-);
-#[cfg(feature = "dealer-fixture")]
-const _: () = assert!(
-    option_env!("LEZ_RELEASE_BUILD").is_none(),
-    "the dealer test fixture (feature dealer-fixture) is never part of a release build (LEZ_RELEASE_BUILD)"
 );
 
 pub use command::{
@@ -87,15 +81,6 @@ pub use config::{
     validate_maker_manifest_config_bytes, validate_rebound_actor_pair,
 };
 pub use local_poc::{LocalPocZcashIdentity, zcash_identity_from_key_file};
-// The dealer test fixture (feature dealer-fixture): it holds both parties' keys.
-#[cfg(feature = "dealer-fixture")]
-pub use local_poc::{
-    LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocLezSignerFiles,
-    LocalPocProvisionSummary, LocalPocTransferSummary, LocalPocZcashKeyFiles,
-    TestnetZebraCredential, finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
-    provision_local_v0_2_corridor, provision_local_v0_2_corridor_with_material,
-    provision_local_v0_2_corridor_with_signers, transfer_local_v0_2_regtest, transfer_v0_2_testnet,
-};
 pub use maker_provision::{
     ZecActorProvisionV1, ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,
     provision_zec_maker_actor_from_config, provision_zec_taker_actor_from_chat,
@@ -260,9 +245,8 @@ impl fmt::Debug for ActorCli {
 // The test payer (feature test-payer): one plain transparent payment between
 // two owner-private keys on the Regtest fixture or Zcash Testnet, with which
 // the harness funds the Taker's key (zec-local-poc-transfer). It holds one
-// party's key at a time and none of the dealer's code, so a release build may
-// carry it. dealer-fixture enables it and re-exports the same items above.
-#[cfg(all(feature = "test-payer", not(feature = "dealer-fixture")))]
+// party's key at a time, so a release build may carry it.
+#[cfg(feature = "test-payer")]
 pub use local_poc::{
     LocalPocTransferSummary, TestnetZebraCredential, transfer_local_v0_2_regtest,
     transfer_v0_2_testnet,

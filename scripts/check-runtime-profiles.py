@@ -64,7 +64,7 @@ def validate_catalog(profile_ids: set[str]) -> tuple[list[dict], set[str]]:
         manifests.add(entry["manifest"])
         if entry["class"] not in CLASSES:
             fail(f"{entry['target']}: unknown executable class")
-        # a devnet test fixture (the Zcash dealer holds both parties' keys)
+        # a devnet test fixture (the Zcash test payer, the escrow probes)
         # belongs to no runtime profile
         if entry["class"] == "fixture" and entry["profiles"]:
             fail(f"{entry['target']}: a test fixture is in no runtime profile")

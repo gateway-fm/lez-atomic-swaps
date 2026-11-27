@@ -134,7 +134,7 @@ tier_tests() { # tier_tests <tier>
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
       echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"
-      # a Zcash offer from the Maker desk's form, taken from the Taker desk (no corridor)
+      # a Zcash offer from the Maker desk's form, taken from the Taker desk
       echo "ui:zec:zec-desk-offer:TakerSellsLez"; echo "ui:zec:zec-desk-offer:TakerSellsForeign"
       # RFP-003 Milestone 5: the operator CLIs on the refund and claim paths (U3, U4), the pre-take outage in
       # the other direction (R8), the price module's staleness bound (F8), the Zcash refund path's kill points (R4)
@@ -165,8 +165,8 @@ tier_tests() { # tier_tests <tier>
   esac
 }
 
-# A release bundle runs release images, which carry no devnet test hooks, no
-# dealer test fixture and none of the repository's sources. The tests that need
+# A release bundle runs release images, which carry no devnet test hooks and
+# none of the repository's sources. The tests that need
 # one of them (node-e2e.py release-unavailable names each, as a pattern of test
 # ids, and why) are left out of a bundle's run with a line that says so, as the
 # Monero tests are on a stack without Monero (deploy/README.md, "Prebuilt
@@ -216,9 +216,6 @@ race_tries="${LEZ_REGRESS_RACE_TRIES:-8}"
 lane_count="${LEZ_LANES:-1}"
 [[ "$lane_count" =~ ^[1-9]$ ]] || { echo "LEZ_LANES must be 1 to 9" >&2; exit 64; }
 poll="${LEZ_REGRESS_POLL_SECONDS:-5}"
-# The runner owns the chain: a ZEC desk test's zec-catalog-fixture.sh must not
-# recreate it from inside a test (ensure-chain.sh) behind the runner's back.
-export LEZ_ZEC_SKIP_CHAIN_CHECK=1
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$out/regress.log"; }
 finalized() {
   curl -s --max-time 10 -H 'content-type: application/json' \
@@ -303,7 +300,7 @@ profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile t
   # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile (selling
   # LEZ its Taker-reveals-first twin): the refund journeys' (-v6, -v8) is group
   # zec-v6, every other ZEC test runs on -v5 (-v7) in `fast`.
-  if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
+  if [[ "$pair" == zec ]]; then
     # as the refund journeys: the ones an operator CLI drives, and the refund path's kill points
     case "$scenario" in zec-maker-cli-refund|zec-taker-cli-refund|zec-kill-maker-refund|zec-kill-taker-refund) echo zec-v6; return 0 ;; esac
     # ... and zec-maker-early-claim, which ends in the Taker's refund (selling LEZ: -v8)
@@ -322,7 +319,6 @@ use_profile() { # use_profile <profile>: switch the standing stack to it unless 
   # (LEZ_ZEC_PROFILE, exported: up.sh recreates the Nodes of every lane with it)
   local timing="$1" zec=deterministic-local-devnet-v5
   [[ "$1" != zec-v6 ]] || { timing="$LEZ_TIMING_PROFILE"; zec=deterministic-local-devnet-v6; }
-  [[ "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]] || zec="${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}"
   [[ -n "$timing" ]] || return 0
   [[ "$timing" != "$LEZ_TIMING_PROFILE" || "$zec" != "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" ]] || return 0
   switches=$((switches + 1)); export LEZ_ZEC_PROFILE="$zec"

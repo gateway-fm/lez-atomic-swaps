@@ -679,8 +679,8 @@ pub(crate) fn encode_rebound_local_v0_2_actor_config(
     if accepted_at.value() == 0 {
         return Err(ActorConfigError::InvalidConfiguration);
     }
-    // A provisioned corridor: the Regtest fixture, or a public Testnet route
-    // (zec-local-poc-provision never writes a Main-network actor).
+    // An actor runs on the Regtest fixture or a public Testnet route, never
+    // on the Main network.
     if source.zebra.identity.network == ZcashNetworkConfig::Main {
         return Err(ActorConfigError::InvalidConfiguration);
     }

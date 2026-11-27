@@ -153,8 +153,7 @@ jobs:
           # zebra-module: the health check its image carries; taker-node: beside the
           # Node package, zec-local-poc-identity (gen-config.sh: zebra's miner
           # address) and the test-only zec-local-poc-transfer (feature
-          # test-payer: the harness pays the Taker's Regtest key with it),
-          # never the dealer test fixture's tools (feature dealer-fixture).
+          # test-payer: the harness pays the Taker's Regtest key with it).
           for role in maker-node taker-node lez-services zebra-module; do
             mkdir -p "_out/images/$role"
             cp deploy/images/$role/lez-* "_out/images/$role/"

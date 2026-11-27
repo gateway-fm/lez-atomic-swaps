@@ -451,9 +451,9 @@ impl fmt::Debug for PreparedExecutionV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct InitiationConfigurationV1 {
-    /// Execute the prepared take when an initiation is admitted (`execute_prepared_zec`
-    /// is the historical spelling and still accepted).
-    #[serde(default, alias = "execute_prepared_zec")]
+    /// Execute the take (the Chat rounds with the Maker and the acceptance)
+    /// when an initiation is admitted.
+    #[serde(default)]
     execute_prepared: bool,
     registry_database: PathBuf,
     #[serde(default)]

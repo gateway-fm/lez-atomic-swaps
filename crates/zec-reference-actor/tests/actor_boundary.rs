@@ -710,8 +710,7 @@ fn pair_rejects_cross_actor_paths_or_config_aliases_but_shares_agreement() {
 #[test]
 fn pair_may_share_its_one_zebra_node_cookie_but_nothing_role_private() {
     // Both roles name the one node's live cookie (the devnet's zebrad_module,
-    // or one operator's self-hosted Testnet Zebra): one pair, as the dealer
-    // fixture provisions it.
+    // or one operator's self-hosted Testnet Zebra): one pair.
     for (kind, network) in [
         ("deterministic_local", "regtest"),
         ("self_hosted_cookie", "test"),

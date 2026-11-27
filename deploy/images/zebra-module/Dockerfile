@@ -5,7 +5,7 @@
 # Node desk configures the module from LEZ_ZEBRA_NETWORK and LEZ_ZEBRA_CONFIG
 # (gen-config.sh renders runtime/zebra/zebrad-module.json) and starts it; its
 # Reset chain starts a new Regtest chain (reset-chain.mjs, pressed by
-# tests/fixtures/zec-catalog-fixture.sh).
+# scripts/node-e2e.py for a worn chain).
 #
 # It runs as the Nodes' user (4713): Zebra writes its JSON-RPC cookie
 # owner-only into the chain's directory, and the Nodes' Zcash actors read it
