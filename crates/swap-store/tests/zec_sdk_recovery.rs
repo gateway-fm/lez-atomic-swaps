@@ -6643,7 +6643,14 @@ fn a_maker_accepts_taker_sells_lez_swaps_up_to_its_capacity_and_again_after_one_
 /// funding step is admitted in the same transaction order as acceptances, so
 /// the swaps holding a place never exceed the capacity.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "three swaps are followed through their windows, a late lock and a freed place"
+)]
 fn an_unfunded_taker_sells_lez_swap_gives_its_place_up_and_a_late_lock_needs_a_free_place() {
+    fn swap_id(swap: &StagedMakerZecCompletion) -> &SwapId {
+        swap.accepted.agreement().coordinator().id()
+    }
     let data = TempDir::new().expect("temporary maker application store");
     let path = data.path().join("maker-unfunded.sqlite3");
     let staged = stage_maker_zec_completions(&path, data.path(), 3);
@@ -6667,9 +6674,6 @@ fn an_unfunded_taker_sells_lez_swap_gives_its_place_up_and_a_late_lock_needs_a_f
             1,
         )
     };
-    fn swap_id(swap: &StagedMakerZecCompletion) -> &SwapId {
-        swap.accepted.agreement().coordinator().id()
-    }
     let count = |now| {
         recovery_store
             .count_open_maker_zec_taker_sells_lez_swaps(now)

@@ -667,7 +667,7 @@ fn run_claimed_attempt_with_lock(
             attempted = command.name();
             return Ok(ClaimedAttempt::Backoff("test_hook_activation_held"));
         }
-        if let Err(class) = zec_funding_held_back(store, lease, command, &status) {
+        if let Some(class) = zec_funding_held_back(store, lease, command, &status) {
             attempted = command.name();
             return Ok(ClaimedAttempt::Backoff(class));
         }
@@ -1663,13 +1663,14 @@ pub(crate) fn admit_prepared_lez_lock(
 /// its Zcash is funded only while a place is free, else the drive is not run
 /// (`zec_funding_waits_for_free_place`) and the swap is looked at again. The
 /// Taker's settlement is then its LEZ refund unless a place frees first.
+/// Returns the class the drive waits with, if it waits.
 #[cfg(feature = "pair-zec")]
 fn zec_funding_held_back(
     store: &SqliteSwapStore,
     lease: &MakerActorLeaseV1,
     command: ActorEffectCommand,
     status: &[u8],
-) -> Result<(), &'static str> {
+) -> Option<&'static str> {
     if lease.record().manifest().kind() != MakerActorKindV1::Zcash
         || command != ActorEffectCommand::Drive
         || serde_json::from_slice::<Value>(status)
@@ -1679,20 +1680,20 @@ fn zec_funding_held_back(
             .and_then(Value::as_str)
             != Some("zcash")
     {
-        return Ok(());
+        return None;
     }
     match store.admit_maker_zec_funding(lease.record().swap_id(), unix_now(), &|profile| {
         crate::zec_chat::zec_taker_sells_lez_capacity(profile)
     }) {
-        Ok(lez_swap_store::MakerZecFundingAdmission::Admitted) => Ok(()),
+        Ok(lez_swap_store::MakerZecFundingAdmission::Admitted) => None,
         Ok(lez_swap_store::MakerZecFundingAdmission::NoFreePlace { open, capacity }) => {
             eprintln!(
                 "maker {}: the Taker's LEZ lock was confirmed after the swap's Taker-lock window and {open} of {capacity} TakerSellsLez places are taken; the Zcash funding is not sent (zec_funding_waits_for_free_place)",
                 lease.record().swap_id().as_str()
             );
-            Err("zec_funding_waits_for_free_place")
+            Some("zec_funding_waits_for_free_place")
         }
-        Err(_) => Err("zec_funding_admission_unavailable"),
+        Err(_) => Some("zec_funding_admission_unavailable"),
     }
 }
 
@@ -1703,8 +1704,8 @@ const fn zec_funding_held_back(
     _lease: &MakerActorLeaseV1,
     _command: ActorEffectCommand,
     _status: &[u8],
-) -> Result<(), &'static str> {
-    Ok(())
+) -> Option<&'static str> {
+    None
 }
 
 /// Whether a claim admitted at `own` (admission time in ms, swap id) yields to
