@@ -281,7 +281,8 @@ class BundleStartBuildsNothing(unittest.TestCase):
 
 DEPLOY = SCRIPTS.parent
 REPO = DEPLOY.parent
-HOOK_CHECKS = ('require_sidecar_test_hooks(', 'xmr_require_test_hooks(', 'require_maker_node_test_hooks(')
+HOOK_CHECKS = ('require_sidecar_test_hooks(', 'xmr_require_test_hooks(', 'require_maker_node_test_hooks(',
+               'require_role_sidecar_test_hooks(')
 
 
 def bundle_tree(root):
@@ -405,7 +406,7 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         # scenario_xmr_kill_walk checks the hooks for the Maker's walk only
         self.assertEqual(hooked - {'xmr-kill-taker'}, {
             'xmr-taker-clock-ahead', 'xmr-punish-replans', 'xmr-taker-cheats', 'xmr-kill-maker',
-            'zec-kill-maker-claim', 'zec-activate-after-expiry', 'zec-maker-cli-claim'})
+            'zec-kill-maker-claim', 'zec-activate-after-expiry', 'zec-maker-cli-claim', 'claim-send-fails'})
         self.assertLessEqual(hooked - {'xmr-kill-taker'}, named)
         self.assertLessEqual(harness.ZEC_CATALOG_SCENARIOS | harness.ZEC_DEALER_LAYOUT_SCENARIOS, named)
         self.assertIn('maker-price-module', named)
@@ -444,14 +445,16 @@ class BundleRegressionEntryPoints(unittest.TestCase):
                      'node:zec:zec-regenerated-catalog:TakerSellsLez', 'node:zec:zec-maker-early-claim:TakerSellsLez',
                      'node:btc:maker-price-module:TakerSellsForeign',
                      'node:btc:maker-price-module-stale:TakerSellsForeign',
-                     'node:zec:zec-maker-cli-claim:TakerSellsLez'):
+                     'node:zec:zec-maker-cli-claim:TakerSellsLez', 'node:btc:claim-send-fails:TakerSellsLez',
+                     'node:btc:claim-send-fails:TakerSellsForeign'):
             self.assertIn(test, left_out)
             line = next(line for line in said if f'=== {test}: ' in line)
             self.assertIn('not run on release images (', line)
         self.assertEqual(len(said), len(left_out))
-        # seven need the hooks, five the dealer fixture (the two catalog tests in
-        # both directions and zec-maker-early-claim), two the repository
-        self.assertEqual(len(left_out), 14, left_out)
+        # nine need the hooks (claim-send-fails in both directions), five the
+        # dealer fixture (the two catalog tests in both directions and
+        # zec-maker-early-claim), two the repository
+        self.assertEqual(len(left_out), 16, left_out)
         for test in ('node:zec:zec-happy:TakerSellsLez', 'node:btc:btc-custody-credit:TakerSellsForeign',
                      'node:zec:zec-custody-credit:TakerSellsLez', 'node:btc:regenerated-config:TakerSellsForeign',
                      'node:xmr:xmr-kill-taker:TakerSellsLez', 'ui:btc:happy:TakerSellsLez',

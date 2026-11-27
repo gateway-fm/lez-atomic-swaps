@@ -17,6 +17,7 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py survivor         Taker Node stopped after its LEZ claim; Maker completes alone
     node-e2e.py late-claim-confirms  the revealing claim sent, the Taker stopped, the claim confirms while it is down
     node-e2e.py late-claim-unmined   the revealing claim sent but never mined until the refund path is open
+    node-e2e.py claim-send-fails     the LEZ claim's send refused in its owner's sidecar, then sent again (needs LEZ_TEST_HOOKS=1)
     node-e2e.py maker-cli        the happy swap with every Maker call made by lez-maker-cli; a non-owner is refused (U3)
     node-e2e.py maker-price-module  a route priced by the TEST Logos price module: quote, publish, a swap; then fail-closed (F8)
     node-e2e.py maker-price-module-stale  the module's quote older than the Node's bound: quote and publish fail closed,
@@ -287,7 +288,7 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
                   "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding", "zec-kill-maker-claim",
-                  "zec-activate-after-expiry", "zec-maker-cli-claim",
+                  "zec-activate-after-expiry", "zec-maker-cli-claim", "claim-send-fails",
                   # the XMR scenarios that write a Node's test hooks or switch,
                   # stop a wallet-rpc container or run the Maker's probe
                   "xmr-taker-refund", "xmr-taker-refund-kill", "xmr-taker-clock-ahead", "xmr-punish-replans",
@@ -311,6 +312,7 @@ RELEASE_UNAVAILABLE = (
     ("node:xmr:xmr-taker-cheats:*", RELEASE_HOOKS),
     ("node:xmr:xmr-kill-maker:*", RELEASE_HOOKS + " (its claim kill points hold the claim in the Maker's sidecar)"),
     ("node:zec:zec-kill-maker-claim:*", RELEASE_HOOKS),
+    ("node:btc:claim-send-fails:*", RELEASE_HOOKS),
     ("node:zec:zec-activate-after-expiry:*", RELEASE_HOOKS),
     ("node:zec:zec-regenerated-catalog:*", RELEASE_DEALER),
     ("node:zec:zec-tampered-catalog:*", RELEASE_DEALER),
@@ -9413,6 +9415,123 @@ def scenario_zec_maker_cli_claim(stamp: str) -> dict:
     return through_maker_cli(claim_through_the_cli)(stamp)
 
 
+# ---- claim-send-fails: a LEZ claim refused before its send, then sent again (issue #174) ----
+# A Bitcoin swap's LEZ claim is one exact transaction its owner's actor sends
+# through the swap's LEZ sidecar: the Taker's revealing claim when it sells
+# Bitcoin, the Maker's follow-up claim when the Taker sells LEZ. The owner's
+# sidecar refuses that claim's submission as unavailable before anything is
+# looked up or sent, CLAIM_SEND_FAILURES times (test hook
+# fail-claim-submissions, a count, a devnet built with LEZ_TEST_HOOKS=1): what
+# a sequencer that does not answer the inclusion lookup does. The actor's
+# journal holds the claim as sent with an unknown outcome, and nothing is on
+# the chain to observe. Each next drive that still finds the claim absent
+# must send the same bytes again, so the swap completes on both Nodes once
+# the refusals are used up; an actor that only observed from there would
+# leave the claim unsent until the refunds open.
+CLAIM_SEND_FAILURE_HOOK = "fail-claim-submissions"
+CLAIM_SEND_FAILURES = 2
+CLAIM_TRANSIENT_CATEGORY = "taker_action_execution_unavailable"
+
+
+def lez_claim_owner() -> str:
+    """Whose actor sends the swap's LEZ claim in this direction."""
+    return "maker" if REVERSE else "taker"
+
+
+def role_sidecar_test_hook(role: str, name: str, value: str | None) -> None:
+    """Sets (`value`) or clears (None) one test hook of the role's LEZ
+    sidecars, read on its next use (no restart)."""
+    node_run(role, "sh", "-c", TEST_HOOK_SCRIPT, "hook", f"{XMR_NODE_STATE[role]}/test-hooks", name, value or "")
+    log(f"  {role} test hook {name}: {value if value is not None else 'cleared'}")
+
+
+def role_sidecar_test_hook_value(role: str, name: str) -> str | None:
+    """What one test hook of the role holds now, None when it is unset."""
+    result = subprocess.run(node_command(role, ["cat", f"{XMR_NODE_STATE[role]}/test-hooks/{name}"]),
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def require_role_sidecar_test_hooks(role: str, hook: str) -> None:
+    """Fails the scenario at once, before any swap, unless the role's LEZ
+    sidecar was built with the devnet test hooks (from-scratch.sh with
+    LEZ_TEST_HOOKS=1): without them the hook file is ignored and no
+    submission is refused."""
+    result = subprocess.run(node_command(role, ["grep", "-qa", hook, ZEC_SIDECAR_PROGRAM]),
+                            capture_output=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"the {role}'s {ZEC_SIDECAR_PROGRAM.rsplit('/', 1)[-1]} has no devnet test hooks: this scenario "
+                      "needs the devnet built with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh)")
+
+
+def claim_admitted_or_refused_in_execution(swap_id: str, stamp: str) -> str:
+    """The Taker's claim while its sidecar refuses the LEZ claim's send: the
+    admission is durable either way, and the request answers with the commit
+    or with the transient execution refusal (-32010,
+    taker_action_execution_unavailable) when the first drive met the refusal.
+    The Node's observer drives the admitted claim from there; nothing is
+    pressed again. Returns which of the two the request answered."""
+    view = wait_taker(swap_id, {"claim_available"}, timeout=1500, describe="(Maker funding)")
+    reply = rpc("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                 "swap_id": swap_id,
+                                                 "expected_generation": view["progress_generation"]}, timeout=300)
+    if "result" in reply:
+        log(f"  Taker's claim admitted and driven (replay={reply['result'].get('was_replay')})")
+        return "committed"
+    error = reply.get("error") or {}
+    if error.get("code") == -32010 and (error.get("data") or {}).get("category") == CLAIM_TRANSIENT_CATEGORY:
+        log("  Taker's claim admitted; its first drive was refused in execution (the sidecar refused the send)")
+        return CLAIM_TRANSIENT_CATEGORY
+    raise Failure(f"taker taker_swap_claim_v1 failed: {json.dumps(error)[:300]}")
+
+
+def scenario_claim_send_fails(stamp: str) -> dict:
+    """Issue #174 on the devnet: the LEZ claim's submission refused before its
+    send CLAIM_SEND_FAILURES times in its owner's sidecar; the swap must still
+    complete on both Nodes, the claim sent again by its owner's next drives."""
+    owner = lez_claim_owner()
+    hook = CLAIM_SEND_FAILURE_HOOK
+    require_role_sidecar_test_hooks(owner, hook)
+    # A count an earlier run could not clear would refuse this run's claim more often.
+    role_sidecar_test_hook(owner, hook, None)
+    offer_id = publish_offer(stamp)
+    swap_id, _ = take(offer_id, stamp)
+    lock(swap_id)
+    wait_taker(swap_id, {"claim_available"}, timeout=1500, describe="(Maker funding)")
+    role_sidecar_test_hook(owner, hook, str(CLAIM_SEND_FAILURES))
+    try:
+        # Selling Bitcoin the Taker's claim is the LEZ claim itself; selling LEZ
+        # it is the Bitcoin claim, and the Maker's follow-up claim meets the hook.
+        if REVERSE:
+            claim(swap_id, stamp)
+            answered = "committed"
+        else:
+            answered = claim_admitted_or_refused_in_execution(swap_id, stamp)
+        wait = Wait(f"the {owner}'s sidecar to refuse the LEZ claim of {swap_id[:12]} {CLAIM_SEND_FAILURES} times", 900)
+        while wait.running():
+            left = role_sidecar_test_hook_value(owner, hook)
+            if left == "0":
+                break
+            state = taker_view(swap_id)["state"]
+            if state == "completed":
+                raise Failure(f"{swap_id[:12]} completed with {hook} at {left}: the {owner}'s LEZ claim was not "
+                              f"refused {CLAIM_SEND_FAILURES} times before it landed")
+            if state in TERMINAL:
+                raise Failure(f"{swap_id[:12]} ended {state} while the {owner}'s LEZ claim was being refused")
+            wait.note((left, state), lambda: f"hook {left}, taker {state}, maker {maker_phase(swap_id)}")
+            time.sleep(3)
+        else:
+            raise wait.failure()
+        log(f"  the {owner}'s sidecar refused the LEZ claim's send {CLAIM_SEND_FAILURES} times; "
+            f"taker {taker_view(swap_id)['state']}, maker {maker_phase(swap_id)}")
+    finally:
+        role_sidecar_test_hook(owner, hook, None)
+    # Nothing of the claim is on the chain: only a resend completes the swap.
+    wait_completed(swap_id)
+    return {"swap_id": swap_id, "lez_claim_owner": owner, "refused_sends": CLAIM_SEND_FAILURES,
+            "taker_claim_answer": answered, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+
+
 # ---- zec-activate-after-expiry: the Maker's actor activated after its offer expired ----
 # A ZEC agreement's transcript expires when its offer does. Each role's actor
 # activates at the time that role accepted the agreement, which its
@@ -9838,6 +9957,7 @@ SCENARIOS = {
     "survivor": scenario_survivor,
     "late-claim-confirms": scenario_late_claim_confirms,
     "late-claim-unmined": scenario_late_claim_unmined,
+    "claim-send-fails": scenario_claim_send_fails,
     "concurrent": scenario_concurrent,
     "concurrent-kill-maker": lambda stamp: scenario_concurrent(stamp, kill=True),
     "mixed-pair": scenario_mixed_pair,

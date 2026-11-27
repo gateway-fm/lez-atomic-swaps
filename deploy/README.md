@@ -74,7 +74,8 @@ bundle:
   `node:xmr:xmr-taker-clock-ahead`, `node:xmr:xmr-punish-replans`,
   `node:xmr:xmr-taker-cheats`, `node:xmr:xmr-kill-maker` (its claim kill
   points hold the claim in the Maker's sidecar), `node:zec:zec-kill-maker-claim`,
-  `node:zec:zec-maker-cli-claim` and `node:zec:zec-activate-after-expiry`;
+  `node:zec:zec-maker-cli-claim`, `node:zec:zec-activate-after-expiry` and
+  `node:btc:claim-send-fails`;
 - they need the Zcash dealer test fixture: `node:zec:zec-regenerated-catalog`
   and `node:zec:zec-tampered-catalog` in both directions, and
   `node:zec:zec-maker-early-claim`;
@@ -415,13 +416,30 @@ the same claim under the same request id, and its sidecar decides the
 in-flight marker on the chain again (looked up, sent once) rather than
 answering `unknown_submission_outcome` from its journal.
 
+**A LEZ claim whose send is refused (issue #174).** `claim-send-fails` (both
+directions, Bitcoin) takes one swap. A Bitcoin swap's LEZ claim is one exact
+transaction that its owner's actor sends through the swap's LEZ sidecar: the
+Taker's revealing claim when it sells Bitcoin, the Maker's follow-up claim
+when the Taker sells LEZ. The owner's sidecar refuses that claim's submission
+as unavailable, before anything is looked up or sent, twice
+(`fail-claim-submissions`, a count), as a sequencer that does not answer the
+inclusion lookup refuses it. The actor's journal then holds a send with an
+unknown outcome and nothing is on the chain to observe; each next drive that
+still finds the claim absent sends the same bytes again, and the swap must
+complete on both Nodes once the refusals are used up
+([ADR 0218](../docs/architecture/0218-resend-an-exact-lez-claim-that-did-not-land.md)).
+Selling Bitcoin, the Taker's claim request may answer the transient
+`taker_action_execution_unavailable`; its admission is durable and the Node's
+observer drives it from there.
+
 The hooks are files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, which the
 entrypoint exports before it starts the ZEC sidecars), counts read by the
 sidecar on its next use. They exist only in a sidecar built with the feature
 `test-hooks`: `LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh` builds it so,
-the default build does not, and `zec-kill-maker-claim` fails at once, before
-any swap, naming `LEZ_TEST_HOOKS=1`, on a devnet built without it (it looks
-for the hook's name in the Maker's sidecar executable). So a devnet for
+the default build does not, and `zec-kill-maker-claim` and `claim-send-fails`
+fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`, on a devnet built
+without it (each looks for its hook's name in the sidecar executable of the
+role it holds or refuses the claim in). So a devnet for
 `regress.sh full` is built with `LEZ_TEST_HOOKS=1`. No release has the hooks:
 the release workflows and the role packagers never name the feature or
 `LEZ_TEST_HOOKS`, they mark their builds with `LEZ_RELEASE_BUILD`, under
@@ -796,12 +814,14 @@ files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, set by the entrypoint):
 `hold-zec-activations` (a flag: the Maker Node's supervisor holds back its
 Zcash actors' activations while it exists),
 `punish-nonce-thefts`, `hold-claim-preparations` and `hold-claim-submissions`
-(counts, in the Maker's sidecar). Without it none
+(counts, in the Maker's sidecar) and `fail-claim-submissions` (a count, in
+the sidecar of the role that sends a Bitcoin swap's LEZ claim). Without it none
 is built in, and `xmr-taker-clock-ahead`, `xmr-punish-replans`,
-`xmr-taker-cheats`, `xmr-kill-maker`, `zec-kill-maker-claim` and
-`zec-activate-after-expiry` fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`
-(they look for the hook's name in the Taker Node's, the Maker Node's or the
-Maker sidecar's executable). So a devnet for `regress.sh full` is built with
+`xmr-taker-cheats`, `xmr-kill-maker`, `zec-kill-maker-claim`,
+`zec-activate-after-expiry` and `claim-send-fails` fail at once, before any
+swap, naming `LEZ_TEST_HOOKS=1`
+(they look for the hook's name in the Taker Node's, the Maker Node's or a
+sidecar's executable). So a devnet for `regress.sh full` is built with
 `LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh`.
 
 No release has the hooks. The release workflows and the role packagers never

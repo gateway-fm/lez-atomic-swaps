@@ -675,6 +675,86 @@ class ZecKillMakerClaim(unittest.TestCase):
                         entrypoint.index('node_helper "$bin/lez-v02-bridge-poc"'))
 
 
+class ClaimSendFails(unittest.TestCase):
+    """claim-send-fails (issue #174): what can be checked without a stack."""
+
+    def test_it_is_registered_refused_natively_and_its_hook_is_in_the_sidecar(self):
+        self.assertIs(e2e.SCENARIOS['claim-send-fails'], e2e.scenario_claim_send_fails)
+        self.assertIn('claim-send-fails', e2e.NATIVE_REFUSED)
+        self.assertEqual(e2e.release_unavailable('node:btc:claim-send-fails:TakerSellsLez'), e2e.RELEASE_HOOKS)
+        self.assertEqual(e2e.release_unavailable('node:btc:claim-send-fails:TakerSellsForeign'), e2e.RELEASE_HOOKS)
+        runtime = (REPO / 'compat/lez-v0_2-sidecar/src/bridge_runtime.rs').read_text()
+        self.assertIn(f'crate::test_hooks::take("{e2e.CLAIM_SEND_FAILURE_HOOK}")', runtime)
+        self.assertGreaterEqual(e2e.CLAIM_SEND_FAILURES, 2)
+
+    def test_the_hook_goes_to_the_role_whose_actor_sends_the_lez_claim(self):
+        with patch.object(e2e, 'REVERSE', False):
+            self.assertEqual(e2e.lez_claim_owner(), 'taker')
+        with patch.object(e2e, 'REVERSE', True):
+            self.assertEqual(e2e.lez_claim_owner(), 'maker')
+        ran = []
+
+        def fake_run(command, **_):
+            ran.append(command)
+            return subprocess.CompletedProcess(command, 0, b'', b'')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'log', lambda *_: None):
+            e2e.role_sidecar_test_hook('taker', e2e.CLAIM_SEND_FAILURE_HOOK, '2')
+            e2e.role_sidecar_test_hook('maker', e2e.CLAIM_SEND_FAILURE_HOOK, None)
+        self.assertEqual(ran[0][-4:], ['hook', '/var/lib/lez/taker/test-hooks', 'fail-claim-submissions', '2'])
+        self.assertEqual(ran[1][-4:], ['hook', '/var/lib/lez/maker/test-hooks', 'fail-claim-submissions', ''])
+
+    def test_a_sidecar_without_the_hooks_fails_at_once_before_any_swap(self):
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e, 'REVERSE', True), \
+                patch.object(e2e.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 1, b'', b'')), \
+                patch.object(e2e, 'publish_offer', lambda *_: self.fail('no swap may start')):
+            with self.assertRaisesRegex(e2e.Failure, "the maker's lez-v02-bridge-poc has no devnet test hooks.*LEZ_TEST_HOOKS=1"):
+                e2e.scenario_claim_send_fails('1700000000')
+
+    def test_the_takers_claim_may_answer_the_execution_refusal_and_nothing_else(self):
+        view = {'state': 'claim_available', 'progress_generation': 4}
+        refused = {'error': {'code': -32010, 'data': {'category': 'taker_action_execution_unavailable'}}}
+        for reply, expected in (({'result': {'was_replay': False}}, 'committed'),
+                                (refused, 'taker_action_execution_unavailable')):
+            with patch.multiple(e2e, wait_taker=lambda *a, **k: view, rpc=lambda *a, **k: reply, log=lambda *_: None):
+                self.assertEqual(e2e.claim_admitted_or_refused_in_execution('ab' * 32, '1700000000'), expected)
+        with patch.multiple(e2e, wait_taker=lambda *a, **k: view, log=lambda *_: None,
+                            rpc=lambda *a, **k: {'error': {'code': -32011, 'data': {'category': 'taker_action_conflict'}}}):
+            with self.assertRaisesRegex(e2e.Failure, 'taker_swap_claim_v1 failed'):
+                e2e.claim_admitted_or_refused_in_execution('ab' * 32, '1700000000')
+
+    def test_the_swap_must_complete_after_exactly_the_refusals(self):
+        calls = []
+        hook = {'value': None}
+
+        def set_hook(role, name, value):
+            calls.append(('hook', role, value))
+            hook['value'] = value
+
+        def read_hook(role, name):
+            # the sidecar takes one from the count at each refused submission
+            if hook['value'] not in (None, '0'):
+                hook['value'] = str(int(hook['value']) - 1)
+            return hook['value']
+
+        with patch.object(e2e, 'REVERSE', True), patch.object(e2e.time, 'sleep', lambda s: None), \
+                patch.multiple(e2e, require_role_sidecar_test_hooks=lambda *a: calls.append(('require', *a)),
+                               role_sidecar_test_hook=set_hook, role_sidecar_test_hook_value=read_hook,
+                               publish_offer=lambda stamp: 'offer', take=lambda offer, stamp: ('cd' * 32, {}),
+                               lock=lambda swap: 'txid', wait_taker=lambda *a, **k: {'state': 'claim_available'},
+                               claim=lambda swap, stamp: calls.append('claim') or {},
+                               taker_view=lambda swap: {'state': 'claim_evidence_available'},
+                               maker_phase=lambda swap: 'both_legs_locked', lez_chain_reading=lambda: {},
+                               wait_completed=lambda swap: calls.append('completed'),
+                               assert_cooperative_claim_is_key_path=lambda swap: 'claimtx', log=lambda *_: None):
+            result = e2e.scenario_claim_send_fails('1700000000')
+        self.assertEqual(calls, [('require', 'maker', 'fail-claim-submissions'), ('hook', 'maker', None),
+                                 ('hook', 'maker', '2'), 'claim', ('hook', 'maker', None), 'completed'])
+        self.assertEqual(result['lez_claim_owner'], 'maker')
+        self.assertEqual(result['refused_sends'], 2)
+
+
 class ZecActivateAfterExpiry(unittest.TestCase):
     """zec-activate-after-expiry: what can be checked without a stack."""
 

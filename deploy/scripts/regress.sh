@@ -123,6 +123,9 @@ tier_tests() { # tier_tests <tier>
       # selling LEZ only: the Maker stopped between the take and its actor's activation, started after
       # the offer expired (a devnet built with LEZ_TEST_HOOKS=1)
       echo "node:zec:zec-activate-after-expiry:TakerSellsLez"
+      # the LEZ claim's send refused in its owner's sidecar and sent again by the next drives: the Taker's
+      # revealing claim selling Bitcoin, the Maker's follow-up claim selling LEZ (a devnet built with LEZ_TEST_HOOKS=1)
+      for d in "${directions[@]}"; do echo "node:btc:claim-send-fails:$d"; done
       # selling ZEC, as issue #130 was found: the Claim pressed at one Zcash confirmation reads queued
       echo "node:zec:zec-claim-at-one-confirmation:TakerSellsForeign"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
