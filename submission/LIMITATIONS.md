@@ -23,8 +23,11 @@ checkpoint; they do not widen the current claim.
 - The current BTC mini-app route uses an owner-local demo controller with
   Docker-socket authority and fixed wallet/amount presets. That controller is
   trusted local-demo orchestration outside the intended production boundary.
-- The stack integrates M5-derived daemon, service, storage, and runner
-  components, but complete M5 delivery is not claimed.
+- M5 (version 0.5.0: the Maker daemon, both CLIs, the swap coordinator, the
+  price source, the outage handling and the fuzz harness) is mapped in
+  [`docs/m5-acceptance-checklist.md`](../docs/m5-acceptance-checklist.md) and
+  bounded in the [M5 boundary](#m5-boundary) below. Its full regression has
+  not run yet, and Logos has not accepted it.
 
 ## Source and Gateway portability
 
@@ -258,7 +261,10 @@ The sidecar:
   after an unknown outcome, so its behaviour did not; its witnessed escrow,
   claim and token effects keep one attempt in the sidecar as well (its own
   journal sends each once; a lost one falls back to observation and
-  recovery), and so does the reference clock transaction. Unit tests only;
+  recovery), and so does the reference clock transaction. Since version
+  0.5.0 the completed witnessed claim is the exception: the sidecar decides
+  its submission on the chain again and the actor sends it again while it is
+  absent (ADR 0218, [M5 boundary](#m5-boundary)). Unit tests only;
   no devnet scenario kills a sidecar mid-submission except
   `xmr-kill-maker`'s "claim tool running" (tag 15).
 - Its request store holds at most 4,096 entries (`MAX_STORE_ENTRIES`). When
@@ -349,17 +355,165 @@ Found in the M4 review, outside the Monero protocol:
   swap ends, on both Nodes and for every pair; a recorded port is never
   reused, so a Node takes at most as many swaps over its life as its role
   configuration's sidecar port range holds.
-- The Taker desk offers **Refund** on a Zcash swap from the Taker's
-  confirmed lock on, while the Maker is still in time to fund and before the
-  refund can be sent (issue #182). A refund requested then waits for its
-  time; if the Maker funds meanwhile, the swap can end refunded on both
-  sides where it could have completed. No funds are at risk. Bitcoin and
-  Monero swaps offer Refund only once it is the Taker's next step.
+- Up to 0.4.x the Taker desk offered **Refund** on a Zcash swap from the
+  Taker's confirmed lock on, while the Maker was still in time to fund and
+  before the refund could be sent (issue #182); a refund requested then
+  waited for its time, and if the Maker funded meanwhile the swap could end
+  refunded on both sides where it could have completed. Version 0.5.0 offers
+  Refund on a Zcash swap only once the Taker's claim window has closed and
+  refuses an earlier request ([M5 boundary](#m5-boundary)), as Bitcoin and
+  Monero swaps offer it only once it is the Taker's next step.
 - The Docker stack's Basecamp containers default their VNC password to
   `lezswap` unless `VNC_PASSWORD` is set (`deploy/images/basecamp-ui/entrypoint.sh`,
   `deploy/compose.yaml`; the testnet overlay `deploy/compose.testnet.yaml`
   uses the same image); the VNC ports are bound to `127.0.0.1`. The systemd
   and macOS packages run no VNC.
+
+## M5 boundary
+
+The Maker daemon, the CLIs, the swap coordinator, the price source, the
+outage handling and the fuzz harness (version 0.5.0,
+[rfp#125](https://github.com/logos-co/rfp/issues/125), issue #162). Each
+limit below is open unless it says otherwise; the deliverables and their
+proof are in
+[`docs/m5-acceptance-checklist.md`](../docs/m5-acceptance-checklist.md).
+
+Evidence:
+
+- The full regression of the tree at `6ad741bf` has not run yet. No test of
+  the 200 in the full tier has a recorded run at that commit, and no
+  regression evidence set for 0.5.0 is committed.
+- Pre-runs of 2026-11-27 on images of the earlier commit `6a5535db`, which
+  has the fix for #174 and thirteen of the new tests and has neither the
+  fixes for #175, #176, #178 and #182 nor the removal of the prepared Zcash
+  catalog, are not evidence of `6ad741bf` and are not committed.
+- The systemd evidence
+  ([`maker-systemd-2026-11-12`](../docs/evidence/maker-systemd-2026-11-12/README.md))
+  is from commits before ADR 0216 and before 0.3.5. The VM run on the 0.5.0
+  tree has not run yet.
+- The evidence set of the fuzz runs of 2026-11-27 is not committed yet.
+- A release bundle leaves 12 of the 200 tests out: 10 need the devnet test
+  hooks, which no release image carries (among them `claim-send-fails`,
+  `zec-maker-claim-collision` and `zec-maker-cli-claim`), and 2 compile the
+  repository's test price module.
+- Private devnet only: Bitcoin Core regtest, Zebra regtest, Monero regtest
+  and LEZ v0.2.4. M5 adds no public-network run of any pair. The RISC Zero
+  3.0 exemption of the M4 boundary stands.
+
+The daemon and its installation:
+
+- Under Logos core the Maker desk starts the Node when it loads and has no
+  control that stops or restarts it. Its view calls `health`, `btcMarket`,
+  `btcPublishOffer`, `btcWithdrawOffer`, `btcSwapAction`, `chatStatus` and
+  `resetChat`; history, monitor, claim and refund exist on its backend only,
+  and the operator uses the CLI for them
+  ([`docs/maker-install.md`](../docs/maker-install.md#what-the-maker-desk-controls)).
+- No swap has run on Linux under `logosctl` without a Basecamp. The headless
+  evidence is the module's start, stop and status on Linux
+  ([`logos-native-2026-11-11-c`](../docs/evidence/logos-native-2026-11-11-c/))
+  and swaps under one `logosctl` session on macOS
+  ([`darwin-native-node-2026-11-12-b`](../docs/evidence/darwin-native-node-2026-11-12-b/)),
+  both from before 0.4.0.
+- Under systemd, Monero is packaged for the Maker only, as an optional
+  drop-in checked statically; Monero for the Taker's unit is not packaged.
+  A swap in which the Taker sells ZEC has not run under the units.
+
+The CLIs:
+
+- `start` and `stop` of both CLIs act on the systemd unit only. Under Logos
+  core the Node is stopped and started with the hold file or with
+  `lez_swap_node`'s `stop_node` and `start_node`.
+- The manual-claim scenario (`zec-maker-cli-claim`) holds the Node's own
+  claim with a devnet test hook and shows the operator's request admitted,
+  replayed, refused a second time and carried by the attempt that claims. It
+  does not show a claim the Node would not have made by itself: the request
+  decides when and under whose name the claim runs.
+- The Maker has no Monero claim or refund to ask for; its Node runs them.
+- On the stack, as the owner, the Maker's `alerts`, `acknowledge-alert`,
+  `delivery-identity` and `create-swap` are not driven; they run in crate
+  tests. The Taker CLI's commands that do not use the Node are not run
+  against chains.
+- A Zcash swap in which the Taker sells ZEC is driven through the Taker CLI
+  in `zec-dynamic-happy` only.
+
+The coordinator and the three fixes:
+
+- **#174, ADR 0218.** A claim the node accepted and the sequencer later
+  dropped is not sent again by the Bitcoin actor: once accepted, the row is
+  only observed. The actor does not bound a claim's first send in time; a
+  Node drives the claim only while its status offers it. The revealing claim
+  is resent only inside its claim window, read from the wall clock. The
+  devnet scenario refuses the submission before its send; the ambiguous
+  answer and the stopped process are covered by crate tests only. Every
+  other effect (Bitcoin effects, LEZ funding, LEZ refunds) keeps one attempt.
+- **#176, ADR 0219.** A Bitcoin LEZ lock that loses its nonce is not planned
+  again: that swap expires with nothing locked by the Maker. The locks in
+  flight are kept in the Node's memory, so a Node that restarts can cost the
+  next transaction one re-plan. Two Nodes configured with one LEZ account,
+  and the operator's own transactions from it, are not coordinated; the
+  claim's re-plans cover them. The capacity under `public-testnet-v3` is
+  held at 1 by a constant, because no LEZ claim has been measured on that
+  network.
+- **#178, ADR 0220.** The rule that an unfunded Zcash `TakerSellsLez` swap
+  gives its place up after its Taker-lock window has crate tests and no
+  devnet scenario. A Taker whose lock is confirmed after its window while
+  the Maker is at capacity waits, and refunds at the LEZ refund time if no
+  place frees; nothing tells it before it locks.
+- **#175.** The check of `lez.sequencer_url` and `lez.indexer_url` against
+  the route is proven by crate tests; no Node has run against the
+  `official_public` origin.
+- No multi-user run: a lane has one Taker identity. No store migration runs
+  on the stack. No Bitcoin corruption scenario exists at the Node level. The
+  adaptor nonce journal's key derives from the role's signing key, so it
+  protects a copy of the state directory, not a reader of that key file.
+
+The price source:
+
+- The external price source is a shared object that exports this
+  repository's C ABI (`crates/logos-price-c-api`), loaded by a one-shot
+  worker process, selected per route and pinned by SHA-256. The Maker does
+  not call a price module through Logos core.
+- The only module exercised is the repository's test fixture. No real Logos
+  price module exists, so no real feed is exercised; the stale quote and the
+  unavailable module of the scenarios are builds of that fixture
+  ([`docs/price-module-guide.md`](../docs/price-module-guide.md#10-the-boundary-and-what-does-not-exist)).
+
+Outage handling:
+
+- The outage scenarios cut the devnet's shared Delivery directory and Chat
+  socket, not the Logos Delivery and Chat modules of
+  `deploy/compose.logos.yaml`.
+- The Node does not buffer a take made during an outage: it refuses it, and
+  the caller replays the same request with the same request id once the
+  transports are back. An offer published during an outage is stored and
+  handed to Delivery after the restore.
+
+The fuzz harness:
+
+- The two coordinator targets drive the state machine and two swaps through
+  one `SqliteSwapStore`. They do not drive the actors, the sidecar or a
+  chain.
+- The runs of 2026-11-27 were 1,212 s for each coordinator target on one
+  x86_64 host with 2 jobs, made before the #174 journal change was in the
+  store the `coordinator_store` target links. The `xmr_reserve_wire` run
+  left one timeout artifact, its own seed `stage-a`, under a 2 s timeout;
+  `scripts/run-fuzz.sh` now runs that target with 20 s.
+- The weekly workflow runs each of the six targets for 120 seconds.
+
+Zcash at take time:
+
+- The devnet's `gen-config.sh` still mints both lane-1 Zcash keys, because
+  Zebra's miner address is the Maker's: on the devnet's first lane the
+  generator, not each Node, creates the two Zcash keys.
+- The Maker's Zcash key is also its Delivery key and its funding key.
+- The public Zcash lane is converted to take time and has not run on a
+  public network.
+
+Fixed in this version and no longer a limit: the early **Refund** on a Zcash
+swap (issue #182). The Zcash actor names the Taker's refund between the locks
+only once the Taker's claim window has closed, the Taker Node refuses an
+earlier refund request with `-32016` `taker_action_unavailable` and keeps
+observing, and the desk's row carries no Refund while it waits.
 
 ## LEZ submissions and the sidecar's request journal
 
@@ -389,9 +543,16 @@ Found in the M4 review, outside the Monero protocol:
   sidecar's own) and bytes that do not match it stay a definite refusal.
 - On the BTC path the sidecar's answer to the witnessed refund changed, but
   the BTC actor never asks again after an unknown outcome, so its behaviour
-  did not; its witnessed escrow, claim and token effects keep one attempt in
-  the sidecar (its own journal sends each once; a lost one falls back to
+  did not; its witnessed escrow and token effects keep one attempt in the
+  sidecar (its own journal sends each once; a lost one falls back to
   observation and recovery). So does the reference clock transaction.
+- The BTC actor's exact LEZ claim is the exception since version 0.5.0
+  ([ADR 0218](../docs/architecture/0218-resend-an-exact-lez-claim-that-did-not-land.md),
+  issue #174): a claim whose send failed, ended ambiguously or was cut by a
+  stopped process is sent again as the same bytes while the chain shows it
+  absent, under the same request id, and the sidecar decides the completed
+  witnessed claim's submission on the chain again. Its limits are in the
+  [M5 boundary](#m5-boundary).
 
 ## M6 boundary
 

@@ -1,7 +1,7 @@
 # Milestone-to-artifact map
 
-First written on 2026-08-26; the M2 and M4 sections were added with their
-milestones. Logos accepted M3 at `v0.2.6`; the other upstream issues are open
+First written on 2026-08-26; the M2, M4 and M5 sections were added with
+their milestones. Logos accepted M3 at `v0.2.6`; the other upstream issues are open
 and their checkboxes unchecked. `Included` below means the artifact is in the
 repository; it does not mean Logos has accepted the deliverable.
 
@@ -120,6 +120,34 @@ is the full tier at `7b4e46da`, 175 of 175, 174 on their first try and
 [`regression-m4-2026-11-21`](../docs/evidence/regression-m4-2026-11-21/README.md),
 is the full tier at `d4475300` on x86_64: 160 of 160, each on its first try.
 
+## M5 — Maker daemon, CLIs, swap coordinator, fuzz harness
+
+Upstream: [logos-co/rfp#125](https://github.com/logos-co/rfp/issues/125),
+tracked here as issue #162. Version 0.5.0, on the private devnet only. Each
+deliverable with its proof and its limits, and the issues fixed in this
+version (#174, #175, #176, #178, #182):
+[`docs/m5-acceptance-checklist.md`](../docs/m5-acceptance-checklist.md). The
+milestone text files the price source under "F9 as amended by PR #108" and
+the outage handling under "R7"; in RFP-003 they are F8 and R8, and the
+checklist and the traceability matrix file them there.
+
+| Official deliverable | Submission artifact | Status |
+|---|---|---|
+| Maker daemon (Tokio + Rust) runnable under Logos core daemon mode (remote-controllable from the maker mini-app), with a standalone systemd-managed fallback, plus installation docs (U2) | `lez-maker-node` in [`crates/maker-node`](../crates/maker-node/); hosted by Logos core through [`modules/lez-swap-node`](../modules/lez-swap-node/) with the package [`modules/lez-maker-node`](../modules/lez-maker-node/); the Maker desk [`apps/basecamp/maker`](../apps/basecamp/maker/); the units in [`packaging/systemd/`](../packaging/systemd/); [`docs/maker-install.md`](../docs/maker-install.md) and [`docs/maker-systemd-install.md`](../docs/maker-systemd-install.md) | Included. Every devnet test runs the Nodes under Logos core in a Basecamp. The systemd evidence ([`maker-systemd-2026-11-12`](../docs/evidence/maker-systemd-2026-11-12/README.md)) predates ADR 0216 and 0.3.5; the VM run on the 0.5.0 tree has not run yet. The desk publishes and withdraws offers and reads health and the market; it has no history, claim or refund panel and no stop control |
+| Maker CLI per U3 (configure pairs/prices, start/stop, query history, manual claims/refunds) | `lez-maker-cli`, 21 commands, in [`docs/cli-reference.md`](../docs/cli-reference.md); stack scenarios `maker-cli`, `maker-cli-refund`, `zec-maker-cli-refund`, `zec-maker-cli-claim` | Included. `start` and `stop` act on the systemd unit only. The manual-claim scenario does not show a claim the Node would not have made by itself |
+| Taker CLI per U4 (offer discovery, swap initiation, progress monitoring, claim/refund) | `lez-taker-cli` in [`docs/cli-reference.md`](../docs/cli-reference.md); stack scenarios `taker-cli` (both directions), `taker-cli-refund`, `zec-taker-cli`, `zec-taker-cli-refund`, `xmr-taker-cli`, `zec-dynamic-happy` (both directions) | Included for all three pairs |
+| Swap-coordinator state machine: persistence, crash recovery, concurrent-swap isolation per R4 / R5 | [`docs/swap-coordinator.md`](../docs/swap-coordinator.md); ADRs [0218](../docs/architecture/0218-resend-an-exact-lez-claim-that-did-not-land.md) (#174), [0219](../docs/architecture/0219-one-gate-for-the-maker-accounts-lez-transactions.md) (#176) and [0220](../docs/architecture/0220-an-unfunded-zec-swap-gives-its-place-up.md) (#178); the kill, restart, corruption, configuration and concurrency scenarios, with `claim-send-fails`, `zec-maker-claim-collision`, `zec-kill-maker-refund` and `zec-kill-taker-refund` new | Included. A claim the node accepted and the sequencer dropped is not resent by the Bitcoin actor; a Bitcoin LEZ lock that loses its nonce is not planned again; the place rule of ADR 0220 has crate tests only; one Taker identity per lane |
+| Pluggable price-source trait per F9 as amended by PR #108, with two reference impls: local configuration, and an external-feed adapter sourcing prices from another Logos module via its C API | `PriceSource`, `LocalPriceSource` and `ProcessLogosPriceSource` in [`crates/maker-node`](../crates/maker-node/src/price_source.rs) over [`crates/logos-price-c-api`](../crates/logos-price-c-api/); [`docs/price-module-guide.md`](../docs/price-module-guide.md); stack scenarios `maker-price-module` and `maker-price-module-stale` | Included, with a boundary: the external source is a shared object exporting this repository's C ABI, loaded by a one-shot worker; no call goes through Logos core, and the only module exercised is the repository's test fixture |
+| Graceful Logos Delivery / Chat unavailability handling per R7, behaviour documented | [`docs/delivery-chat-outage.md`](../docs/delivery-chat-outage.md); stack scenarios `outage-before-take` and `zec-outage-before-take` (both directions), `xmr-outage-before-take`, and the cuts after the lock (`offline-after-lock`, `offline-after-second-lock`, `offline-after-claim`, `taker-refund-offline`, `xmr-cut-after-lock`) | Included. The cut is on the devnet's shared Delivery directory and Chat socket, not on the Logos modules; a take is not buffered |
+| Fuzz harness against the swap-coordinator state machine using `cargo-fuzz` or equivalent | [`fuzz/fuzz_targets/coordinator.rs`](../fuzz/fuzz_targets/coordinator.rs) and [`coordinator_store.rs`](../fuzz/fuzz_targets/coordinator_store.rs), nine seeds each, replayed on stable in the ordinary test run; [`scripts/run-fuzz.sh`](../scripts/run-fuzz.sh); the weekly [`fuzz.yml`](../.github/workflows/fuzz.yml) | Included. The runs of 2026-11-27 found no crash, timeout or out-of-memory in the two coordinator targets; their evidence set is not committed yet. The committed set is the one-hour run of [`coordinator-fuzz-2026-11-12`](../docs/evidence/coordinator-fuzz-2026-11-12/README.md) |
+| Added by issue #162 and the reviewer's comment on rfp#125, under the swap-coordinator deliverable: ZEC swaps prepared by the two Nodes at take time | The rounds `zec_reserve_v1`, `zec_chat_propose_v1`, `zec_chat_complete_v1`: the Taker's Node makes the secret and sends only its SHA-256, each Node signs with its own Zcash key; the prepared catalog, its fixture, the dealer tools and the options that named a prepared swap are removed ([`docs/sdk-lez-zec.md`](../docs/sdk-lez-zec.md)) | Included. The devnet's `gen-config.sh` still mints both lane-1 Zcash keys; the Maker's Zcash key is also its Delivery key and funding key; the public Zcash lane has not run on a public network |
+
+The full tier holds 200 tests at 0.5.0, twenty more than at 0.4.0. The full
+regression of the tree at `6ad741bf` has not run yet, and no regression
+evidence set for 0.5.0 is committed. Pre-runs of 2026-11-27 on images of the
+earlier commit `6a5535db` are described in the checklist; they are not
+evidence of `6ad741bf` and are not committed.
+
 ## M3 — BTC/LEZ leg
 
 Upstream: [logos-co/rfp#123](https://github.com/logos-co/rfp/issues/123)
@@ -159,6 +187,8 @@ Imported checkpoint: `m6-poc-complete` / `78f9842465462715a913dde37105b77c4fd880
 | M1 | Design/checkpoint summary | Full M1 documents, verifier, reproducer, ADRs |
 | M3 | One real completed BTC/LEZ run, explorer views, dated live validation | Both directions, refunds, first-lock recovery, restart survivor, overlap, cryptographic records |
 | M6 | Current Basecamp BTC Maker/Taker journey | HTML prototypes, package builds, isolated journeys, ZEC service certificates |
+| M5 | None: the presentation predates it | The M5 section above and [`docs/m5-acceptance-checklist.md`](../docs/m5-acceptance-checklist.md): both modes of the daemon, both CLIs on the stack, the coordinator fixes, the price source, the outage handling, the fuzz targets |
 
-M5-derived daemon, service, storage, and runner components are exercised by the
-live stack. Complete M5 delivery is intentionally not claimed.
+The daemon, service, storage and runner components of M5 are exercised by the
+live stack, and M5 is mapped deliverable by deliverable in the M5 section
+above. Its full regression has not run yet, and Logos has not accepted it.

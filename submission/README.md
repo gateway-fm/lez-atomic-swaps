@@ -14,7 +14,15 @@ module topology it runs on is traced in
 is version 0.4.0; its deliverables are mapped in
 [the M4 section](MILESTONES.md#m4--xmrlez-leg) and, with the proof for each,
 in [`docs/m4-acceptance-checklist.md`](../docs/m4-acceptance-checklist.md).
-The deck, walkthrough and manifest below predate both and show the BTC pair.
+Milestone 5 (the Maker daemon, the CLIs, the swap coordinator, the price
+source, the outage handling and the fuzz harness) is version 0.5.0; its
+deliverables are mapped in
+[the M5 section](MILESTONES.md#m5--maker-daemon-clis-swap-coordinator-fuzz-harness)
+and, with the proof for each, in
+[`docs/m5-acceptance-checklist.md`](../docs/m5-acceptance-checklist.md); its
+full regression has not run yet.
+The deck, walkthrough and manifest below predate all three and show the BTC
+pair.
 
 ## Start here
 
@@ -64,7 +72,10 @@ regtest and Stagenet (M4) and a private LEZ v0.2 devnet.
 It is submitted for review; the public milestone issues remain open and their
 checkboxes remain unchecked. The pack does not claim public-network deployment
 (no Monero testnet or mainnet swap has run), production custody, a
-formal cryptographic audit, complete M5 operations, or M7 mainnet readiness.
+formal cryptographic audit, or M7 mainnet readiness. M5 is mapped in
+[the M5 section](MILESTONES.md#m5--maker-daemon-clis-swap-coordinator-fuzz-harness)
+within the [M5 boundary](LIMITATIONS.md#m5-boundary); the full regression of
+version 0.5.0 has not run yet.
 
 The historical milestone checkpoints are recorded by commit identity. The
 default branch now includes the complete buildable source workspace directly;

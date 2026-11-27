@@ -31,6 +31,16 @@ from the BTC/ZEC flow in
 and each deliverable with its proof in
 [`docs/m4-acceptance-checklist.md`](docs/m4-acceptance-checklist.md).
 
+Version 0.5.0 adds the operator's side (Milestone 5): the Maker daemon hosted
+by Logos core or run under systemd, `lez-maker-cli` and `lez-taker-cli`
+driving swaps of all three pairs, a price source that is either a local price
+or a module behind a C ABI, documented behaviour while Logos Delivery or Chat
+is unavailable, and fuzz targets on the swap coordinator and its store. A
+Zcash swap is now agreed by the two Nodes at take time, each with its own
+key, and the prepared catalog is gone. It runs on the private devnet; each
+deliverable with its proof and its limits is in
+[`docs/m5-acceptance-checklist.md`](docs/m5-acceptance-checklist.md).
+
 [**Watch the 1:53 product walkthrough**](media/lez-btc-ui-swap-demo.mp4) ·
 [**Open the interactive deck**](media/lez-btc-m1-m3-m6-submission.html) ·
 [**Get the latest release**](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest) ·
@@ -244,7 +254,7 @@ licence, architecture, DCO, and security-review requirements.
 | [`tests/`](tests/) | Local-chain, UI, transport, security, and integration tests |
 | [`docs/architecture/`](docs/architecture/) | Protocol decisions, safety arguments, and operational design |
 | [`docs/evidence/`](docs/evidence/) | Secret-safe records from real local runs |
-| [`submission/`](submission/) | M1/M3/M6 reviewer map, evidence index, reproduction guide, and release checksums |
+| [`submission/`](submission/) | Reviewer map of M1 to M6, limitations, evidence index, reproduction guide, and release checksums |
 | [`media/`](media/) | Interactive deck, PDF, walkthrough, captions, and screenshots |
 
 Operator documents:
@@ -258,12 +268,14 @@ Operator documents:
 | [Delivery and Chat outages](docs/delivery-chat-outage.md) | What each role can do while Logos Delivery or Chat is unavailable |
 | [Swap coordinator](docs/swap-coordinator.md) | The state machine, its persistence, crash recovery and concurrent-swap isolation |
 | [Price module guide](docs/price-module-guide.md) | Writing and running a Logos price module for the Maker |
+| [M5 acceptance checklist](docs/m5-acceptance-checklist.md) | Each M5 deliverable (daemon, CLIs, coordinator, price source, outage handling, fuzz harness) with its proof and its limits |
 
-The current public release, v0.5.0, covers the M1 protocol foundation, the M2
-ZEC/LEZ pair, the M3 BTC/LEZ vertical slice, the M4 XMR/LEZ pair (one
-direction, the Taker selling LEZ, see
-[`docs/sdk-lez-xmr.md`](docs/sdk-lez-xmr.md)) and the M6 Maker/Taker
-experience, with LEZ on private local chains. Public-network operation is not
+Version 0.5.0 covers the M1 protocol foundation, the M2 ZEC/LEZ pair, the M3
+BTC/LEZ vertical slice, the M4 XMR/LEZ pair (one direction, the Taker selling
+LEZ, see [`docs/sdk-lez-xmr.md`](docs/sdk-lez-xmr.md)), the M5 Maker daemon,
+CLIs, swap coordinator, price source and fuzz harness
+([`docs/m5-acceptance-checklist.md`](docs/m5-acceptance-checklist.md)) and the
+M6 Maker/Taker experience, with LEZ on private local chains. Public-network operation is not
 part of it, apart from Monero Stagenet: the Nodes completed, refunded and
 punished a swap there once, with LEZ on the devnet
 ([`docs/monero-stagenet-guide.md`](docs/monero-stagenet-guide.md)). Release
