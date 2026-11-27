@@ -1,6 +1,7 @@
 //! Owner-private startup configuration for the Taker Node: discovery-only by
-//! default, prepared-route lifecycle when a validated catalog is configured.
-//! The prepared catalog lives in [`prepared`]; its Zcash entries need `pair-zec`.
+//! default, the swap lifecycle when `initiation` is configured. The swaps a
+//! Node may execute live in [`prepared`]; a Zcash swap is agreed with the
+//! Maker at take time and never read from this configuration.
 
 pub(crate) mod prepared;
 
@@ -48,6 +49,12 @@ pub enum TakerServiceStartupError {
     /// Prepared initiation custody or the existing registry is unavailable.
     #[error("Taker service initiation authority is unavailable")]
     InitiationUnavailable,
+    /// The configuration names `initiation.prepared_zec`, the list of Zcash
+    /// swaps prepared ahead of the take, which this Node no longer reads.
+    #[error(
+        "Taker service startup configuration names initiation.prepared_zec, which was removed: a Zcash swap is agreed with the Maker at take time (initiation.zec_role_config); remove the field"
+    )]
+    RemovedPreparedZec,
 }
 
 /// Metadata-only availability probe for one configured owner-local Chat socket.
@@ -175,6 +182,7 @@ pub fn load_taker_service_context(
         "Taker service startup configuration",
     )
     .map_err(|_| TakerServiceStartupError::ConfigurationUnavailable)?;
+    refuse_removed_fields(bytes.bytes())?;
     let configuration: StartupConfigurationV1 = serde_json::from_slice(bytes.bytes())
         .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
     validate_configuration(&configuration)?;
@@ -239,6 +247,25 @@ pub fn load_taker_service_backend(
         return Err(TakerServiceStartupError::InvalidConfiguration);
     }
     Ok(context.into_backend())
+}
+
+/// Names the one removed field an older configuration may still carry. The
+/// strict schema would refuse it as any unknown field, without saying which;
+/// an owner who upgrades reads the field and what replaced it instead.
+fn refuse_removed_fields(bytes: &[u8]) -> Result<(), TakerServiceStartupError> {
+    #[derive(Deserialize)]
+    struct Probe {
+        #[serde(default)]
+        initiation: Option<serde_json::Map<String, serde_json::Value>>,
+    }
+    let named = serde_json::from_slice::<Probe>(bytes)
+        .ok()
+        .and_then(|probe| probe.initiation)
+        .is_some_and(|initiation| initiation.contains_key("prepared_zec"));
+    if named {
+        return Err(TakerServiceStartupError::RemovedPreparedZec);
+    }
+    Ok(())
 }
 
 fn validate_configuration(

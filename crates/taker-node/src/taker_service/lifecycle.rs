@@ -557,7 +557,7 @@ const MAXIMUM_MONITORED_SWAPS: usize = 256;
 const MAXIMUM_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const SIGNING_KEY_BYTES: u64 = 32;
 
-/// Registers the prepared-ZEC lifecycle methods when a validated catalog exists.
+/// Registers the swap lifecycle methods when a validated initiation context exists.
 #[allow(clippy::too_many_lines)]
 pub(super) fn register(
     module: &mut RpcModule<()>,
@@ -1810,8 +1810,8 @@ async fn monitor_swap(
     Ok(view)
 }
 
-/// A Zcash swap whose files the monitor can no longer read (a corridor that a
-/// later provisioning archived, with its catalog entry) is read from the
+/// A Zcash swap whose files the monitor can no longer read (its swap
+/// directory moved away, or a file in it altered) is read from the
 /// supervisor's schedule store, which the Node keeps: a swap it saw reach
 /// `completed` or `refunded` keeps that state. Anything else is not answered
 /// from the store, so the caller's error (an attention row in the list)
@@ -2377,7 +2377,7 @@ async fn initiate(
     }
     let initiation = state.initiation.clone().ok_or(InitiationError::Internal)?;
 
-    // Durable lookup deliberately precedes catalog selection, time, and Delivery.
+    // Durable lookup deliberately precedes selection, time, and Delivery.
     let replay = lookup_replay(&initiation, &request.request_id).await?;
     if let Some((facts, admitted_at)) = replay {
         if !request_matches_facts(&request, &facts) {
@@ -2410,7 +2410,10 @@ async fn initiate(
     // before authenticated Delivery performs asynchronous I/O.
     let offer_id = request.offer_id.clone();
     let selection_context = Arc::clone(&initiation);
-    let (catalog_entry, dynamic, dynamic_zec, dynamic_xmr) =
+    // A swap this Node already prepared for the offer (an earlier take of it,
+    // reloaded from its swap directory on start) is resumed; otherwise the
+    // pair's take-time path prepares one now.
+    let (prepared_entry, dynamic, dynamic_zec, dynamic_xmr) =
         tokio::task::spawn_blocking(move || {
             let context = selection_context
                 .lock()
@@ -2434,7 +2437,7 @@ async fn initiate(
         .map_err(|_| InitiationError::Internal)??;
     #[cfg(not(feature = "pair-xmr"))]
     let _ = dynamic_xmr;
-    let prepared = match (catalog_entry, dynamic, dynamic_zec) {
+    let prepared = match (prepared_entry, dynamic, dynamic_zec) {
         (Some(prepared), _, _) => prepared,
         (None, Some(dynamic), _) if request.route.pair() == Pair::Bitcoin => {
             prepare_dynamic_btc(&state, &request, &initiation, &dynamic).await?
@@ -2487,7 +2490,7 @@ async fn initiate(
 }
 
 /// Prepares a Bitcoin swap for any live offer at take time (ADR 0213) and
-/// registers it in the catalog, so the rest of the initiation is shared.
+/// registers it as a prepared entry, so the rest of the initiation is shared.
 async fn prepare_dynamic_btc(
     state: &TakerServiceState,
     request: &TakerSwapInitiateRequestV1,
@@ -2550,7 +2553,7 @@ async fn prepare_dynamic_btc(
 }
 
 /// Prepares a Zcash swap for any live offer at take time (`zec_reserve_v1`,
-/// docs/sdk-lez-zec.md) and registers it in the catalog, so the rest of the
+/// docs/sdk-lez-zec.md) and registers it as a prepared entry, so the rest of the
 /// initiation is the prepared Zcash take, unchanged.
 #[cfg(feature = "pair-zec")]
 async fn prepare_dynamic_zec(
@@ -2615,7 +2618,7 @@ async fn prepare_dynamic_zec(
 }
 
 /// Prepares a Monero swap for any live offer at take time (`xmr_reserve_v1`
-/// and the ceremony) and registers it in the catalog, so the rest of the
+/// and the ceremony) and registers it as a prepared entry, so the rest of the
 /// initiation is the prepared Monero take (`execute_prepared_xmr`).
 #[cfg(feature = "pair-xmr")]
 async fn prepare_dynamic_xmr(

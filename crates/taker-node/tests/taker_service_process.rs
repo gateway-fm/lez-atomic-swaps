@@ -43,6 +43,9 @@ use secp256k1::{PublicKey, Secp256k1, SecretKey};
 #[cfg(feature = "pair-zec")]
 use sha2::{Digest as _, Sha256};
 
+#[cfg(feature = "pair-zec")]
+mod support;
+
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -334,8 +337,8 @@ async fn taker_cli_swap_commands_reach_the_running_node_owner_rpcs() {
     let monitored = taker_cli(&socket, &[&["swap", "monitor"][..], &swap].concat());
     assert_eq!(monitored, taken["swap"]);
 
-    // An Initiating swap admits no lock, claim or refund and this Node has no
-    // wallet: each answer is the RPC's own refusal, never a parameter error.
+    // An Initiating swap admits no lock, claim or refund: each answer is the
+    // RPC's own refusal, never a parameter error.
     // The lock answers a swap that is not a Node-owned Bitcoin swap with
     // invalid params itself; its category tells that from a parameter error.
     let lock = taker_cli_output(&socket, &[&["swap", "lock"][..], &swap].concat());
@@ -354,7 +357,6 @@ async fn taker_cli_swap_commands_reach_the_running_node_owner_rpcs() {
     for arguments in [
         [&["swap", "claim"][..], &swap, &action].concat(),
         [&["swap", "refund"][..], &swap, &action].concat(),
-        vec!["balances"],
     ] {
         let output = taker_cli_output(&socket, &arguments);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -367,6 +369,9 @@ async fn taker_cli_swap_commands_reach_the_running_node_owner_rpcs() {
             assert!(!stderr.contains(wrong), "{arguments:?}: {stderr}");
         }
     }
+    // A Node that takes Zcash has its own wallets (its LEZ role and Zcash
+    // key): `balances` reaches `taker_wallet_balances_v1` and prints its answer.
+    assert!(taker_cli(&socket, &["balances"]).is_object());
     assert!(service.terminate().await.success());
 }
 
@@ -616,6 +621,43 @@ fn startup_requires_private_config_and_rejects_invalid_or_relative_socket_before
     assert!(!run.path().join("relative.sock").exists());
 }
 
+/// A configuration written for a Node that read Zcash swaps prepared ahead of
+/// the take still names `initiation.prepared_zec`. The Node refuses it before
+/// it binds its socket and says which field, with or without `pair-zec`.
+#[test]
+fn startup_refuses_the_removed_prepared_zec_list_by_name() {
+    let run = tempfile::tempdir().unwrap();
+    let runtime = private_directory(run.path().join("runtime"));
+    let config = private_config(
+        run.path().join("older.json"),
+        &json!({
+            "schema_version": 1,
+            "delivery_sources": [],
+            "maximum_offers": 16,
+            "initiation": {
+                "registry_database": run.path().join("registry.sqlite3"),
+                "prepared_zec": [],
+            },
+        }),
+    );
+    let socket = runtime.join("older.sock");
+    let refused = Command::new(env!("CARGO_BIN_EXE_lez-taker-node"))
+        .arg("--role-config")
+        .arg(&config)
+        .arg("--socket")
+        .arg(&socket)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(!socket.exists());
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert!(stderr.contains("initiation.prepared_zec"), "{stderr}");
+    assert!(
+        stderr.contains("agreed with the Maker at take time"),
+        "{stderr}"
+    );
+}
+
 #[cfg(feature = "pair-zec")]
 struct ProcessInitiationFixture {
     _run: tempfile::TempDir,
@@ -670,24 +712,26 @@ impl ProcessInitiationFixture {
                 }],
                 "chat_socket": root.join("chat.sock"),
                 "maximum_offers": 16,
-                "initiation": {
-                    "registry_database": registry,
-                    "prepared_zec": [{
-                        "source_id": "process-maker",
-                        "swap_id": "m6-process-zec-swap-001",
-                        "offer_id": "m6-process-zec-offer-001",
-                        "reservation_id": "m6-process-zec-reservation-001",
-                        "foreign_units": 42,
-                        "lez_units": 84,
-                        "signed_envelope": process_digest_binding(&signed),
-                        "unsigned_draft": process_digest_binding(&draft),
-                        "signing_key": {"path": key},
-                        "source_config": process_digest_binding(&actor),
-                        "agreement_output": root.join("agreement.json"),
-                        "actor_root": root.join("actor-root"),
-                        "receipt_output": root.join("receipt.json"),
-                    }]
-                }
+                "initiation": support::take_time_initiation(&root, &registry, &key),
+            }),
+        );
+        // The swap as the Node persisted it when it prepared it at take time.
+        support::persist_take_time_swap(
+            &root,
+            &json!({
+                "source_id": "process-maker",
+                "swap_id": "m6-process-zec-swap-001",
+                "offer_id": "m6-process-zec-offer-001",
+                "reservation_id": "m6-process-zec-reservation-001",
+                "foreign_units": 42,
+                "lez_units": 84,
+                "signed_envelope": process_digest_binding(&signed),
+                "unsigned_draft": process_digest_binding(&draft),
+                "signing_key": {"path": key},
+                "source_config": process_digest_binding(&actor),
+                "agreement_output": root.join("agreement.json"),
+                "actor_root": root.join("actor-root"),
+                "receipt_output": root.join("receipt.json"),
             }),
         );
 

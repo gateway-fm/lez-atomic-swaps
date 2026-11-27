@@ -468,7 +468,10 @@ pub enum TakerDependencyStateV1 {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TakerInitiationCapabilityV1 {
-    /// Private drafts, keys, role templates, and effect material must be preprovisioned.
+    /// `taker_swap_initiate_v1` on this Node takes the offer: the Node holds
+    /// the swap's private drafts, keys, role templates, and effect material,
+    /// which it prepares with the Maker when the offer is taken. (The wire
+    /// name dates from swaps whose material was provisioned ahead.)
     PreparedPrivateMaterial,
     /// Acceptance is composed by `lez-taker-cli` and the local demo controller,
     /// not by `taker_swap_initiate_v1` on this Node.

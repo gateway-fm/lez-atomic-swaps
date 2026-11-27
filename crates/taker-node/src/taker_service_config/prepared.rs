@@ -1,7 +1,12 @@
-//! Prepared initiation catalog: owner-configured authorities the Taker Node may
-//! admit and execute, one entry per swap, for the Bitcoin route and (with
-//! `pair-zec`) the Zcash route. Every entry carries the same private material;
-//! the pair decides which take path and which actor run it.
+//! Prepared initiations: the authorities the Taker Node may admit and execute,
+//! one entry per swap. A Zcash or Monero entry is the record the Node itself
+//! persisted when it agreed the swap at take time (`zec_reserve_v1`,
+//! `xmr_reserve_v1`), reloaded from the swap's own directory; a Bitcoin entry
+//! is the Node-owned take's record or one of the owner's `prepared_btc`
+//! entries. Every entry carries the same private material; the pair decides
+//! which take path and which actor run it. No Zcash swap is read from the
+//! startup configuration: a configuration that still names
+//! `initiation.prepared_zec` is refused by name.
 
 use super::{TakerServiceStartupError, validate_normalized_absolute};
 use std::{
@@ -32,7 +37,7 @@ const MAX_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const MAX_PREPARED_RECEIPT_BYTES: u64 = 16 * 1024;
 const MAX_SIGNING_KEY_BYTES: u64 = 32;
 
-/// Existing registry plus a bounded static catalog of prepared ZEC authorities.
+/// Existing registry plus the bounded set of prepared swap authorities.
 pub struct ConfiguredTakerInitiationContext {
     execute_prepared: bool,
     registry: SqliteTakerFacadeStore,
@@ -51,7 +56,7 @@ pub struct ConfiguredTakerInitiationContext {
 }
 
 impl ConfiguredTakerInitiationContext {
-    /// Whether admitted prepared ZEC swaps execute Chat acceptance before response.
+    /// Whether admitted prepared swaps execute Chat acceptance before response.
     #[must_use]
     pub const fn execution_enabled(&self) -> bool {
         self.execute_prepared
@@ -192,7 +197,7 @@ impl ConfiguredTakerInitiationContext {
         Ok(())
     }
 
-    /// Number of configured role-fixed ZEC initiation entries.
+    /// Number of prepared entries this process holds.
     #[must_use]
     pub fn prepared_count(&self) -> usize {
         self.prepared_by_offer.len()
@@ -209,7 +214,7 @@ impl ConfiguredTakerInitiationContext {
 
     /// Looks up one fixed entry by application swap identity.
     ///
-    /// Startup validation rejects duplicate swap identities and bounds the catalog.
+    /// The set is bounded and holds one entry per offer.
     #[must_use]
     pub fn prepared_for_swap(&self, swap_id: &SwapId) -> Option<&PreparedTakerInitiationV1> {
         self.prepared_by_offer
@@ -380,7 +385,7 @@ impl PreparedExecutionV1 {
     }
 
     /// Whether the Node prepared this swap itself at take time (ADR 0213)
-    /// rather than reading it from the static catalog.
+    /// rather than reading it from the owner's `prepared_btc` entries.
     pub(crate) const fn dynamic(&self) -> bool {
         self.dynamic
     }
@@ -451,9 +456,6 @@ pub(super) struct InitiationConfigurationV1 {
     #[serde(default, alias = "execute_prepared_zec")]
     execute_prepared: bool,
     registry_database: PathBuf,
-    #[cfg(feature = "pair-zec")]
-    #[serde(default)]
-    prepared_zec: Vec<PreparedConfigurationV1>,
     #[serde(default)]
     prepared_btc: Vec<PreparedConfigurationV1>,
     /// Node-owned Bitcoin lifecycle configuration (`BtcRoleConfigV1`).
@@ -486,16 +488,13 @@ const fn automatic_refund_default() -> bool {
 impl InitiationConfigurationV1 {
     /// Every configured entry with the pair its array names.
     fn entries(&self) -> impl Iterator<Item = (Pair, &PreparedConfigurationV1)> {
-        #[cfg(feature = "pair-zec")]
-        let zec = self.prepared_zec.iter().map(|entry| (Pair::Zcash, entry));
-        #[cfg(not(feature = "pair-zec"))]
-        let zec = std::iter::empty();
-        zec.chain(self.prepared_btc.iter().map(|entry| (Pair::Bitcoin, entry)))
+        self.prepared_btc.iter().map(|entry| (Pair::Bitcoin, entry))
     }
 }
 
-/// One prepared swap: the static catalog entry, or the record a Node-owned
-/// Bitcoin take persists next to its swap directory.
+/// One prepared swap: the record a take persists in its swap directory (the
+/// Node-owned Bitcoin take, the take-time Zcash and Monero agreements), or one
+/// of the owner's `prepared_btc` entries.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreparedConfigurationV1 {
@@ -921,7 +920,7 @@ where
     Ok(digest)
 }
 
-/// Validates the prepared-ZEC catalog against the already-checked Delivery sources.
+/// Validates the owner's `prepared_btc` entries against the already-checked Delivery sources.
 pub(super) fn validate_initiation(
     initiation: &InitiationConfigurationV1,
     source_ids: &BTreeSet<&str>,

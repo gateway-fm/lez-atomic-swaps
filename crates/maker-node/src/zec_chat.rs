@@ -278,8 +278,9 @@ fn complete_materialized_zec_chat(
 }
 
 /// Validated deployment inputs for daemon-owned ZEC actor creation. The
-/// template registry is fixed at start for a provisioned corridor and grows
-/// at run time by one template per take-time reservation (`zec_reserve.rs`).
+/// template registry holds the templates named at start
+/// (`--zec-source-maker-config`, none on a Node the role launcher starts) and
+/// grows at run time by one template per take-time reservation (`zec_reserve.rs`).
 #[derive(Clone)]
 pub struct ZecMakerActorProvisioner {
     source_maker_configs: Arc<std::sync::RwLock<Vec<ActorConfig>>>,
@@ -420,7 +421,7 @@ impl ZecMakerActorProvisioner {
         })
     }
 
-    /// How many pinned Maker templates this catalog holds.
+    /// How many pinned Maker templates this registry holds.
     #[must_use]
     pub fn template_count(&self) -> usize {
         self.source_maker_configs

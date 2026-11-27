@@ -56,9 +56,9 @@ const MAX_RECORD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_FACTS_BYTES: usize = 64 * 1024;
 const PREPARED_FILE: &str = "xmr-taker-prepared.json";
 const RESERVE_FILE: &str = "xmr-taker-reserve.json";
-/// The swap's public facts the supervisor reads (the catalog's actor config).
+/// The swap's public facts the supervisor reads (the prepared entry's actor config).
 pub(super) const SWAP_FACTS_FILE: &str = "xmr-swap.json";
-/// The Taker's per-swap agreement key as raw bytes, the catalog's signing key.
+/// The Taker's per-swap agreement key as raw bytes, the prepared entry's signing key.
 const AGREEMENT_KEY_COPY: &str = "xmr-agreement.key";
 /// The Taker's own material, packets, Stage A/B and adaptor journal.
 pub(super) const ROLE_DIRECTORY: &str = "xmr";
@@ -198,7 +198,7 @@ impl DynamicXmrRole {
             .unwrap_or_default()
     }
 
-    /// Every swap this Node prepared at take time, as catalog entries.
+    /// Every swap this Node prepared at take time, as it persisted them.
     pub(crate) fn persisted_entries(&self) -> Vec<PreparedConfigurationV1> {
         self.swap_directories()
             .into_iter()
@@ -207,8 +207,8 @@ impl DynamicXmrRole {
             .collect()
     }
 
-    /// Turns a persisted entry into a catalog entry, re-authenticating the
-    /// offer against its Delivery source like the static catalog does.
+    /// Turns a persisted entry into a prepared one, re-authenticating the
+    /// offer against its Delivery source and every bound file against its digest.
     pub(crate) fn load_entry(
         &self,
         configured: &PreparedConfigurationV1,
@@ -587,7 +587,7 @@ pub(super) async fn negotiate(
     Ok(negotiated)
 }
 
-/// The per-swap agreement key as the catalog binds a signing key: 32 raw
+/// The per-swap agreement key as a prepared entry binds a signing key: 32 raw
 /// bytes (the role root keeps it as hex).
 fn agreement_key_bytes(role_root: &Path) -> Result<Zeroizing<[u8; 32]>> {
     let text = Zeroizing::new(read_private(&role_root.join(ROLE_AGREEMENT_KEY_FILE), 128)?);

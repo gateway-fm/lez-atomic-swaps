@@ -49,7 +49,7 @@ const AUTHENTICATED_OFFER_CONFLICT_CODE: i32 = -32_012;
 struct TakerServiceState {
     backend: ConfiguredTakerFacadeBackend,
     initiation: Option<Arc<Mutex<ConfiguredTakerInitiationContext>>>,
-    /// Which pairs the prepared catalog holds, fixed at startup.
+    /// Which pairs this Node can take or already holds a swap of, fixed at startup.
     btc_registered: bool,
     zec_registered: bool,
     xmr_registered: bool,
@@ -72,7 +72,7 @@ pub const DEFAULT_OBSERVER_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 /// Builds the exact JSON-RPC module enabled by one validated service context.
 ///
 /// Health and authenticated offer listing are always registered. A validated
-/// prepared catalog plus existing registry registers initiation, receipt-bound reads,
+/// initiation context plus existing registry registers initiation, receipt-bound reads,
 /// and generation-fenced claim/refund methods that invoke only the role actor.
 ///
 /// # Errors

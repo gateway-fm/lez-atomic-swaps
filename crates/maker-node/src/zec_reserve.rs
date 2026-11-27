@@ -186,7 +186,7 @@ fn holds_outpoint(
 /// What a completion found for its reservation id.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Materialized {
-    /// No take-time reservation: a static catalog swap.
+    /// No take-time reservation: a swap of a template named at start.
     NotTakeTime,
     /// A take-time reservation not yet completed; its template is ready.
     Open,
@@ -353,7 +353,7 @@ impl ZecMakerReservations {
 
     /// Refuses a proposal for a take-time reservation unless it is exactly
     /// the draft this Maker answered with and the reservation still holds.
-    /// A reservation id this Maker never reserved is the static catalog's.
+    /// A reservation id this Maker never reserved is a start-time template's.
     pub(super) fn check_proposal(
         &self,
         reservation_id: &RequestId,
@@ -380,7 +380,7 @@ impl ZecMakerReservations {
     /// Before a completion: starts the reservation's sidecar, writes the
     /// Maker's actor template around the reserved draft and registers it, so
     /// the existing completion provisions the actor from it. A completion of
-    /// a static catalog swap, or a replay, finds nothing to do.
+    /// a swap of a start-time template, or a replay, finds nothing to do.
     ///
     /// Until the completion is recorded as completed, the final agreement is
     /// checked first: it must validate now and countersign exactly the draft

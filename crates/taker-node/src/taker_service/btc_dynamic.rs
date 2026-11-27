@@ -1,5 +1,5 @@
 //! Node-owned Bitcoin take (ADR 0213, S1.3): the Taker prepares any live
-//! Bitcoin offer at take time instead of reading a fixture catalog.
+//! Bitcoin offer at take time instead of reading a swap prepared ahead.
 //!
 //! The take runs as one `taker_swap_initiate_v1` call: reservation with the
 //! Maker, funding plan from the Taker's wallet (when it funds Bitcoin), LEZ
@@ -122,7 +122,7 @@ impl DynamicBtcRole {
         })
     }
 
-    /// Every swap this Node prepared earlier, as catalog entries.
+    /// Every swap this Node prepared earlier, as it persisted them.
     #[must_use]
     pub(crate) fn persisted_entries(&self) -> Vec<PreparedConfigurationV1> {
         let Ok(entries) = fs::read_dir(&self.runtime.config().swaps_root) else {
@@ -160,8 +160,8 @@ impl DynamicBtcRole {
         &self.chat_socket
     }
 
-    /// Turns a persisted entry into a catalog entry, re-authenticating the
-    /// offer against its Delivery source like the static catalog does.
+    /// Turns a persisted entry into a prepared one, re-authenticating the
+    /// offer against its Delivery source and every bound file against its digest.
     pub(crate) fn load_entry(
         &self,
         configured: &PreparedConfigurationV1,
@@ -326,7 +326,7 @@ impl TakerSwapRecordV1 {
     }
 }
 
-/// The prepared catalog entry the take produced (or resumed).
+/// The prepared entry the take produced (or resumed).
 pub(super) struct DynamicTake {
     pub configured: PreparedConfigurationV1,
 }

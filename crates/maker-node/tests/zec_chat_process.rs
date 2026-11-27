@@ -6,6 +6,9 @@
 #[path = "support/cross_role_binary.rs"]
 mod cross_role;
 mod support;
+/// The Taker's side of a swap it prepared at take time, as it persists it.
+#[path = "../../taker-node/tests/support/mod.rs"]
+mod taker_take_time;
 
 use std::{
     collections::BTreeSet,
@@ -262,6 +265,34 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     let registry = taker_files.draft.with_file_name("taker-service.sqlite3");
     drop(SqliteTakerFacadeStore::create_new(&registry).unwrap());
     let service_config = taker_files.draft.with_file_name("service.json");
+    // The Taker Node holds the swap as its own take persisted it: the record
+    // in the swap's directory, reloaded when the service starts.
+    let taker_home = taker_files.draft.with_file_name("taker-home");
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&taker_home)
+        .unwrap();
+    let mut service_initiation =
+        taker_take_time::take_time_initiation(&taker_home, &registry, &taker_files.key);
+    service_initiation["execute_prepared"] = json!(true);
+    taker_take_time::persist_take_time_swap(
+        &taker_home,
+        &json!({
+            "source_id": "m6-service-maker",
+            "swap_id": "m5-chat-swap-001",
+            "offer_id": offer_id,
+            "reservation_id": reservation_id,
+            "foreign_units": 10_000,
+            "lez_units": 25_000,
+            "signed_envelope": service_digest_binding(&signed_envelope),
+            "unsigned_draft": service_digest_binding(&taker_files.draft),
+            "signing_key": {"path": taker_files.key},
+            "source_config": service_digest_binding(&taker_files.source_actor_config),
+            "agreement_output": taker_files.agreement,
+            "actor_root": taker_files.actor_root,
+            "receipt_output": taker_files.receipt,
+        }),
+    );
     let service_value = json!({
         "schema_version": 1,
         "delivery_sources": [{
@@ -271,25 +302,7 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         }],
         "chat_socket": chat_socket,
         "maximum_offers": 16,
-        "initiation": {
-            "execute_prepared_zec": true,
-            "registry_database": registry,
-            "prepared_zec": [{
-                "source_id": "m6-service-maker",
-                "swap_id": "m5-chat-swap-001",
-                "offer_id": offer_id,
-                "reservation_id": reservation_id,
-                "foreign_units": 10_000,
-                "lez_units": 25_000,
-                "signed_envelope": service_digest_binding(&signed_envelope),
-                "unsigned_draft": service_digest_binding(&taker_files.draft),
-                "signing_key": {"path": taker_files.key},
-                "source_config": service_digest_binding(&taker_files.source_actor_config),
-                "agreement_output": taker_files.agreement,
-                "actor_root": taker_files.actor_root,
-                "receipt_output": taker_files.receipt,
-            }]
-        }
+        "initiation": service_initiation,
     });
     write_private(
         &service_config,

@@ -1,7 +1,11 @@
-//! Exercises the prepared-ZEC lifecycle; compiled only with `pair-zec`.
+//! Exercises the Zcash initiation; compiled only with `pair-zec`.
 #![cfg(feature = "pair-zec")]
 
-//! Direct RED contract for service-wired, admission-only Taker initiation.
+//! Direct contract for service-wired, admission-only Taker initiation. The
+//! swap is one the Node prepared at take time and reloads from its own swap
+//! directory (`support::persist_take_time_swap`), so no Maker is needed.
+
+mod support;
 
 use std::{
     collections::BTreeSet,
@@ -67,23 +71,25 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
     assert!(methods.monitor());
     assert!(methods.claim());
     assert!(methods.refund());
+    // A Node that takes Zcash at take time does so over its Bitcoin
+    // lifecycle's LEZ role, so it runs the Bitcoin lifecycle too.
     let bitcoin = &health.pair_capabilities()[0];
     assert_eq!(bitcoin.pair(), Pair::Bitcoin);
     assert_eq!(
         bitcoin.initiation(),
-        TakerInitiationCapabilityV1::OwnerCliOrDemo
+        TakerInitiationCapabilityV1::PreparedPrivateMaterial
     );
     assert_eq!(
         bitcoin.claim(),
-        TakerTerminalActionCapabilityV1::OwnerCliOrDemo
+        TakerTerminalActionCapabilityV1::FullLifecycle
     );
     assert_eq!(
         bitcoin.refund(),
-        TakerTerminalActionCapabilityV1::OwnerCliOrDemo
+        TakerTerminalActionCapabilityV1::FullLifecycle
     );
     assert_eq!(
         bitcoin.monitoring(),
-        lez_taker_node::TakerMonitoringCapabilityV1::OwnerCliOrDemo
+        lez_taker_node::TakerMonitoringCapabilityV1::ReceiptBound
     );
     assert_eq!(
         health.pair_capabilities()[2].claim(),
@@ -178,7 +184,7 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
 #[tokio::test]
 async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry() {
     // Bitcoin has a Node lifecycle, so it passes the pair gate and fails only
-    // against the prepared catalog (which holds a Zcash entry for this offer);
+    // against the swap already prepared for this offer (a Zcash one);
     // Monero has a Node lifecycle only with `pair-xmr`: with it, a Node whose
     // Monero role is not configured has nothing to select; without it, the
     // pair is refused before any lookup.
@@ -522,24 +528,25 @@ impl Fixture {
                 }],
                 "chat_socket": root.join("chat.sock"),
                 "maximum_offers": 16,
-                "initiation": {
-                    "registry_database": registry,
-                    "prepared_zec": [{
-                        "source_id": "maker-a",
-                        "swap_id": "m6-zec-swap-001",
-                        "offer_id": "m6-zec-offer-001",
-                        "reservation_id": "m6-zec-reservation-001",
-                        "foreign_units": 42,
-                        "lez_units": 84,
-                        "signed_envelope": digest_binding(&signed),
-                        "unsigned_draft": digest_binding(&draft),
-                        "signing_key": {"path": key},
-                        "source_config": digest_binding(&actor),
-                        "agreement_output": root.join("agreement.json"),
-                        "actor_root": root.join("actor-root"),
-                        "receipt_output": root.join("receipt.json"),
-                    }]
-                }
+                "initiation": support::take_time_initiation(&root, &registry, &key),
+            }),
+        );
+        support::persist_take_time_swap(
+            &root,
+            &json!({
+                "source_id": "maker-a",
+                "swap_id": "m6-zec-swap-001",
+                "offer_id": "m6-zec-offer-001",
+                "reservation_id": "m6-zec-reservation-001",
+                "foreign_units": 42,
+                "lez_units": 84,
+                "signed_envelope": digest_binding(&signed),
+                "unsigned_draft": digest_binding(&draft),
+                "signing_key": {"path": key},
+                "source_config": digest_binding(&actor),
+                "agreement_output": root.join("agreement.json"),
+                "actor_root": root.join("actor-root"),
+                "receipt_output": root.join("receipt.json"),
             }),
         );
 

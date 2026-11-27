@@ -120,7 +120,7 @@ impl DynamicZecRole {
         swap_directories_under(&self.btc.runtime().config().swaps_root)
     }
 
-    /// Every swap this Node prepared at take time, as catalog entries.
+    /// Every swap this Node prepared at take time, as it persisted them.
     pub(crate) fn persisted_entries(&self) -> Vec<PreparedConfigurationV1> {
         self.swap_directories()
             .into_iter()
@@ -129,8 +129,8 @@ impl DynamicZecRole {
             .collect()
     }
 
-    /// Turns a persisted entry into a catalog entry, re-authenticating the
-    /// offer against its Delivery source like the static catalog does.
+    /// Turns a persisted entry into a prepared one, re-authenticating the
+    /// offer against its Delivery source and every bound file against its digest.
     pub(crate) fn load_entry(
         &self,
         configured: &PreparedConfigurationV1,
