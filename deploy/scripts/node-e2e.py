@@ -90,6 +90,11 @@ tests/fixtures/zec-catalog-fixture.sh --direction …, which also recreates both
                                          with its LEZ claim held in its sidecar, at its
                                          preparation and in flight; both swaps complete
                                          (issue #187; needs LEZ_TEST_HOOKS=1)
+    node-e2e.py --pair Zcash zec-maker-claim-collision (TakerSellsLez): the Maker's
+                                         follow-up LEZ claim loses its nonce six times to
+                                         other transactions of the Maker's account (a
+                                         sidecar test hook sends them), is re-planned each
+                                         time and lands (issue #176; needs LEZ_TEST_HOOKS=1)
     node-e2e.py --pair Zcash zec-activate-after-expiry (TakerSellsLez): an offer with a
                                          60 s TTL taken, the Maker's actor activation
                                          held by a test hook, the Maker Node stopped and
@@ -290,6 +295,7 @@ NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "of
                   "zec-taker-refund",
                   "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding", "zec-kill-maker-claim",
                   "zec-activate-after-expiry", "zec-maker-cli-claim", "claim-send-fails",
+                  "zec-maker-claim-collision",
                   # the XMR scenarios that write a Node's test hooks or switch,
                   # stop a wallet-rpc container or run the Maker's probe
                   "xmr-taker-refund", "xmr-taker-refund-kill", "xmr-taker-clock-ahead", "xmr-punish-replans",
@@ -314,6 +320,7 @@ RELEASE_UNAVAILABLE = (
     ("node:xmr:xmr-kill-maker:*", RELEASE_HOOKS + " (its claim kill points hold the claim in the Maker's sidecar)"),
     ("node:zec:zec-kill-maker-claim:*", RELEASE_HOOKS),
     ("node:btc:claim-send-fails:*", RELEASE_HOOKS),
+    ("node:zec:zec-maker-claim-collision:*", RELEASE_HOOKS),
     ("node:zec:zec-activate-after-expiry:*", RELEASE_HOOKS),
     ("node:zec:zec-regenerated-catalog:*", RELEASE_DEALER),
     ("node:zec:zec-tampered-catalog:*", RELEASE_DEALER),
@@ -9407,6 +9414,105 @@ def zec_kill_maker_claim_point(stamp: str, point: str, hook: str) -> dict:
             "kill": {**at, **killed}, "maker_claim_operations": maker_claims, **settled}
 
 
+# ---- zec-maker-claim-collision: the Maker's follow-up LEZ claim loses its nonce (issue #176) ----
+#
+# The mirror of zec-claim-collision for the Maker's side. Selling LEZ, the
+# Maker's last step is its follow-up LEZ claim, signed by the account that
+# signs its LEZ locks of other swaps and its other LEZ transactions. The Maker
+# Node holds its own locks back while a claim is pending (ADR 0219), so a
+# lock of this Node cannot be made to take one claim's nonce six times; the
+# collisions are made by the Maker's sidecar instead: with the test hook
+# claim-nonce-thefts set to N, each of the next N submissions of an owned LEZ
+# claim sends another transaction of the Maker's account at the claim's nonce
+# (one unit to the escrow's depositor) and not the claim, as when a competing
+# transaction is included first. Each time the claim is answered Superseded
+# on its next submission and re-planned at the live nonce, one re-plan an
+# attempt, across the Node's requeues; past five re-plans the actor reports
+# lez_claim_nonce_contention and goes on; the claim sent after the last theft
+# lands and the swap completes on both Nodes.
+ZEC_CLAIM_NONCE_THEFT_HOOK = "claim-nonce-thefts"
+ZEC_CLAIM_NONCE_THEFTS = 6
+
+
+def scenario_zec_maker_claim_collision(stamp: str) -> dict:
+    """Issue #176 on the devnet: the Maker's follow-up LEZ claim superseded
+    ZEC_CLAIM_NONCE_THEFTS times (more than the five re-plans the protocol
+    allowed before issue #172) by other transactions of its account, re-planned
+    through the actor and the Node's requeue each time, and landing."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-maker-claim-collision is a selling-LEZ scenario: the Maker claims the Taker's LEZ last")
+    hook = ZEC_CLAIM_NONCE_THEFT_HOOK
+    require_sidecar_test_hooks(hook)
+    # A count an earlier run could not clear would take this run's nonces early.
+    maker_test_hook(hook, None)
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    before = lez_balances()
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                          describe=zec_flow())
+    maker_owner = lez_owner_account("maker")
+    nonce_before = lez_account_nonce(maker_owner)
+    maker_test_hook(hook, str(ZEC_CLAIM_NONCE_THEFTS))
+    try:
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                       "swap_id": swap_id,
+                                                       "expected_generation": view["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')}); the Maker's LEZ claim "
+            f"is to lose its nonce {ZEC_CLAIM_NONCE_THEFTS} times")
+        zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor,
+                       describe="(the Maker's re-planned LEZ claim)")
+        wait = Wait(f"the Maker to land its re-planned LEZ claim of {swap_id[:12]} and complete", 900)
+        while wait.running():
+            maker = maker_view(swap_id)
+            phase = maker_phase(swap_id)
+            if maker.get("schedule_state") == "terminal":
+                break
+            wait.note((phase, maker.get("schedule_state"), maker_test_hook_value(hook)),
+                      lambda: f"maker {maker_phase(swap_id)}, {maker_test_hook_value(hook)} thefts left")
+            time.sleep(5)
+        else:
+            raise wait.failure()
+        thefts_left = maker_test_hook_value(hook)
+    finally:
+        maker_test_hook(hook, None)
+    if maker_phase(swap_id) != "completed":
+        raise Failure(f"the Maker ended {swap_id[:12]} {maker_phase(swap_id)}, not completed: its LEZ claim "
+                      "did not land after its nonce was taken")
+    wait_completed(swap_id, timeout=300)
+    if thefts_left != "0":
+        raise Failure(f"the Maker completed {swap_id[:12]} with {thefts_left} of {ZEC_CLAIM_NONCE_THEFTS} nonce "
+                      "thefts left: its claim's nonce was not taken that often")
+    node_log = node_log_since("maker", since)
+    superseded = [line.strip() for line in node_log.splitlines() if "follow-up LEZ claim superseded" in line]
+    contention = [line.strip() for line in node_log.splitlines() if "lez_claim_nonce_contention" in line]
+    for line in superseded + contention[:1]:
+        log(f"  node: {line[:260]}")
+    if len(superseded) < ZEC_CLAIM_NONCE_THEFTS:
+        raise Failure(f"the Maker's log shows {len(superseded)} superseded follow-up LEZ claims, "
+                      f"{ZEC_CLAIM_NONCE_THEFTS} nonces were taken")
+    if not contention:
+        raise Failure(f"the Maker's claim was re-planned {len(superseded)} times and its actor never reported "
+                      "lez_claim_nonce_contention")
+    maker_claims = zec_maker_claim_operations(swap_id, since)
+    if "lez_followup_claim" not in maker_claims:
+        raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
+                      "not its LEZ follow-up claim")
+    nonce_moved = lez_account_nonce(maker_owner) - nonce_before
+    if nonce_moved < ZEC_CLAIM_NONCE_THEFTS + 1:
+        raise Failure(f"the Maker's account nonce moved by {nonce_moved}; {ZEC_CLAIM_NONCE_THEFTS} thefts and the "
+                      f"claim move it by {ZEC_CLAIM_NONCE_THEFTS + 1}")
+    # Each theft paid one unit from the Maker's account to the escrow's depositor, the Taker.
+    settled = assert_lez_settled(before, taker_view(swap_id)["state"], maker_phase(swap_id),
+                                 surplus={"maker": -ZEC_CLAIM_NONCE_THEFTS, "taker": ZEC_CLAIM_NONCE_THEFTS})
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "claim_nonce_thefts": ZEC_CLAIM_NONCE_THEFTS, "maker_account_nonce_moved": nonce_moved,
+            "claim_supersessions": superseded,
+            "claim_nonce_contention": contention[0], "maker_claim_operations": maker_claims, **settled}
+
+
 def scenario_zec_kill_maker_claim(stamp: str) -> dict:
     """Issue #187 on the devnet: the Maker killed at each of ZEC_CLAIM_HOLDS
     while its LEZ follow-up claim is held in its sidecar, one fresh swap per
@@ -10078,6 +10184,7 @@ ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
     "zec-slow-funding": scenario_zec_slow_funding,
     "zec-kill-maker-claim": scenario_zec_kill_maker_claim,
+    "zec-maker-claim-collision": scenario_zec_maker_claim_collision,
     "zec-activate-after-expiry": scenario_zec_activate_after_expiry,
     "zec-claim-at-one-confirmation": scenario_zec_claim_at_one_confirmation,
     "zec-taker-refund": scenario_zec_taker_refund,

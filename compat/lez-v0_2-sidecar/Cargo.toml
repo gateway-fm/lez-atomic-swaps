@@ -16,7 +16,8 @@ spel-client-gen = { version = "=0.6.0", git = "https://github.com/logos-co/spel.
 [features]
 # The devnet's test hooks (src/test_hooks.rs): holds of a claim's preparation
 # and submission, a refusal of the BTC actor's claim submission before its
-# send, and a nonce thief for the Maker's punishment, read from
+# send, and a nonce thief for the Maker's punishment and for an owned LEZ
+# claim, read from
 # LEZ_TEST_HOOKS_DIR. The devnet build
 # enables it only with LEZ_TEST_HOOKS=1 (deploy/scripts/from-scratch.sh); no
 # release build does.

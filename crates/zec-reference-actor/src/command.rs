@@ -2471,7 +2471,13 @@ where
     Store: lez_zec_swap_sdk::ClaimRecoveryStore + lez_zec_swap_sdk::RefundRecoveryStore,
 {
     let count = active.claim_supersessions().await.ok()?.len();
-    lez_claim_contention_wait(count, active.agreement().lez_refund_at_ms())
+    let wait = lez_claim_contention_wait(count, active.agreement().lez_refund_at_ms());
+    if wait.is_some() {
+        eprintln!(
+            "actor claim: the LEZ claim was re-planned {count} times: the account's nonce keeps being taken; it is re-planned until the LEZ refund time; needs attention (lez_claim_nonce_contention)"
+        );
+    }
+    wait
 }
 
 /// The wait a Maker's follow-up LEZ claim past its window reports.

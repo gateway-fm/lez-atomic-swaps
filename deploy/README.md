@@ -74,8 +74,8 @@ bundle:
   `node:xmr:xmr-taker-clock-ahead`, `node:xmr:xmr-punish-replans`,
   `node:xmr:xmr-taker-cheats`, `node:xmr:xmr-kill-maker` (its claim kill
   points hold the claim in the Maker's sidecar), `node:zec:zec-kill-maker-claim`,
-  `node:zec:zec-maker-cli-claim`, `node:zec:zec-activate-after-expiry` and
-  `node:btc:claim-send-fails`;
+  `node:zec:zec-maker-cli-claim`, `node:zec:zec-maker-claim-collision`,
+  `node:zec:zec-activate-after-expiry` and `node:btc:claim-send-fails`;
 - they need the Zcash dealer test fixture: `node:zec:zec-regenerated-catalog`
   and `node:zec:zec-tampered-catalog` in both directions, and
   `node:zec:zec-maker-early-claim`;
@@ -432,14 +432,33 @@ Selling Bitcoin, the Taker's claim request may answer the transient
 `taker_action_execution_unavailable`; its admission is durable and the Node's
 observer drives it from there.
 
+**The Maker's follow-up LEZ claim losing its nonce (issue #176).**
+`zec-maker-claim-collision` (TakerSellsLez) is the mirror of
+`zec-claim-collision` for the Maker. The Maker Node holds its own LEZ locks
+back while one of its follow-up claims is pending
+([ADR 0219](../docs/architecture/0219-one-gate-for-the-maker-accounts-lez-transactions.md)),
+so no lock of the Node can be made to take one claim's nonce six times; the
+competing transactions are sent by the Maker's ZEC sidecar instead. With the
+test hook `claim-nonce-thefts` at six, each of the next six submissions of
+the claim sends another transaction of the Maker's account at the claim's
+nonce (one LEZ unit to the escrow's depositor) and not the claim. The claim
+is answered superseded on its next submission and planned again at the live
+nonce, one re-plan an attempt across the Node's requeues. The scenario
+requires the swap completed on both Nodes, six `follow-up LEZ claim
+superseded` lines and the actor's `lez_claim_nonce_contention` line in the
+Maker's log (past five re-plans), the hook's count at zero, the Maker's
+account nonce moved by seven or more, and the LEZ lot paid to the Maker less
+the six units. Not run yet: it was written without a stack.
+
 The hooks are files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, which the
 entrypoint exports before it starts the ZEC sidecars), counts read by the
 sidecar on its next use. They exist only in a sidecar built with the feature
 `test-hooks`: `LEZ_TEST_HOOKS=1 deploy/scripts/from-scratch.sh` builds it so,
-the default build does not, and `zec-kill-maker-claim` and `claim-send-fails`
-fail at once, before any swap, naming `LEZ_TEST_HOOKS=1`, on a devnet built
-without it (each looks for its hook's name in the sidecar executable of the
-role it holds or refuses the claim in). So a devnet for
+the default build does not, and `zec-kill-maker-claim`,
+`zec-maker-claim-collision` and `claim-send-fails` fail at once, before any
+swap, naming `LEZ_TEST_HOOKS=1`, on a devnet built without it (each looks for
+its hook's name in the sidecar executable of the role it holds, takes the
+nonce of or refuses the claim in). So a devnet for
 `regress.sh full` is built with `LEZ_TEST_HOOKS=1`. No release has the hooks:
 the release workflows and the role packagers never name the feature or
 `LEZ_TEST_HOOKS`, they mark their builds with `LEZ_RELEASE_BUILD`, under
@@ -832,11 +851,12 @@ files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, set by the entrypoint):
 `cheat-refund-before-r` and `cheat-refund-after-claim` (a cheating Taker),
 `hold-zec-activations` (a flag: the Maker Node's supervisor holds back its
 Zcash actors' activations while it exists),
-`punish-nonce-thefts`, `hold-claim-preparations` and `hold-claim-submissions`
-(counts, in the Maker's sidecar) and `fail-claim-submissions` (a count, in
-the sidecar of the role that sends a Bitcoin swap's LEZ claim). Without it none
-is built in, and `xmr-taker-clock-ahead`, `xmr-punish-replans`,
-`xmr-taker-cheats`, `xmr-kill-maker`, `zec-kill-maker-claim`,
+`punish-nonce-thefts`, `claim-nonce-thefts`, `hold-claim-preparations` and
+`hold-claim-submissions` (counts, in the Maker's sidecar) and
+`fail-claim-submissions` (a count, in the sidecar of the role that sends a
+Bitcoin swap's LEZ claim). Without it none is built in, and
+`xmr-taker-clock-ahead`, `xmr-punish-replans`, `xmr-taker-cheats`,
+`xmr-kill-maker`, `zec-kill-maker-claim`, `zec-maker-claim-collision`,
 `zec-activate-after-expiry` and `claim-send-fails` fail at once, before any
 swap, naming `LEZ_TEST_HOOKS=1`
 (they look for the hook's name in the Taker Node's, the Maker Node's or a
@@ -911,9 +931,12 @@ one. What the Monero side does about it, and what is left:
 - The Taker's tag 16 (the refund) is signed by the swap's own refund authority
   account, not the owner: it cannot collide with another swap's transaction.
 - The Maker's tag 17 (the punishment) is signed by the Maker's owner account
-  without coordination. The Maker Node's actor attempts run one at a time, so
-  two owner transactions collide only if the second is prepared before the
-  first is in a block. Until it is final the Node drives tag 17 again on every
+  and passes the Maker Node's account gate with its other LEZ transactions
+  ([ADR 0219](../docs/architecture/0219-one-gate-for-the-maker-accounts-lez-transactions.md)):
+  it is not sent while a Zcash follow-up LEZ claim of the Node is pending or
+  another LEZ lock of the Node is in flight (`lez_lock_waits_for_claim`,
+  `lez_lock_waits_for_lock`), so two owner transactions of the Node collide
+  only around a claim that arrives while tag 17 is on its way. Until it is final the Node drives tag 17 again on every
   attempt, and the sidecar sends the current bytes again unless the node
   already includes them; it answers with the same bytes unless the node has
   not included them while the owner's nonce is above theirs (they can then

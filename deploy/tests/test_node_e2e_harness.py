@@ -717,6 +717,31 @@ class ZecSlowFunding(unittest.TestCase):
                 e2e.scenario_zec_slow_funding('1700000000')
 
 
+class ZecMakerClaimCollision(unittest.TestCase):
+    """zec-maker-claim-collision (issue #176): what can be checked without a stack."""
+
+    def test_it_is_registered_refused_natively_and_takes_more_nonces_than_the_old_replan_limit(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-maker-claim-collision'], e2e.scenario_zec_maker_claim_collision)
+        self.assertIn('zec-maker-claim-collision', e2e.NATIVE_REFUSED)
+        self.assertEqual(e2e.ZEC_CLAIM_NONCE_THEFT_HOOK, 'claim-nonce-thefts')
+        runtime = (REPO / 'compat/lez-v0_2-sidecar/src/bridge_runtime.rs').read_text()
+        self.assertIn(f'crate::test_hooks::take("{e2e.ZEC_CLAIM_NONCE_THEFT_HOOK}")', runtime)
+        claim = (REPO / 'crates/zec-swap-sdk/src/claim.rs').read_text()
+        attention = int(re.search(r'REVEALING_CLAIM_REPLAN_ATTENTION: u32 = (\d+);', claim).group(1))
+        self.assertGreater(e2e.ZEC_CLAIM_NONCE_THEFTS, attention)
+        # the lines the scenario reads in the Maker's log are the actor's
+        actor = (REPO / 'crates/zec-reference-actor/src/command.rs').read_text()
+        self.assertIn('ClaimStepV1::FollowupLez => "follow-up LEZ claim"', actor)
+        self.assertIn('{} superseded (planned nonce', actor)
+        self.assertIn('needs attention (lez_claim_nonce_contention)', actor)
+
+    def test_selling_zec_is_refused_before_anything_runs(self):
+        with patch.object(e2e, 'zec_taker_sells_lez', lambda: False), \
+                patch.object(e2e, 'require_sidecar_test_hooks', lambda *_: self.fail('nothing may be checked')):
+            with self.assertRaisesRegex(e2e.Failure, 'selling-LEZ'):
+                e2e.scenario_zec_maker_claim_collision('1700000000')
+
+
 class ZecKillMakerClaim(unittest.TestCase):
     """zec-kill-maker-claim (issue #187): what can be checked without a stack."""
 

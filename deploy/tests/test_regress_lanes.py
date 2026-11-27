@@ -323,7 +323,7 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 199)
+        self.assertEqual(len(full), 200)
 
     def test_full_has_the_early_zcash_refund_in_both_directions_on_the_node_and_the_desk(self):
         # Issue #182: a refund asked for before the Maker's lock is refused
@@ -349,6 +349,13 @@ class Tiers(unittest.TestCase):
             self.assertIn(f'node:btc:claim-send-fails:{direction}', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':claim-send-fails:' in test], tier)
+
+    def test_full_has_the_maker_claim_collision_selling_lez_only(self):
+        full = self.tier('full')
+        self.assertIn('node:zec:zec-maker-claim-collision:TakerSellsLez', full)
+        self.assertNotIn('node:zec:zec-maker-claim-collision:TakerSellsForeign', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-maker-claim-collision:' in test], tier)
 
     def test_full_has_the_activation_after_expiry_selling_lez_only(self):
         full = self.tier('full')

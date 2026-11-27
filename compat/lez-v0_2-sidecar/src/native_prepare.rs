@@ -3113,6 +3113,44 @@ impl NativeEscrowPlanner {
         self.prepare_message(message)
     }
 
+    /// TEST-ONLY (feature `test-hooks`): one unit from the signer to the
+    /// escrow's depositor at the nonce the owned LEZ claim `claim` is signed
+    /// at, which takes that nonce so the claim is superseded and re-planned.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a claim that is not of this sidecar's claim lineage, and bytes
+    /// that do not decode for the signer.
+    #[cfg(feature = "test-hooks")]
+    pub async fn revealing_claim_nonce_theft(
+        &self,
+        claim: &PreparedTransaction,
+    ) -> Result<PreparedTransaction, NativePrepareError> {
+        let state = self.state.lock().await;
+        if Self::claim_lineage_member(&state, claim.transaction_id).as_ref() != Some(claim) {
+            return Err(NativePrepareError::MissingPrepare);
+        }
+        let depositor = AccountId::new(
+            *state
+                .active_claim
+                .as_ref()
+                .ok_or(NativePrepareError::MissingPrepare)?
+                .terms
+                .depositor_account_id()
+                .as_bytes(),
+        );
+        drop(state);
+        let nonce = prepared_signer_nonce(claim, self.signer_account_id)?;
+        let message = Message::try_new(
+            self.authenticated_transfer_program_id,
+            vec![self.signer_account_id, depositor],
+            vec![nonce.into()],
+            AuthenticatedTransferInstruction::Transfer { amount: 1 },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        self.prepare_message(message)
+    }
+
     /// Whether `prepared` is the completed tag-16 refund or the current
     /// tag-17 punishment this sidecar holds: a recovery whose identical bytes
     /// are sent again until it lands (a superseded punishment is not one).

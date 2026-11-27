@@ -1775,6 +1775,10 @@ impl BridgeRuntime {
                     },
                 ));
             }
+            #[cfg(feature = "test-hooks")]
+            if crate::test_hooks::take("claim-nonce-thefts") {
+                return self.steal_claim_nonce(request).await;
+            }
         }
         self.node
             .submit_prepared_transaction(&request.transaction)
@@ -1841,6 +1845,38 @@ impl BridgeRuntime {
         let theft = self
             .planner
             .punish_nonce_theft(&request.transaction)
+            .await?;
+        self.node
+            .submit_prepared_transaction(&theft)
+            .await
+            .map_err(|_| BridgeRuntimeError::UnknownSubmissionOutcome)?;
+        for _ in 0..60 {
+            if self.node.prepared_transaction_is_included(&theft).await? {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        Ok(SubmitTransactionResult::new(
+            request.context.clone(),
+            request.transaction.transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
+    }
+
+    /// TEST-ONLY (feature `test-hooks`, the devnet's
+    /// zec-maker-claim-collision scenario): while `claim-nonce-thefts` holds
+    /// a count, another transaction of the signer takes the owned LEZ claim's
+    /// nonce first and the claim itself is not sent, as when a competing
+    /// transaction of the account is included ahead of it; the next
+    /// submission is answered `Superseded` and the caller re-plans.
+    #[cfg(feature = "test-hooks")]
+    async fn steal_claim_nonce(
+        &self,
+        request: &SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
+        let theft = self
+            .planner
+            .revealing_claim_nonce_theft(&request.transaction)
             .await?;
         self.node
             .submit_prepared_transaction(&theft)

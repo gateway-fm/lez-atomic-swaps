@@ -406,7 +406,8 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         # scenario_xmr_kill_walk checks the hooks for the Maker's walk only
         self.assertEqual(hooked - {'xmr-kill-taker'}, {
             'xmr-taker-clock-ahead', 'xmr-punish-replans', 'xmr-taker-cheats', 'xmr-kill-maker',
-            'zec-kill-maker-claim', 'zec-activate-after-expiry', 'zec-maker-cli-claim', 'claim-send-fails'})
+            'zec-kill-maker-claim', 'zec-activate-after-expiry', 'zec-maker-cli-claim', 'claim-send-fails',
+            'zec-maker-claim-collision'})
         self.assertLessEqual(hooked - {'xmr-kill-taker'}, named)
         self.assertLessEqual(harness.ZEC_CATALOG_SCENARIOS | harness.ZEC_DEALER_LAYOUT_SCENARIOS, named)
         self.assertIn('maker-price-module', named)
@@ -441,6 +442,7 @@ class BundleRegressionEntryPoints(unittest.TestCase):
         left_out = [t for t in everything if t not in kept]
         self.assertEqual(kept, [t for t in everything if t not in left_out])
         for test in ('node:zec:zec-kill-maker-claim:TakerSellsLez', 'node:zec:zec-activate-after-expiry:TakerSellsLez',
+                     'node:zec:zec-maker-claim-collision:TakerSellsLez',
                      'node:xmr:xmr-taker-cheats:TakerSellsLez', 'node:xmr:xmr-kill-maker:TakerSellsLez',
                      'node:zec:zec-regenerated-catalog:TakerSellsLez', 'node:zec:zec-maker-early-claim:TakerSellsLez',
                      'node:btc:maker-price-module:TakerSellsForeign',
@@ -451,10 +453,10 @@ class BundleRegressionEntryPoints(unittest.TestCase):
             line = next(line for line in said if f'=== {test}: ' in line)
             self.assertIn('not run on release images (', line)
         self.assertEqual(len(said), len(left_out))
-        # nine need the hooks (claim-send-fails in both directions), five the
+        # ten need the hooks (claim-send-fails in both directions), five the
         # dealer fixture (the two catalog tests in both directions and
         # zec-maker-early-claim), two the repository
-        self.assertEqual(len(left_out), 16, left_out)
+        self.assertEqual(len(left_out), 17, left_out)
         for test in ('node:zec:zec-happy:TakerSellsLez', 'node:btc:btc-custody-credit:TakerSellsForeign',
                      'node:zec:zec-custody-credit:TakerSellsLez', 'node:btc:regenerated-config:TakerSellsForeign',
                      'node:xmr:xmr-kill-taker:TakerSellsLez', 'ui:btc:happy:TakerSellsLez',

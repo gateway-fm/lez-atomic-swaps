@@ -120,6 +120,9 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-slow-funding:TakerSellsLez"
       # selling LEZ only: the Maker killed with its LEZ claim held in its sidecar (a devnet built with LEZ_TEST_HOOKS=1)
       echo "node:zec:zec-kill-maker-claim:TakerSellsLez"
+      # selling LEZ only: the Maker's follow-up LEZ claim loses its nonce six times to other transactions of
+      # its account and lands (issue #176; a devnet built with LEZ_TEST_HOOKS=1)
+      echo "node:zec:zec-maker-claim-collision:TakerSellsLez"
       # selling LEZ only: the Maker stopped between the take and its actor's activation, started after
       # the offer expired (a devnet built with LEZ_TEST_HOOKS=1)
       echo "node:zec:zec-activate-after-expiry:TakerSellsLez"
@@ -429,6 +432,8 @@ expected_seconds() { # expected_seconds <test>
       *zec-kill-maker-claim*) seconds=700 ;;
       # two swaps, in each the Maker's claim attempts held until the operator's request is in
       *zec-maker-cli-claim*) seconds=900 ;;
+      # a happy swap, then six taken nonces, each a Maker claim attempt
+      *zec-maker-claim-collision*) seconds=450 ;;
       # a 60 s offer, the Maker down past it, then the happy swap
       *zec-activate-after-expiry*) seconds=500 ;;
       node:xmr:xmr-kill-*) seconds=2700 ;;
