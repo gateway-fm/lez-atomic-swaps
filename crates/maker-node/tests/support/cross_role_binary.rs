@@ -9,9 +9,9 @@ use std::{
 static BUILT: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// The pair features the peer binary is built with: the Maker test's own.
-/// A Zcash test run against a Taker built without the Zcash pair fails at its
-/// command line (`--accept-zec-offer` unknown), and any `lez-taker-cli`
-/// already in the target directory may have been built without it.
+/// A Zcash test run against a Taker built without the Zcash pair fails (its
+/// CLI does not read a Zcash receipt), and any `lez-taker-cli` already in the
+/// target directory may have been built without it.
 fn peer_features() -> Vec<&'static str> {
     let mut features = Vec::new();
     if cfg!(feature = "pair-zec") {
@@ -24,7 +24,7 @@ fn peer_features() -> Vec<&'static str> {
 }
 
 /// The pairs the Taker CLI already in the target directory was built with,
-/// read from its help: each pair adds its own `--accept-<pair>-offer` flag.
+/// read from the last line of its help ("Pairs in this build: …").
 /// The workspace build of the Taker's own tests may have unified more features
 /// than this Maker test selects, so the binary is never rebuilt with fewer.
 fn existing_taker_pairs(profile_directory: &Path) -> Vec<&'static str> {
@@ -33,11 +33,17 @@ fn existing_taker_pairs(profile_directory: &Path) -> Vec<&'static str> {
         return Vec::new();
     };
     let help = String::from_utf8_lossy(&output.stdout);
+    let Some(built) = help
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Pairs in this build:"))
+    else {
+        return Vec::new();
+    };
     let mut pairs = Vec::new();
-    if help.contains("--accept-zec-offer") {
+    if built.contains("zcash") {
         pairs.push("pair-zec");
     }
-    if help.contains("--accept-xmr-offer") {
+    if built.contains("monero") {
         pairs.push("pair-xmr");
     }
     pairs

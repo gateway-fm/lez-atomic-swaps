@@ -1,5 +1,7 @@
 #![doc(hidden)]
-//! Reusable owner-private ZEC taker acceptance support.
+//! The Taker Node's acceptance of a Zcash agreement it reserved at take time
+//! (`taker_service/zec_dynamic.rs`): it proposes the Maker's draft, countersigns
+//! the Maker's proposal, provisions its actor and writes its receipt.
 
 use std::{
     fmt, fs,
@@ -7,8 +9,8 @@ use std::{
 };
 
 use crate::{
-    AuthenticatedOfferRefV1, DeliveryOfferQueryV1, RunLocalDelivery, ZecChatCompleteRequestV1,
-    ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1,
+    AuthenticatedOfferRefV1, ZecChatCompleteRequestV1, ZecChatCompleteResponseV1,
+    ZecChatProposalV1, ZecChatProposeRequestV1,
     acceptance_files::{
         MAX_TAKER_RECEIPT_BYTES, ReplayOutput, decode_sha256, derived_request_id,
         normalized_absolute, publish_exact_new, resolved_new_path,
@@ -19,7 +21,6 @@ use crate::{
 use anyhow::{Context as _, ensure};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, Participant, SwapDirection, SwapId, UnixSeconds};
-use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_zec_chat_session_id};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, ZecAgreementDraftV1,
@@ -29,12 +30,10 @@ use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zec_reference_actor::{
-    ActorConfig, ActorRole, ZecActorProvisionV1, provision_zec_taker_actor_from_chat,
-    provision_zec_taker_actor_from_config,
+    ActorConfig, ActorRole, ZecActorProvisionV1, provision_zec_taker_actor_from_config,
 };
 
 pub struct ZecTakeInput<'a> {
-    pub delivery: Option<&'a RunLocalDelivery>,
     pub expected_maker: &'a PublicKey,
     pub now_unix_seconds: u64,
     pub direction: SwapDirection,
@@ -43,7 +42,6 @@ pub struct ZecTakeInput<'a> {
     pub reservation_id: &'a str,
     pub foreign_units: u64,
     pub unsigned_draft_file: &'a Path,
-    pub source_taker_config_file: &'a Path,
     pub taker_actor_root: &'a Path,
     pub acceptance_receipt_file: &'a Path,
     pub taker_signing_key_file: &'a Path,
@@ -54,7 +52,6 @@ impl fmt::Debug for ZecTakeInput<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ZecTakeInput")
-            .field("delivery_configured", &self.delivery.is_some())
             .field("offer_id", &self.offer_id)
             .field("reservation_id", &self.reservation_id)
             .field("foreign_units", &self.foreign_units)
@@ -139,27 +136,15 @@ fn named_maker_refusal(error: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// Runs ZEC acceptance using authenticated Delivery discovery.
-pub async fn take_zec(input: ZecTakeInput<'_>) -> anyhow::Result<ZecAcceptanceOutput> {
-    take_zec_inner(input, None, None).await
-}
-
-/// Runs exact-offer ZEC acceptance using an already authenticated actor config.
+/// Runs exact-offer ZEC acceptance for the offer the Node authenticated and
+/// the actor template it wrote at take time.
 ///
-/// This entry point preserves the caller's digest-pinned actor authority across
-/// acceptance and provisioning instead of reopening the source config path.
+/// The caller's digest-pinned actor authority is kept across acceptance and
+/// provisioning: the source config path is not opened again.
 pub async fn take_zec_with_authenticated_offer_and_actor_config(
     input: ZecTakeInput<'_>,
-    authenticated_offer: &AuthenticatedOfferRefV1,
+    selected: &AuthenticatedOfferRefV1,
     source_actor_config: &ActorConfig,
-) -> anyhow::Result<ZecAcceptanceOutput> {
-    take_zec_inner(input, Some(authenticated_offer), Some(source_actor_config)).await
-}
-
-async fn take_zec_inner(
-    input: ZecTakeInput<'_>,
-    authenticated_offer: Option<&AuthenticatedOfferRefV1>,
-    source_actor_config: Option<&ActorConfig>,
 ) -> anyhow::Result<ZecAcceptanceOutput> {
     validate_acceptance_paths(&input)?;
     let offer_id = MakerOfferId::new(input.offer_id)?;
@@ -171,33 +156,13 @@ async fn take_zec_inner(
             &input,
             offer_id,
             reservation_id,
-            authenticated_offer,
+            selected,
             source_actor_config,
         )
         .await;
     }
 
-    let route = selected_zec_route(&input, authenticated_offer)?;
-    let discovered = if authenticated_offer.is_none() {
-        Some(
-            input
-                .delivery
-                .context("fresh ZEC acceptance requires Delivery")?
-                .discover(&DeliveryOfferQueryV1::for_route(
-                    route,
-                    input.now_unix_seconds,
-                ))
-                .await?
-                .into_iter()
-                .find(|candidate| candidate.offer().id() == &offer_id)
-                .context("selected ZEC offer is unavailable, expired, or not authentic")?,
-        )
-    } else {
-        None
-    };
-    let selected = authenticated_offer
-        .or(discovered.as_ref())
-        .context("authenticated ZEC offer is unavailable")?;
+    let route = selected_zec_route(&input, selected)?;
     let expected_lez_units = validate_authenticated_offer(&input, &offer_id, route, selected)?;
     let draft_wire = read_private_file(
         input.unsigned_draft_file,
@@ -222,7 +187,7 @@ async fn take_zec_inner(
     )?;
     // Before the Maker is asked to sign: the Taker's template must hold the
     // swap secret (its digest is checked once the agreement is countersigned).
-    require_taker_claim_preimage(&input, source_actor_config, None)?;
+    require_taker_claim_preimage(source_actor_config, None)?;
 
     let propose_request_id = derived_request_id(&reservation_id, "zec", b"propose")?;
     let proposal: ZecChatProposalV1 = call_local_chat_rpc(
@@ -267,23 +232,14 @@ async fn take_zec_inner(
 }
 
 /// The Taker holds the swap secret in both directions: it locks first and
-/// claims the Maker-funded leg first, revealing the preimage (the preparation
-/// gives it to the Taker's half only). A source template without the claim
+/// claims the Maker-funded leg first, revealing the preimage (its Node made
+/// it before the reservation). A source template without the claim
 /// preimage, or with one that does not hash to the agreement's digest, is
 /// refused before anything is signed or provisioned.
 fn require_taker_claim_preimage(
-    input: &ZecTakeInput<'_>,
-    source_actor_config: Option<&ActorConfig>,
+    source: &ActorConfig,
     secret_digest: Option<&[u8; 32]>,
 ) -> anyhow::Result<()> {
-    let loaded;
-    let source = if let Some(source) = source_actor_config {
-        source
-    } else {
-        loaded = ActorConfig::load_private(input.source_taker_config_file)
-            .context("load the Taker's actor template")?;
-        &loaded
-    };
     let material = source
         .load_activate_material()
         .context("load the Taker template's activation material")?;
@@ -302,12 +258,9 @@ fn require_taker_claim_preimage(
 
 fn selected_zec_route(
     input: &ZecTakeInput<'_>,
-    authenticated_offer: Option<&AuthenticatedOfferRefV1>,
+    selected: &AuthenticatedOfferRefV1,
 ) -> anyhow::Result<MakerRouteV1> {
-    let route = authenticated_offer.map_or_else(
-        || MakerRouteV1::new(Pair::Zcash, input.direction),
-        |selected| Ok(selected.offer().route()),
-    )?;
+    let route = selected.offer().route();
     ensure!(
         route.pair() == Pair::Zcash && route.direction() == input.direction,
         "authenticated ZEC offer is unavailable"
@@ -327,8 +280,8 @@ async fn resume_persisted_zec(
     input: &ZecTakeInput<'_>,
     offer_id: MakerOfferId,
     reservation_id: RequestId,
-    authenticated_offer: Option<&AuthenticatedOfferRefV1>,
-    source_actor_config: Option<&ActorConfig>,
+    selected: &AuthenticatedOfferRefV1,
+    source_actor_config: &ActorConfig,
 ) -> anyhow::Result<ZecAcceptanceOutput> {
     let final_wire = read_private_file(
         input.agreement_output_file,
@@ -359,27 +312,25 @@ async fn resume_persisted_zec(
             && validated_draft.body() == agreement.record().body(),
         "persisted agreement does not match the local taker, pinned maker, or executable draft"
     );
-    if let Some(selected) = authenticated_offer {
-        let route = selected.offer().route();
-        ensure!(
-            route.pair() == Pair::Zcash,
-            "authenticated ZEC offer is unavailable"
-        );
-        let expected_lez_units = validate_authenticated_offer(input, &offer_id, route, selected)?;
-        validate_draft_offer_bindings(
-            input,
-            &reservation_id,
-            selected,
-            expected_lez_units,
-            &validated_draft,
-            &taker_public,
-        )?;
-    }
-    let receipt_exists = if authenticated_offer.is_some() {
-        completed_receipt_is_present_and_valid(input, agreement.application_swap_id(), &final_wire)?
-    } else {
-        false
-    };
+    let route = selected.offer().route();
+    ensure!(
+        route.pair() == Pair::Zcash,
+        "authenticated ZEC offer is unavailable"
+    );
+    let expected_lez_units = validate_authenticated_offer(input, &offer_id, route, selected)?;
+    validate_draft_offer_bindings(
+        input,
+        &reservation_id,
+        selected,
+        expected_lez_units,
+        &validated_draft,
+        &taker_public,
+    )?;
+    let receipt_exists = completed_receipt_is_present_and_valid(
+        input,
+        agreement.application_swap_id(),
+        &final_wire,
+    )?;
     let provisioned = provision_taker_actor(input, &final_wire, source_actor_config)?;
     if receipt_exists {
         return completed_offline_replay(
@@ -436,7 +387,7 @@ async fn complete_zec(
     proposal: ZecChatProposalV1,
     maker_proposal: ZecMakerAgreementProposalV1,
     mut taker_secret: SecretKey,
-    source_actor_config: Option<&ActorConfig>,
+    source_actor_config: &ActorConfig,
 ) -> anyhow::Result<ZecAcceptanceOutput> {
     let taker_signature = Secp256k1::signing_only()
         .sign_ecdsa(
@@ -448,7 +399,7 @@ async fn complete_zec(
     let agreement = maker_proposal
         .complete_at(taker_signature, UnixSeconds::new(input.now_unix_seconds))
         .context("countersign maker ZEC proposal")?;
-    require_taker_claim_preimage(input, source_actor_config, Some(agreement.secret_digest()))?;
+    require_taker_claim_preimage(source_actor_config, Some(agreement.secret_digest()))?;
     let final_wire = agreement.encode_wire()?;
     let agreement_file_was_replay = publish_exact_new(
         input.agreement_output_file,
@@ -630,23 +581,14 @@ fn validate_acceptance_paths(input: &ZecTakeInput<'_>) -> anyhow::Result<()> {
 fn provision_taker_actor(
     input: &ZecTakeInput<'_>,
     final_wire: &[u8],
-    source_actor_config: Option<&ActorConfig>,
+    source_actor_config: &ActorConfig,
 ) -> anyhow::Result<ZecActorProvisionV1> {
-    let accepted_at = UnixSeconds::new(input.now_unix_seconds);
-    let provisioned = match source_actor_config {
-        Some(source) => provision_zec_taker_actor_from_config(
-            source,
-            final_wire,
-            accepted_at,
-            input.taker_actor_root,
-        ),
-        None => provision_zec_taker_actor_from_chat(
-            input.source_taker_config_file,
-            final_wire,
-            accepted_at,
-            input.taker_actor_root,
-        ),
-    }
+    let provisioned = provision_zec_taker_actor_from_config(
+        source_actor_config,
+        final_wire,
+        UnixSeconds::new(input.now_unix_seconds),
+        input.taker_actor_root,
+    )
     .context("provision accepted Taker actor")?;
     ensure!(
         provisioned.role() == ActorRole::Taker,

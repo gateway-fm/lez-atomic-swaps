@@ -3314,7 +3314,6 @@ async fn execute_prepared_zec(
         .map_err(|_| InitiationError::ExecutionUnavailable)?;
     take_zec_with_authenticated_offer_and_actor_config(
         ZecTakeInput {
-            delivery: None,
             expected_maker: &maker,
             now_unix_seconds: admitted_at,
             direction: prepared.facts().route().direction(),
@@ -3323,7 +3322,6 @@ async fn execute_prepared_zec(
             reservation_id: prepared.reservation_id().as_str(),
             foreign_units: prepared.facts().foreign_units(),
             unsigned_draft_file: execution.unsigned_draft_path(),
-            source_taker_config_file: execution.source_config_path(),
             taker_actor_root: execution.actor_root(),
             acceptance_receipt_file: execution.receipt_output(),
             taker_signing_key_file: execution.signing_key_path(),

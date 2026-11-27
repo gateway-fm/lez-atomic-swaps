@@ -222,6 +222,58 @@ fn swap_subcommands_name_the_node_owner_rpc_each_calls() {
     assert!(help(&["swap", "take", "--help"]).contains("--funding-transaction-hex"));
 }
 
+/// A Zcash swap is agreed by the two Nodes at take time (`swap take`). The
+/// file lane once accepted a Zcash draft made ahead of the take: its flags are
+/// refused by name, and the acceptance flags it shares with Bitcoin, given
+/// without a Bitcoin or Monero acceptance, are refused with the command that
+/// takes a Zcash offer.
+#[test]
+fn the_removed_zcash_draft_acceptance_is_refused_by_name() {
+    // The secp256k1 generator: any valid Maker identity.
+    let discovery = [
+        "--delivery-directory",
+        "/nonexistent/delivery",
+        "--maker-public-key",
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "--now-unix-seconds",
+        "1",
+    ];
+    for removed in [
+        "--accept-zec-offer",
+        "--zec-source-taker-config",
+        "--zec-taker-actor-root",
+        "--zec-acceptance-receipt",
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_lez-taker-cli"))
+            .args(discovery)
+            .args([removed, "value"])
+            .output()
+            .expect("run the Taker CLI");
+        assert!(!output.status.success(), "{removed} must be refused");
+        assert!(output.stdout.is_empty());
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            diagnostic.contains(&format!("unexpected argument '{removed}'")),
+            "{removed}: {diagnostic}"
+        );
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker-cli"))
+        .args(discovery)
+        .args(["--pair", "zcash", "--direction", "taker-sells-lez"])
+        .args(["--chat-socket", "/nonexistent/chat.sock"])
+        .args(["--reservation-id", "reservation-1", "--foreign-units", "1"])
+        .args(["--unsigned-draft-file", "/nonexistent/draft.borsh"])
+        .output()
+        .expect("run the Taker CLI");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("lez-taker-cli swap take"),
+        "{diagnostic}"
+    );
+}
+
 fn taker_command(command: &str, actor_config: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_lez-taker-cli"))
         .arg(command)

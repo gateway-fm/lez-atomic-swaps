@@ -46,9 +46,6 @@ use zec_reference_actor::{
     ActorCommand as ZecActorCommand, ActorConfig, ActorRole, execute_actor_command,
 };
 
-#[cfg(feature = "pair-zec")]
-#[path = "support/taker_accept.rs"]
-mod taker_accept;
 use lez_taker_node::btc_taker_accept::{BtcTakeInput, load_btc_taker_actor_from_receipt, take_btc};
 #[cfg(feature = "pair-xmr")]
 use lez_taker_node::xmr_taker_accept::{
@@ -57,7 +54,7 @@ use lez_taker_node::xmr_taker_accept::{
 };
 
 #[cfg(feature = "pair-zec")]
-use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
+use lez_taker_node::zec_taker_accept::load_taker_actor_from_receipt;
 
 // Owner RPC timeouts for the `swap` commands. A take reserves with the Maker,
 // runs the signing ceremony and activates the actor; a lock or an action
@@ -73,8 +70,25 @@ const NODE_ACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(
 #[cfg(feature = "pair-xmr")]
 const XMR_EFFECT_OBSERVATION_TIMEOUT: Duration = Duration::from_mins(2);
 
+/// The pairs this build of the CLI serves, as the last line of its help: a
+/// Zcash or Monero build adds no flag of its own at the top level, and a
+/// caller that picks a binary by its pairs reads them here.
+fn built_pairs_help() -> String {
+    let mut pairs = vec!["bitcoin"];
+    if cfg!(feature = "pair-zec") {
+        pairs.push("zcash");
+    }
+    if cfg!(feature = "pair-xmr") {
+        pairs.push("monero");
+    }
+    format!("Pairs in this build: {}.", pairs.join(", "))
+}
+
 #[derive(Parser)]
-#[command(about = "Operator CLI for the LEZ atomic-swap Taker Node")]
+#[command(
+    about = "Operator CLI for the LEZ atomic-swap Taker Node",
+    after_help = built_pairs_help()
+)]
 struct Arguments {
     /// Owner-only Taker Node socket used by operational commands.
     #[arg(long, default_value = "/run/lez/taker/node.sock")]
@@ -100,10 +114,6 @@ struct Arguments {
     /// Plan this exact BTC offer before constructing its chain-complete draft.
     #[arg(long)]
     plan_btc_offer: Option<String>,
-    #[cfg(feature = "pair-zec")]
-    /// Accept this exact ZEC offer instead of only listing discovery results.
-    #[arg(long)]
-    accept_zec_offer: Option<String>,
     /// Accept this exact BTC offer instead of only listing discovery results.
     #[arg(long)]
     accept_btc_offer: Option<String>,
@@ -117,7 +127,7 @@ struct Arguments {
     /// Stable Chat reservation identity already bound into the unsigned draft.
     #[arg(long)]
     reservation_id: Option<String>,
-    /// Exact selected Zcash principal in zatoshis.
+    /// Exact selected principal in the foreign chain's atomic units.
     #[arg(long)]
     foreign_units: Option<u64>,
     /// Owner-private canonical unsigned agreement draft.
@@ -141,18 +151,6 @@ struct Arguments {
     /// New owner-private file for the exact countersigned agreement.
     #[arg(long)]
     agreement_output_file: Option<PathBuf>,
-    #[cfg(feature = "pair-zec")]
-    /// Owner-private source Taker actor authority template.
-    #[arg(long)]
-    zec_source_taker_config: Option<PathBuf>,
-    #[cfg(feature = "pair-zec")]
-    /// New owner-private root for the accepted Taker actor bundle.
-    #[arg(long)]
-    zec_taker_actor_root: Option<PathBuf>,
-    #[cfg(feature = "pair-zec")]
-    /// New owner-private acceptance receipt written after Maker completion.
-    #[arg(long)]
-    zec_acceptance_receipt: Option<PathBuf>,
     /// Owner-private source Taker Bitcoin actor authority template.
     #[arg(long)]
     btc_source_taker_config: Option<PathBuf>,
@@ -399,19 +397,14 @@ async fn execute() -> anyhow::Result<()> {
         .now_unix_seconds
         .context("discovery requires --now-unix-seconds")?;
     let btc_take_requested = btc_take_was_requested(&arguments);
-    let zec_take_requested = zec_take_was_requested(&arguments);
     let xmr_take_requested = xmr_take_was_requested(&arguments);
     let btc_plan_requested = arguments.plan_btc_offer.is_some();
     ensure!(
-        usize::from(btc_take_requested)
-            + usize::from(zec_take_requested)
-            + usize::from(xmr_take_requested)
-            <= 1,
-        "exactly one BTC, XMR, or ZEC acceptance may be requested"
+        usize::from(btc_take_requested) + usize::from(xmr_take_requested) <= 1,
+        "exactly one BTC or XMR acceptance may be requested"
     );
     ensure!(
-        usize::from(btc_plan_requested)
-            + usize::from(btc_take_requested || zec_take_requested || xmr_take_requested)
+        usize::from(btc_plan_requested) + usize::from(btc_take_requested || xmr_take_requested)
             <= 1,
         "planning and acceptance operations are mutually exclusive"
     );
@@ -445,22 +438,11 @@ async fn execute() -> anyhow::Result<()> {
             .await;
         }
     }
-    #[cfg(feature = "pair-zec")]
-    {
-        if zec_take_requested || shared_take_was_requested(&arguments) {
-            return execute_zec_take(
-                &arguments,
-                &expected_maker,
-                delivery_directory.context("ZEC acceptance requires --delivery-directory")?,
-                now_unix_seconds,
-            )
-            .await;
-        }
-    }
-    #[cfg(not(feature = "pair-zec"))]
+    // A Zcash swap is agreed by the two Nodes at take time (`swap take`):
+    // this lane accepts no Zcash draft made ahead of the take.
     ensure!(
         !shared_take_was_requested(&arguments),
-        "ZEC acceptance is not available in this build"
+        "acceptance flags need --accept-btc-offer or --accept-xmr-offer; a Zcash offer is taken through the Node (`lez-taker-cli swap take`)"
     );
     let delivery_directory =
         delivery_directory.context("discovery requires --delivery-directory")?;
@@ -490,84 +472,6 @@ async fn execute() -> anyhow::Result<()> {
             })
             .collect(),
     };
-    println!("{}", serde_json::to_string(&output)?);
-    Ok(())
-}
-
-#[cfg(feature = "pair-zec")]
-async fn execute_zec_take(
-    arguments: &Arguments,
-    expected_maker: &PublicKey,
-    delivery_directory: &std::path::Path,
-    now_unix_seconds: u64,
-) -> anyhow::Result<()> {
-    ensure!(
-        arguments
-            .pair
-            .is_none_or(|pair| matches!(pair, PairArgument::Zcash)),
-        "ZEC acceptance supports only zcash"
-    );
-    let direction: SwapDirection = arguments
-        .direction
-        .unwrap_or(DirectionArgument::TakerSellsLez)
-        .into();
-    let agreement_output_file = required_path(
-        arguments.agreement_output_file.as_deref(),
-        "--agreement-output-file",
-    )?;
-    let agreement_is_durable = match std::fs::symlink_metadata(agreement_output_file) {
-        Ok(_) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => return Err(error).context("inspect persisted ZEC agreement"),
-    };
-    let delivery = if agreement_is_durable {
-        None
-    } else {
-        Some(RunLocalDelivery::subscriber(
-            delivery_directory.to_path_buf(),
-            expected_maker.to_owned(),
-        )?)
-    };
-    let output = take_zec(ZecTakeInput {
-        delivery: delivery.as_ref(),
-        expected_maker,
-        now_unix_seconds,
-        direction,
-        offer_id: arguments
-            .accept_zec_offer
-            .as_deref()
-            .context("ZEC acceptance requires --accept-zec-offer")?,
-        chat_socket: required_path(arguments.chat_socket.as_deref(), "--chat-socket")?,
-        reservation_id: arguments
-            .reservation_id
-            .as_deref()
-            .context("ZEC acceptance requires --reservation-id")?,
-        foreign_units: arguments
-            .foreign_units
-            .context("ZEC acceptance requires --foreign-units")?,
-        unsigned_draft_file: required_path(
-            arguments.unsigned_draft_file.as_deref(),
-            "--unsigned-draft-file",
-        )?,
-        taker_signing_key_file: required_path(
-            arguments.taker_signing_key_file.as_deref(),
-            "--taker-signing-key-file",
-        )?,
-        agreement_output_file,
-        source_taker_config_file: required_path(
-            arguments.zec_source_taker_config.as_deref(),
-            "--zec-source-taker-config",
-        )?,
-        taker_actor_root: required_path(
-            arguments.zec_taker_actor_root.as_deref(),
-            "--zec-taker-actor-root",
-        )?,
-        acceptance_receipt_file: required_path(
-            arguments.zec_acceptance_receipt.as_deref(),
-            "--zec-acceptance-receipt",
-        )?,
-    })
-    .await?;
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
@@ -792,7 +696,6 @@ async fn execute_btc_plan(
             && arguments.btc_role_root.is_none()
             && arguments.taker_signing_key_file.is_none()
             && arguments.agreement_output_file.is_none()
-            && !zec_actor_arguments_present(arguments)
             && arguments.btc_source_taker_config.is_none()
             && arguments.btc_taker_actor_root.is_none()
             && arguments.btc_acceptance_receipt.is_none(),
@@ -1936,14 +1839,6 @@ fn xmr_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.xmr_run_id.is_some()
 }
 
-#[cfg(feature = "pair-zec")]
-fn zec_take_was_requested(arguments: &Arguments) -> bool {
-    arguments.accept_zec_offer.is_some()
-        || arguments.zec_source_taker_config.is_some()
-        || arguments.zec_taker_actor_root.is_some()
-        || arguments.zec_acceptance_receipt.is_some()
-}
-
 fn shared_take_was_requested(arguments: &Arguments) -> bool {
     arguments.chat_socket.is_some()
         || arguments.reservation_id.is_some()
@@ -1955,34 +1850,9 @@ fn shared_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.agreement_output_file.is_some()
 }
 
-#[cfg(feature = "pair-zec")]
-fn zec_actor_arguments_present(arguments: &Arguments) -> bool {
-    arguments.zec_source_taker_config.is_some()
-        || arguments.zec_taker_actor_root.is_some()
-        || arguments.zec_acceptance_receipt.is_some()
-}
-
-#[cfg(not(feature = "pair-zec"))]
-const fn zec_actor_arguments_present(_arguments: &Arguments) -> bool {
-    false
-}
-
-#[cfg(not(feature = "pair-zec"))]
-const fn zec_take_was_requested(_arguments: &Arguments) -> bool {
-    false
-}
-
 #[cfg(not(feature = "pair-xmr"))]
 const fn xmr_take_was_requested(_arguments: &Arguments) -> bool {
     false
-}
-
-#[cfg(feature = "pair-zec")]
-fn required_path<'a>(
-    value: Option<&'a std::path::Path>,
-    flag: &str,
-) -> anyhow::Result<&'a std::path::Path> {
-    value.with_context(|| format!("ZEC acceptance requires {flag}"))
 }
 
 #[cfg(feature = "pair-xmr")]
