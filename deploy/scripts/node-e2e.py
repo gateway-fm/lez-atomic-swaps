@@ -9518,8 +9518,16 @@ def scenario_zec_maker_claim_collision(stamp: str) -> dict:
     if "lez_followup_claim" not in maker_claims:
         raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
                       "not its LEZ follow-up claim")
-    nonce_moved = lez_account_nonce(maker_owner) - nonce_before
-    if nonce_moved < ZEC_CLAIM_NONCE_THEFTS + 1:
+    # The indexer's nonce follows finality, a few blocks behind the inclusion
+    # both Nodes have just reported: wait for it rather than read it once.
+    wait = Wait(f"the indexer to show the Maker's account nonce moved by {ZEC_CLAIM_NONCE_THEFTS + 1}", 180)
+    while wait.running():
+        nonce_moved = lez_account_nonce(maker_owner) - nonce_before
+        if nonce_moved >= ZEC_CLAIM_NONCE_THEFTS + 1:
+            break
+        wait.note(nonce_moved, lambda: f"moved by {nonce_moved}")
+        time.sleep(2)
+    else:
         raise Failure(f"the Maker's account nonce moved by {nonce_moved}; {ZEC_CLAIM_NONCE_THEFTS} thefts and the "
                       f"claim move it by {ZEC_CLAIM_NONCE_THEFTS + 1}")
     # Each theft paid one unit from the Maker's account to the escrow's depositor, the Taker.
