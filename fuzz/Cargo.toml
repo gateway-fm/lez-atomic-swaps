@@ -27,6 +27,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "coordinator_store"
+path = "fuzz_targets/coordinator_store.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "offer_announcement"
 path = "fuzz_targets/offer_announcement.rs"
 test = false
