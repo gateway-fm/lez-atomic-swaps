@@ -1669,6 +1669,13 @@ impl BridgeRuntime {
     /// or an unknown one-attempt submission outcome.
     /// [`BridgeRuntimeError::Unavailable`] comes only from the lookups before
     /// the send: the request journal tries such a request again.
+    #[cfg_attr(
+        feature = "test-hooks",
+        allow(
+            clippy::too_many_lines,
+            reason = "the devnet's test hooks add their branches to the one submission path"
+        )
+    )]
     pub async fn submit_transaction(
         &self,
         request: &SubmitTransactionRequest,
