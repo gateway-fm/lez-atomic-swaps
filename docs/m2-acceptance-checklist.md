@@ -40,8 +40,11 @@ stack and are kept as the record of that submission shape.
   creates the secret and signs for both parties, so the Taker trusts that
   operator. Version 0.4.0 composes a ZEC agreement at take time
   (`zec_reserve_v1`, [`docs/sdk-lez-zec.md`](sdk-lez-zec.md)): the Taker's
-  Node creates the secret and each Node signs with its own Zcash key; the
-  prepared catalog stays as the catalog tests' fixture. The acceptance also
+  Node creates the secret and each Node signs with its own Zcash key; in
+  0.4.x the prepared catalog stayed as the catalog tests' fixture. Version
+  0.5.0 removes the catalog, its fixture and the preparation tools: every
+  Zcash swap is agreed at take time ([M5 checklist](m5-acceptance-checklist.md),
+  D-8). The acceptance also
   records the deviation from RFP Functionality 4 when the Taker sells LEZ
   ([ADR 0216](architecture/0216-zec-taker-reveals-first-in-both-directions.md),
   [`submission/LIMITATIONS.md`](../submission/LIMITATIONS.md)).
@@ -175,7 +178,7 @@ stack and are kept as the record of that submission shape.
 
 | Phase | Checks | Scope statement |
 |---|---|---|
-| `node-e2e.py --pair Zcash`, **both directions** (handover Part D) | happy, replay, wrong-inputs, restart-taker, restart-maker, survivor, concurrent, taker-refund, maker-refund, regenerated-catalog, tampered-catalog (fast profile for the refunds) | Decided 2026-10-28: both directions through the Nodes. Done 2026-11-01: 28/28 in both directions (the eleven plus early-lock, offline-after-lock and refund-then-maker-lock for BTC parity), profile `deterministic-local-devnet-v3` |
+| `node-e2e.py --pair Zcash`, **both directions** (handover Part D) | happy, replay, wrong-inputs, restart-taker, restart-maker, survivor, concurrent, taker-refund, maker-refund, regenerated-catalog, tampered-catalog (fast profile for the refunds; since 0.5.0 the last two are `zec-regenerated-config` and `zec-tampered-config`, on swaps agreed at take time) | Decided 2026-10-28: both directions through the Nodes. Done 2026-11-01: 28/28 in both directions (the eleven plus early-lock, offline-after-lock and refund-then-maker-lock for BTC parity), profile `deterministic-local-devnet-v3` |
 | desk scenarios, Zcash | happy, concurrent, one refund (+ restart-taker if the catalog survives a restart, which it should) | Done 2026-11-01/02: 15 desk journeys in both directions (taker-refund, maker-refund, concurrent, concurrent-staggered, restart-taker, restart-maker, survivor, node-offline, happy, stale-window) plus the recordings; the Taker Node drives its own first LEZ lock after the take |
 | BTC regression on the same binaries | `node-e2e.py` 14 × TakerSellsForeign **and** 14 × TakerSellsLez, the desk suites, desk scenarios forward (8) and reversed (7): the full M3-shaped 45 | Decided 2026-10-28: the full set, both directions. Done on the M2 images: Node 28/28 and desks 16/16, eleven of them on a rerun after a devnet finality freeze (see the set's `RESULTS.txt`) |
 | CI | the Zebra regtest gate green on the pushed commit | On `main` since PR #119 (written 2026-11-03); HTLC tests and Trivy 0 HIGH/CRITICAL |

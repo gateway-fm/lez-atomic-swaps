@@ -17,8 +17,9 @@ with provenance; and no claim Logos has not made ("accepted", "audited",
 A devnet scenario is named by its `regress.sh` test id
 (`deploy/scripts/regress.sh list full`), run by `deploy/scripts/node-e2e.py`
 (`node:`) or `deploy/scripts/ui-e2e.sh` (`ui:`) on the Docker devnet with
-Monero regtest up (`LEZ_MONERO=1`). The full tier holds 180 tests, 26 of them
-Monero. The last full run is at `23e54486`
+Monero regtest up (`LEZ_MONERO=1`). The full tier held 180 tests at 0.4.0, 26
+of them Monero; it holds 200 at 0.5.0, 27 of them Monero
+([M5 checklist](m5-acceptance-checklist.md)). The last full run is at `23e54486`
 ([regression-0.4.0-2026-11-25-macos-arm64-zebra-module](evidence/regression-0.4.0-2026-11-25-macos-arm64-zebra-module/)),
 with the devnet's Zcash Regtest chain run by the upstream `zebrad_module`
 (Zebra 7.1.0) in a Basecamp: 177 of 180 passed, each on its first try, among
