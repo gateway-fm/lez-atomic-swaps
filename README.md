@@ -247,6 +247,18 @@ licence, architecture, DCO, and security-review requirements.
 | [`submission/`](submission/) | M1/M3/M6 reviewer map, evidence index, reproduction guide, and release checksums |
 | [`media/`](media/) | Interactive deck, PDF, walkthrough, captions, and screenshots |
 
+Operator documents:
+
+| Document | What it covers |
+|---|---|
+| [Maker installation](docs/maker-install.md) | The Maker daemon hosted by Logos core and as a systemd service, and how the two differ |
+| [systemd install guide](docs/maker-systemd-install.md) | Both Nodes as hardened systemd units, step by step |
+| [CLI reference](docs/cli-reference.md) | Every command of `lez-maker-cli` and `lez-taker-cli` |
+| [Owner API reference](docs/api/README.md) | The JSON-RPC methods behind the CLIs and the desks |
+| [Delivery and Chat outages](docs/delivery-chat-outage.md) | What each role can do while Logos Delivery or Chat is unavailable |
+| [Swap coordinator](docs/swap-coordinator.md) | The state machine, its persistence, crash recovery and concurrent-swap isolation |
+| [Price module guide](docs/price-module-guide.md) | Writing and running a Logos price module for the Maker |
+
 The current public release, v0.5.0, covers the M1 protocol foundation, the M2
 ZEC/LEZ pair, the M3 BTC/LEZ vertical slice, the M4 XMR/LEZ pair (one
 direction, the Taker selling LEZ, see

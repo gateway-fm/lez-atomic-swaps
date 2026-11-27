@@ -420,7 +420,8 @@ Registration and errors:
 
 Taker CLI: `lez-taker-cli [--socket /run/lez/taker/node.sock]` calls one method
 per command, prints its JSON result, and on an error prints its code, message and
-`data`. `swap take` fills the offer's route, identity, digest and exact quote from
+`data` and exits 2. Every command and flag of both CLIs is in the
+[CLI reference](../cli-reference.md). `swap take` fills the offer's route, identity, digest and exact quote from
 the Node's listing; when offers of two Makers share the id it refuses until
 `--maker-public-key` names the one reviewed. A timed-out step is safe to repeat
 with the same arguments.
@@ -656,8 +657,11 @@ half over: refund now, or from the punish time the Maker takes your LEZ and the
 Monero stays locked`, and `detail: …` when the Node gives one. `swap lock` on a
 Monero swap fails and says that the Taker Node locks the LEZ by itself right
 after the take. The CLIs' Monero rows are covered by unit tests in
-`lez-taker-cli.rs`; the devnet scenarios publish through `lez-maker-cli` and
-drive the Taker over its owner RPC, not through `lez-taker-cli`.
+`lez-taker-cli.rs`. The Monero devnet scenarios publish through `lez-maker-cli`
+and drive the Taker over its owner RPC. The devnet drives Bitcoin and Zcash
+swaps through `lez-taker-cli` in the scenarios `taker-cli`, `taker-cli-refund`,
+`zec-taker-cli` and `zec-dynamic-happy`, and a Bitcoin swap's Maker side through
+`lez-maker-cli` in `maker-cli`.
 
 ## Retries, errors, and observation limits
 
