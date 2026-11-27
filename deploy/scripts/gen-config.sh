@@ -162,6 +162,12 @@ role_files() {
   # key) and zebra mines to its transparent address, so the Maker owns the
   # coinbase outputs it funds Zcash from; the Taker's key funds Zcash in
   # TakerSellsForeign (node-e2e.py pays it from the Maker's before such a take).
+  # The devnet supplies both keys, as an operator may, although each launcher
+  # creates its own where none is supplied (node-entrypoint.sh): the Maker's
+  # has to exist before zebra's settings are rendered below (its address is
+  # zebra's miner address), and scripts/run-maker-node-systemd-vm.sh installs
+  # lane 1's two keys from here as the systemd Nodes' credentials and reads
+  # the Taker's address from its file.
   # Nothing here is a constant: a fresh runtime mints fresh keys. The address
   # comes from zec-local-poc-identity, staged on the host by from-scratch.sh
   # --only rust or, once the stage is gone, run from the Taker image.

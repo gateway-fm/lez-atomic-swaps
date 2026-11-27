@@ -474,25 +474,51 @@ mkdir -p "$zec_state" "$zec_role_root"
 chmod 0700 "$zec_state" "$zec_role_root"
 zec_role_config="$zec_role_root/zec-role.json"
 zec_key_field='{}'
-# The Taker's Zcash key: the identity's file, or (a systemd deployment) its credential.
+# The Taker's own Zcash key, one role-level file of 32 raw bytes which every
+# take-time swap names in place and binds by inode. Its operator may supply
+# it (the identity's file, or a systemd deployment's credential,
+# LEZ_ZCASH_KEY_SOURCE); where none is supplied the Node creates its own on
+# its first start, owner-only, and keeps it: a key is never created over an
+# existing one, and a key this Node created is never replaced by a supplied
+# one (it may hold coins). A new key holds no coins: selling ZEC, its owner
+# pays its address first (`lez-taker-cli balances --zcash` prints it).
 zec_key_source="${LEZ_ZCASH_KEY_SOURCE:-$identity_src/$zcash_key_in_identity}"
-if [[ "$role" == taker && -s "$zec_key_source" ]]; then
-  # One role-level copy as 32 raw bytes, which every take-time swap names in
-  # place and binds by inode: rewritten only when the key itself changes.
-  if (( $(wc -c <"$zec_key_source") == 32 )); then
-    install -m 0600 "$zec_key_source" "$zec_role_root/.zcash.key.new"
-  else
-    zec_key_hex="$(tr -d ' \r\n' <"$zec_key_source")"
-    [[ "$zec_key_hex" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "$role: $zec_key_source is not a Zcash key" >&2; exit 1; }
-    # shellcheck disable=SC2059 # the format is the key's own \xHH escapes
-    printf "$(sed 's/../\\x&/g' <<<"$zec_key_hex")" >"$zec_role_root/.zcash.key.new"
-  fi
-  if cmp -s "$zec_role_root/.zcash.key.new" "$zec_role_root/zcash.key"; then
+if [[ "$role" == taker ]]; then
+  zec_own_key="$zec_role_root/zcash.key"
+  zec_created_here="$zec_role_root/zcash.key.created-here"
+  if [[ -s "$zec_key_source" ]]; then
+    # Rewritten only when the supplied key itself changes.
+    if (( $(wc -c <"$zec_key_source") == 32 )); then
+      install -m 0600 "$zec_key_source" "$zec_role_root/.zcash.key.new"
+    else
+      zec_key_hex="$(tr -d ' \r\n' <"$zec_key_source")"
+      [[ "$zec_key_hex" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "$role: $zec_key_source is not a Zcash key" >&2; exit 1; }
+      # shellcheck disable=SC2059 # the format is the key's own \xHH escapes
+      printf "$(sed 's/../\\x&/g' <<<"$zec_key_hex")" >"$zec_role_root/.zcash.key.new"
+    fi
+    if cmp -s "$zec_role_root/.zcash.key.new" "$zec_own_key"; then
+      rm -f "$zec_role_root/.zcash.key.new"
+    elif [[ -e "$zec_created_here" ]]; then
+      rm -f "$zec_role_root/.zcash.key.new"
+      echo "taker: this Node created its own Zcash key ($zec_own_key) and $zec_key_source now supplies another one. Nothing was replaced: the Node's key may hold coins. To take the supplied key, move $zec_own_key and $zec_created_here away first; to keep the Node's, stop supplying one" >&2
+      exit 1
+    else
+      mv -f "$zec_role_root/.zcash.key.new" "$zec_own_key"
+    fi
+  elif [[ -n "${LEZ_ZCASH_KEY_SOURCE:-}" ]]; then
+    echo "taker: LEZ_ZCASH_KEY_SOURCE names $zec_key_source, which is absent or empty: no key is created beside a named source"
+  elif [[ ! -e "$zec_own_key" ]]; then
+    head -c 32 /dev/urandom >"$zec_role_root/.zcash.key.new"
+    (( $(wc -c <"$zec_role_root/.zcash.key.new") == 32 )) || { echo "taker: could not read 32 random bytes for its Zcash key" >&2; exit 1; }
+    chmod 0600 "$zec_role_root/.zcash.key.new"
+    mv -n "$zec_role_root/.zcash.key.new" "$zec_own_key"
     rm -f "$zec_role_root/.zcash.key.new"
-  else
-    mv -f "$zec_role_root/.zcash.key.new" "$zec_role_root/zcash.key"
+    : >"$zec_created_here"
+    echo "taker: created its own Zcash key ($zec_own_key). It holds no coins until its address is paid: lez-taker-cli balances --zcash prints the address"
   fi
-  zec_key_field="$(jq -n --arg key "$zec_role_root/zcash.key" '{zcash_key_file:$key}')"
+  if [[ -s "$zec_own_key" ]]; then
+    zec_key_field="$(jq -n --arg key "$zec_own_key" '{zcash_key_file:$key}')"
+  fi
 fi
 # The Zebra the role's Zcash actors use (LEZ_ZEC_ZEBRA_ROUTE, the route kinds
 # of crates/zec-reference-actor/src/local_poc.rs LocalPocZebraRoute), with the
@@ -629,20 +655,33 @@ case "$role" in
   maker)
     # A systemd deployment names its Delivery key, a credential, instead.
     delivery_key="${LEZ_DELIVERY_SIGNING_KEY_FILE:-$state/delivery-signing.key}"
-    if [[ ! -s "$delivery_key" ]]; then
-      od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$delivery_key"
-      chmod 0600 "$delivery_key"
-    fi
     # The Maker's Delivery signing key is also its Zcash key: a Zcash
     # agreement binds the Maker's Delivery identity, its Chat signing key and
     # its Zcash key together (crates/maker-node/src/zec_chat.rs,
-    # crates/taker-node/src/zec_taker_accept.rs). On the devnet it is the key
-    # gen-config.sh minted (runtime/lez/maker/zcash.key), which zebra mines
-    # to. Replacing it orphans offers signed by the previous identity.
+    # crates/taker-node/src/zec_taker_accept.rs), and when the Taker sells LEZ
+    # the Maker funds Zcash from it. Its operator may supply it (zcash.key in
+    # the identity directory: on the devnet the key gen-config.sh minted,
+    # which zebra mines to); where none is supplied the Node creates its own
+    # on its first start, owner-only, and keeps it. A key is never created
+    # over an existing one, and a key this Node created is never replaced by
+    # a supplied one (it may hold coins). Replacing the key orphans offers
+    # signed by the previous identity.
     pinned_delivery_key="$identity_src/zcash.key"
-    if [[ -r "$pinned_delivery_key" ]] && ! cmp -s "$pinned_delivery_key" "$delivery_key"; then
-      install -m 0600 "$pinned_delivery_key" "$delivery_key"
-      echo "maker Delivery signing key is the minted Zcash key ($pinned_delivery_key)"
+    delivery_key_created_here="$delivery_key.created-here"
+    if [[ -r "$pinned_delivery_key" ]]; then
+      if ! cmp -s "$pinned_delivery_key" "$delivery_key"; then
+        if [[ -e "$delivery_key_created_here" ]]; then
+          echo "maker: this Node created its own Delivery signing key ($delivery_key), which is also its Zcash key, and $pinned_delivery_key now supplies another one. Nothing was replaced: the Node's key may hold coins. To take the supplied key, move $delivery_key and $delivery_key_created_here away first; to keep the Node's, stop supplying one" >&2
+          exit 1
+        fi
+        install -m 0600 "$pinned_delivery_key" "$delivery_key"
+        echo "maker Delivery signing key is the minted Zcash key ($pinned_delivery_key)"
+      fi
+    elif [[ ! -s "$delivery_key" ]]; then
+      od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$delivery_key"
+      chmod 0600 "$delivery_key"
+      : >"$delivery_key_created_here"
+      echo "maker: created its own Delivery signing key ($delivery_key), which is also its Zcash key. It holds no coins until its address is paid: lez-maker-cli balances --zcash prints the address"
     fi
     if [[ ! -s "$state/btc-chat-signing.key" ]]; then
       od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$state/btc-chat-signing.key"

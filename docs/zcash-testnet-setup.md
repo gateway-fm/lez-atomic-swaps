@@ -456,9 +456,13 @@ What each Node needs before the lane starts, all of it its own operator's:
   (Tatum's gateway, the one provider origin the actors accept). Both Nodes
   name the same profile. The Node checks the chain (`test`, genesis
   `05a60a92…2c38`) before it reserves anything;
-- its own Zcash key. The Taker's is the key its operator supplies
-  (`LEZ_ZCASH_KEY_SOURCE`, or `zcash.key` in its identity directory); the
-  Maker's Zcash key is its Delivery signing key;
+- its own Zcash key. The Taker's launcher creates one on its first start
+  when none is supplied (`zcash.key` in the role's Zcash directory, owner-only;
+  an operator may supply its own through `LEZ_ZCASH_KEY_SOURCE` or as
+  `zcash.key` in the identity directory). The Maker's Zcash key is its
+  Delivery signing key, which its launcher creates the same way. A key the
+  launcher has just created holds no coins, and it is never replaced by a
+  key supplied later;
 - coins on the key of whichever party funds Zcash: the Maker's when the
   Taker sells LEZ, the Taker's when it sells ZEC. The funder spends one
   ordinary unspent output of its own key, 10 blocks deep, that covers the

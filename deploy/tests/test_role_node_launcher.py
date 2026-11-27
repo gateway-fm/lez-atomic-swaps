@@ -337,6 +337,169 @@ class Launcher(unittest.TestCase):
         for gone in ('prepared_zec', 'prepared.json', '--zec-source-maker-config', 'zec-catalog-fixture'):
             self.assertNotIn(gone, text, gone)
 
+    # Each Node creates its own Zcash key (issue #162): the Taker's is a file
+    # of its own, the Maker's is its Delivery signing key.
+    def start(self, role, root, **env):
+        """The launcher's exit code and output for one start of `role`, each
+        role with its own state, Zcash directory and identity."""
+        self.record.unlink(missing_ok=True)
+        return subprocess.run(
+            [shutil.which('bash'), str(self.payload / 'node-entrypoint.sh'), role],
+            env={'PATH': f'{self.fakes}:{self.tools}', 'HOME': str(self.tmp / 'home'), 'CALLS': str(self.calls),
+                 'RECORD': str(self.record), 'LEZ_SIDECAR_PORT_BASE': '19000', 'LEZ_V02_CHANNEL_ID': CHANNEL,
+                 'LEZ_NODE_STATE_DIR': str(root / f'state-{role}'), 'LEZ_NODE_RUN_ROOT': str(root / 'run'),
+                 'LEZ_ZEC_STATE_DIR': str(root / f'zec-{role}'), 'LEZ_NODE_IDENTITY_DIR': str(root / f'identity-{role}'),
+                 'LEZ_MARKET_MANIFEST': str(root / 'market/market-bootstrap.env'),
+                 'LEZ_BTC_RPC_COOKIE_FILE': str(root / 'config/btc-rpc-cookie'),
+                 'LEZ_DELIVERY_DIR': str(root / 'delivery'), **env},
+            capture_output=True, text=True, timeout=60)
+
+    def taker_inputs(self, root):
+        self.host('Linux', setpriv=True)
+        self.inputs(root / 'identity-taker', root / 'market/market-bootstrap.env', root / 'config/btc-rpc-cookie',
+                    role='taker')
+        (root / 'delivery').mkdir()
+        (root / 'delivery/maker-delivery-identity.pub').write_text(MAKER_KEY + '\n')
+
+    def test_the_taker_creates_its_own_zcash_key_once_and_keeps_it(self):
+        root = self.tmp / 'own'
+        self.taker_inputs(root)
+        key, mark = root / 'zec-taker/zcash.key', root / 'zec-taker/zcash.key.created-here'
+        first = self.start('taker', root)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn(f'taker: created its own Zcash key ({key}). It holds no coins until its address is paid',
+                      first.stdout)
+        created = key.read_bytes()
+        self.assertEqual(len(created), 32)
+        self.assertNotEqual(created, bytes(32))
+        self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o600)
+        self.assertTrue(mark.exists())
+        self.assertFalse((root / 'zec-taker/.zcash.key.new').exists())
+        # The Zcash role names it, and the Taker takes Zcash at take time with it.
+        self.assertEqual(json.loads((root / 'zec-taker/zec-role.json').read_text())['zcash_key_file'], str(key))
+        config = json.loads((root / 'state-taker/role.json').read_text())
+        self.assertEqual(config['initiation']['zec_role_config'], str(root / 'zec-taker/zec-role.json'))
+        # Started again, it keeps the key it has and creates nothing.
+        inode = key.stat().st_ino
+        again = self.start('taker', root)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertNotIn('created its own Zcash key', again.stdout)
+        self.assertEqual(key.read_bytes(), created)
+        self.assertEqual(key.stat().st_ino, inode, 'open swaps bind the key file by inode')
+        # Two Takers do not share a key.
+        other = self.tmp / 'other'
+        self.taker_inputs(other)
+        self.assertEqual(self.start('taker', other).returncode, 0)
+        self.assertNotEqual((other / 'zec-taker/zcash.key').read_bytes(), created)
+
+    def test_a_zcash_key_the_operator_supplies_is_used_and_none_is_created(self):
+        root = self.tmp / 'supplied'
+        self.taker_inputs(root)
+        (root / 'identity-taker/taker').mkdir()
+        supplied = root / 'identity-taker/taker/zcash.key'
+        supplied.write_text('44' * 32 + '\n')
+        key = root / 'zec-taker/zcash.key'
+        started = self.start('taker', root)
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertNotIn('created its own Zcash key', started.stdout)
+        self.assertEqual(key.read_bytes(), b'\x44' * 32)
+        self.assertFalse((root / 'zec-taker/zcash.key.created-here').exists())
+        # The same key in the other spelling leaves the file alone; another key replaces it.
+        inode = key.stat().st_ino
+        supplied.write_bytes(b'\x44' * 32)
+        self.assertEqual(self.start('taker', root).returncode, 0)
+        self.assertEqual(key.stat().st_ino, inode)
+        supplied.write_text('55' * 32)
+        self.assertEqual(self.start('taker', root).returncode, 0)
+        self.assertEqual(key.read_bytes(), b'\x55' * 32)
+        # A credential named by LEZ_ZCASH_KEY_SOURCE (a systemd deployment) works the same way.
+        credential = root / 'credential.key'
+        credential.write_bytes(b'\x66' * 32)
+        self.assertEqual(self.start('taker', root, LEZ_ZCASH_KEY_SOURCE=str(credential)).returncode, 0)
+        self.assertEqual(key.read_bytes(), b'\x66' * 32)
+
+    def test_a_key_the_node_created_is_never_replaced_by_a_supplied_one(self):
+        root = self.tmp / 'kept'
+        self.taker_inputs(root)
+        self.assertEqual(self.start('taker', root).returncode, 0)
+        key = root / 'zec-taker/zcash.key'
+        created = key.read_bytes()
+        (root / 'identity-taker/taker').mkdir()
+        (root / 'identity-taker/taker/zcash.key').write_text('44' * 32)
+        refused = self.start('taker', root)
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn(f'this Node created its own Zcash key ({key})', refused.stderr)
+        self.assertIn("Nothing was replaced: the Node's key may hold coins", refused.stderr)
+        self.assertEqual(key.read_bytes(), created)
+        self.assertFalse((root / 'zec-taker/.zcash.key.new').exists())
+        self.assertFalse(self.record.exists(), 'the Node must not start')
+        # Supplying the Node's own key back (a backup restored) changes nothing.
+        (root / 'identity-taker/taker/zcash.key').write_bytes(created)
+        self.assertEqual(self.start('taker', root).returncode, 0)
+        self.assertEqual(key.read_bytes(), created)
+
+    def test_a_named_key_source_that_is_absent_creates_nothing(self):
+        # An operator who names a credential means to supply it: the Node
+        # takes no Zcash swap rather than making a key beside it.
+        root = self.tmp / 'named'
+        self.taker_inputs(root)
+        started = self.start('taker', root, LEZ_ZCASH_KEY_SOURCE=str(root / 'missing.key'))
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertIn('no key is created beside a named source', started.stdout)
+        self.assertFalse((root / 'zec-taker/zcash.key').exists())
+        config = json.loads((root / 'state-taker/role.json').read_text())
+        self.assertNotIn('zec_role_config', config['initiation'])
+        self.assertNotIn('zcash_key_file', json.loads((root / 'zec-taker/zec-role.json').read_text()))
+
+    def test_the_maker_creates_its_own_delivery_key_which_is_its_zcash_key(self):
+        self.host('Linux', setpriv=True)
+        root = self.tmp / 'maker-own'
+        self.inputs(root / 'identity-maker', root / 'market/market-bootstrap.env', root / 'config/btc-rpc-cookie')
+        (root / 'identity-maker/zcash.key').unlink()
+        key = root / 'state-maker/delivery-signing.key'
+        first = self.start('maker', root)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn(f'maker: created its own Delivery signing key ({key}), which is also its Zcash key. '
+                      'It holds no coins until its address is paid', first.stdout)
+        created = key.read_text()
+        self.assertRegex(created, r'^[0-9a-f]{64}$')
+        self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o600)
+        node = dict(zip(*[iter(self.record.read_text().splitlines()[2:])] * 2))
+        self.assertEqual(node['--delivery-signing-key-file'], str(key))
+        # The Maker's Zcash role names no other key: the Delivery key is it.
+        self.assertNotIn('zcash_key_file', json.loads((root / 'zec-maker/zec-role.json').read_text()))
+        again = self.start('maker', root)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertNotIn('created its own Delivery signing key', again.stdout)
+        self.assertEqual(key.read_text(), created)
+        self.assertTrue((root / 'state-maker/delivery-signing.key.created-here').exists())
+        # A key supplied later does not replace the one the Node created: it
+        # is also the key the Maker funds Zcash from.
+        (root / 'identity-maker/zcash.key').write_text('22' * 32)
+        refused = self.start('maker', root)
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn("Nothing was replaced: the Node's key may hold coins", refused.stderr)
+        self.assertEqual(key.read_text(), created)
+        self.assertFalse(self.record.exists(), 'the Node must not start')
+
+    def test_a_delivery_key_the_makers_operator_supplies_is_used_and_none_is_created(self):
+        # The devnet's: gen-config.sh mints it before the Node first starts,
+        # because Zebra mines to its address.
+        self.host('Linux', setpriv=True)
+        root = self.tmp / 'maker-supplied'
+        self.inputs(root / 'identity-maker', root / 'market/market-bootstrap.env', root / 'config/btc-rpc-cookie')
+        key = root / 'state-maker/delivery-signing.key'
+        started = self.start('maker', root)
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertNotIn('created its own Delivery signing key', started.stdout)
+        self.assertEqual(key.read_text(), '22' * 32)
+        self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o600)
+        self.assertFalse((root / 'state-maker/delivery-signing.key.created-here').exists())
+        # Another supplied key replaces a supplied one, as before.
+        (root / 'identity-maker/zcash.key').write_text('33' * 32)
+        self.assertEqual(self.start('maker', root).returncode, 0)
+        self.assertEqual(key.read_text(), '33' * 32)
+
     def test_no_rpc_login_reaches_a_command_line(self):
         # A recording curl: each call's arguments and the config it reads on
         # its standard input (-K -), then the answers of the plain fake.
