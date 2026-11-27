@@ -7717,6 +7717,22 @@ impl ExactLezClaimSend {
     }
 }
 
+/// Whether a LEZ claim that did not land may still be offered again now.
+///
+/// The revealing claim's signature discloses the adaptor secret to whoever
+/// sees the transaction, included or not. A Node keeps driving a swap whose
+/// claim it submitted across the claim window's close, to see a claim that
+/// was included in time; such a drive must never offer the revealing claim
+/// again once the window has closed, when the Maker's refund can win the
+/// escrow and the disclosed secret still spends the other leg. So the
+/// revealing claim is resent only while [`claim_window_closed`] is false,
+/// the bound the Nodes offer its first send under. The follow-up claim
+/// discloses nothing (its secret is already public) and is resent for as
+/// long as it is absent; sent after the refund, it fails in the escrow.
+fn lez_claim_resend_admitted(agreement: &BtcAgreementV1, transition: ClaimTransition) -> bool {
+    transition != ClaimTransition::RevealingClaim || !claim_window_closed(agreement)
+}
+
 /// Reconciles one exact LEZ claim with what the chain shows and decides
 /// whether this drive sends it.
 ///
@@ -7727,17 +7743,20 @@ impl ExactLezClaimSend {
 /// sequencer, had an ambiguous outcome, or stopped with the process, and
 /// observation alone would wait for a transaction that may never have
 /// arrived. Every send is the journal's same signed bytes, which the chain
-/// includes at most once.
+/// includes at most once. `resend_admitted`
+/// ([`lez_claim_resend_admitted`]) is the time bound of a resend.
 fn authorize_exact_lez_claim_send(
     journal: &mut SqlitePublicEffectJournal,
     key: &PublicEffectKey,
     observation: PublicEffectObservation,
+    resend_admitted: bool,
 ) -> Result<Option<ExactLezClaimSend>, ActorCommandError> {
-    let resend_evidence = matches!(
-        observation,
-        PublicEffectObservation::Absent
-            | PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe { .. }
-    )
+    let resend_evidence = (resend_admitted
+        && matches!(
+            observation,
+            PublicEffectObservation::Absent
+                | PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe { .. }
+        ))
     .then(|| observation.clone());
     let decision = journal
         .reconcile(key, observation)
@@ -7969,8 +7988,12 @@ where
         let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
-        let Some(send) =
-            authorize_exact_lez_claim_send(&mut journal, effect.effect.key(), observation)?
+        let Some(send) = authorize_exact_lez_claim_send(
+            &mut journal,
+            effect.effect.key(),
+            observation,
+            lez_claim_resend_admitted(agreement, transition),
+        )?
         else {
             trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
@@ -8175,8 +8198,12 @@ where
         let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
-        let Some(send) =
-            authorize_exact_lez_claim_send(&mut journal, effect.effect.key(), observation)?
+        let Some(send) = authorize_exact_lez_claim_send(
+            &mut journal,
+            effect.effect.key(),
+            observation,
+            lez_claim_resend_admitted(agreement, transition),
+        )?
         else {
             trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());

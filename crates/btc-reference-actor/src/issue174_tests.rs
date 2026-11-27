@@ -29,6 +29,7 @@ async fn owned_lez_claim(
     transition: ClaimTransition,
 ) -> (ActorFixture, PreparedLezClaimEffect) {
     let fixture = ActorFixture::for_direction(direction, role);
+    freeze_wall_clock(claim_window_close(&fixture) - 1);
     activate_and_project_both_locks(&fixture).await;
     if transition == ClaimTransition::FollowupClaim {
         project_revealing_claim(&fixture).await;
@@ -44,6 +45,15 @@ async fn owned_lez_claim(
     .expect("prepare the owned LEZ claim")
     .expect("this role owns the LEZ claim");
     (fixture, effect)
+}
+
+/// The wall-clock instant the revealing claim's window closes at.
+fn claim_window_close(fixture: &ActorFixture) -> u64 {
+    fixture
+        .agreement
+        .body()
+        .recovery_plan()
+        .earlier_refund_latest_unix_seconds()
 }
 
 fn absent(
@@ -374,6 +384,45 @@ async fn a_lez_claim_contradicted_on_the_chain_is_never_sent_again() {
     }
 }
 
+/// A Node observes a submitted claim across the claim window's close. Past
+/// it the revealing claim, whose signature discloses the adaptor secret, is
+/// never offered again; the follow-up claim, which discloses nothing, is.
+#[tokio::test(flavor = "current_thread")]
+async fn a_revealing_lez_claim_is_not_sent_again_once_its_claim_window_closed() {
+    for (direction, role, transition) in OWNED_LEZ_CLAIMS {
+        let (fixture, effect) = owned_lez_claim(direction, role, transition).await;
+        let (_, sends) = drive(
+            &fixture,
+            &effect,
+            absent(&fixture, transition, &effect),
+            Err(ActorCommandError::ObservationUnavailable),
+        )
+        .await;
+        assert_eq!(sends, 1);
+        assert_eq!(journal_state(&fixture, &effect), PublicEffectState::Unknown);
+
+        freeze_wall_clock(claim_window_close(&fixture));
+        let (observed, sends) = drive(
+            &fixture,
+            &effect,
+            absent(&fixture, transition, &effect),
+            Ok(SubmissionOutcome::Accepted),
+        )
+        .await;
+        let _ = observed.expect("the drive still observes");
+        if transition == ClaimTransition::RevealingClaim {
+            assert_eq!(sends, 0, "no revealing claim after the window closed");
+            assert_eq!(journal_state(&fixture, &effect), PublicEffectState::Unknown);
+        } else {
+            assert_eq!(sends, 1, "the follow-up claim discloses nothing");
+            assert_eq!(
+                journal_state(&fixture, &effect),
+                PublicEffectState::Accepted
+            );
+        }
+    }
+}
+
 /// The custom-token claim is the same exact effect on the same journal key
 /// and takes the same path, in both owned directions.
 #[tokio::test(flavor = "current_thread")]
@@ -381,6 +430,7 @@ async fn a_token_claim_with_a_failed_send_is_sent_by_the_next_drive() {
     for (direction, role, transition) in OWNED_LEZ_CLAIMS {
         let mut fixture = ActorFixture::for_direction(direction, role);
         let _ = configure_schema5_asset_claim(&mut fixture);
+        freeze_wall_clock(claim_window_close(&fixture) - 1);
         activate_and_project_schema5_both_locks(&fixture).await;
         if transition == ClaimTransition::FollowupClaim {
             project_revealing_claim(&fixture).await;

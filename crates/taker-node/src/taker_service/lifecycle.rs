@@ -2860,7 +2860,10 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
         }
         // A submitted claim stays observed until it lands or the swap ends,
         // across the claim window's close: a claim included before the
-        // deadline may be seen only afterwards, and observing never sends.
+        // deadline may be seen only afterwards. A claim the actor's journal
+        // holds as sent is not sent by observing, except that a LEZ claim
+        // still absent after a failed send is sent again, the revealing one
+        // only while its window is open (ADR 0218).
         // Once the window has closed the Maker's refund is watched as well,
         // through the recovery command, which for the Taker only observes.
         let claim_submitted =
