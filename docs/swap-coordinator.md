@@ -276,7 +276,11 @@ observed on chain and its evidence is projected into the actor store, as ADR 003
 Monero workflow step.
 
 These rules are about the journal row. What an actor may do for a step whose row is observe-only
-is set by ADR 0033, ADR 0036 and, after a reveal, ADR 0040.
+is set by ADR 0033, ADR 0036 and, after a reveal, ADR 0040. One effect has a second send:
+`resend_exact_lez_claim` authorizes the same bytes of a Bitcoin swap's exact LEZ claim again when
+its row is `Started` or `Unknown` and the chain still shows it absent, and never after a recorded
+conflicting presence ([ADR 0218](architecture/0218-resend-an-exact-lez-claim-that-did-not-land.md),
+`an_exact_lez_claim_left_unknown_or_started_is_sent_again_while_still_absent`).
 
 ### State that cannot be read
 

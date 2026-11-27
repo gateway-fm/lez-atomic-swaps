@@ -600,7 +600,7 @@ flowchart TB
         LC["Logos Core lifecycle adapter"]
         MD["Maker daemon"]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v10<br/>lock + claim + refund journals")]
+        DB[("Maker SQLite schema 22<br/>lock + claim + refund journals")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
         ZTX["ZEC BIP-199 V5 transaction SDK"]
@@ -617,7 +617,7 @@ flowchart TB
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
         TMO["Taker-only maker-lock observation"]
-        TDB[("Taker SQLite schema v10<br/>role-local recovery")]
+        TDB[("Taker SQLite schema 22<br/>role-local recovery")]
         TLB["Context-owning LEZ SDK ports + adapter"]
     end
 

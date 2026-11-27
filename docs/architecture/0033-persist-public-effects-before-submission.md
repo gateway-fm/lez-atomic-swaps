@@ -4,7 +4,11 @@ Status: Accepted for the M3 public-effect persistence boundary. Reference-actor
 Bitcoin and LEZ claim integration is GREEN in source, deterministic adapter
 tests, and both actual-node happy directions in `m3actor-20260716n`. The live
 replay pass added zero submissions. Forced process-kill crash evidence remains
-production-hardening work.
+production-hardening work. Amended by
+[ADR 0218](0218-resend-an-exact-lez-claim-that-did-not-land.md) for one
+effect: the BTC actor's exact LEZ claim left `Started` or `Unknown` by a send
+that did not land is sent again as the same bytes while it is still absent;
+every other effect keeps the rule below.
 
 ## Context
 
