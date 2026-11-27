@@ -1692,9 +1692,15 @@ fn register_methods(
         // paths: the ZEC SDK's `lez_refund` and the BTC actor's witnessed
         // refund share one planner slot (a resend of a refund is always
         // wanted; the BTC actor never asks again after an unknown outcome).
-        // The others (the BTC actor's witnessed escrow and claim and its
-        // token effects, which its own journal sends once and never asks for
-        // again, and the reference clock transaction) keep their one attempt.
+        // The BTC actor's completed witnessed claim, native or token, is in
+        // that class too (#174): its actor asks for the same bytes again
+        // while its journal holds no acceptance and the claim is still
+        // absent, and a replayed answer would strand a claim that never
+        // reached the sequencer.
+        // The others (the BTC actor's witnessed escrow and its token escrow
+        // and refund effects, which its own journal sends once and never asks
+        // for again, and the reference clock transaction) keep their one
+        // attempt.
         let decide_success_again = runtime
             .submission_success_decided_again(&request.transaction)
             .await;

@@ -3140,6 +3140,25 @@ impl NativeEscrowPlanner {
             .is_some_and(|completed| completed.result.claim == *prepared)
     }
 
+    /// Whether `prepared` is the completed witnessed claim this sidecar
+    /// holds, native or custom-token: the BTC actor's revealing claim (Taker
+    /// sells BTC) or the Maker's follow-up claim (Taker sells LEZ). Its one
+    /// message is signed by the swap's aggregate authority at that account's
+    /// nonce, and nothing replaces it; the actor asks for the same bytes
+    /// again only after it observed them absent, so they are decided on the
+    /// chain again whatever the request journal holds for them (#174).
+    pub async fn witnessed_claim_submission(&self, prepared: &PreparedTransaction) -> bool {
+        let state = self.state.lock().await;
+        state
+            .completed_witnessed_claim
+            .as_ref()
+            .is_some_and(|completed| completed.result.claim == *prepared)
+            || state
+                .completed_witnessed_asset_claim_v2
+                .as_ref()
+                .is_some_and(|completed| completed.result.claim == *prepared)
+    }
+
     /// Whether `prepared` is the native refund this sidecar holds: the ZEC
     /// path's `lez_refund` of a native escrow, or the BTC actor's witnessed
     /// refund (`PrepareNativeRefundRequest::new_witnessed`), which takes the

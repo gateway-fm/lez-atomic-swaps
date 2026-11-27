@@ -1625,9 +1625,10 @@ impl BridgeRuntime {
     /// transaction absent and inside its own window. That is the XMR tag-13
     /// pair, tag 15, tag 16 and tag 17, the native escrow pair and its
     /// re-plans, the revealing claim and its re-plans (also the Maker's
-    /// follow-up claim) and the native refund (the ZEC `lez_refund` and the
-    /// BTC actor's witnessed refund alike). Identical bytes carry one
-    /// transaction id and one nonce and are included at most once.
+    /// follow-up claim), the BTC actor's completed witnessed claim and the
+    /// native refund (the ZEC `lez_refund` and the BTC actor's witnessed
+    /// refund alike). Identical bytes carry one transaction id and one nonce
+    /// and are included at most once.
     pub async fn submission_unknown_decided_again(&self, prepared: &PreparedTransaction) -> bool {
         self.submission_success_decided_again(prepared).await
             || self.planner.xmr_escrow_submission(prepared).await
@@ -1638,7 +1639,11 @@ impl BridgeRuntime {
     /// observed absent although accepted (a sequencer that admitted them and
     /// dropped them), and those whose nonce can be taken and re-planned. The
     /// native refund is one: replayed as accepted, a refund the sequencer
-    /// dropped would hold the LEZ in its escrow for good. The XMR tag-13 pair
+    /// dropped would hold the LEZ in its escrow for good. The BTC actor's
+    /// completed witnessed claim is another: the actor asks for it again only
+    /// when its own journal holds no acceptance and the claim is still
+    /// absent (a reply lost on the way back, or a stop mid-call), and an
+    /// acceptance replayed then would never reach the node. The XMR tag-13 pair
     /// is not: its supervisor submits it on every lock step until it is final
     /// without first finding it absent, so a decided-again acceptance would
     /// re-broadcast it in every send-to-inclusion gap, while one the
@@ -1648,6 +1653,7 @@ impl BridgeRuntime {
             || self.xmr_claim_submission(prepared).await
             || self.native_escrow_lineage_member(prepared).await
             || self.revealing_claim_lineage_member(prepared).await
+            || self.planner.witnessed_claim_submission(prepared).await
             || self.planner.native_refund_submission(prepared).await
     }
 
@@ -1669,7 +1675,7 @@ impl BridgeRuntime {
     ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
         let ownership = self.planner.validate_submission_request(request).await?;
         #[cfg(feature = "test-hooks")]
-        self.hold_claim_submission(&request.transaction).await;
+        self.claim_test_hooks(&request.transaction).await?;
         if let OwnedSubmission::XmrFunding { initialization } = &ownership
             && !self
                 .node
@@ -1795,6 +1801,31 @@ impl BridgeRuntime {
         {
             std::future::pending::<()>().await;
         }
+    }
+
+    /// TEST-ONLY (feature `test-hooks`, the devnet's claim-send-fails
+    /// scenario): while `fail-claim-submissions` holds a count, the BTC
+    /// actor's completed witnessed claim is refused as unavailable before
+    /// anything is looked up or sent, as a sequencer that does not answer the
+    /// inclusion lookup refuses it.
+    #[cfg(feature = "test-hooks")]
+    async fn fail_witnessed_claim_submission(&self, prepared: &PreparedTransaction) -> bool {
+        self.planner.witnessed_claim_submission(prepared).await
+            && crate::test_hooks::take("fail-claim-submissions")
+    }
+
+    /// TEST-ONLY (feature `test-hooks`): the hooks a claim's submission meets
+    /// before anything is looked up or sent, the hold first, then the refusal.
+    #[cfg(feature = "test-hooks")]
+    async fn claim_test_hooks(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<(), BridgeRuntimeError> {
+        self.hold_claim_submission(prepared).await;
+        if self.fail_witnessed_claim_submission(prepared).await {
+            return Err(BridgeRuntimeError::Unavailable);
+        }
+        Ok(())
     }
 
     /// TEST-ONLY (feature `test-hooks`, the devnet's punish re-plan
