@@ -18,7 +18,8 @@
 # endpoints, through QEMU guestfwd from a container on the stack's network: Bitcoin Core
 # :18443, the LEZ sequencer :3040 and the indexer :8779. Lane 1's two Node containers use the
 # same identities, so they are stopped for the run and started again afterwards. Run it under
-# the stack lock (~/m2-work/stack-lock.sh), with the stack up and lane 1 idle.
+# the stack lock (~/m2-work/stack-lock.sh), with the stack up and lane 1 idle. A stack brought
+# up under another LEZ_STACK_PREFIX is found by the same variable.
 #
 # LEZ_SWAP_PAIR=zcash runs one Zcash swap instead, Taker sells LEZ, formed at take time
 # (zec_reserve_v1) with the Maker funding Zcash from lane 1's Maker key, which the devnet's
@@ -45,10 +46,12 @@ readonly image_name="ubuntu-24.04-server-cloudimg-amd64.img"
 readonly sidecar_program="${SIDECAR_PROGRAM:?SIDECAR_PROGRAM must name the LEZ sidecar (lez-v02-bridge-poc)}"
 readonly planner_program="${STAGE_A_PLANNER_PROGRAM:-$(dirname "$sidecar_program")/lez-v02-xmr-stage-a-plan}"
 readonly stack="${LEZ_STACK_DEPLOY_DIR:-}"
-readonly stack_network="${LEZ_STACK_NETWORK:-lez-swap-chains}"
-readonly lane_nodes=(lez-maker-node lez-taker-node)
+# The stack's container and network prefix, as deploy/ names it (LEZ_STACK_PREFIX).
+readonly stack_prefix="${LEZ_STACK_PREFIX:-lez}"
+readonly stack_network="${LEZ_STACK_NETWORK:-$stack_prefix-swap-chains}"
+readonly lane_nodes=("$stack_prefix-maker-node" "$stack_prefix-taker-node")
 readonly swap_pair="${LEZ_SWAP_PAIR:-bitcoin}"
-btc_cli=(docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin)
+btc_cli=(docker exec "$stack_prefix-bitcoin-core" bitcoin-cli -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin)
 
 [[ -c /dev/kvm ]] || {
   echo "/dev/kvm is required" >&2
@@ -163,20 +166,20 @@ if [[ -n "$stack" ]]; then
     install -d -m 0700 "$payload/stack/$role"
     cp "$stack/runtime/lez/$role/identity.json" "$stack/runtime/lez/$role/lez-signer.key" \
       "$stack/runtime/lez/$role/zcash.key" "$payload/stack/$role/"
-    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "lez-$role-node" \
+    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$stack_prefix-$role-node" \
       | sed -n 's/^LEZ_BTC_WALLET=//p' >"$payload/stack/$role/wallet"
   done
   cp "$stack/runtime/market-bootstrap.env" "$stack/runtime/secrets/btc-rpc-cookie" "$payload/stack/"
   # The devnet Zebra's JSON-RPC cookie (zebrad_module writes it owner-only in
   # its volume, new at every start): copied once for this run, which does not
   # restart Zebra, owner-only, and deleted with the work directory.
-  (umask 077; docker exec lez-zebra cat /var/lib/zebra/regtest/.cookie >"$payload/stack/zebra-cookie")
+  (umask 077; docker exec "$stack_prefix-zebra" cat /var/lib/zebra/regtest/.cookie >"$payload/stack/zebra-cookie")
   echo "$swap_pair" >"$payload/stack/pair"
-  stack_containers=(lez-bitcoin-core lez-sequencer lez-network lez-zebra)
+  stack_containers=("$stack_prefix-bitcoin-core" "$stack_prefix-sequencer" "$stack_prefix-network" "$stack_prefix-zebra")
   # The Maker's Monero logins (gen-config.sh, LEZ_MONERO=1): monerod's and its wallet-rpc's.
   if [[ "$swap_pair" == monero ]]; then
     cp "$stack/runtime/lez/maker/monerod.login" "$stack/runtime/lez/maker/monero-wallet-rpc.login" "$payload/stack/maker/"
-    stack_containers+=(lez-monerod lez-maker-xmr-wallet)
+    stack_containers+=("$stack_prefix-monerod" "$stack_prefix-maker-xmr-wallet")
   fi
   grep -E '^(LEZ_V02_CHANNEL_ID|LEZ_BTC_|LEZ_LEZ_DISCOVERY_MAX_BLOCKS|LEZ_MAKER_ACTOR_|LEZ_TAKER_OBSERVER_|LEZ_NODE_FINALITY_|LEZ_XMR_)' \
     "$stack/runtime/runtime.env" >"$payload/stack/profile.env"
