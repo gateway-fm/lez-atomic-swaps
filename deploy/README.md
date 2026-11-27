@@ -909,11 +909,18 @@ run two at once (`ui:xmr:xmr-concurrent`), and show a punishment
 Maker's funding through the refund window, as in `node:xmr:xmr-punish`; the
 Maker desk opened shortly before the punish time watches its row reach
 "Punished", and the Taker desk, back up, shows the swap punished). All four
-are recorded in `docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/` (the videos outside git). Not run with
-native macOS Nodes: the darwin-arm64 packages carry the Monero programs and
-both roles take a Monero role on macOS, with a weaker effect custody for the
-Maker there (`docs/architecture/logos-native-packaging.md`, "The Node on
-macOS"). The Maker's systemd unit takes a Monero role from an optional
+are recorded in `docs/evidence/demos-0.4.0-2026-11-25-macos-arm64/` (the videos outside git). The
+darwin-arm64 packages carry the Monero programs and both roles take a Monero
+role on macOS, with a weaker effect custody for the Maker there
+(`docs/architecture/logos-native-packaging.md`, "The Node on macOS"). On
+2026-11-27, on an Apple-silicon Mac, four Monero swaps ran with one role's
+Node native from its darwin-arm64 0.4.1 package (CI-built from `2373e287`)
+and the other role in its container: with the Maker native, `xmr-happy`,
+`xmr-taker-refund` and `xmr-punish`; with the Taker native, `xmr-happy`;
+each passed on its first try
+(`docs/evidence/macos-native-0.4.1-2026-11-27/`). Not run with native macOS
+Nodes: a Monero swap with both Nodes native (one role's wallet-rpc per
+host), the other Monero scenarios and the Monero desk journeys. The Maker's systemd unit takes a Monero role from an optional
 drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with
 stub programs, not run in the VM; the Taker unit has none.
 

@@ -701,9 +701,24 @@ supervisor through tag 17, refund and claim recovery
 (`xmr_take_process.rs`); and `xmr-reference-actor`'s `full-lifecycle`
 example against a Monero regtest `monerod` and wallet-rpc in a container
 (the funding, the view-only check, the claim and refund sweeps with the
-rebuilt keys). Not run on macOS: the Maker's effect tools against a live
-`monerod`, and a swap through two Nodes. `monerod` and `monero-wallet-rpc`
-are verified and staged for Linux only (`tests/e2e/monero/provenance.env`).
+rebuilt keys).
+
+What ran on 2026-11-27 on an Apple-silicon Mac (macOS 26): four XMR/LEZ
+swaps with one role's Node native from its darwin-arm64 0.4.1 package
+(CI-built from `2373e287`) in a `logosctl` 0.3.2 session and the other role
+in its container from the release bundle, against Monero regtest
+([macos-native-0.4.1-2026-11-27](../evidence/macos-native-0.4.1-2026-11-27/README.md)).
+With the Maker native, a completed swap, a Taker refund and a punishment:
+the Maker's effect tools funded and verified the Monero, claimed with tag
+15, swept the refund and punished with tag 17 against a live `monerod`,
+through the official macOS `monero-wallet-rpc` 0.18.5.1 on
+`127.0.0.1:18083`. With the Taker native, a completed swap. Each passed on
+its first try. Not run on macOS: a Monero swap with both Nodes native (both
+would read the same two ports), a Taker refund or a punishment with the
+Taker native, the other Monero scenarios and the Monero desk journeys with
+a native Node. The repository stages `monerod` and `monero-wallet-rpc` for
+Linux only (`tests/e2e/monero/provenance.env`); that run checked the macOS
+archive against the same signed hash manifest with its own script.
 
 ### Chains on another host
 
