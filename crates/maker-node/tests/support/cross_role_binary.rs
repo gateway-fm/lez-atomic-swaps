@@ -76,6 +76,10 @@ pub fn workspace_binary(name: &str) -> PathBuf {
         "lez-node-common"
     } else if name.starts_with("lez-taker-") {
         "lez-taker-node"
+    } else if name == "lez-zec-maker-actor" {
+        // The Zcash Maker actor a Maker Node supervises: its own package's
+        // binary, with no pair feature of the Nodes.
+        "zec-reference-actor"
     } else {
         panic!("unsupported cross-role test binary: {name}");
     };

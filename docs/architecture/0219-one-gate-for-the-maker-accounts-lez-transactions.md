@@ -135,9 +135,15 @@ it is still sent.
   `the_makers_lez_locks_wait_for_a_pending_lez_claim_and_for_each_other_and_no_claim_waits_for_a_lock`,
   `a_submitted_lez_claim_holds_the_next_claim_for_its_hold_not_until_it_is_final`,
   `a_makers_zcash_funding_drive_passes_the_lez_account_gate`.
-- `zec_followup_claim_contention.rs`: the Maker's follow-up claim is
-  superseded more than five times across attempts of the real actor under
-  the real supervisor, reports `lez_claim_nonce_contention`, and lands.
+- `zec_followup_claim_contention.rs`
+  (`a_followup_lez_claim_re_planned_more_than_five_times_across_attempts_still_lands`):
+  the real supervisor runs the real `lez-zec-maker-actor` against a LEZ
+  bridge sidecar the test serves. Seven transactions of the Maker's account
+  take the claim's nonce; the claim is re-planned seven times across seven
+  attempts the supervisor requeues, reports `lez_claim_nonce_contention`
+  from the sixth re-plan on, and is included in the eighth attempt. A LEZ
+  lock of the same account, due after each attempt, is held back
+  (`lez_lock_waits_for_claim`) until the claim is final, then driven.
 - The capacity: `the_capacity_is_the_queue_bound_and_never_a_zero_raised_to_one`.
 - On the devnet, `zec-maker-claim-collision` (selling LEZ): the sidecar's
   test hook `claim-nonce-thefts` sends six transactions of the Maker's

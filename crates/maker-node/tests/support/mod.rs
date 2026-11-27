@@ -26,7 +26,12 @@ use zcash_protocol::{
 use zcash_transparent::address::TransparentAddress;
 use zec_reference_actor::{ActorConfig, ActorRole};
 
-const CLAIM_PREIMAGE: [u8; 32] = [0x44; 32];
+/// The preimage every fixture agreement's secret digest commits to. Only the
+/// Taker holds it; a Maker reads it from the Taker's revealing claim.
+pub const CLAIM_PREIMAGE: [u8; 32] = [0x44; 32];
+
+/// The LEZ bridge endpoint a fixture config names when no test serves one.
+const UNSERVED_BRIDGE_ENDPOINT: &str = "http://127.0.0.1:19001";
 
 #[allow(dead_code)]
 pub struct ActorDeployment {
@@ -47,6 +52,59 @@ pub fn actor_deployment_with_direction(
     swap_id: &str,
     direction: SwapDirection,
 ) -> ActorDeployment {
+    deployment(
+        run_root,
+        swap_id,
+        profile_for(direction),
+        direction,
+        UNSERVED_BRIDGE_ENDPOINT,
+    )
+}
+
+/// A `TakerSellsLez` deployment under `profile` (a Regtest NU7 profile the
+/// Taker reveals first in) whose config names `bridge_endpoint` as the LEZ
+/// bridge sidecar (a loopback `http://127.0.0.1:<port>` a test serves itself).
+/// A test that runs real actors against the swap's deadlines picks a profile
+/// whose LEZ refund delay outlasts it on a loaded machine.
+#[allow(dead_code)]
+pub fn actor_deployment_with_bridge(
+    run_root: &Path,
+    swap_id: &str,
+    profile: ZecProfileId,
+    bridge_endpoint: &str,
+) -> ActorDeployment {
+    let direction = SwapDirection::TakerSellsLez;
+    let (_, branch_hex, branch, _) = profile_for(direction);
+    let refund = lez_zec_swap_sdk::ZecRefundProfile::for_id(profile);
+    assert_eq!(refund.consensus_branch_id(), branch);
+    deployment(
+        run_root,
+        swap_id,
+        (
+            profile,
+            branch_hex,
+            branch,
+            ZCASH_REFUND_HEIGHT - refund.zcash_refund_blocks(),
+        ),
+        direction,
+        bridge_endpoint,
+    )
+}
+
+/// A profile, its Zcash branch id (hex and typed), and the Zcash anchor
+/// height giving the contract's refund height [`ZCASH_REFUND_HEIGHT`].
+type ProfileParameters = (ZecProfileId, &'static str, BranchId, u32);
+
+/// The Zcash refund height of every fixture contract.
+const ZCASH_REFUND_HEIGHT: u32 = 120;
+
+fn deployment(
+    run_root: &Path,
+    swap_id: &str,
+    profile: ProfileParameters,
+    direction: SwapDirection,
+    bridge_endpoint: &str,
+) -> ActorDeployment {
     let source_root = run_root.join("actor-source");
     let root = run_root.join("maker-actors");
     let source_config = source_root.join("actor-config.json");
@@ -60,7 +118,7 @@ pub fn actor_deployment_with_direction(
         for directory in [&source_root, &root] {
             fs::DirBuilder::new().mode(0o700).create(directory).unwrap();
         }
-        let agreement = agreement_wire(agreement_basis_time, swap_id, direction);
+        let agreement = agreement_wire(agreement_basis_time, swap_id, direction, profile);
         let agreement_file = source_root.join("agreement-v2.borsh");
         let claim_key = source_root.join("claim-recovery.key");
         let zcash_key = source_root.join("zcash.key");
@@ -84,7 +142,7 @@ pub fn actor_deployment_with_direction(
             "claim_preimage_file": serde_json::Value::Null,
             "zcash_key_file": zcash_key,
             "bridge": {
-                "endpoint": "http://127.0.0.1:19001",
+                "endpoint": bridge_endpoint,
                 "journal_db": source_root.join("unused-source-bridge.sqlite3"),
                 "capability_file": capability,
                 "runtime": {
@@ -107,7 +165,7 @@ pub fn actor_deployment_with_direction(
                 "identity": {
                     "network": "regtest",
                     "rpc_chain": "test",
-                    "consensus_branch_id": profile_for(direction).1,
+                    "consensus_branch_id": profile.1,
                     "genesis_hash": "77".repeat(32)
                 },
                 "counterparty_scan_blocks": 1000
@@ -144,7 +202,7 @@ pub fn actor_deployment_with_direction(
 /// the contract's refund height 120: the Taker-reveals-first local profile
 /// for `TakerSellsLez` (an older profile is refused there), V1 otherwise.
 #[allow(dead_code)]
-pub fn profile_for(direction: SwapDirection) -> (ZecProfileId, &'static str, BranchId, u32) {
+pub fn profile_for(direction: SwapDirection) -> ProfileParameters {
     match direction {
         SwapDirection::TakerSellsForeign => (
             ZecProfileId::DeterministicLocalV1,
@@ -166,7 +224,14 @@ pub fn profile_for(direction: SwapDirection) -> (ZecProfileId, &'static str, Bra
 /// margin; in `TakerSellsForeign` the earlier (LEZ) refund's bound follows it.
 #[allow(dead_code)]
 pub fn refund_plan_for(direction: SwapDirection, basis_time: u64) -> ZecRefundPlanV1 {
-    let (profile, _, _, anchor_height) = profile_for(direction);
+    refund_plan(direction, profile_for(direction), basis_time)
+}
+
+fn refund_plan(
+    direction: SwapDirection,
+    (profile, _, _, anchor_height): ProfileParameters,
+    basis_time: u64,
+) -> ZecRefundPlanV1 {
     match direction {
         SwapDirection::TakerSellsForeign => ZecRefundPlanV1::new(
             basis_time,
@@ -187,7 +252,12 @@ pub fn refund_plan_for(direction: SwapDirection, basis_time: u64) -> ZecRefundPl
     }
 }
 
-fn agreement_wire(basis_time: u64, swap_id: &str, direction: SwapDirection) -> Vec<u8> {
+fn agreement_wire(
+    basis_time: u64,
+    swap_id: &str,
+    direction: SwapDirection,
+    parameters: ProfileParameters,
+) -> Vec<u8> {
     let maker_secret = SecretKey::from_slice(&[8; 32]).unwrap();
     let taker_secret = SecretKey::from_slice(&[2; 32]).unwrap();
     let maker_public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &maker_secret);
@@ -201,7 +271,7 @@ fn agreement_wire(basis_time: u64, swap_id: &str, direction: SwapDirection) -> V
         SwapDirection::TakerSellsForeign => (taker_hash, maker_hash),
         SwapDirection::TakerSellsLez => (maker_hash, taker_hash),
     };
-    let (profile, _, branch, _) = profile_for(direction);
+    let (profile, _, branch, _) = parameters;
     let binding = ZecSwapBinding::new(
         profile,
         ExpectedBip199Output::new(
@@ -210,7 +280,7 @@ fn agreement_wire(basis_time: u64, swap_id: &str, direction: SwapDirection) -> V
             Zatoshis::from_u64(10_000).unwrap(),
             Bip199Contract::for_profile(
                 profile,
-                120,
+                ZCASH_REFUND_HEIGHT,
                 zcash_funder_hash,
                 secret_digest,
                 zcash_claimant_hash,
@@ -249,7 +319,7 @@ fn agreement_wire(basis_time: u64, swap_id: &str, direction: SwapDirection) -> V
             1,
             40,
         ),
-        refund_plan_for(direction, basis_time),
+        refund_plan(direction, parameters, basis_time),
         NegotiationTranscriptV1::new([9; 32], [10; 32], basis_time + 300),
     );
     let commitment = body.commitment();
