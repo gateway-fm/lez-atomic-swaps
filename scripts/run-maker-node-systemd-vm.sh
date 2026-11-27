@@ -209,7 +209,7 @@ run systemctl --version
 step "Install (docs/maker-systemd-install.md)"
 run useradd --system --no-create-home --shell /usr/sbin/nologin lez-swap
 run env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-maker-node-service.sh
-for name in delivery-signing.key maker-claim-recovery.key maker-claim-preimage.key lez-signer.key; do
+for name in delivery-signing.key maker-claim-recovery.key lez-signer.key; do
   printf '$ head -c 32 /dev/urandom | systemd-creds encrypt --name=%s - /etc/lez/maker/credentials/%s.cred\n' "$name" "$name"
   head -c 32 /dev/urandom | systemd-creds encrypt --name="$name" - "/etc/lez/maker/credentials/$name.cred"
 done
@@ -405,10 +405,9 @@ run curl -sS http://127.0.0.1:8779/ -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}'
 
 step "Inputs: credentials, identities, cookie copies, market constants, env files"
-for name in maker-claim-recovery.key maker-claim-preimage.key; do
-  printf '$ head -c 32 /dev/urandom | systemd-creds encrypt --name=%s - /etc/lez/maker/credentials/%s.cred\n' "$name" "$name"
-  head -c 32 /dev/urandom | systemd-creds encrypt --name="$name" - "/etc/lez/maker/credentials/$name.cred" 2>/dev/null
-done
+name=maker-claim-recovery.key
+printf '$ head -c 32 /dev/urandom | systemd-creds encrypt --name=%s - /etc/lez/maker/credentials/%s.cred\n' "$name" "$name"
+head -c 32 /dev/urandom | systemd-creds encrypt --name="$name" - "/etc/lez/maker/credentials/$name.cred" 2>/dev/null
 # The Maker's Delivery key is its Zcash key: lane 1's, which the devnet's Zebra mines to.
 run systemd-creds encrypt --name=delivery-signing.key /payload/stack/maker/zcash.key \
   /etc/lez/maker/credentials/delivery-signing.key.cred

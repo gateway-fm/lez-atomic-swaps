@@ -3,6 +3,8 @@
 Every command below except the Monero section ran as root in an Ubuntu 24.04 VM (systemd 255) under
 `scripts/run-maker-node-systemd-vm.sh`, which also executed a Bitcoin and a Zcash swap between the
 two units against the devnet's chains; record: `docs/evidence/maker-systemd-2026-11-12/`.
+This is the standalone mode; [maker-install.md](maker-install.md) describes it beside the Maker
+hosted by Logos core, and [cli-reference.md](cli-reference.md) lists every CLI command.
 
 ## Prerequisites
 
@@ -39,15 +41,17 @@ units to `/usr/lib/systemd/system/`, `env.example` and an empty mode-0700 `crede
 Every role key reaches the Nodes as an encrypted credential, decrypted at each start into
 `/run/credentials/<unit>/` (root:root 0440, readable by `lez-swap` through an ACL) and read
 there by the Node, its sidecars and its Zcash actors; the one exception is the Taker's Zcash key
-(below). The Maker unit loads four, the Taker unit two:
+(below). The Maker unit loads three, the Taker unit two:
 
 ```sh
 head -c 32 /dev/urandom | systemd-creds encrypt --name=delivery-signing.key - /etc/lez/maker/credentials/delivery-signing.key.cred
 systemd-creds encrypt --name=lez-signer.key lez-signer.key /etc/lez/maker/credentials/lez-signer.key.cred
 ```
 
-(the same `head -c 32 …` for `maker-claim-recovery.key` and `maker-claim-preimage.key`, and the
-Taker's own `lez-signer.key` and `zcash.key` into `/etc/lez/taker/credentials/`). `lez-signer.key` is the role's
+(the same `head -c 32 …` for `maker-claim-recovery.key`, and the
+Taker's own `lez-signer.key` and `zcash.key` into `/etc/lez/taker/credentials/`). The Maker holds
+no claim preimage (the Taker holds the swap secret in both directions), so the unit loads none
+and the Node has no flag for one. `lez-signer.key` is the role's
 LEZ account key (64 lowercase hex). Without a TPM, `systemd-creds` binds them to
 `/var/lib/systemd/credential.secret` only. Per role, as run:
 
@@ -68,9 +72,9 @@ claim-recovery key is the `maker-claim-recovery.key` credential.
 **What stays in plaintext for Zcash** (`lez-swap` mode 0600 under `/var/lib/lez/<role>/`): the
 Taker's Zcash key as one role-level copy, `zec/zcash.key` (32 raw bytes, written from its
 credential only when the key changes: every swap binds that file); and in each swap's
-`btc/swaps/<id>/zec/` the swap's own `claim-recovery.key` and the funder's `claim-preimage.key`,
-kept after completion (the Maker reads its own again for a replayed completion). No swap
-directory holds a role's long-lived key.
+`btc/swaps/<id>/zec/` the swap's own `claim-recovery.key` and, on the Taker only, the swap's
+`claim-preimage.key`, kept after completion (the Maker reads its `claim-recovery.key` again for a
+replayed completion). No swap directory holds a role's long-lived key.
 
 ## Monero (Maker only, optional)
 

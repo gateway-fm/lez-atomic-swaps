@@ -185,8 +185,6 @@ fn start_daemon(
         .arg("m5-logos-price-claim-key-v1")
         .arg("--maker-claim-key-file")
         .arg(&actor.claim_key)
-        .arg("--maker-claim-preimage-file")
-        .arg(&actor.claim_preimage)
         .arg("--zec-source-maker-config")
         .arg(&actor.source_config)
         .arg("--zec-maker-actor-root")

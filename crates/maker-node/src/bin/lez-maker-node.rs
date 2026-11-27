@@ -227,10 +227,6 @@ struct ZecArguments {
     /// Owner-only file containing one raw 32-byte claim-recovery key.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id"])]
     maker_claim_key_file: Option<PathBuf>,
-    /// Deprecated and ignored: the Maker holds no claim preimage (the Taker
-    /// holds the swap secret in both directions).
-    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
-    maker_claim_preimage_file: Option<PathBuf>,
     /// Existing owner-private per-swap Maker configs used as authority templates.
     #[arg(
         long,
@@ -1089,9 +1085,7 @@ impl PairAuthorities {
 /// Whether the ZEC claim flags are absent; trivially true when ZEC is not built.
 #[cfg(feature = "pair-zec")]
 fn zec_claim_arguments_absent(arguments: &Arguments) -> bool {
-    arguments.zec.maker_claim_key_id.is_none()
-        && arguments.zec.maker_claim_key_file.is_none()
-        && arguments.zec.maker_claim_preimage_file.is_none()
+    arguments.zec.maker_claim_key_id.is_none() && arguments.zec.maker_claim_key_file.is_none()
 }
 
 #[cfg(not(feature = "pair-zec"))]
@@ -1110,27 +1104,13 @@ fn configured_zec_authority(
     match (
         arguments.zec.maker_claim_key_id.as_deref(),
         arguments.zec.maker_claim_key_file.as_deref(),
-        arguments.zec.maker_claim_preimage_file.as_deref(),
         zec_actor_provisioner,
     ) {
-        (None, None, None, None) => Ok(None),
-        (Some(claim_key_id), Some(claim_key_file), preimage_file, Some(provisioner)) => {
-            // A Node-wide claim preimage was one secret for the whole catalog:
-            // every swap's LEZ claim would reveal every other open swap's. The
-            // Maker holds no claim preimage at all (the Taker holds the swap
-            // secret in both directions); the flag is deprecated, ignored for
-            // one template and refused for more.
-            if preimage_file.is_some() {
-                if provisioner.template_count() > 1 {
-                    bail!(
-                        "--maker-claim-preimage-file is one secret for a catalog of {} templates; drop the flag, the Maker holds no claim preimage",
-                        provisioner.template_count()
-                    );
-                }
-                eprintln!(
-                    "maker: --maker-claim-preimage-file is deprecated and ignored; the Maker holds no claim preimage (the Taker holds the swap secret)"
-                );
-            }
+        (None, None, None) => Ok(None),
+        // The Maker holds no claim preimage (the Taker holds the swap secret
+        // in both directions), so its claim-recovery key is its only ZEC
+        // claim secret.
+        (Some(claim_key_id), Some(claim_key_file), Some(provisioner)) => {
             let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;
             let claim_key = ProtectedClaimKey::new(claim_key_id, *claim_key_material)
                 .context("validate maker claim-recovery key ID")?;
@@ -1143,7 +1123,7 @@ fn configured_zec_authority(
             Ok(Some((recovery_store, provisioner)))
         }
         _ => bail!(
-            "ZEC claim, preimage, templates, root, program, and SHA-256 authority must be configured together"
+            "ZEC claim, templates, root, program, and SHA-256 authority must be configured together"
         ),
     }
 }
@@ -1303,8 +1283,6 @@ mod tests {
             "maker-claim-v1",
             "--maker-claim-key-file",
             "/tmp/claim.key",
-            "--maker-claim-preimage-file",
-            "/tmp/preimage.key",
         ]
     }
 

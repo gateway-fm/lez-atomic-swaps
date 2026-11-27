@@ -35,7 +35,6 @@ pub struct ActorDeployment {
     pub program: PathBuf,
     pub program_sha256: String,
     pub claim_key: PathBuf,
-    pub claim_preimage: PathBuf,
     pub agreement_basis_time: u64,
 }
 
@@ -64,15 +63,10 @@ pub fn actor_deployment_with_direction(
         let agreement = agreement_wire(agreement_basis_time, swap_id, direction);
         let agreement_file = source_root.join("agreement-v2.borsh");
         let claim_key = source_root.join("claim-recovery.key");
-        let preimage = source_root.join("claim-preimage.key");
         let zcash_key = source_root.join("zcash.key");
         let capability = source_root.join("bridge.capability");
         write_private(&agreement_file, &agreement);
         write_raw_key(&claim_key, 0x7a);
-        // The Maker holds no claim preimage in either direction (the Taker
-        // reveals it); the file exists only for tests that pass the
-        // deprecated, ignored `--maker-claim-preimage-file`.
-        write_raw_key(&preimage, CLAIM_PREIMAGE[0]);
         write_raw_key(&zcash_key, 8);
         write_private(&capability, b"m5_actor_capability_0123456789abcdef");
         let config = json!({
@@ -142,7 +136,6 @@ pub fn actor_deployment_with_direction(
         program,
         program_sha256: hex::encode(program_identity),
         claim_key: source_root.join("claim-recovery.key"),
-        claim_preimage: source_root.join("claim-preimage.key"),
         agreement_basis_time,
     }
 }

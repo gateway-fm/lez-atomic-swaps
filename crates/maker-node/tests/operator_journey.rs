@@ -894,8 +894,6 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         .arg("m5-operator-claim-key-v1")
         .arg("--maker-claim-key-file")
         .arg(&actor.claim_key)
-        .arg("--maker-claim-preimage-file")
-        .arg(&actor.claim_preimage)
         .arg("--zec-source-maker-config")
         .arg(&actor.source_config)
         .arg("--zec-maker-actor-root")
