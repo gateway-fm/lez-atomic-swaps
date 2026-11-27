@@ -2358,8 +2358,9 @@ def scenario_maker_cli(stamp: str) -> dict:
     role image ships (`docker exec <maker> lez-maker-cli`), the Taker's as
     always. The CLI has no command for maker_local_route_save_v1, which the
     other scenarios use to save the pair and its price at once, so the route is
-    configured with configure-pair, then set-local-price, each against the
-    revision `pairs` and `prices` list; then publish-offer, offers, monitor
+    configured with configure-pair (disabled), set-local-price, then
+    configure-pair (enabled), each against the revision `pairs` and `prices`
+    list, so the test does not need an earlier test's price on its lane; then publish-offer, offers, monitor
     until the Maker reports the swap completed and terminal, and history;
     health and balances answer the documented fields (assert_cli_health,
     assert_cli_balances: the LEZ balance is the indexer's). The owner boundary: the same CLI as another user (nobody, 65534) is refused
@@ -2367,11 +2368,15 @@ def scenario_maker_cli(stamp: str) -> dict:
     route = ["--pair", "bitcoin", "--direction", "taker-sells-lez" if REVERSE else "taker-sells-foreign"]
     revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
                                      if r["value"]["route"] == ROUTE), [])
-    maker_cli("configure-pair", "--request-id", f"e2e-cli-pair-{stamp}", *revision(maker_cli("pairs")), *route,
-              "--enabled", "true", "--price-source", "local", "--minimum-foreign-units", str(FOREIGN_UNITS),
-              "--maximum-foreign-units", str(FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
-    maker_cli("set-local-price", "--request-id", f"e2e-cli-price-{stamp}", *revision(maker_cli("prices")), *route,
-              "--lez-units-per-lot", "1", "--foreign-units-per-lot", "1000")
+    # A route is enabled only once it has a local price, and a lane's Maker has
+    # none for this route until a test saved one: disabled, priced, enabled.
+    for step, enabled in (("off", "false"), ("on", "true")):
+        maker_cli("configure-pair", "--request-id", f"e2e-cli-pair-{stamp}-{step}", *revision(maker_cli("pairs")), *route,
+                  "--enabled", enabled, "--price-source", "local", "--minimum-foreign-units", str(FOREIGN_UNITS),
+                  "--maximum-foreign-units", str(FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+        if step == "off":
+            maker_cli("set-local-price", "--request-id", f"e2e-cli-price-{stamp}", *revision(maker_cli("prices")), *route,
+                      "--lez-units-per-lot", "1", "--foreign-units-per-lot", "1000")
     offer_id = f"offer-e2e-cli-{stamp}"
     maker_cli("publish-offer", "--request-id", f"e2e-cli-publish-{stamp}", "--offer-id", offer_id, *route)
     listed = [record for record in maker_cli("offers") if record["offer"]["id"] == offer_id]
