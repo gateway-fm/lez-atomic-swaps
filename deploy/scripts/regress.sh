@@ -130,6 +130,16 @@ tier_tests() { # tier_tests <tier>
       echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"; echo "ui:zec:logos-happy:TakerSellsForeign"
       # a Zcash offer from the Maker desk's form, taken from the Taker desk (no corridor)
       echo "ui:zec:zec-desk-offer:TakerSellsLez"; echo "ui:zec:zec-desk-offer:TakerSellsForeign"
+      # RFP-003 Milestone 5: the operator CLIs on the refund and claim paths (U3, U4), the pre-take outage in
+      # the other direction (R8), the price module's staleness bound (F8), the Zcash refund path's kill points (R4)
+      echo "node:btc:maker-cli-refund:TakerSellsForeign"; echo "node:zec:zec-maker-cli-refund:TakerSellsForeign"
+      # selling LEZ only: the Maker's own LEZ claim held in its sidecar (a devnet built with LEZ_TEST_HOOKS=1)
+      echo "node:zec:zec-maker-cli-claim:TakerSellsLez"
+      echo "node:btc:taker-cli:TakerSellsLez"; echo "node:zec:zec-taker-cli-refund:TakerSellsLez"
+      echo "node:xmr:xmr-taker-cli:TakerSellsLez"
+      echo "node:btc:outage-before-take:TakerSellsLez"; echo "node:zec:zec-outage-before-take:TakerSellsForeign"
+      echo "node:btc:maker-price-module-stale:TakerSellsForeign"
+      for d in "${directions[@]}"; do echo "node:zec:zec-kill-maker-refund:$d"; echo "node:zec:zec-kill-taker-refund:$d"; done
       # last: each makes its own chain, one no other test can run on
       # a stranger's credit to a funded escrow's custody (TM-0032): the swap still settles,
       # the ending's recipient gets the lot and the credit; refunds refund the Taker's LEZ
@@ -288,11 +298,15 @@ profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile t
   # LEZ its Taker-reveals-first twin): the refund journeys' (-v6, -v8) is group
   # zec-v6, every other ZEC test runs on -v5 (-v7) in `fast`.
   if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
+    # as the refund journeys: the ones an operator CLI drives, and the refund path's kill points
+    case "$scenario" in zec-maker-cli-refund|zec-taker-cli-refund|zec-kill-maker-refund|zec-kill-taker-refund) echo zec-v6; return 0 ;; esac
     case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window|zec-custody-credit-refund) echo zec-v6 ;; *) echo fast ;; esac
     return 0
   fi
   [[ "$pair" != xmr ]] || { echo fast; return 0; }
   [[ "$pair" == btc ]] || return 0
+  # as maker-refund: the same journey with the Maker driven by its CLI
+  [[ "$scenario" != maker-cli-refund ]] || { echo refund; return 0; }
   case "$scenario" in taker-refund|taker-refund-offline|maker-refund|refund-then-maker-lock|btc-custody-credit-refund) echo refund ;; *) echo fast ;; esac
 }
 switches=0
@@ -410,6 +424,8 @@ expected_seconds() { # expected_seconds <test>
       *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
       # two swaps, the Maker killed and started again in each
       *zec-kill-maker-claim*) seconds=700 ;;
+      # two swaps, in each the Maker's claim attempts held until the operator's request is in
+      *zec-maker-cli-claim*) seconds=900 ;;
       # a 60 s offer, the Maker down past it, then the happy swap
       *zec-activate-after-expiry*) seconds=500 ;;
       node:xmr:xmr-kill-*) seconds=2700 ;;

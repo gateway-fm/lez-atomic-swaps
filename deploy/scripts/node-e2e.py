@@ -19,6 +19,11 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py late-claim-unmined   the revealing claim sent but never mined until the refund path is open
     node-e2e.py maker-cli        the happy swap with every Maker call made by lez-maker-cli; a non-owner is refused (U3)
     node-e2e.py maker-price-module  a route priced by the TEST Logos price module: quote, publish, a swap; then fail-closed (F8)
+    node-e2e.py maker-price-module-stale  the module's quote older than the Node's bound: quote and publish fail closed,
+                                 on the Bitcoin route and on a Zcash route priced by the module (F8)
+    node-e2e.py maker-cli-refund  maker-refund with every Maker call made by lez-maker-cli: `refund`, `monitor`, `history` (U3)
+    node-e2e.py taker-cli        the happy swap with the Taker driven by lez-taker-cli; list, health, balances; a non-owner is refused (U4)
+    node-e2e.py taker-cli-refund taker-refund with the Taker driven by lez-taker-cli (U4)
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py concurrent-kill-maker  the same, the Maker SIGKILLed while both swaps are locked (R5)
     node-e2e.py mixed-pair       a Bitcoin and a Zcash swap in flight at once on the same two Nodes (R5)
@@ -26,7 +31,8 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
     node-e2e.py offline-after-second-lock / offline-after-claim  the same cut later, and the counterparty killed under it
     node-e2e.py taker-refund-offline  taker-refund with Chat and Delivery cut through the Taker's lock and refund (R2)
-    node-e2e.py outage-before-take  Chat and Delivery cut before the take: refused, no swap; the same take succeeds once back (R8)
+    node-e2e.py outage-before-take  Chat and Delivery cut before the take: refused, no swap; an offer published under the
+                                 cut is committed and reaches the Taker once they are back, where the same take succeeds (R8)
     node-e2e.py zebra-down       the lane's Zebra stopped: a Bitcoin swap completes, then a Zcash one once it is back (R3)
     node-e2e.py taker-refund     Maker stopped before funding; Taker refunds its Bitcoin
     node-e2e.py maker-refund     Taker never claims; Maker refunds LEZ, then Taker refunds Bitcoin
@@ -90,6 +96,20 @@ tests/fixtures/zec-catalog-fixture.sh --direction …, which also recreates both
                                          cleared; the Maker activates at its recorded
                                          acceptance and the swap completes (needs
                                          LEZ_TEST_HOOKS=1)
+    node-e2e.py --pair Zcash zec-maker-cli-refund (TakerSellsForeign): zec-maker-refund with
+                                         every Maker call made by lez-maker-cli; the Maker's
+                                         LEZ refund is asked for with `lez-maker-cli refund` (U3)
+    node-e2e.py --pair Zcash zec-maker-cli-claim (TakerSellsLez): the Maker's own LEZ claim
+                                         held in its sidecar, `lez-maker-cli claim` admitted
+                                         while it is, the hold cleared; the swap completes
+                                         once (U3; needs LEZ_TEST_HOOKS=1)
+    node-e2e.py --pair Zcash zec-taker-cli-refund  zec-taker-refund with the Taker driven by
+                                         lez-taker-cli (U4)
+    node-e2e.py --pair Zcash zec-kill-maker-refund / zec-kill-taker-refund  zec-maker-refund
+                                         with the role's container SIGKILLed while both
+                                         legs wait for the refund times and again once the
+                                         Taker's refund is admitted (R4)
+    node-e2e.py --pair Monero xmr-taker-cli  xmr-happy with the Taker driven by lez-taker-cli (U4)
     node-e2e.py --pair Zcash zec-claim-at-one-confirmation  zec-happy with the Claim
                                          pressed while the Zcash funding is one deep,
                                          below the pre-reveal gate (two): the Node
@@ -267,7 +287,7 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
                   "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
                   "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding", "zec-kill-maker-claim",
-                  "zec-activate-after-expiry",
+                  "zec-activate-after-expiry", "zec-maker-cli-claim",
                   # the XMR scenarios that write a Node's test hooks or switch,
                   # stop a wallet-rpc container or run the Maker's probe
                   "xmr-taker-refund", "xmr-taker-refund-kill", "xmr-taker-clock-ahead", "xmr-punish-replans",
@@ -297,6 +317,9 @@ RELEASE_UNAVAILABLE = (
     ("node:zec:zec-maker-early-claim:*", RELEASE_DEALER),
     ("node:btc:maker-price-module:*", "compiles the repository's TEST price module (crates/logos-price-c-api), "
                                       "which a release bundle does not carry"),
+    ("node:btc:maker-price-module-stale:*", "compiles the repository's TEST price module (crates/logos-price-c-api), "
+                                            "which a release bundle does not carry"),
+    ("node:zec:zec-maker-cli-claim:*", RELEASE_HOOKS),
 )
 
 
@@ -383,6 +406,8 @@ def rpc(role: str, method: str, params: object, timeout: int = 300) -> dict:
     """One owner-RPC call; returns the full JSON-RPC envelope."""
     if role == "taker" and TAKER_CLI:
         return taker_cli_rpc(method, params)
+    if role == "maker" and MAKER_CLI:
+        return maker_cli_rpc(method, params)
     container, socket = NODES[role]
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": [params]})
     # No -i: curl takes the body from --data and never reads stdin, while the
@@ -2257,6 +2282,74 @@ def maker_cli(*arguments: str) -> object:
     return json.loads(result.stdout)
 
 
+def assert_cli_health(role: str, reported: dict, degraded: bool) -> dict:
+    """`lez-<role>-cli health` as a script reads it (docs/cli-reference.md):
+    the Node answered ready, and with `degraded` false Delivery and Chat are
+    available and nothing is degraded, with it true both are unavailable and
+    the Node says degraded (the command still exits 0). The Maker lists the
+    scenario's route with a dependency state; the Taker names the methods it
+    serves and a capability row for the scenario's pair and direction."""
+    want = "unavailable" if degraded else "available"
+    problems = [f"{field} {reported.get(field)!r}, expected {expected!r}" for field, expected in
+                (("schema_version", 1), ("ready", True), ("degraded", degraded), ("delivery", want), ("chat", want))
+                if reported.get(field) != expected or type(reported.get(field)) is not type(expected)]
+    if role == "maker":
+        listed = [entry.get("state") for entry in reported.get("routes") or [] if entry.get("route") == ROUTE]
+        if len(listed) != 1 or listed[0] not in {"disabled", "available"}:
+            problems.append(f"routes names {ROUTE} as {listed}, expected once, disabled or available")
+    else:
+        methods = reported.get("registered_methods") or {}
+        missing = [name for name in ("health", "offer_list", "swap_list", "initiate", "monitor", "claim", "refund", "lock")
+                   if methods.get(name) is not True]
+        if missing:
+            problems.append(f"registered_methods lacks {missing}")
+        capabilities = reported.get("pair_capabilities") or []
+        if not any(row.get("pair") == ROUTE["pair"] and row.get("supported_direction") == ROUTE["direction"]
+                   for row in capabilities):
+            problems.append(f"pair_capabilities has no row for {ROUTE}")
+    if problems:
+        raise Failure(f"lez-{role}-cli health is not as documented: {'; '.join(problems)}: {json.dumps(reported)[:400]}")
+    log(f"  lez-{role}-cli health: ready, degraded {str(degraded).lower()}, delivery and chat {want}")
+    return reported
+
+
+def assert_cli_balances(role: str, read) -> dict:
+    """`lez-<role>-cli balances` (`read` runs it): schema 1, the Core wallet
+    and the LEZ owner account each with a state and exact integer amounts, an
+    available wallet named, and the LEZ balance the one the indexer holds for
+    that account (finalized state on both sides; read again for up to 30 s
+    while a block lands between the two reads)."""
+    deadline = time.time() + 30
+    while True:
+        view = read()
+        bitcoin, lez = view.get("bitcoin") or {}, view.get("lez") or {}
+        whole = lambda value: isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        problems = []
+        if view.get("schema_version") != 1:
+            problems.append(f"schema_version {view.get('schema_version')!r}")
+        if bitcoin.get("state") not in {"available", "unavailable", "disabled"} or lez.get("state") != "available":
+            problems.append(f"states bitcoin {bitcoin.get('state')!r}, lez {lez.get('state')!r}")
+        if bitcoin.get("state") == "available" and not (isinstance(bitcoin.get("wallet"), str) and bitcoin["wallet"]):
+            problems.append("an available Core wallet without a name")
+        problems += [f"{name} {amount!r} is not a whole number" for name, amount in
+                     (*((key, bitcoin.get(key)) for key in ("trusted_sat", "untrusted_pending_sat", "immature_sat")),
+                      *((key, lez.get(key)) for key in ("balance_atomic_units", "nonce"))) if not whole(amount)]
+        if not (isinstance(lez.get("owner_account_base58"), str) and lez["owner_account_base58"]):
+            problems.append("no LEZ owner account")
+        if problems:
+            raise Failure(f"lez-{role}-cli balances is not as documented: {'; '.join(problems)}: {json.dumps(view)[:400]}")
+        indexed = lez_account_balance(lez["owner_account_base58"])
+        if indexed == lez["balance_atomic_units"]:
+            break
+        if time.time() >= deadline:
+            raise Failure(f"lez-{role}-cli balances reads {lez['balance_atomic_units']} LEZ units for "
+                          f"{lez['owner_account_base58']}, the indexer {indexed}")
+        time.sleep(3)
+    log(f"  lez-{role}-cli balances: Core wallet {bitcoin.get('wallet')} ({bitcoin['state']}, {bitcoin['trusted_sat']} sat "
+        f"trusted), LEZ {lez['balance_atomic_units']} units as the indexer holds")
+    return view
+
+
 def scenario_maker_cli(stamp: str) -> dict:
     """U3/F9: the happy swap with every Maker call made by the operator CLI the
     role image ships (`docker exec <maker> lez-maker-cli`), the Taker's as
@@ -2264,8 +2357,9 @@ def scenario_maker_cli(stamp: str) -> dict:
     other scenarios use to save the pair and its price at once, so the route is
     configured with configure-pair, then set-local-price, each against the
     revision `pairs` and `prices` list; then publish-offer, offers, monitor
-    until the Maker reports the swap completed and terminal, and history. The
-    owner boundary: the same CLI as another user (nobody, 65534) is refused
+    until the Maker reports the swap completed and terminal, and history;
+    health and balances answer the documented fields (assert_cli_health,
+    assert_cli_balances: the LEZ balance is the indexer's). The owner boundary: the same CLI as another user (nobody, 65534) is refused
     connecting to the Node's 0600 socket, so no request is made."""
     route = ["--pair", "bitcoin", "--direction", "taker-sells-lez" if REVERSE else "taker-sells-foreign"]
     revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
@@ -2299,6 +2393,8 @@ def scenario_maker_cli(stamp: str) -> dict:
     if [entry["phase"] for entry in history] != ["Completed"]:
         raise Failure(f"lez-maker-cli history does not list {swap_id[:12]} Completed: {history}")
     log(f"  lez-maker-cli monitor reports {swap_id[:12]} completed and terminal; history lists it Completed")
+    owner_reads = {"health": assert_cli_health("maker", maker_cli("health"), degraded=False),
+                   "balances": assert_cli_balances("maker", lambda: maker_cli("balances"))}
     owner_before = {"pairs": maker_cli("pairs"), "prices": maker_cli("prices"), "history": maker_cli("history")}
     denied = wrong_owner_matrix("maker", MAKER_CLI_OWNER_COMMANDS, {"stamp": stamp, "swap": swap_id, "offer": offer_id})
     # What the refused writes would have left, read back as the owner: nothing.
@@ -2308,7 +2404,8 @@ def scenario_maker_cli(stamp: str) -> dict:
         raise Failure(f"a refused command left a trace in the Maker Node: offers {stray}, pairs/prices/history "
                       f"{'changed' if owner_after != owner_before else 'unchanged'}")
     log("  as the owner afterwards: no offer, pair, price or swap from the refused commands")
-    return {"swap_id": swap_id, "offer_id": offer_id, "history": history, "wrong_owner": denied}
+    return {"swap_id": swap_id, "offer_id": offer_id, "history": history, "owner_reads": owner_reads,
+            "wrong_owner": denied}
 
 
 # Every lez-maker-cli / lez-taker-cli command that calls its Node's owner RPC, with
@@ -2332,6 +2429,7 @@ MAKER_CLI_OWNER_COMMANDS = (
     ("monitor", "--id", "{swap}"),
     ("claim", "--id", "{swap}", "--request-id", "e2e-other-claim-{stamp}", "--expected-generation", "0"),
     ("refund", "--id", "{swap}", "--request-id", "e2e-other-refund-{stamp}", "--expected-generation", "0"),
+    ("balances",),
 )
 TAKER_CLI_OWNER_COMMANDS = (
     ("health",), ("balances",), ("swap", "offers"), ("swap", "list"),
@@ -2368,17 +2466,32 @@ def wrong_owner_matrix(role: str, commands: tuple, values: dict) -> list[dict]:
 
 
 def scenario_taker_cli(stamp: str) -> dict:
-    """The happy swap with the Taker driven by lez-taker-cli (through_taker_cli),
+    """The happy swap with the Taker driven by lez-taker-cli (through_taker_cli);
+    then, as the owner, `swap list` (the swap completed, the row the owner RPC
+    answers), `health` and `balances` (assert_cli_health, assert_cli_balances);
     then the Taker's wrong-owner table (TAKER_CLI_OWNER_COMMANDS)."""
     summary = through_taker_cli(scenario_happy)(stamp)
     offer = next(swap.get("offer_id") for swap in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]
                  if swap["swap_id"] == summary["swap_id"])
     swaps_before = call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]
+    listed = taker_cli("swap", "list")
+    rows = [swap for swap in listed.get("swaps") or [] if swap.get("swap_id") == summary["swap_id"]]
+    # what identifies the swap and its end, not the fields a later read may refresh
+    facts = lambda swap: {key: swap.get(key) for key in ("swap_id", "offer_id", "route", "state", "progress_generation")}
+    if listed.get("schema_version") != 1 or len(rows) != 1 or rows[0].get("state") != "completed" \
+            or rows[0].get("route") != ROUTE or facts(rows[0]) not in [facts(swap) for swap in swaps_before]:
+        raise Failure(f"lez-taker-cli swap list does not list {summary['swap_id'][:12]} completed on {ROUTE} as the "
+                      f"owner RPC does: {json.dumps(rows)[:300]}")
+    log(f"  lez-taker-cli swap list: {summary['swap_id'][:12]} completed, the owner RPC's row, among "
+        f"{len(listed['swaps'])} swap(s)")
+    owner_reads = {"swap_list_row": rows[0],
+                   "health": assert_cli_health("taker", taker_cli("health"), degraded=False),
+                   "balances": assert_cli_balances("taker", lambda: taker_cli("balances"))}
     denied = wrong_owner_matrix("taker", TAKER_CLI_OWNER_COMMANDS,
                                 {"stamp": stamp, "swap": summary["swap_id"], "offer": offer})
     if call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] != swaps_before:
         raise Failure("a refused command changed the Taker Node's swap list")
-    return {**summary, "wrong_owner": denied}
+    return {**summary, "owner_reads": owner_reads, "wrong_owner": denied}
 
 
 # ---- the Taker's side through its operator CLI (taker-cli) --------------------------
@@ -2408,11 +2521,34 @@ def taker_cli_arguments(method: str, params: dict) -> list[str]:
     if method in ("taker_swap_claim_v1", "taker_swap_refund_v1"):
         return ["swap", method.split("_")[2], "--swap-id", params["swap_id"], "--request-id", params["request_id"],
                 "--expected-generation", str(params["expected_generation"])]
-    commands = {"taker_swap_list_v1": ["swap", "list"], "taker_wallet_balances_v1": ["balances"],
-                "taker_health": ["health"]}
+    if method == "taker_wallet_balances_v1":
+        # the Zcash funder's outputs and the Monero role wallet are asked for by flag
+        return ["balances"] + [f"--{chain}" for chain in ("zcash", "monero") if params.get(chain)]
+    commands = {"taker_swap_list_v1": ["swap", "list"], "taker_health": ["health"]}
     if method not in commands:
         raise Failure(f"lez-taker-cli has no command for {method}")
     return commands[method]
+
+
+def cli_reply(cli: str, result: subprocess.CompletedProcess) -> dict:
+    """What one CLI command printed, as rpc() answers: its JSON as the result,
+    or the `local RPC error <code>: <message> <data>` both CLIs print on
+    stderr as the error (lez-maker-cli after `Error: `); anything else that
+    failed (no socket, a refused argument, the CLI's own timeout) is code -1,
+    as a transport failure is."""
+    if result.returncode == 0:
+        return {"result": json.loads(result.stdout)}
+    printed = re.search(r"local RPC error (-?\d+): (.*)", result.stderr)
+    if printed is None:
+        return {"error": {"code": -1, "message": f"{cli}: {result.stderr.strip()[-300:]}"}}
+    code, text = int(printed.group(1)), printed.group(2).strip()
+    # the server's data follows the message as compact JSON
+    for at in (i for i in range(len(text)) if text.startswith(" {", i)):
+        try:
+            return {"error": {"code": code, "message": text[:at], "data": json.loads(text[at + 1:])}}
+        except ValueError:
+            continue
+    return {"error": {"code": code, "message": text}}
 
 
 def taker_cli_rpc(method: str, params: dict) -> dict:
@@ -2426,19 +2562,7 @@ def taker_cli_rpc(method: str, params: dict) -> dict:
     if arguments[0] == "swap" and arguments[1] not in TAKER_CLI_READS:
         log(f"  lez-taker-cli {' '.join(arguments[:2])}: exit {result.returncode} after {time.time() - started:.0f} s"
             + (f": {result.stderr.strip()[-300:]}" if result.returncode else ""))
-    if result.returncode == 0:
-        return {"result": json.loads(result.stdout)}
-    printed = re.search(r"local RPC error (-?\d+): (.*)", result.stderr)
-    if printed is None:
-        return {"error": {"code": -1, "message": f"lez-taker-cli: {result.stderr.strip()[-300:]}"}}
-    code, text = int(printed.group(1)), printed.group(2).strip()
-    # the server's data follows the message as compact JSON
-    for at in (i for i in range(len(text)) if text.startswith(" {", i)):
-        try:
-            return {"error": {"code": code, "message": text[:at], "data": json.loads(text[at + 1:])}}
-        except ValueError:
-            continue
-    return {"error": {"code": code, "message": text}}
+    return cli_reply("lez-taker-cli", result)
 
 
 def through_taker_cli(scenario):
@@ -2451,6 +2575,186 @@ def through_taker_cli(scenario):
         finally:
             TAKER_CLI = False
     return run
+
+
+def taker_cli(*arguments: str) -> object:
+    """One lez-taker-cli command in the Taker's container, as the Node's owner
+    (the container's user); its JSON answer (the words it adds for Monero rows
+    go to stderr)."""
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "lez-taker-cli", *arguments],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=600)
+    if result.returncode != 0:
+        raise Failure(f"lez-taker-cli {' '.join(arguments[:2])} failed ({result.returncode}): "
+                      f"{result.stderr.strip()[-300:]}")
+    return json.loads(result.stdout)
+
+
+# ---- the Maker's side through its operator CLI (maker-cli-refund, zec-maker-cli-*) ----
+# With MAKER_CLI set, every owner call a scenario makes to the Maker Node is a
+# `docker exec <maker> lez-maker-cli` command instead (maker_cli_rpc), so the
+# scenario's Maker side is what an operator types; the Taker's is unchanged.
+MAKER_CLI = False
+# The CLI's commands that change something; each one's outcome is logged.
+MAKER_CLI_WRITES = {"publish-offer", "withdraw-offer", "claim", "refund"}
+
+
+def maker_cli_route(route: dict) -> list[str]:
+    """A route as both CLIs take it: --pair and --direction."""
+    return ["--pair", route["pair"].lower(),
+            "--direction", "taker-sells-lez" if route["direction"] == "TakerSellsLez" else "taker-sells-foreign"]
+
+
+def maker_cli_arguments(method: str, params: dict) -> list[str]:
+    """The lez-maker-cli command for one Maker owner RPC (docs/cli-reference.md).
+    A method the CLI has no command for, or parameters its command cannot
+    carry (a filtered list), fails the scenario instead of going around the CLI."""
+    if method == "maker_offer_publish":
+        return ["publish-offer", "--request-id", params["request_id"], "--offer-id", params["offer_id"],
+                *maker_cli_route(params["route"])]
+    if method == "maker_offer_withdraw":
+        return ["withdraw-offer", "--request-id", params["request_id"], "--offer-id", params["offer_id"],
+                "--expected-revision", str(params["expected_revision"])]
+    if method == "maker_price_quote":
+        return ["quote", *maker_cli_route(params["route"])]
+    if method in ("maker_actor_monitor_v1", "swap_status"):
+        return ["monitor" if method == "maker_actor_monitor_v1" else "status", "--id", params["id"]]
+    if method in ("maker_actor_claim_v1", "maker_actor_refund_v1"):
+        return [method.split("_")[2], "--id", params["id"], "--request-id", params["request_id"],
+                "--expected-generation", str(params["expected_generation"])]
+    if method == "maker_wallet_balances_v1":
+        return ["balances"] + (["--zcash"] if params.get("zcash") else [])
+    commands = {"maker_pair_list": ["pairs"], "maker_local_price_list": ["prices"], "maker_health": ["health"],
+                "maker_offer_list": ["offers"], "swap_history": ["history"]}
+    if method not in commands or params:
+        raise Failure(f"lez-maker-cli has no command for {method}{' with ' + json.dumps(params) if params else ''}")
+    return commands[method]
+
+
+def maker_cli_reply(arguments: list[str]) -> dict:
+    """One lez-maker-cli command as the Node's owner, answered as rpc() answers
+    (cli_reply). The CLI waits 30 s for the Node's reply."""
+    result = subprocess.run(["docker", "exec", NODES["maker"][0], "lez-maker-cli", *arguments],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
+    return cli_reply("lez-maker-cli", result)
+
+
+def maker_cli_save_route(request: dict) -> dict:
+    """maker_local_route_save_v1 through the CLI, which has no command for it:
+    the route's policy and its price are two commands there, and a price
+    needs its route saved while an enabled route needs its price. So the
+    route is saved disabled (configure-pair), priced (set-local-price) and
+    then saved as asked, each against the revision `pairs` and `prices` list
+    at that moment, as an operator reads them. The request ids are the
+    request's own with the step's name."""
+    configuration, price = request["configuration"], request["price"]
+    if configuration.get("price_source") != "local":
+        raise Failure(f"maker_local_route_save_v1 saves a local price; got source {configuration.get('price_source')}")
+    route = maker_cli_route(configuration["route"])
+
+    def revision(command: str) -> list[str]:
+        return next((["--expected-revision", str(record["revision"])] for record in maker_cli(command)
+                     if record["value"]["route"] == configuration["route"]), [])
+
+    def configure(step: str, enabled: bool) -> dict:
+        return maker_cli_reply(["configure-pair", "--request-id", f"{request['request_id']}-{step}", *revision("pairs"),
+                                *route, "--enabled", "true" if enabled else "false", "--price-source", "local",
+                                "--minimum-foreign-units", str(configuration["minimum_foreign_units"]),
+                                "--maximum-foreign-units", str(configuration["maximum_foreign_units"]),
+                                "--offer-ttl-seconds", str(configuration["offer_ttl_seconds"])])
+
+    saved = configure("pair-off", False)
+    if "error" in saved:
+        return saved
+    priced = maker_cli_reply(["set-local-price", "--request-id", f"{request['request_id']}-price", *revision("prices"),
+                              *route, "--lez-units-per-lot", str(price["lez_units_per_lot"]),
+                              "--foreign-units-per-lot", str(price["foreign_units_per_lot"])])
+    if "error" in priced:
+        return priced
+    if configuration["enabled"]:
+        saved = configure("pair-on", True)
+        if "error" in saved:
+            return saved
+    return {"result": {"pair": saved["result"], "price": priced["result"]}}
+
+
+def maker_cli_rpc(method: str, params: dict) -> dict:
+    """One Maker owner call through lez-maker-cli, answered as rpc() answers."""
+    if method == "maker_local_route_save_v1":
+        return maker_cli_save_route(params)
+    arguments = maker_cli_arguments(method, params)
+    started = time.time()
+    reply = maker_cli_reply(arguments)
+    if arguments[0] in MAKER_CLI_WRITES:
+        log(f"  lez-maker-cli {arguments[0]}: {'ok' if 'result' in reply else 'refused'} after "
+            f"{time.time() - started:.0f} s" + (f": {json.dumps(reply['error'])[:300]}" if "error" in reply else ""))
+    return reply
+
+
+def through_maker_cli(scenario):
+    """`scenario` with the Maker driven by lez-maker-cli (MAKER_CLI)."""
+    def run(stamp: str) -> dict:
+        global MAKER_CLI
+        MAKER_CLI = True
+        try:
+            return scenario(stamp)
+        finally:
+            MAKER_CLI = False
+    return run
+
+
+def pascal(snake: str) -> str:
+    """`maker_leg_refunded` as swap_history names the phase: `MakerLegRefunded`."""
+    return "".join(word.capitalize() for word in snake.split("_"))
+
+
+def maker_cli_action_evidence(swap_id: str, request_id: str, action: str, phases: set[str]) -> dict:
+    """What an operator reads after a manual claim or refund, with
+    `lez-maker-cli monitor` and `history`: the swap's actor is terminal at one
+    of `phases`, its latest owner action is this request and is `completed`
+    (the attempt that ended the swap carried it), and history lists the swap
+    at the same phase."""
+    wait = Wait(f"lez-maker-cli monitor to report {swap_id[:12]} terminal", 900)
+    while wait.running():
+        view = maker_cli("monitor", "--id", swap_id)
+        phase = ((view.get("progress") or {}).get("observation") or {}).get("phase")
+        if view.get("schedule_state") == "terminal":
+            break
+        wait.note((phase, view.get("schedule_state")), f"maker {phase} (schedule {view.get('schedule_state')})")
+        time.sleep(3)
+    else:
+        raise wait.failure()
+    if phase not in phases:
+        raise Failure(f"lez-maker-cli monitor reports {swap_id[:12]} terminal at {phase}, not {sorted(phases)}")
+    requested = view.get("manual_action") or {}
+    if (requested.get("request_id"), requested.get("action"), requested.get("state")) != (request_id, action, "completed"):
+        raise Failure(f"lez-maker-cli monitor does not show the {action} request {request_id} completed: {requested}")
+    history = [entry for entry in maker_cli("history") if entry.get("id") == swap_id]
+    if [entry["phase"] for entry in history] != [pascal(phase)]:
+        raise Failure(f"lez-maker-cli history does not list {swap_id[:12]} {pascal(phase)}: {history}")
+    log(f"  lez-maker-cli monitor: {swap_id[:12]} terminal at {phase}, the {action} request {request_id} completed; "
+        f"history lists it {pascal(phase)}")
+    return {"phase": phase, "manual_action": requested, "history": history[0]}
+
+
+MAKER_REFUNDED_PHASES = {"refunded", "maker_leg_refunded", "taker_leg_refunded"}
+
+
+def scenario_maker_cli_refund(stamp: str) -> dict:
+    """U3, "manual claims/refunds": maker-refund with every Maker call made by
+    the operator CLI (through_maker_cli). The route is saved and the offer
+    published with configure-pair, set-local-price and publish-offer, the
+    Maker's refund is asked for with `lez-maker-cli refund` at the
+    `lease_generation` `lez-maker-cli monitor` reads, and monitor and history
+    say how it ended (maker_cli_action_evidence). Both chains' balances must
+    fit a refunded swap."""
+    def refund_through_the_cli(stamp: str) -> dict:
+        before = party_balances()
+        summary = scenario_maker_refund(stamp)
+        swap_id = summary["swap_id"]
+        read = maker_cli_action_evidence(swap_id, f"e2e-maker-refund-{stamp}", "refund", MAKER_REFUNDED_PHASES)
+        settled = assert_settled_consistently(before, taker_view(swap_id)["state"], read["phase"])
+        return {**summary, "maker_cli": read, **settled}
+    return through_maker_cli(refund_through_the_cli)(stamp)
 
 
 # The Maker's state volume holds the TEST price modules: a directory of the
@@ -2573,15 +2877,217 @@ def scenario_maker_price_module(stamp: str) -> dict:
         subprocess.run(["docker", "exec", NODES["maker"][0], "rm", "-rf", PRICE_MODULE_DIR], check=False)
 
 
+# What the Maker answers when its price source's answer fails validation: a
+# quote older than --logos-price-max-age-seconds (30 s on the devnet: the
+# launcher does not set it) makes the worker exit non-zero ("quote is stale",
+# crates/logos-price-c-api/src/lib.rs), which the Maker reports as
+# PriceSourceError::InvalidSource (docs/price-module-guide.md, section 4).
+PRICE_SOURCE_INVALID = "external price source failed validation"
+PRICE_MODULE_ZEC_ROUTE = {"pair": "Zcash", "direction": "TakerSellsLez"}
+
+
+def taker_lists_offer(offer_id: str, route: dict, timeout: int = 60) -> dict:
+    """The Taker's authenticated offer list for `route` names `offer_id`; its row."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for entry in call("taker", "taker_offer_list_v1", {"schema_version": 1, "route": route})["offers"]:
+            if entry["offer"]["id"] == offer_id:
+                return entry
+        time.sleep(2)
+    raise Failure(f"the Taker does not list {offer_id} on {route} within {timeout}s")
+
+
+def configure_pair_arguments(request_id: str, value: dict) -> list[str]:
+    """configure-pair for one pair configuration as `pairs` prints it, against
+    the route's current revision."""
+    revision = next((["--expected-revision", str(record["revision"])] for record in maker_cli("pairs")
+                     if record["value"]["route"] == value["route"]), [])
+    return ["configure-pair", "--request-id", request_id, *revision, *maker_cli_route(value["route"]),
+            "--enabled", "true" if value["enabled"] else "false",
+            "--price-source", "local" if value["price_source"] == "local" else "logos-c-api",
+            "--minimum-foreign-units", str(value["minimum_foreign_units"]),
+            "--maximum-foreign-units", str(value["maximum_foreign_units"]),
+            "--offer-ttl-seconds", str(value["offer_ttl_seconds"])]
+
+
+def scenario_maker_price_module_stale(stamp: str) -> dict:
+    """F8, the staleness bound, and a second pair priced by the module. The
+    Maker runs the repository's TEST price module (as maker-price-module
+    does); configure-pair selects the logos-c-api source for the Bitcoin route
+    and for Zcash TakerSellsLez; each route's quote is the module's (5 LEZ
+    units per 2 foreign units, observed 5 s before its revision) and one offer
+    is published on each at that price under the module's sha256, which the
+    Taker lists. Then the Maker runs the fixture's STALE build, whose quote is
+    61 s old, past the Node's 30 s bound: quote and publish-offer on both
+    routes fail closed with -32603 "external price source failed validation",
+    no offer is left by a refused publish, and the two offers already out
+    stay active at their price and listed by the Taker. With the first build
+    back the quote answers again. No swap is made here: maker-price-module
+    completes one on a module-priced offer. The Zcash route is put back as it
+    was and the Maker goes back to no price module however the scenario ends."""
+    global FOREIGN_UNITS, LEZ_UNITS
+    kept_units = FOREIGN_UNITS, LEZ_UNITS
+    FOREIGN_UNITS, LEZ_UNITS = 200_000, 500_000  # the fixture's 5 LEZ units per 2 sat
+    routes = {"bitcoin": (dict(ROUTE), FOREIGN_UNITS), "zcash": (PRICE_MODULE_ZEC_ROUTE, ZEC_FOREIGN_UNITS)}
+    zcash_before = next((record["value"] for record in maker_cli("pairs")
+                         if record["value"]["route"] == PRICE_MODULE_ZEC_ROUTE), None)
+
+    def module_quote(route: dict) -> dict:
+        quote = maker_cli("quote", *maker_cli_route(route))
+        if (quote["price"]["lez_units_per_lot"], quote["price"]["foreign_units_per_lot"],
+                quote["source_revision"] - quote["observed_at_unix_seconds"]) != (5, 2, 5):
+            raise Failure(f"the quote on {route} is not the module's 5/2 observed 5 s before its revision: {quote}")
+        return quote
+
+    def record_of(offer_id: str) -> dict | None:
+        return next((record for record in maker_cli("offers") if record["offer"]["id"] == offer_id), None)
+
+    try:
+        module, module_sha256 = install_test_price_module("")
+        recreate_maker_with_price_module(module, module_sha256)
+        offers, quotes = {}, {}
+        for name, (route, units) in routes.items():
+            maker_cli(*configure_pair_arguments(f"e2e-stale-pair-{name}-{stamp}", {
+                "route": route, "enabled": True, "price_source": "logos_c_api", "minimum_foreign_units": units,
+                "maximum_foreign_units": units, "offer_ttl_seconds": 3600}))
+            quotes[name] = module_quote(route)
+            offer_id = f"offer-e2e-stale-{name}-{stamp}"
+            maker_cli("publish-offer", "--request-id", f"e2e-stale-publish-{name}-{stamp}", "--offer-id", offer_id,
+                      *maker_cli_route(route))
+            offer = record_of(offer_id)["offer"]
+            identity = offer.get("price_source_identity_sha256")
+            identity = bytes(identity).hex() if isinstance(identity, list) else identity
+            if identity != module_sha256 or offer["price"] != quotes[name]["price"]:
+                raise Failure(f"{offer_id} is not at the module's price under its identity: {offer}")
+            listed = taker_lists_offer(offer_id, route)
+            if listed["offer"]["price"] != quotes[name]["price"]:
+                raise Failure(f"the Taker lists {offer_id} at {listed['offer']['price']}, not the module's price")
+            offers[name] = offer_id
+            log(f"  {route['pair']} {route['direction']}: quote 5/2 at revision {quotes[name]['source_revision']}; "
+                f"{offer_id} published under identity {module_sha256[:16]}… and listed by the Taker")
+
+        stale, stale_sha256 = install_test_price_module("STALE")
+        recreate_maker_with_price_module(stale, stale_sha256)
+        refused = {}
+        for name, (route, _) in routes.items():
+            late = f"offer-e2e-stale-{name}-late-{stamp}"
+            refused[name] = {
+                "quote": maker_cli_reply(["quote", *maker_cli_route(route)]),
+                "publish": maker_cli_reply(["publish-offer", "--request-id", f"e2e-stale-publish-{name}-late-{stamp}",
+                                            "--offer-id", late, *maker_cli_route(route)])}
+            for command, reply in refused[name].items():
+                error = reply.get("error") or {}
+                if "result" in reply or error.get("code") != -32603 or error.get("message") != PRICE_SOURCE_INVALID:
+                    raise Failure(f"{command} on {route} with a 61 s old quote did not fail closed with -32603 "
+                                  f"{PRICE_SOURCE_INVALID!r}: {json.dumps(reply)[:300]}")
+            if record_of(late) is not None:
+                raise Failure(f"the refused publish left {late} behind")
+            kept = record_of(offers[name])
+            if kept["status"] != "active" or kept["offer"]["price"] != quotes[name]["price"]:
+                raise Failure(f"{offers[name]} did not stay active at its price with the module stale: {kept}")
+            taker_lists_offer(offers[name], route)
+            log(f"  {route['pair']} {route['direction']}, the module's quote 61 s old: quote and publish-offer answer "
+                f"-32603 {PRICE_SOURCE_INVALID!r}; no offer left; {offers[name]} still active and listed by the Taker")
+
+        recreate_maker_with_price_module(module, module_sha256)
+        again = module_quote(routes["bitcoin"][0])
+        if again["source_revision"] <= quotes["bitcoin"]["source_revision"]:
+            raise Failure(f"the quote after the stale build did not move on: revision {again['source_revision']} after "
+                          f"{quotes['bitcoin']['source_revision']}")
+        log(f"  the first build back: the quote answers again, revision {again['source_revision']}")
+        for name, offer_id in offers.items():
+            maker_cli("withdraw-offer", "--request-id", f"e2e-stale-withdraw-{name}-{stamp}", "--offer-id", offer_id,
+                      "--expected-revision", str(record_of(offer_id)["revision"]))
+        return {"offers": offers, "module_sha256": module_sha256, "quotes": quotes,
+                "stale": {"module_sha256": stale_sha256,
+                          **{name: {command: reply["error"] for command, reply in replies.items()}
+                             for name, replies in refused.items()}},
+                "quote_after": again}
+    finally:
+        FOREIGN_UNITS, LEZ_UNITS = kept_units
+        recreate_maker_with_price_module()
+        # The Zcash route as it was before (the Zcash scenarios save it with the
+        # local source themselves); one this scenario created is left disabled.
+        restored = zcash_before or {"route": PRICE_MODULE_ZEC_ROUTE, "enabled": False, "price_source": "local",
+                                    "minimum_foreign_units": ZEC_FOREIGN_UNITS,
+                                    "maximum_foreign_units": ZEC_FOREIGN_UNITS, "offer_ttl_seconds": 3600}
+        try:
+            maker_cli(*configure_pair_arguments(f"e2e-stale-pair-zcash-back-{stamp}", restored))
+        except Failure as failure:
+            log(f"  could not put the Zcash route back: {failure}")
+        subprocess.run(["docker", "exec", NODES["maker"][0], "rm", "-rf", PRICE_MODULE_DIR], check=False)
+
+
+# What the Maker's Delivery adapter answers for a directory whose mode is not
+# 0700 (RunLocalDeliveryError::InsecureDirectory, crates/node-common/src/
+# run_local_delivery.rs), which the cut's `chmod 0000` makes it.
+DELIVERY_REFUSED_DIRECTORY = "Delivery directory must be an owner-owned non-symlink directory with mode 0700"
+
+
+def publish_under_outage(stamp: str) -> dict:
+    """R8, the Maker's side of the outage (docs/delivery-chat-outage.md,
+    section 3): `lez-maker-cli publish-offer` under the cut fails with -32603
+    and the Delivery adapter's message, after the Node has committed the offer:
+    `lez-maker-cli offers` lists it active. No Taker can discover it: the
+    Taker's offer list is refused as `authenticated_delivery_unavailable`."""
+    request = {"request_id": f"e2e-outage-publish-{stamp}", "offer_id": f"offer-e2e-outage-{stamp}", "route": dict(ROUTE)}
+    reply = maker_cli_reply(maker_cli_arguments("maker_offer_publish", request))
+    error = reply.get("error") or {}
+    if "result" in reply or error.get("code") != -32603 or error.get("message") != DELIVERY_REFUSED_DIRECTORY:
+        raise Failure(f"publish-offer under the outage did not fail with -32603 and the Delivery adapter's message: "
+                      f"{json.dumps(reply)[:300]}")
+    recorded = [record for record in maker_cli("offers") if record["offer"]["id"] == request["offer_id"]]
+    if [record["status"] for record in recorded] != ["active"]:
+        raise Failure(f"after the failed publish the Maker does not list {request['offer_id']} once, active: {recorded}")
+    listing = rpc("taker", "taker_offer_list_v1", {"schema_version": 1, "route": ROUTE})
+    refusal = listing.get("error") or {}
+    category = (refusal.get("data") or {}).get("category") if isinstance(refusal.get("data"), dict) else None
+    if "result" in listing or refusal.get("code") != -32010 or category != "authenticated_delivery_unavailable":
+        raise Failure(f"the Taker's offer list under the outage was not refused as authenticated_delivery_unavailable: "
+                      f"{json.dumps(listing)[:300]}")
+    log(f"  publish-offer under the outage: -32603 {error['message']!r}; the Maker lists {request['offer_id']} active "
+        f"(revision {recorded[0]['revision']}); the Taker's offer list is refused ({category})")
+    return {"request": request, "error": error, "status": recorded[0]["status"], "revision": recorded[0]["revision"],
+            "taker_offer_list": {"code": refusal.get("code"), "category": category}}
+
+
+def assert_outage_offer_recovered(published: dict) -> dict:
+    """After the restore: the offer published under the outage reaches the
+    Taker with no second publish (the Maker writes the missing file at its
+    next health call, RunLocalDelivery::reconcile; assert_restored has made
+    several), its record is the one committed under the outage, and the same
+    publish request now answers was_replay. The offer is then withdrawn: the
+    scenario's swap is on the offer it took."""
+    request = published["request"]
+    entry = discover(request["offer_id"], timeout=120)
+    record = next(record for record in maker_cli("offers") if record["offer"]["id"] == request["offer_id"])
+    if (record["status"], record["revision"]) != (published["status"], published["revision"]):
+        raise Failure(f"{request['offer_id']} is {record['status']} at revision {record['revision']} after the restore, "
+                      f"not as committed under the outage ({published['status']}, {published['revision']})")
+    replay = maker_cli("publish-offer", "--request-id", request["request_id"], "--offer-id", request["offer_id"],
+                       *maker_cli_route(request["route"]))
+    if replay.get("was_replay") is not True or replay.get("revision") != published["revision"]:
+        raise Failure(f"the publish repeated after the restore is not a replay of the committed offer: {replay}")
+    maker_cli("withdraw-offer", "--request-id", request["request_id"].replace("publish", "withdraw"),
+              "--offer-id", request["offer_id"], "--expected-revision", str(record["revision"]))
+    log(f"  restored, {request['offer_id']} reached the Taker with no second publish; the repeated publish is a "
+        "replay; withdrawn")
+    return {"discovered_envelope_sha256": entry.get("signed_envelope_sha256"), "replay": replay}
+
+
 def take_after_outage(offer_id: str, stamp: str) -> tuple[str, dict]:
     """R8: Logos Chat and Delivery cut before the take (cut_delivery_and_chat,
     proven from the Taker's container; both Nodes report both unavailable and
-    are degraded). The Taker's take of an offer it discovered before the cut
+    are degraded, which `lez-maker-cli health` and `lez-taker-cli health` say
+    too, exiting 0). The Taker's take of an offer it discovered before the cut
     is refused as dependency-unavailable with its own category,
     `authenticated_delivery_unavailable` (it cannot confirm the offer is still
     live); afterwards no swap names the offer in the Taker's list, the Maker's
     offer record and swap history are as they were, and no Chat connection
-    reached the Maker. Once both are restored the same request, with the same
+    reached the Maker. Under the same cut the Maker publishes another offer
+    (publish_under_outage): committed, the command failed, not discoverable.
+    Once both are restored that offer reaches the Taker with no second publish
+    (assert_outage_offer_recovered) and the same take request, with the same
     request id, takes the offer."""
     entry = discover(offer_id)
     request = take_request(offer_id, entry, f"e2e-take-{stamp}")
@@ -2592,6 +3098,9 @@ def take_after_outage(offer_id: str, stamp: str) -> tuple[str, dict]:
     watch = None
     try:
         watch = cut_delivery_and_chat()
+        cli_health = {"maker": assert_cli_health("maker", maker_cli("health"), degraded=True),
+                      "taker": assert_cli_health("taker", taker_cli("health"), degraded=True)}
+        published = publish_under_outage(stamp)
         reply = rpc("taker", "taker_swap_initiate_v1", request, timeout=420)
         error = reply.get("error") or {}
         category = (error.get("data") or {}).get("category") if isinstance(error.get("data"), dict) else None
@@ -2618,13 +3127,18 @@ def take_after_outage(offer_id: str, stamp: str) -> tuple[str, dict]:
             watch.stop()
         restore_delivery_and_chat()
     assert_restored()
+    recovered = assert_outage_offer_recovered(published)
     result = initiate(request)
     swap_id = result["swap"]["swap_id"]
     log(f"  restored, the same request {request['request_id']} took {offer_id}: swap {swap_id[:12]} "
         f"({result['swap']['state']}, replay={result.get('was_replay')})")
     return swap_id, {"refused": {"code": error.get("code"), "category": category}, "cut": held,
                      "maker_offer_status": offer_before["status"], "maker_offer_revision": offer_before["revision"],
-                     "request_id": request["request_id"]}
+                     "request_id": request["request_id"],
+                     "cli_health_under_cut": {role: {key: reported.get(key) for key in ("ready", "degraded", "delivery", "chat")}
+                                              for role, reported in cli_health.items()},
+                     "publish_under_cut": {key: value for key, value in published.items() if key != "request"},
+                     "published_offer_id": published["request"]["offer_id"], "publish_after_restore": recovered}
 
 
 def scenario_outage_before_take(stamp: str) -> dict:
@@ -5495,10 +6009,22 @@ def zec_wait_until_phase(swap_id: str, config: str, phases: set[str], timeout: i
 
 # (swap id, request id) -> the generation the Taker admitted that refund request at.
 ZEC_REFUND_REQUESTS: dict[tuple[str, str], int] = {}
+# zec-kill-<role>-refund (R4): the refund path's two kill points, on one
+# zec-maker-refund swap (scenario_zec_maker_refund's kill_role), as kill-<role>
+# has them for Bitcoin. They are tests of their own because the refund journeys
+# are agreed under the refund profiles (zec_refund_profile; regress.sh's zec-v6
+# group), not the ones zec-kill-<role> walks under. At the first point both legs
+# are locked and nothing is claimed or refunded: the Taker's Node reads
+# claim_available, or, selling LEZ with the Maker's funding kept one deep,
+# still awaiting_second_lock or refund_available.
+ZEC_REFUND_KILL_POINTS = ("both legs locked, refund times running", "refund admitted")
+ZEC_REFUND_LOCKED_STATES = {"awaiting_second_lock", "refund_available", "claim_available"}
+ZEC_REFUND_ADMITTED_STATES = {"refund_available", "refund_in_progress"}
 
 
 def zec_refund_until_terminal(swap_id: str, stamp: str, timeout: int,
-                              until: frozenset[str] = frozenset({"refunded"}), mine_pending: bool = False) -> dict:
+                              until: frozenset[str] = frozenset({"refunded"}), mine_pending: bool = False,
+                              kill_role: str | None = None, killed: list | None = None) -> dict:
     """The Taker's LEZ refund as an operator action, repeated with one request id:
     the Node answers taker_action_execution_unavailable until the actor's recovery
     checks pass (lock confirmed, maker lock proven absent or the deadline gone),
@@ -5511,7 +6037,9 @@ def zec_refund_until_terminal(swap_id: str, stamp: str, timeout: int,
     (mine to the refund height, queue the Maker's refund) asks for either and
     comes back for `refunded`. With `mine_pending` zebra is generated for
     whatever waits in its mempool (the Taker's own Zcash refund when it sold
-    ZEC): a LEZ refund needs no block from here."""
+    ZEC): a LEZ refund needs no block from here. With `kill_role` that role's
+    container is killed once the refund is admitted (kill_at, appended to
+    `killed`); the same request is then replayed as before."""
     wait = Wait(f"the Taker's refund of {swap_id[:12]} to reach {'/'.join(sorted(until))}", timeout)
     attempt = 0
     request_id = f"e2e-refund-{stamp}"
@@ -5537,6 +6065,8 @@ def zec_refund_until_terminal(swap_id: str, stamp: str, timeout: int,
             if not reply["result"].get("was_replay") or attempt % 4 == 1:
                 log(f"  refund request {'replayed' if reply['result'].get('was_replay') else 'admitted'} "
                     f"(attempt {attempt}, taker {view['state']} | maker: {maker_phase(swap_id)})")
+            if kill_role and not reply["result"].get("was_replay"):
+                killed.append(kill_at(kill_role, swap_id, ZEC_REFUND_KILL_POINTS[1], ZEC_REFUND_ADMITTED_STATES))
         else:
             category = (reply["error"].get("data") or {}).get("category")
             if category not in {"taker_action_execution_unavailable", "taker_action_conflict", "taker_action_unavailable"}:
@@ -5773,7 +6303,7 @@ def zec_maker_zcash_refund_first(swap_id: str, stamp: str, corridor: dict, fundi
     raise wait.failure()
 
 
-def scenario_zec_maker_refund(stamp: str) -> dict:
+def scenario_zec_maker_refund(stamp: str, kill_role: str | None = None) -> dict:
     """Selling LEZ, both legs locked and the Taker never claims: the Maker's
     Zcash funding is kept at one confirmation (below the Taker's pre-reveal
     gate), so no secret is revealed. The Maker-funded leg refunds first: once
@@ -5781,9 +6311,14 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
     the profile's margin) zebra is mined to the agreement's refund height and
     the Maker Node refunds its Zcash on its own, with no operator action; at
     the LEZ refund time the Taker refunds its LEZ, and both Nodes end
-    `refunded`."""
+    `refunded`. With `kill_role` (zec-kill-<role>-refund, R4) that role's
+    container is killed with SIGKILL at each of ZEC_REFUND_KILL_POINTS: while
+    both legs wait for the refund times, and again once the Taker's refund is
+    admitted; both legs must still refund and no LEZ may have moved
+    (assert_lez_settled)."""
     if not zec_taker_sells_lez():
-        return scenario_zec_maker_refund_foreign(stamp)
+        return scenario_zec_maker_refund_foreign(stamp, kill_role)
+    before = lez_balances() if kill_role else None
     corridor = zec_provision(profile=zec_refund_profile())
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -5796,6 +6331,7 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
     if funding is None:
         raise Failure("the Taker observed the Maker's lock, but no zebra block spends the provisioned outpoint")
     log(f"  Maker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker never claims")
+    killed = [kill_at(kill_role, swap_id, ZEC_REFUND_KILL_POINTS[0], ZEC_REFUND_LOCKED_STATES)] if kill_role else []
     opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
     # No operator action: the Maker Node's own supervisor refunds its earlier
     # Zcash leg (ObserveThenRecover); the desk journey queues it by hand.
@@ -5806,7 +6342,7 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
     if refunded_at >= opens:
         raise Failure("the Maker's Zcash refund landed after the agreement's LEZ refund time")
     wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
-    taker = zec_refund_until_terminal(swap_id, stamp, timeout=1800)
+    taker = zec_refund_until_terminal(swap_id, stamp, timeout=1800, kill_role=kill_role, killed=killed)
     log(f"  the Taker refunded its LEZ escrow; Taker ended {taker['state']}")
     maker_terminal = wait_maker_terminal(swap_id, timeout=900, describe="(observing the Taker's LEZ refund)")
     if maker_terminal not in {"refunded", "maker_leg_refunded", "taker_leg_refunded"}:
@@ -5816,16 +6352,31 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
             "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]},
             "zcash_refund_height": corridor["zcash_refund_height"],
             "zcash_refund_before_lez_refund_time": refunded_at < opens,
-            "maker_terminal_phase": maker_terminal, "taker_terminal_state": taker["state"]}
+            "maker_terminal_phase": maker_terminal, "taker_terminal_state": taker["state"],
+            **zec_refund_kills_settled(kill_role, killed, before, taker["state"], maker_terminal)}
 
 
-def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
+def zec_refund_kills_settled(kill_role: str | None, killed: list, before: dict | None, taker_state: str,
+                             maker_terminal: str) -> dict:
+    """zec-kill-<role>-refund's end: the role was killed at both refund points
+    and the swap's LEZ leg is back where it was (assert_lez_settled, refunded);
+    {} without `kill_role`."""
+    if not kill_role:
+        return {}
+    if [kill["point"] for kill in killed] != list(ZEC_REFUND_KILL_POINTS):
+        raise Failure(f"the refund swap was killed at {[kill['point'] for kill in killed]}, not at both refund points")
+    return {"role": kill_role, "kill": killed, **assert_lez_settled(before, taker_state, maker_terminal)}
+
+
+def scenario_zec_maker_refund_foreign(stamp: str, kill_role: str | None = None) -> dict:
     """TakerSellsForeign: the Taker funds the Zcash HTLC, the Maker locks LEZ,
     the Taker's LEZ claim is offered and never pressed; at the agreement's LEZ
     refund time the Maker refunds its LEZ escrow (the queued recovery, as the
     desk's Refund would), then zebra is mined to the Zcash refund height and
     the Taker refunds its HTLC; both Nodes end `refunded`. The LEZ refund
-    comes first and the Zcash refund outlives it (F4)."""
+    comes first and the Zcash refund outlives it (F4). `kill_role` as in
+    scenario_zec_maker_refund."""
+    before = lez_balances() if kill_role else None
     corridor = zec_provision(profile=zec_refund_profile())
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -5836,6 +6387,7 @@ def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
     if funding is None:
         raise Failure("the Taker's claim is offered, but no zebra block spends the provisioned outpoint")
     log(f"  Taker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker never claims")
+    killed = [kill_at(kill_role, swap_id, ZEC_REFUND_KILL_POINTS[0], {"claim_available"})] if kill_role else []
     opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
     wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
     if maker_view(swap_id).get("schedule_state") != "terminal":
@@ -5852,7 +6404,8 @@ def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
     height = int(zebra("getblockcount"))
     if height < corridor["zcash_refund_height"]:
         zebra_mine(corridor["zcash_refund_height"] - height, "Zcash refund height")
-    taker = zec_refund_until_terminal(swap_id, stamp, timeout=1800, mine_pending=True)
+    taker = zec_refund_until_terminal(swap_id, stamp, timeout=1800, mine_pending=True, kill_role=kill_role,
+                                      killed=killed)
     refund_tx = zec_spend_of((funding[0], 0), funding[1])
     if refund_tx is None:
         raise Failure("no zebra block spends the Taker's funding output: the Taker did not refund Zcash")
@@ -5864,7 +6417,8 @@ def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
             "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]},
             "zcash_refund_height": corridor["zcash_refund_height"], "maker_terminal_phase": maker_terminal,
-            "taker_terminal_state": taker["state"]}
+            "taker_terminal_state": taker["state"],
+            **zec_refund_kills_settled(kill_role, killed, before, taker["state"], maker_terminal)}
 
 
 # ---- BTC/ZEC parity (REVIEW 21:08Z): early-lock, offline-after-lock, refund-then-maker-lock ----
@@ -8696,6 +9250,169 @@ def scenario_zec_kill_maker_claim(stamp: str) -> dict:
     return {"points": walked}
 
 
+# ---- the Zcash swaps an operator drives with the CLIs (zec-maker-cli-*, zec-taker-cli-refund) ----
+
+def zec_refunded_through(wrap, scenario):
+    """A Zcash refund journey `scenario` run with one role driven by its CLI
+    (`wrap`: through_maker_cli or through_taker_cli); it must end refunded on
+    both Nodes with no LEZ moved (assert_lez_settled)."""
+    def run(stamp: str) -> dict:
+        before = lez_balances()
+        summary = wrap(scenario)(stamp)
+        swap_id = summary["swap_id"]
+        return {**summary, **assert_lez_settled(before, taker_view(swap_id)["state"], maker_phase(swap_id))}
+    return run
+
+
+def scenario_zec_maker_cli_refund(stamp: str) -> dict:
+    """U3, "manual claims/refunds", on Zcash: zec-maker-refund selling ZEC with
+    every Maker call made by lez-maker-cli. This is the direction in which the
+    Maker has a refund to ask for: its LEZ escrow, at the agreement's LEZ
+    refund time, with `lez-maker-cli refund` at the generation `monitor`
+    reads (selling LEZ the Maker Node refunds its Zcash by itself and nothing
+    is asked). Then the Taker refunds its Zcash; monitor and history say how
+    the Maker ended (maker_cli_action_evidence) and no LEZ has moved."""
+    if zec_taker_sells_lez():
+        raise Failure("zec-maker-cli-refund is a selling-ZEC scenario (--direction TakerSellsForeign): selling LEZ the "
+                      "Maker Node refunds its Zcash by itself and no refund is requested")
+
+    def refund_through_the_cli(stamp: str) -> dict:
+        summary = scenario_zec_maker_refund(stamp)
+        read = maker_cli_action_evidence(summary["swap_id"], f"e2e-zec-maker-refund-{stamp}", "refund",
+                                         MAKER_REFUNDED_PHASES)
+        return {**summary, "maker_cli": read}
+    return zec_refunded_through(through_maker_cli, refund_through_the_cli)(stamp)
+
+
+# zec-maker-cli-claim: how many of the Maker's claim attempts the hook holds
+# while the operator acts; the hold is cleared right after the request.
+ZEC_CLI_CLAIM_HOLD_COUNT = 100
+MANUAL_ACTION_PENDING = "already has a pending manual action"
+
+
+def zec_maker_cli_claim_point(stamp: str, point: str, hook: str) -> dict:
+    """One fresh swap selling LEZ: the Maker's own LEZ claim held at `hook`
+    in its sidecar, the operator's `lez-maker-cli claim` admitted while it is
+    held, the hold cleared, the swap completed once on both Nodes."""
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    before = lez_balances()
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                          describe=zec_flow())
+    request_id = f"e2e-cli-claim-{stamp}"
+    maker_test_hook(hook, str(ZEC_CLI_CLAIM_HOLD_COUNT))
+    try:
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                       "swap_id": swap_id,
+                                                       "expected_generation": view["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')}); the Maker's LEZ claim "
+            f"is to wait in its sidecar's {hook}")
+        held = lambda: ZEC_CLI_CLAIM_HOLD_COUNT - int(maker_test_hook_value(hook) or ZEC_CLI_CLAIM_HOLD_COUNT)
+        wait = Wait(f"the Maker's sidecar to take the hold {hook} on {swap_id[:12]}", 900)
+        while wait.running():
+            if held() > 0:
+                break
+            if maker_phase(swap_id) == "completed":
+                raise Failure(f"the Maker completed {swap_id[:12]} with {hook} set: its LEZ claim was never held")
+            wait.note(maker_phase(swap_id), lambda: f"maker {maker_phase(swap_id)}, hook {maker_test_hook_value(hook)}")
+            time.sleep(3)
+        else:
+            raise wait.failure()
+        pending = maker_view(swap_id)
+        log(f"  the Maker's own LEZ claim waits in its sidecar ({point}); lez-maker-cli monitor: schedule "
+            f"{pending.get('schedule_state')}, generation {pending.get('lease_generation')}, maker {maker_phase(swap_id)}")
+        admitted = maker_action_with_fresh_generation("maker_actor_claim_v1", swap_id, request_id)
+        if (admitted.get("action"), admitted.get("was_replay")) != ("claim", False):
+            raise Failure(f"lez-maker-cli claim was not admitted as a new claim request: {admitted}")
+        generation = admitted["requested_after_generation"]
+        replay = call("maker", "maker_actor_claim_v1", {"request_id": request_id, "id": swap_id,
+                                                        "expected_generation": generation})
+        if replay.get("was_replay") is not True or replay.get("requested_after_generation") != generation:
+            raise Failure(f"the same lez-maker-cli claim repeated is not a replay of its admission: {replay}")
+        # One owner action is open per swap: a second claim under another
+        # request id is refused while this one waits for the held attempt.
+        for _ in range(5):
+            second = rpc("maker", "maker_actor_claim_v1", {"request_id": f"{request_id}-second", "id": swap_id,
+                                                           "expected_generation": maker_view(swap_id)["lease_generation"]})
+            if STALE_GENERATION not in str((second.get("error") or {}).get("message", "")):
+                break
+            time.sleep(1)
+        error = second.get("error") or {}
+        if "result" in second or error.get("code") != -32009 or MANUAL_ACTION_PENDING not in str(error.get("message")):
+            raise Failure(f"a second claim request while the first is open was not refused as pending (-32009): "
+                          f"{json.dumps(second)[:300]}")
+        open_action = maker_view(swap_id).get("manual_action") or {}
+        if open_action.get("request_id") != request_id or open_action.get("state") not in {"queued", "leased"}:
+            raise Failure(f"lez-maker-cli monitor does not show the claim request open: {open_action}")
+        if maker_phase(swap_id) == "completed":
+            raise Failure(f"the Maker completed {swap_id[:12]} with {hook} still set")
+        at = {"point": point, "hook": hook, "claim_attempts_held": held(), "admitted": admitted,
+              "second_request": error, "manual_action_while_held": open_action,
+              "taker_state": taker_view(swap_id)["state"], "maker_phase": maker_phase(swap_id)}
+        log(f"  lez-maker-cli claim admitted after generation {generation} with the Maker's claim held "
+            f"({at['claim_attempts_held']} attempt(s) held so far); its repeat is a replay, a second request is "
+            f"refused: {error.get('message')}; clearing the hold")
+    finally:
+        maker_test_hook(hook, None)
+    # The Taker holds the Zcash; the Maker's attempt held last ends at its
+    # timeout, and the next one, which carries the operator's request, claims.
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    phase = wait_maker_terminal(swap_id, timeout=900, describe="(the claim the operator asked for)")
+    if phase != "completed":
+        raise Failure(f"with the hold cleared the Maker ended {swap_id[:12]} {phase}, not completed")
+    wait_completed(swap_id, timeout=300)
+    read = maker_cli_action_evidence(swap_id, request_id, "claim", {"completed"})
+    maker_claims = zec_maker_claim_operations(swap_id, since)
+    if "lez_followup_claim" not in maker_claims:
+        raise Failure(f"both Nodes completed, but the Maker's actor logged {maker_claims or 'no claim'}, "
+                      "not its LEZ follow-up claim")
+    settled = assert_lez_settled(before, taker_view(swap_id)["state"], maker_phase(swap_id))
+    late = rpc("maker", "maker_actor_claim_v1", {"request_id": f"{request_id}-late", "id": swap_id,
+                                                 "expected_generation": maker_view(swap_id)["lease_generation"]})
+    if "result" in late or (late.get("error") or {}).get("code") != -32602:
+        raise Failure(f"a claim request on the completed swap was not refused (-32602): {json.dumps(late)[:300]}")
+    log(f"  {swap_id[:12]} completed once: the LEZ lot moved to the Maker to the unit, and a further claim request "
+        f"is refused: {late['error'].get('message')}")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "held": at,
+            "maker_cli": read, "maker_claim_operations": maker_claims, "claim_after_completion": late["error"], **settled}
+
+
+def scenario_zec_maker_cli_claim(stamp: str) -> dict:
+    """U3, "manual claims", selling LEZ: at each of ZEC_CLAIM_HOLDS, one fresh
+    swap each, the Maker's own LEZ follow-up claim is pending (held in its
+    sidecar by the devnet test hook, every attempt of it, for as long as the
+    hook is set) when the operator asks for the claim with `lez-maker-cli
+    claim` at the generation `lez-maker-cli monitor` reads. The request is
+    admitted and never spliced into the attempt that is running; its repeat
+    is a replay; a second request is refused while it is open. With the hold
+    cleared, the attempt that carries the request claims: the swap completes
+    on both Nodes, the LEZ lot moves to the Maker to the unit (once), monitor
+    shows the request completed and a claim request after that is refused.
+
+    What this does not show: a claim the Node would not have made. The Maker's
+    supervisor runs the same `claim` command by itself whenever the actor's
+    next action is the claim (parse_status and manual_effect_command,
+    crates/maker-node/src/actor_supervisor/runtime.rs), so the request decides
+    when and under whose name the claim runs, not whether."""
+    if not zec_taker_sells_lez():
+        raise Failure("zec-maker-cli-claim is a selling-LEZ scenario: the Maker claims the Taker's LEZ last")
+    for _, hook in ZEC_CLAIM_HOLDS:
+        require_sidecar_test_hooks(hook)
+    # A hold an earlier run could not clear would park this run's claims.
+    for _, hook in ZEC_CLAIM_HOLDS:
+        maker_test_hook(hook, None)
+
+    def claim_through_the_cli(stamp: str) -> dict:
+        walked = [zec_maker_cli_claim_point(f"{stamp}c{index}", point, hook)
+                  for index, (point, hook) in enumerate(ZEC_CLAIM_HOLDS)]
+        log("  lez-maker-cli claim admitted at " + "; ".join(f"{w['held']['point']} → completed" for w in walked))
+        return {"points": walked}
+    return through_maker_cli(claim_through_the_cli)(stamp)
+
+
 # ---- zec-activate-after-expiry: the Maker's actor activated after its offer expired ----
 # A ZEC agreement's transcript expires when its offer does. Each role's actor
 # activates at the time that role accepted the agreement, which its
@@ -9062,6 +9779,7 @@ XMR_SCENARIOS = {
     "xmr-taker-cheats": scenario_xmr_taker_cheats,
     "xmr-shared-address-dust": scenario_xmr_shared_address_dust,
     "mixed-three-pair": scenario_mixed_three_pair,
+    "xmr-taker-cli": through_taker_cli(scenario_xmr_happy),
 }
 
 
@@ -9099,6 +9817,11 @@ ZEC_SCENARIOS = {
     "zec-bitcoin-down": scenario_zec_bitcoin_down,
     "zec-taker-cli": through_taker_cli(scenario_zec_happy),
     "zec-dynamic-happy": through_taker_cli(scenario_zec_dynamic_happy),
+    "zec-taker-cli-refund": zec_refunded_through(through_taker_cli, scenario_zec_taker_refund),
+    "zec-maker-cli-refund": scenario_zec_maker_cli_refund,
+    "zec-maker-cli-claim": scenario_zec_maker_cli_claim,
+    "zec-kill-maker-refund": lambda stamp: scenario_zec_maker_refund(stamp, kill_role="maker"),
+    "zec-kill-taker-refund": lambda stamp: scenario_zec_maker_refund(stamp, kill_role="taker"),
 }
 
 
@@ -9132,6 +9855,8 @@ SCENARIOS = {
     "zebra-down": scenario_zebra_down,
     "maker-cli": scenario_maker_cli,
     "maker-price-module": scenario_maker_price_module,
+    "maker-price-module-stale": scenario_maker_price_module_stale,
+    "maker-cli-refund": scenario_maker_cli_refund,
 }
 
 # The custody-credit scenarios (TM-0032), defined with their helpers above.

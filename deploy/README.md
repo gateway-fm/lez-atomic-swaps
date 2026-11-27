@@ -73,12 +73,13 @@ bundle:
 - they need the devnet test hooks (`LEZ_TEST_HOOKS=1`):
   `node:xmr:xmr-taker-clock-ahead`, `node:xmr:xmr-punish-replans`,
   `node:xmr:xmr-taker-cheats`, `node:xmr:xmr-kill-maker` (its claim kill
-  points hold the claim in the Maker's sidecar), `node:zec:zec-kill-maker-claim`
-  and `node:zec:zec-activate-after-expiry`;
+  points hold the claim in the Maker's sidecar), `node:zec:zec-kill-maker-claim`,
+  `node:zec:zec-maker-cli-claim` and `node:zec:zec-activate-after-expiry`;
 - they need the Zcash dealer test fixture: `node:zec:zec-regenerated-catalog`
   and `node:zec:zec-tampered-catalog` in both directions, and
   `node:zec:zec-maker-early-claim`;
-- it compiles the repository's TEST price module: `node:btc:maker-price-module`.
+- they compile the repository's TEST price module: `node:btc:maker-price-module`
+  and `node:btc:maker-price-module-stale`.
 
 The Zcash tests selling ZEC run from a bundle: the harness pays the Taker's
 Zcash key from the Maker's with `zec-local-poc-transfer`, the one test-only
@@ -368,10 +369,17 @@ self-hosted `lez-stack` runner).
 | `concurrent` | two swaps interleaved end to end (one sidecar per swap) |
 | `early-lock` | the Taker's lock is in front of the Maker unconfirmed (selling Bitcoin: in the mempool; selling LEZ: included at the sequencer, its finality source, the indexer, cut); the Maker must not lock: its phase, its own record and the chain (its LEZ balance, or its Core wallet's sends) stay clean |
 | `offline-after-lock` | after the first lock Chat and Delivery are denied to both Nodes' user (socket and directory to mode 0000, refused with EACCES from the Taker's container); the Maker holds no Chat connection until the swap completes; both Nodes report both dependencies unavailable; the restore is checked from both sides |
-| `outage-before-take`, `zec-outage-before-take` | Chat and Delivery are cut the same way before a take: both Nodes report both unavailable and are degraded; the take is refused with `-32010` `authenticated_delivery_unavailable` and leaves no swap on the Taker and the Maker's offer record and history unchanged; no Chat connection reaches the Maker; restored, the same request with the same request id takes the offer and the swap completes ([behaviour](../docs/delivery-chat-outage.md)) |
+| `outage-before-take`, `zec-outage-before-take` | Chat and Delivery are cut the same way before a take: both Nodes report both unavailable and are degraded; the take is refused with `-32010` `authenticated_delivery_unavailable` and leaves no swap on the Taker and the Maker's offer record and history unchanged; no Chat connection reaches the Maker; under the cut `lez-maker-cli health` and `lez-taker-cli health` exit 0 and read degraded with both unavailable, and `lez-maker-cli publish-offer` fails with `-32603` and the Delivery adapter's message after the offer is committed (`offers` lists it active, the Taker's offer list is refused); restored, that offer reaches the Taker with no second publish, its repeated publish is a replay, and the same take request with the same request id takes the offer and the swap completes; `regress.sh full` runs each in both directions ([behaviour](../docs/delivery-chat-outage.md)) |
 | `taker-refund` | the Maker never funds; after the cutoff and CSV maturity the Taker refunds its Bitcoin; the Maker reconciles |
 | `maker-refund` | the Taker never claims; the Maker refunds LEZ after `refund_at`, then the Taker refunds Bitcoin |
 | `refund-then-maker-lock` | the Taker's refund is admitted with the Maker's lock on chain but unobserved (asserted on the Taker's view), then the lock appears; the Taker's observer refunds unaided, the Maker refunds too, and both parties' balances on both chains are back less the locker's Bitcoin fees |
+| `taker-cli` (both directions) | `happy` with every Taker call made by `lez-taker-cli`; then, as the owner, `swap list` names the swap completed as the owner RPC does, `health` reads ready and not degraded with the pair's capability row, `balances` reads whole numbers and the indexer's LEZ balance; as uid 65534 every owner-RPC command is refused at the socket |
+| `maker-cli-refund` (TakerSellsForeign) | `maker-refund` with every Maker call made by `lez-maker-cli`: the route saved with `configure-pair` and `set-local-price`, the Maker's refund asked for with `refund` at the generation `monitor` reads; `monitor` shows the swap terminal at a refunded phase with that request completed, `history` lists the same phase, and both chains' balances fit a refunded swap |
+| `zec-maker-cli-refund` (TakerSellsForeign) | `zec-maker-refund` selling ZEC with every Maker call made by `lez-maker-cli`: the Maker's LEZ refund asked for with `refund`, then the Taker refunds its Zcash; `monitor` and `history` as in `maker-cli-refund`, the Zcash refund in a zebra block, no LEZ moved. Selling LEZ the Maker Node refunds its Zcash by itself, so the scenario refuses that direction |
+| `zec-maker-cli-claim` (TakerSellsLez) | two swaps; in each the Maker's own LEZ follow-up claim is held in its sidecar (`hold-claim-preparations`, then `hold-claim-submissions`, every attempt while the hook is set) when `lez-maker-cli claim` is asked at the generation `monitor` reads: admitted, its repeat a replay, a second request refused with `-32009` while it is open; the hold cleared, the swap completes on both Nodes, the LEZ lot moves to the Maker to the unit, `monitor` shows the request completed and a later claim request is refused with `-32602`. The Maker's supervisor runs the same `claim` command by itself when the claim is the actor's next action, so this shows the request's admission and that the swap completes once, not a claim the Node would not have made. Needs `LEZ_TEST_HOOKS=1` |
+| `zec-taker-cli-refund` (TakerSellsLez) | `zec-taker-refund` with every Taker call made by `lez-taker-cli` (`swap take`, `swap monitor`, `swap refund` replayed under one request id); the Maker's Zcash output stays unspent, both Nodes end refunded and no LEZ moved |
+| `maker-price-module-stale` (TakerSellsForeign) | the TEST price module prices the Bitcoin route and a Zcash route (`configure-pair --price-source logos-c-api` on each): each quote is the module's and one offer per route is published under the module's sha256 and listed by the Taker; then the module's `STALE` build answers a quote 61 s old, past the Node's 30 s bound: `quote` and `publish-offer` on both routes fail with `-32603` `external price source failed validation`, no offer is left by a refused publish, the two offers already out stay active at their price; with the first build back the quote answers again |
+| `zec-kill-maker-refund`, `zec-kill-taker-refund` | `zec-maker-refund` with that role's container killed with SIGKILL while both legs wait for the refund times and again once the Taker's refund is admitted (the refund path's two kill points, as `kill-maker` and `kill-taker` have them for Bitcoin; tests of their own because the refund journeys run under the refund profiles); both legs refund, both Nodes end refunded and no LEZ moved |
 
 **A stranger's credit to the custody (TM-0032).** LEZ lets anyone pay into
 any initialised account, so a third party can send LEZ to a funded escrow's
@@ -764,6 +772,7 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 | `xmr-monerod-down` | the lane's monerod stopped before a take: both Nodes read the Monero route unavailable (the Maker withdraws and refuses Monero offers, the Taker refuses a take), Bitcoin's and Zcash's available; started again, a swap completes; then stopped right after a take until the Maker has seen the Taker's lock final and 60 s more, within the funding cutoff: the swap completes, or ends refunded with nothing lost. The Maker's drive asks monerod before it spends the swap's one funding and keeps it for a later drive while monerod does not answer, so an outage that ends before the cutoff leaves the funding to go out after it; one that begins while the funding tool runs (its three attempts five seconds apart) still spends it, and the swap is refunded |
 | `xmr-wallet-restart` | a role's `monero-wallet-rpc` restarted mid-swap: the Maker's after the take, the Taker's while it watches for the Monero and before its sweep; both swaps complete |
 | `xmr-outage-before-take` | Logos Chat and Delivery cut before a take: both Nodes degraded, the take refused, no swap on either Node; restored, the same request takes the offer and the swap completes |
+| `xmr-taker-cli` | `xmr-happy` with every Taker call made by `lez-taker-cli`: `balances --monero`, `swap offers`, `swap take`, `swap monitor`, `swap claim`; the same assertions as `xmr-happy` |
 | `xmr-cut-after-lock` | Chat and Delivery cut once the Taker's LEZ lock is out, until the swap completes under the cut |
 | `mixed-three-pair` | a Monero, a Bitcoin and a Zcash swap of the same Nodes at once, all TakerSellsLez; all three complete |
 | `xmr-taker-clock-ahead` | the Taker Node's clock 60 s ahead of LEZ time (test hook `clock-offset-ms`), its own refund off: the owner refunds as soon as the swap offers it, 60 s before LEZ time reaches R; no refund is recorded as sent before the finalized LEZ time reaches R, then it lands and the Maker sweeps back |
@@ -1041,7 +1050,8 @@ A module that fails a check, answers unavailable or reports a price older than 3
 or publish closed; offers already out keep their price. The systemd package installs the worker as
 `/usr/bin/lez-logos-price-worker`; there the unit runs the same launcher, so the two
 `LEZ_LOGOS_PRICE_MODULE*` values go in `/etc/lez/maker/env` and the launcher passes the flags. No Logos price module exists yet: `node:btc:maker-price-module:TakerSellsForeign` runs
-the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ units per 2 sat). How to write and run a module: [docs/price-module-guide.md](../docs/price-module-guide.md).
+the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ units per 2 sat), and
+`node:btc:maker-price-module-stale:TakerSellsForeign` its build whose quote is older than the bound. How to write and run a module: [docs/price-module-guide.md](../docs/price-module-guide.md).
 
 ## Services
 
