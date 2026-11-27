@@ -205,13 +205,15 @@ impl PreparedPublicEffect {
 pub enum PublicEffectState {
     /// Exact bytes are durable and no send has been authorized.
     Prepared,
-    /// The sole send authorization was durably consumed before the RPC call.
+    /// Send authorization was durably consumed before the RPC call: the
+    /// first send's, or a resend's of an exact LEZ claim.
     Started,
     /// Exact chain evidence or the fresh call proved acceptance.
     Accepted,
     /// The fresh call definitively rejected the payload before admission.
     Rejected,
-    /// The fresh call outcome was ambiguous; only observation is now allowed.
+    /// The fresh call outcome was ambiguous; only observation is now allowed,
+    /// except that an exact LEZ claim still absent may be sent again.
     Unknown,
 }
 
@@ -263,7 +265,8 @@ impl PublicEffectSnapshot {
     ///
     /// One means either that a send was authorized before transport or that
     /// conflicting chain presence defensively burned that authority without a
-    /// transport call.
+    /// transport call. It does not count the resends of an exact LEZ claim
+    /// ([`SqlitePublicEffectJournal::resend_exact_lez_claim`]).
     #[must_use]
     pub const fn attempt_count(&self) -> u32 {
         self.attempt_count
@@ -465,11 +468,14 @@ impl SqlitePublicEffectJournal {
     /// admission may authorize only a payload-identical LEZ claim without
     /// claiming absence. For refunds, only `EligibleToAttempt + Prepared`
     /// atomically commits `Started` before returning the sole `SubmitOnce`
-    /// authorization. `Started` and `Unknown` are never rearmed. `Uncertain` is
+    /// authorization. `Started` and `Unknown` are never rearmed here; the one
+    /// exception is an exact LEZ claim, which
+    /// [`Self::resend_exact_lez_claim`] may send again. `Uncertain` is
     /// retryable and always observe-only. `ConflictingPresence`
     /// atomically consumes still-fresh authority without returning
-    /// `SubmitOnce`; later absence can therefore never rearm it. Exact presence
-    /// monotonically accepts Prepared, Started, or Unknown state.
+    /// `SubmitOnce` and durably bars any resend; later absence can therefore
+    /// never rearm it. Exact presence monotonically accepts Prepared, Started,
+    /// or Unknown state.
     ///
     /// # Errors
     ///
@@ -550,8 +556,11 @@ impl SqlitePublicEffectJournal {
                 match snapshot.state {
                     PublicEffectState::Prepared => {
                         burn_authority_without_send(&transaction, &mut snapshot)?;
+                        record_conflicting_presence(&transaction, key)?;
                     }
-                    PublicEffectState::Started | PublicEffectState::Unknown => {}
+                    PublicEffectState::Started | PublicEffectState::Unknown => {
+                        record_conflicting_presence(&transaction, key)?;
+                    }
                     PublicEffectState::Accepted | PublicEffectState::Rejected => {
                         return Err(StoreError::PublicEffectConflict);
                     }
@@ -635,6 +644,105 @@ impl SqlitePublicEffectJournal {
             snapshot,
             was_replay,
         })
+    }
+
+    /// Authorizes one more send of an exact LEZ claim that was sent, or may
+    /// have been sent, and is still not on the chain (#174).
+    ///
+    /// The first send of an effect is authorized once by [`Self::reconcile`].
+    /// When that send fails before it reaches the sequencer, or its outcome is
+    /// ambiguous, the row stays `Unknown`; a process that stops during the
+    /// call leaves it `Started`. Observation alone then has nothing to find if
+    /// the transaction never arrived. An exact LEZ claim is safe to offer
+    /// again: the journal holds its complete signed bytes, every resend is
+    /// those same bytes, and a LEZ transaction carries the signer's account
+    /// nonce, which the chain compares with the account and advances on
+    /// inclusion, so identical bytes are included at most once.
+    ///
+    /// The same evidence as for the first send is required, taken after the
+    /// failed attempt: `Absent`, or `ExactIdempotentLezClaimSubmissionSafe`
+    /// bound to the durable ID and bytes. `Unknown` moves back to `Started`
+    /// before `Some` is returned, so [`Self::record_submission_result`]
+    /// records the resend's outcome exactly as it records a first send's; a
+    /// `Started` row is returned as it is. `None` means no send: the row is
+    /// `Prepared` (the first send belongs to `reconcile`), `Accepted`,
+    /// `Rejected`, or barred because conflicting chain presence was observed
+    /// for it.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any key other than a LEZ claim, any other observation, an
+    /// observation bound to a different ID or bytes, missing or corrupt
+    /// state, or storage failure without partially changing the row.
+    pub fn resend_exact_lez_claim(
+        &mut self,
+        key: &PublicEffectKey,
+        observation: &PublicEffectObservation,
+    ) -> Result<Option<PublicEffectSnapshot>, StoreError> {
+        if key.chain != PublicEffectChain::Lez || key.operation != PublicEffectOperation::Claim {
+            return Err(StoreError::InvalidPublicEffect);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut snapshot =
+            load_snapshot(&transaction, key)?.ok_or(StoreError::MissingPublicEffect)?;
+        match observation {
+            PublicEffectObservation::Absent => {}
+            PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe {
+                expected_effect_id,
+                exact_public_bytes,
+            } => {
+                if expected_effect_id.as_ref() != snapshot.effect.expected_effect_id()
+                    || exact_public_bytes.as_slice() != snapshot.effect.exact_public_bytes()
+                {
+                    return Err(StoreError::PublicEffectConflict);
+                }
+            }
+            PublicEffectObservation::PresentExact(_)
+            | PublicEffectObservation::EligibleToAttempt
+            | PublicEffectObservation::Uncertain
+            | PublicEffectObservation::ConflictingPresence => {
+                return Err(StoreError::InvalidPublicEffect);
+            }
+        }
+        if conflicting_presence_recorded(&transaction, key)? {
+            return Ok(None);
+        }
+        match snapshot.state {
+            PublicEffectState::Unknown => {
+                let updated = transaction.execute(
+                    "UPDATE public_effect_journal
+                     SET state = 'started', revision = 1
+                     WHERE swap_id = ?1 AND local_role = ?2 AND chain = ?3
+                       AND operation = ?4 AND predecessor_revision = ?5
+                       AND state = 'unknown' AND attempt_count = 1 AND revision = 2",
+                    params![
+                        key.swap_id.as_str(),
+                        participant_name(key.local_role),
+                        key.chain.as_str(),
+                        key.operation.as_str(),
+                        revision_to_sql(key.predecessor_revision)?,
+                    ],
+                )?;
+                if updated != 1 {
+                    return Err(StoreError::PublicEffectConflict);
+                }
+                snapshot.state = PublicEffectState::Started;
+                snapshot.revision = 1;
+            }
+            PublicEffectState::Started => {}
+            PublicEffectState::Prepared
+            | PublicEffectState::Accepted
+            | PublicEffectState::Rejected => return Ok(None),
+        }
+        let postcondition =
+            load_snapshot(&transaction, key)?.ok_or(StoreError::CorruptPublicEffectState)?;
+        if postcondition != snapshot {
+            return Err(StoreError::CorruptPublicEffectState);
+        }
+        transaction.commit()?;
+        Ok(Some(snapshot))
     }
 
     /// Gives back the send authority of one `Started` row whose single
@@ -741,9 +849,20 @@ fn migrate_public_effect_journal(connection: &mut Connection) -> Result<(), Stor
                      OR (attempt_count = 1 AND revision IN (2, 3))
                  ))
              )
+         ) STRICT;
+         CREATE TABLE IF NOT EXISTS public_effect_conflicting_presence (
+             swap_id               TEXT NOT NULL,
+             local_role            TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+             chain                 TEXT NOT NULL CHECK (chain IN ('bitcoin', 'lez')),
+             operation             TEXT NOT NULL CHECK (operation IN ('funding', 'claim', 'refund')),
+             predecessor_revision  INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+             PRIMARY KEY (
+                 swap_id, local_role, chain, operation, predecessor_revision
+             )
          ) STRICT;",
     )?;
     validate_public_effect_schema(&transaction)?;
+    validate_conflicting_presence_schema(&transaction)?;
     transaction.commit()?;
     Ok(())
 }
@@ -967,6 +1086,102 @@ fn burn_authority_without_send(
     snapshot.state = PublicEffectState::Unknown;
     snapshot.attempt_count = 1;
     snapshot.revision = 2;
+    Ok(())
+}
+
+/// Durably marks that chain evidence contradicted this effect before it was
+/// proven accepted. The mark is never removed and bars
+/// [`SqlitePublicEffectJournal::resend_exact_lez_claim`]: a row that reached
+/// `Unknown` because its authority was burned without a send has the same
+/// shape as one whose send had an ambiguous outcome, and only this mark tells
+/// them apart.
+fn record_conflicting_presence(
+    transaction: &rusqlite::Transaction<'_>,
+    key: &PublicEffectKey,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "INSERT OR IGNORE INTO public_effect_conflicting_presence (
+             swap_id, local_role, chain, operation, predecessor_revision
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            key.swap_id.as_str(),
+            participant_name(key.local_role),
+            key.chain.as_str(),
+            key.operation.as_str(),
+            revision_to_sql(key.predecessor_revision)?,
+        ],
+    )?;
+    Ok(())
+}
+
+fn conflicting_presence_recorded(
+    connection: &Connection,
+    key: &PublicEffectKey,
+) -> Result<bool, StoreError> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM public_effect_conflicting_presence
+             WHERE swap_id = ?1 AND local_role = ?2 AND chain = ?3
+               AND operation = ?4 AND predecessor_revision = ?5
+         )",
+        params![
+            key.swap_id.as_str(),
+            participant_name(key.local_role),
+            key.chain.as_str(),
+            key.operation.as_str(),
+            revision_to_sql(key.predecessor_revision)?,
+        ],
+        |row| row.get(0),
+    )?)
+}
+
+fn validate_conflicting_presence_schema(connection: &Connection) -> Result<(), StoreError> {
+    let columns = {
+        let mut statement =
+            connection.prepare("PRAGMA table_xinfo(public_effect_conflicting_presence)")?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })?
+            .collect::<Result<Vec<(String, String, i64, i64)>, _>>()?
+    };
+    let expected = [
+        ("swap_id", "TEXT", 1, 1),
+        ("local_role", "TEXT", 1, 2),
+        ("chain", "TEXT", 1, 3),
+        ("operation", "TEXT", 1, 4),
+        ("predecessor_revision", "INTEGER", 1, 5),
+    ];
+    let columns_match = columns.len() == expected.len()
+        && columns
+            .iter()
+            .zip(expected)
+            .all(|((name, kind, not_null, primary_key), expected)| {
+                (name.as_str(), kind.as_str(), *not_null, *primary_key) == expected
+            });
+    let strict: Option<i64> = connection
+        .query_row(
+            "SELECT strict FROM pragma_table_list
+             WHERE schema = 'main' AND name = 'public_effect_conflicting_presence'
+               AND type = 'table'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let triggers: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM sqlite_schema
+         WHERE type = 'trigger' AND tbl_name = 'public_effect_conflicting_presence'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !columns_match || strict != Some(1) || triggers != 0 {
+        return Err(StoreError::CorruptPublicEffectState);
+    }
     Ok(())
 }
 

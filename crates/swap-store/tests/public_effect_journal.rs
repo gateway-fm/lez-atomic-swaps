@@ -834,3 +834,205 @@ fn only_a_started_row_gives_its_authority_back_and_then_rearms_exactly_once() {
         PublicEffectState::Unknown
     );
 }
+
+/// #174: an exact LEZ claim whose send failed, had an ambiguous outcome, or
+/// was cut short by a stopped process is sent again while it is still absent.
+#[test]
+fn an_exact_lez_claim_left_unknown_or_started_is_sent_again_while_still_absent() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared_lez_claim();
+    let key = candidate.key().clone();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+
+    // The first send belongs to `reconcile`: a prepared row is not resent.
+    assert_eq!(
+        journal
+            .resend_exact_lez_claim(&key, &PublicEffectObservation::Absent)
+            .unwrap(),
+        None
+    );
+    assert!(matches!(
+        journal
+            .reconcile(&key, PublicEffectObservation::Absent)
+            .unwrap(),
+        PublicEffectDecision::SubmitOnce(_)
+    ));
+
+    // A process that stopped during the call left `Started`.
+    drop(journal);
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let crashed = journal
+        .resend_exact_lez_claim(&key, &PublicEffectObservation::Absent)
+        .unwrap()
+        .expect("a claim left in flight is sent again");
+    assert_eq!(crashed.state(), PublicEffectState::Started);
+    assert_eq!((crashed.attempt_count(), crashed.revision()), (1, 1));
+    let _ = journal
+        .record_submission_result(&key, &PublicEffectSubmissionResult::Unknown)
+        .unwrap();
+
+    // An unknown outcome is sent again under either kind of first-send
+    // evidence, and each resend's outcome is recorded like a first send's.
+    for observation in [
+        PublicEffectObservation::Absent,
+        exact_idempotent_lez_claim(&candidate),
+    ] {
+        assert!(matches!(
+            journal.reconcile(&key, observation.clone()).unwrap(),
+            PublicEffectDecision::ObserveOnly(_)
+        ));
+        let resent = journal
+            .resend_exact_lez_claim(&key, &observation)
+            .unwrap()
+            .expect("an unknown outcome is sent again");
+        assert_eq!(resent.state(), PublicEffectState::Started);
+        assert_eq!(resent.effect(), &candidate);
+        assert_eq!((resent.attempt_count(), resent.revision()), (1, 1));
+        let recorded = journal
+            .record_submission_result(&key, &PublicEffectSubmissionResult::Unknown)
+            .unwrap();
+        assert!(!recorded.was_replay());
+        assert_eq!(recorded.snapshot().state(), PublicEffectState::Unknown);
+    }
+
+    // Once the node accepts it, or the chain shows it, nothing is sent again.
+    let _ = journal
+        .resend_exact_lez_claim(&key, &PublicEffectObservation::Absent)
+        .unwrap()
+        .expect("still unknown");
+    let _ = journal
+        .record_submission_result(
+            &key,
+            &PublicEffectSubmissionResult::Accepted(candidate.expected_effect_id().into()),
+        )
+        .unwrap();
+    assert_eq!(
+        journal
+            .resend_exact_lez_claim(&key, &PublicEffectObservation::Absent)
+            .unwrap(),
+        None
+    );
+    let _ = journal
+        .reconcile(
+            &key,
+            PublicEffectObservation::PresentExact(candidate.exact_public_bytes().to_vec()),
+        )
+        .unwrap();
+    assert_eq!(
+        journal
+            .resend_exact_lez_claim(&key, &exact_idempotent_lez_claim(&candidate))
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        journal.current(&key).unwrap().unwrap().state(),
+        PublicEffectState::Accepted
+    );
+}
+
+/// #174: the resend is for exact LEZ claims only, needs the first send's
+/// evidence bound to the durable bytes, and never follows conflicting
+/// presence, whether that burned a fresh row or contradicted a sent one.
+#[test]
+fn a_resend_is_lez_claim_only_evidence_bound_and_barred_by_conflicting_presence() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+
+    // Bitcoin claims and LEZ refunds keep their single attempt.
+    for other in [prepared(), prepared_refund()] {
+        let _ = journal.record_prepared(&other).unwrap();
+        assert!(matches!(
+            journal.resend_exact_lez_claim(other.key(), &PublicEffectObservation::Absent),
+            Err(StoreError::InvalidPublicEffect)
+        ));
+    }
+
+    let candidate = prepared_lez_claim();
+    let key = candidate.key().clone();
+    let _ = journal.record_prepared(&candidate).unwrap();
+    let _ = journal
+        .reconcile(&key, PublicEffectObservation::Absent)
+        .unwrap();
+    let _ = journal
+        .record_submission_result(&key, &PublicEffectSubmissionResult::Unknown)
+        .unwrap();
+
+    for not_evidence in [
+        PublicEffectObservation::Uncertain,
+        PublicEffectObservation::EligibleToAttempt,
+        PublicEffectObservation::ConflictingPresence,
+        PublicEffectObservation::PresentExact(candidate.exact_public_bytes().to_vec()),
+    ] {
+        assert!(matches!(
+            journal.resend_exact_lez_claim(&key, &not_evidence),
+            Err(StoreError::InvalidPublicEffect)
+        ));
+    }
+    for drifted in [
+        PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe {
+            expected_effect_id: "another-lez-claim".into(),
+            exact_public_bytes: candidate.exact_public_bytes().to_vec(),
+        },
+        PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe {
+            expected_effect_id: candidate.expected_effect_id().into(),
+            exact_public_bytes: vec![0xff],
+        },
+    ] {
+        assert!(matches!(
+            journal.resend_exact_lez_claim(&key, &drifted),
+            Err(StoreError::PublicEffectConflict)
+        ));
+    }
+    assert_eq!(
+        journal.current(&key).unwrap().unwrap().state(),
+        PublicEffectState::Unknown
+    );
+
+    // Conflicting presence seen after the send bars every later resend.
+    let _ = journal
+        .reconcile(&key, PublicEffectObservation::ConflictingPresence)
+        .unwrap();
+    drop(journal);
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    for observation in [
+        PublicEffectObservation::Absent,
+        exact_idempotent_lez_claim(&candidate),
+    ] {
+        assert_eq!(
+            journal.resend_exact_lez_claim(&key, &observation).unwrap(),
+            None
+        );
+    }
+
+    // Authority burned without a send has the same row shape and is barred too.
+    let burned = PreparedPublicEffect::new(
+        PublicEffectKey::new(
+            SwapId::new("m5-lez-claim-burned").unwrap(),
+            Participant::Taker,
+            PublicEffectChain::Lez,
+            PublicEffectOperation::Claim,
+            2,
+        ),
+        [0xc2; 32],
+        "lez-claim-transaction-0002",
+        vec![0x31, 0x32],
+    )
+    .unwrap();
+    let _ = journal.record_prepared(&burned).unwrap();
+    let _ = journal
+        .reconcile(burned.key(), PublicEffectObservation::ConflictingPresence)
+        .unwrap();
+    assert_eq!(
+        journal
+            .resend_exact_lez_claim(burned.key(), &PublicEffectObservation::Absent)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        journal.current(burned.key()).unwrap().unwrap().state(),
+        PublicEffectState::Unknown
+    );
+}
