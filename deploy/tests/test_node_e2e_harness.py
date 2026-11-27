@@ -319,6 +319,89 @@ class RefundAdmission(unittest.TestCase):
         self.assertIn('did not admit the refund', str(refused.exception))
 
 
+class EarlyZcashRefund(unittest.TestCase):
+    """Issue #182: between the Taker's lock and the Maker's, with the Maker in
+    time to fund, the row offers nothing and a refund is refused."""
+    WAITING = {'state': 'awaiting_second_lock', 'progress_generation': 2}
+    REFUSED = {'error': {'code': -32016, 'data': {'category': 'taker_action_unavailable'}}}
+
+    def ask(self, views, replies, phase='taker_lock_confirmed'):
+        views, replies, asked = iter(views), iter(replies), []
+
+        def rpc(role, method, params, timeout=300):
+            asked.append((role, method, params['request_id'], params['expected_generation']))
+            return next(replies)
+
+        with patch.object(e2e, 'taker_view', lambda swap: dict(next(views))), patch.object(e2e, 'rpc', rpc), \
+                patch.object(e2e, 'zec_actor_phase', lambda config: phase), \
+                patch.object(e2e, 'ZEC_EARLY_REFUND_WATCH_SECONDS', 0), \
+                patch.object(e2e.time, 'sleep', lambda seconds: None), patch.object(e2e, 'log', lambda line: None):
+            return e2e.zec_refund_refused_before_maker_lock('ab' * 32, '7', 'config'), asked
+
+    def test_the_refusal_and_its_replay_pass_and_nothing_is_admitted(self):
+        result, asked = self.ask([self.WAITING] * 3, [self.REFUSED] * 2)
+        self.assertEqual(result, {'refusals': 2, 'state': 'awaiting_second_lock', 'generation': 2,
+                                  'first_refusal': {'generation': 2, 'code': -32016,
+                                                    'category': 'taker_action_unavailable'}})
+        # One request id, asked twice: the second is a replay of the first.
+        self.assertEqual(asked, [('taker', 'taker_swap_refund_v1', 'e2e-early-refund-7', 2)] * 2)
+
+    def test_a_row_that_offers_refund_fails_before_anything_is_asked(self):
+        offered = {'state': 'refund_available', 'available_action': 'refund', 'progress_generation': 2}
+        with self.assertRaises(e2e.Failure) as failure:
+            self.ask([offered], [])
+        self.assertIn('refund_available offering refund', str(failure.exception))
+
+    def test_a_row_still_on_its_snapshot_from_before_the_lock_is_waited_for(self):
+        stale = {'state': 'awaiting_first_lock', 'progress_generation': 1}
+        result, asked = self.ask([stale, self.WAITING, self.WAITING, self.WAITING], [self.REFUSED] * 2)
+        self.assertEqual((result['refusals'], len(asked)), (2, 2))
+
+    def test_an_admitted_refund_fails(self):
+        admitted = {'result': {'schema_version': 1, 'action': 'refund', 'was_replay': False}}
+        with self.assertRaises(e2e.Failure) as failure:
+            self.ask([self.WAITING], [admitted])
+        self.assertIn('admitted a refund while the Maker was still in time to fund', str(failure.exception))
+
+    def test_a_refusal_for_another_reason_fails(self):
+        other = {'error': {'code': -32014, 'data': {'category': 'swap_not_found'}}}
+        with self.assertRaises(e2e.Failure) as failure:
+            self.ask([self.WAITING], [other])
+        self.assertIn('not refused as taker_action_unavailable', str(failure.exception))
+
+    def test_a_busy_actor_is_asked_again(self):
+        busy = {'error': {'code': -32010, 'data': {'category': 'taker_action_execution_unavailable'}}}
+        result, asked = self.ask([self.WAITING] * 4, [busy, self.REFUSED, self.REFUSED])
+        self.assertEqual((result['refusals'], len(asked)), (2, 3))
+
+    def test_a_row_offering_refund_after_the_refusals_fails(self):
+        offered = {'state': 'refund_available', 'available_action': 'refund', 'progress_generation': 2}
+        with self.assertRaises(e2e.Failure) as failure:
+            self.ask([self.WAITING, self.WAITING, offered], [self.REFUSED] * 2)
+        self.assertIn('after the refused refund', str(failure.exception))
+
+    def test_a_maker_lock_during_the_watch_fails(self):
+        with self.assertRaises(e2e.Failure) as failure:
+            self.ask([self.WAITING], [self.REFUSED], phase='both_legs_locked')
+        self.assertIn('left taker_lock_confirmed', str(failure.exception))
+
+    def test_the_scenario_and_the_desk_steps_are_registered(self):
+        self.assertIs(e2e.ZEC_SCENARIOS['zec-early-refund'], e2e.scenario_zec_early_refund)
+        # It cuts a forward inside the Maker's container: not for native Nodes.
+        self.assertIn('zec-early-refund', e2e.NATIVE_REFUSED)
+        for step in ('maker-lock-withheld', 'maker-lock-released'):
+            self.assertIn(step, e2e.ZEC_STEPS)
+
+    def test_the_maker_lock_is_released_without_reading_the_corridor(self):
+        calls = []
+        with patch.object(e2e, 'zec_restore_routes', lambda role, *names: calls.append((role, names))), \
+                patch.object(e2e, 'wait_lez_view', lambda role, restored: calls.append((role, restored))), \
+                patch.object(e2e, 'zec_provision', lambda **kwargs: self.fail('the corridor was read')), \
+                patch.object(e2e, 'log', lambda line: None):
+            self.assertTrue(e2e.zec_step_tool('ab' * 32, 'maker-lock-released', 60))
+        self.assertEqual(calls, [('maker', ('indexer', 'sequencer')), ('maker', True)])
+
+
 class LateClaimSettlement(unittest.TestCase):
     """#103 item 14 (b): whichever way the swap ends, the chains must agree with it."""
     BEFORE = {'maker': {'btc_sat': 10_000_000, 'lez_units': 5_000},

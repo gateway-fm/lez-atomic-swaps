@@ -459,6 +459,25 @@ so the Maker activates after the expiry and the swap must complete on both
 Nodes as `zec-dynamic-happy`'s does. A Maker Node built without the hooks
 fails the scenario before any swap, naming `LEZ_TEST_HOOKS=1`.
 
+**A refund asked for before the Maker's lock (issue #182).**
+`zec-early-refund` (both directions in `regress.sh full`, as a Node scenario
+and as a desk journey) holds a Zcash swap between the Taker's lock and the
+Maker's while the Maker is still in time to lock: the Maker's view of LEZ is
+cut (selling LEZ its indexer forwarder, so it never sees the Taker's LEZ lock
+final and does not fund Zcash; selling ZEC its indexer and sequencer
+forwarders, so it sees the Taker's Zcash funding and cannot lock LEZ) and
+the Taker's actor reaches `taker_lock_confirmed`. The Taker Node's row must
+read `awaiting_second_lock` with no action for 45 s
+(`LEZ_ZEC_EARLY_REFUND_WATCH_SECONDS`), and `taker_swap_refund_v1` must be
+refused as `taker_action_unavailable`, the first request and a replay of it,
+with nothing admitted; the desk journey asserts that the Taker desk shows the
+row as waiting for the Maker's lock with no action button
+(`INTERACTIVE_EXPECT_NO_ACTION=1` in `ui-tests/verify.mjs`). The Maker's view
+is then restored, the Maker locks, the Taker claims and both Nodes end
+`completed`. The Node offers the refund of a swap with no Maker lock once the
+Taker's claim window has closed (the LEZ refund time minus the profile's
+margin), which `zec-taker-refund` waits for.
+
 **A Claim pressed at one Zcash confirmation (issue #130).**
 `zec-claim-at-one-confirmation` (TakerSellsForeign in `regress.sh full`, the
 direction the issue was found in) runs `zec-happy`, but until the Taker Node

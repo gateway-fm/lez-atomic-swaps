@@ -286,7 +286,8 @@ NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HO
 # Scenarios that cut a loopback forward or the Chat socket inside a Node's
 # container: a native Node reaches the chains directly, with nothing to cut.
 NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
-                  "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
+                  "refund-then-maker-lock", "zec-early-lock", "zec-early-refund", "zec-refund-then-maker-lock",
+                  "zec-taker-refund",
                   "zec-offline-after-lock", "zec-maker-early-claim", "zec-slow-funding", "zec-kill-maker-claim",
                   "zec-activate-after-expiry", "zec-maker-cli-claim", "claim-send-fails",
                   # the XMR scenarios that write a Node's test hooks or switch,
@@ -5639,7 +5640,10 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
         if role == "maker":
             restart_point = "maker_down_across_the_takers_reveal"
     else:
-        zec_wait_until(swap_id, config, {"refund_available"}, timeout=1200, corridor=corridor,
+        # The first lock final reads awaiting_second_lock until the Maker
+        # locks, which can be within one poll: claim_available is then the
+        # same point, before the Taker's claim.
+        zec_wait_until(swap_id, config, {"awaiting_second_lock", "claim_available"}, timeout=1200, corridor=corridor,
                         describe="(Taker first lock final)")
     container, _ = NODES[role]
     restarted_at = time.time()
@@ -5678,8 +5682,8 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
 
 # The Zcash Taker's points between the take and a terminal state: the Taker Node
 # sends its first lock itself, so the take and the lock in flight are one point;
-# the first lock final reads awaiting_second_lock, or refund_available where the
-# Taker may refund its leg (the restart scenario's point). The refund path has no
+# the first lock final reads awaiting_second_lock (the restart scenario's point;
+# refund_available only once the claim window closed). The refund path has no
 # take-time point here (zec-taker-refund runs under the refund profile group).
 ZEC_KILL_POINTS = (
     ("taken", {"not_activated", "awaiting_first_lock"}),
@@ -5817,7 +5821,7 @@ def scenario_zec_regenerated_catalog(stamp: str) -> dict:
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
-    zec_wait_until(swap_id, config, {"refund_available"}, timeout=1200, corridor=corridor,
+    zec_wait_until(swap_id, config, {"awaiting_second_lock", "claim_available"}, timeout=1200, corridor=corridor,
                     describe="(Taker first lock final)")
     regenerate_runtime_config()
     log("  restarting the Taker Node onto the re-rendered configuration")
@@ -5958,9 +5962,9 @@ def zec_drive_tool(swap_id: str, until: str, timeout: int, mine_pending_only: bo
     config = zec_taker_actor_config(corridor["receipt_output"])
     try:
         if until_phase:
-            # The Node reads refund_available from the Taker's confirmed LEZ lock
-            # on; a refund journey has to stop at the actor's phase instead,
-            # once the Maker's Zcash funding is in (both legs locked).
+            # A refund journey stops at the actor's phase, once the Maker's
+            # Zcash funding is in (both legs locked): the Node's state there
+            # is claim_available, which the journey must not act on.
             view = zec_wait_until_phase(swap_id, config, set(until_phase.split("|")), timeout, corridor,
                                          mine_pending_only=mine_pending_only, describe=f"(zec-drive to phase {until_phase})")
         else:
@@ -5977,8 +5981,10 @@ def zec_drive_tool(swap_id: str, until: str, timeout: int, mine_pending_only: bo
 def zec_wait_until_phase(swap_id: str, config: str, phases: set[str], timeout: int, corridor: dict,
                          mine_pending_only: bool, describe: str = "") -> dict:
     """Polls until the Taker actor's own durable phase is in `phases` (the Node
-    reads refund_available from the confirmed LEZ lock on, so a refund
-    journey stops at the phase instead). With `mine_pending_only` a zebra
+    reads awaiting_second_lock from the Taker's confirmed lock until the
+    Maker's lock or the close of the claim window, so a journey that has to
+    stop at both legs locked waits for the phase instead). With
+    `mine_pending_only` a zebra
     block is generated only to include what waits in the mempool, never for
     depth: that keeps the Maker's funding at one confirmation, below the
     pre-reveal gate."""
@@ -6563,6 +6569,137 @@ def scenario_zec_early_lock(stamp: str) -> dict:
             "held_seconds": held, "second_leg_withheld": True, "seen_in_block": seen_in_block}
 
 
+# How long the Taker's row is watched for a Refund it must not offer, and for
+# the refusal of a refund asked for anyway (issue #182).
+ZEC_EARLY_REFUND_WATCH_SECONDS = int(os.environ.get("LEZ_ZEC_EARLY_REFUND_WATCH_SECONDS", "45"))
+# What the Node may answer for a moment instead of the refusal itself: its
+# supervisor holds the actor (a drive in flight) or moved the row meanwhile.
+ZEC_EARLY_REFUND_NOT_YET = {"taker_action_execution_unavailable", "progress_generation_conflict",
+                            "taker_monitor_unavailable"}
+
+
+# The Maker's forwarders whose loss keeps it from locking its leg while it is
+# still in time to: selling LEZ the indexer, its only source of LEZ finality
+# (it never sees the Taker's LEZ lock final, so it does not fund Zcash);
+# selling ZEC the indexer and the sequencer (it sees the Taker's Zcash funding
+# in zebra and cannot lock LEZ). Restoring both is right in either direction.
+ZEC_MAKER_LEZ_ROUTES = ("indexer", "sequencer")
+
+
+def zec_withhold_maker_lock(swap_id: str, config: str, corridor: dict, timeout: int) -> None:
+    """Cuts the Maker's view of LEZ and waits for the Taker's own first lock
+    to be confirmed with no Maker lock: the Taker actor at
+    taker_lock_confirmed. The caller restores the routes
+    (`zec_restore_routes("maker", *ZEC_MAKER_LEZ_ROUTES)`)."""
+    sells_lez = zec_taker_sells_lez()
+    routes = ZEC_MAKER_LEZ_ROUTES[:1] if sells_lez else ZEC_MAKER_LEZ_ROUTES
+    log(f"  cutting the Maker's {' and '.join(routes)} forwarder{'s' if len(routes) > 1 else ''}: "
+        "it cannot lock its leg, and its time to do so has not run out")
+    zec_cut_routes("maker", *routes)
+    wait_lez_view("maker", restored=False)
+    zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=timeout, corridor=corridor,
+                         mine_pending_only=sells_lez,
+                         describe="(the Taker's first lock confirmed, the Maker's lock withheld)")
+    if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
+        raise Failure(f"the Taker actor is at {zec_actor_phase(config)}: the Maker locked without its LEZ view")
+
+
+def zec_row_before_maker_lock(swap_id: str) -> dict | None:
+    """The Taker's row between its lock and the Maker's: the view once it
+    reads awaiting_second_lock with no action, None while it still shows the
+    supervisor's last snapshot from before the lock was confirmed. A row that
+    offers an action there, or reads as a refund, fails at once (issue #182)."""
+    view = taker_view(swap_id)
+    if view.get("available_action") is not None or view["state"] in {"refund_available", "refund_in_progress"}:
+        raise Failure(f"between the Taker's lock and the Maker's the Taker's row reads {view['state']} offering "
+                      f"{view.get('available_action')}, not awaiting_second_lock with no action (#182)")
+    return view if view["state"] == "awaiting_second_lock" else None
+
+
+def zec_refund_refused_before_maker_lock(swap_id: str, stamp: str, config: str) -> dict:
+    """With the Taker's lock confirmed, no Maker lock and the Maker still in
+    time to fund, the Taker's row offers no action and a refund asked for
+    anyway is refused as `taker_action_unavailable`, by its first request and
+    by a replay of it; nothing is admitted and the actor stays where it was
+    (issue #182: the row used to read refund_available with Refund, and the
+    request was admitted and waited for its time)."""
+    request_id = f"e2e-early-refund-{stamp}"
+    refusals = []
+    deadline = time.time() + ZEC_EARLY_REFUND_WATCH_SECONDS
+    wait = Wait(f"the Taker to refuse a refund of {swap_id[:12]} before the Maker's lock",
+                ZEC_EARLY_REFUND_WATCH_SECONDS + 120)
+    while wait.running():
+        phase = zec_actor_phase(config)
+        if phase not in ZEC_FIRST_LOCK_CONFIRMED:
+            raise Failure(f"the Taker actor left taker_lock_confirmed ({phase}) while the Maker's lock was withheld")
+        view = zec_row_before_maker_lock(swap_id)
+        if view is None:
+            wait.note("snapshot", "the Taker's row has not caught up with its confirmed lock yet")
+            time.sleep(3)
+            continue
+        reply = rpc("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": request_id,
+                                                     "swap_id": swap_id,
+                                                     "expected_generation": view["progress_generation"]}, timeout=300)
+        if "result" in reply:
+            raise Failure(f"the Taker admitted a refund while the Maker was still in time to fund (#182): "
+                          f"{json.dumps(reply['result'])[:200]}")
+        error = reply["error"]
+        category = (error.get("data") or {}).get("category")
+        if category == "taker_action_unavailable":
+            refusals.append({"generation": view["progress_generation"], "code": error.get("code"), "category": category})
+            if len(refusals) == 1:
+                log(f"  refund refused at generation {view['progress_generation']} ({error.get('code')} {category}); "
+                    f"the row reads {view['state']} with no action")
+            # The first refusal and one replay of the same request, then the
+            # row watched to the end of the window.
+            if len(refusals) >= 2 and time.time() >= deadline:
+                break
+        elif category not in ZEC_EARLY_REFUND_NOT_YET:
+            raise Failure(f"the early refund was not refused as taker_action_unavailable: {json.dumps(error)[:300]}")
+        wait.note(category, f"refund answered {category}; taker {view['state']}")
+        time.sleep(5)
+    else:
+        raise wait.failure()
+    after = taker_view(swap_id)
+    if after.get("available_action") is not None or after["state"] != "awaiting_second_lock":
+        raise Failure(f"after the refused refund the Taker's row reads {after['state']} offering "
+                      f"{after.get('available_action')}, not awaiting_second_lock with no action (#182)")
+    log(f"  the refund was refused {len(refusals)} times over {ZEC_EARLY_REFUND_WATCH_SECONDS}s and admitted never; "
+        f"the row still reads {after['state']} with no action")
+    return {"refusals": len(refusals), "first_refusal": refusals[0], "state": after["state"],
+            "generation": after["progress_generation"]}
+
+
+def scenario_zec_early_refund(stamp: str) -> dict:
+    """Issue #182: a refund asked for between the Taker's lock and the Maker's,
+    with the Maker still in time to fund, is refused and has no effect, and
+    the swap then completes. The Maker's lock is withheld as in zec-early-lock,
+    by cutting the Maker's view of LEZ: selling LEZ its indexer forwarder (it
+    cannot see the Taker's LEZ lock final, so it does not fund Zcash), selling
+    ZEC its indexer and sequencer forwarders (it sees the Taker's Zcash
+    funding in zebra and cannot lock LEZ). The Taker's lock is confirmed (its
+    actor at taker_lock_confirmed); its row must read awaiting_second_lock
+    with no action, and taker_swap_refund_v1 must answer
+    taker_action_unavailable. The Maker's view is restored, the Maker locks,
+    the Taker claims and both Nodes end completed."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    try:
+        zec_withhold_maker_lock(swap_id, config, corridor, timeout=1500)
+        refusal = zec_refund_refused_before_maker_lock(swap_id, stamp, config)
+    finally:
+        zec_restore_routes("maker", *ZEC_MAKER_LEZ_ROUTES)
+    wait_lez_view("maker", restored=True)
+    log("  the Maker can read LEZ again; it locks its leg and the swap goes on")
+    zec_finish(swap_id, config, corridor, stamp)
+    final = taker_view(swap_id)
+    if final["state"] != "completed":
+        raise Failure(f"after the refused refund the swap ended {final['state']}, not completed")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "early_refund": refusal, "taker_terminal_state": final["state"]}
+
+
 def scenario_zec_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
     """R2 for Zcash: once the first lock is confirmed the swap proceeds on chain
     state alone. Logos Chat and Delivery are cut at `at` as in the BTC twin
@@ -7130,7 +7267,8 @@ def scenario_zec_maker_early_claim(stamp: str) -> dict:
 
 
 ZEC_STEPS = ("maker-down-after-first-lock", "refund-point", "maker-up-reconcile", "maker-completes", "maker-lez-refund",
-             "claim-window-closed", "maker-zcash-refund", "taker-claim-broadcast", "maker-read-reveal")
+             "claim-window-closed", "maker-zcash-refund", "taker-claim-broadcast", "maker-read-reveal",
+             "maker-lock-withheld", "maker-lock-released")
 
 
 def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
@@ -7160,13 +7298,29 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
       in zebra's mempool, unmined (restart-taker, survivor);
     - maker-read-reveal: selling LEZ, the Taker's Zcash claim is mined and the
       Maker has read the preimage from it (claim_evidence_available) before
-      its LEZ claim is final (restart-maker)."""
+      its LEZ claim is final (restart-maker);
+    - maker-lock-withheld: the Maker's view of LEZ is cut so it cannot lock
+      its leg while it is still in time to; the Taker's own lock is confirmed
+      and its Node's row reads awaiting_second_lock with no action
+      (zec-early-refund, issue #182);
+    - maker-lock-released: the Maker's view of LEZ is restored (also run when
+      the journey ends early)."""
     os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
     # The corridor read asks the Zcash funder's container for its outpoint:
     # selling LEZ that is the Maker, which these steps may find stopped.
     if step == "maker-up-reconcile":
         node_start("maker")
         wait_healthy("maker")
+    if step == "maker-lock-released":
+        # No corridor read: this also runs from the journey's exit trap.
+        zec_restore_routes("maker", *ZEC_MAKER_LEZ_ROUTES)
+        try:
+            wait_lez_view("maker", restored=True)
+        except Failure as failure:
+            log(f"FAILED: {failure}")
+            return False
+        log("  the Maker can read LEZ again; it may now lock its leg")
+        return True
     if step == "refund-point" and zec_taker_sells_lez():
         if taker_has_take_time_swap(swap_id):
             taken = zec_dynamic_corridor(swap_id, "")
@@ -7198,6 +7352,19 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
                 raise Failure(f"the Maker locked its leg although its route was cut (Taker at {zec_actor_phase(config)})")
             log("  the Maker observed the Taker's first lock; stopping the Maker Node")
             node_stop("maker")
+        elif step == "maker-lock-withheld":
+            config = zec_taker_actor_config(corridor["receipt_output"])
+            zec_withhold_maker_lock(swap_id, config, corridor, timeout=timeout)
+            wait = Wait(f"the Taker's row of {swap_id[:12]} to read awaiting_second_lock", 120)
+            while wait.running():
+                view = zec_row_before_maker_lock(swap_id)
+                if view is not None:
+                    break
+                wait.note("snapshot", "the Taker's row has not caught up with its confirmed lock yet")
+                time.sleep(3)
+            else:
+                raise wait.failure()
+            log(f"  the Taker's lock is confirmed, the Maker's withheld; the Taker's row reads {view['state']} with no action")
         elif step == "refund-point":
             if zec_taker_sells_lez():
                 wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
@@ -9916,6 +10083,7 @@ ZEC_SCENARIOS = {
     "zec-concurrent-staggered": scenario_zec_concurrent_staggered,
     "zec-claim-collision": scenario_zec_claim_collision,
     "zec-early-lock": scenario_zec_early_lock,
+    "zec-early-refund": scenario_zec_early_refund,
     "zec-offline-after-lock": scenario_zec_offline_after_lock,
     "zec-offline-after-second-lock": lambda stamp: scenario_zec_offline_after_lock(stamp, "both legs locked"),
     "zec-offline-after-claim": lambda stamp: scenario_zec_offline_after_lock(stamp, "claim sent"),

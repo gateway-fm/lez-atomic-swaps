@@ -323,7 +323,18 @@ class Tiers(unittest.TestCase):
         self.assertNotIn('node:zec:zec-maker-early-claim:TakerSellsForeign', full)
         for tier in ('smoke', 'refunds'):
             self.assertFalse([test for test in self.tier(tier) if ':zec-maker-early-claim:' in test], tier)
-        self.assertEqual(len(full), 195)
+        self.assertEqual(len(full), 199)
+
+    def test_full_has_the_early_zcash_refund_in_both_directions_on_the_node_and_the_desk(self):
+        # Issue #182: a refund asked for before the Maker's lock is refused
+        # (node) and the desk offers none (ui), and the swap completes: on the
+        # fast profile, so in `full` only.
+        full = self.tier('full')
+        for kind in ('node', 'ui'):
+            for direction in ('TakerSellsLez', 'TakerSellsForeign'):
+                self.assertIn(f'{kind}:zec:zec-early-refund:{direction}', full)
+        for tier in ('smoke', 'refunds'):
+            self.assertFalse([test for test in self.tier(tier) if ':zec-early-refund:' in test], tier)
 
     def test_full_has_the_maker_claim_kill_selling_lez_only(self):
         full = self.tier('full')

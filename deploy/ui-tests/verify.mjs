@@ -409,7 +409,36 @@ async function waitDeskState(app, outputName, wanted, states, label) {
       }
       console.log(`  label: ${reached.state_label}`);
     }
+    // INTERACTIVE_EXPECT_NO_ACTION=1: the row in that state offers nothing to
+    // press (issue #182: no Refund between the Taker's lock and the Maker's
+    // on a Zcash swap). Checked on the desk's model and on the button itself;
+    // a row that offers an action there fails the step at once.
+    if (process.env.INTERACTIVE_EXPECT_NO_ACTION === "1") {
+      const reached = rows.find((swap) => states.includes(swap.state));
+      if (reached.can_act === true || reached.action_required || reached.action_label) {
+        throw new StepFailed(`${role} desk offers "${reached.action_label ?? reached.action_required}" on ${reached.state} (${reached.state_label}), where no action is expected`);
+      }
+      const shown = await visibleActionsOf(app, `${role}SwapAction`, String(reached.ui_swap_id));
+      if (shown.length > 0) {
+        throw new StepFailed(`${role} desk shows the button${shown.length > 1 ? "s" : ""} ${shown.map((text) => `"${text}"`).join(", ")} on ${reached.state} (${reached.state_label}), where none is expected`);
+      }
+      console.log(`  no action offered on ${reached.state} (${reached.state_label})`);
+    }
   }, { timeout: waitTimeoutMs, interval: 10000, description: label });
+}
+
+// The texts of the visible action buttons of one swap's row.
+async function visibleActionsOf(app, objectName, swapId) {
+  const found = await app.findByProperty("objectName", objectName);
+  const texts = [];
+  for (const match of found.matches ?? []) {
+    const response = await app.getProperties(match.id);
+    const values = Object.fromEntries((response.properties ?? []).map((entry) => [entry.name, entry.value]));
+    if (values.visible !== true) continue;
+    const row = await evaluateIn(app, match.id, "String(modelData.ui_swap_id)");
+    if (row.ok === true && row.result === swapId) texts.push(String(values.text ?? ""));
+  }
+  return texts;
 }
 
 function unwrap(raw, what) {

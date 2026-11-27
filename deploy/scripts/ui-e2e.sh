@@ -110,7 +110,9 @@ fi
 # set (REVIEW 21:08Z): zec-taker-refund (the Maker's Basecamp stopped after it
 # saw the first lock), zec-restart-taker / zec-restart-maker, zec-survivor (the
 # Taker's Basecamp stopped after its claim), zec-node-offline (both Nodes held
-# down with a Zcash swap open). Host steps between desk presses are node-e2e.py zec-wait/zec-step.
+# down with a Zcash swap open), and zec-early-refund (the Maker's lock withheld:
+# the Taker desk offers no Refund before it, issue #182). Host steps between desk
+# presses are node-e2e.py zec-wait/zec-step.
 case "$pair" in
   Bitcoin) ;;
   Zcash)
@@ -128,11 +130,13 @@ esac
 
 log() { printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() { log "FAILED: $*"; exit 1; }
-# A scenario that stops a party's Basecamp registers it here, and one that
-# holds the Nodes down sets nodes_held; either is undone however the scenario
+# A scenario that stops a party's Basecamp registers it here, one that holds
+# the Nodes down sets nodes_held, and one that cuts the Maker's view of LEZ
+# names its swap in maker_lock_withheld; each is undone however the scenario
 # ends.
-stopped_node=""; nodes_held=0; logos_on=0; own_refund_off=0
+stopped_node=""; nodes_held=0; logos_on=0; own_refund_off=0; maker_lock_withheld=""
 trap '[[ -z "$stopped_node" ]] || docker start "$stopped_node" >/dev/null 2>&1
+  [[ -z "$maker_lock_withheld" ]] || python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-step --swap-id "$maker_lock_withheld" --step maker-lock-released >/dev/null 2>&1
   [[ "$own_refund_off" == 0 ]] || taker_own_refund true >/dev/null 2>&1
   [[ "$nodes_held" == 0 ]] || bash scripts/node-hold.sh release maker taker >/dev/null 2>&1
   [[ "$logos_on" == 0 ]] || { chat_log; transport local; }' EXIT
@@ -843,6 +847,8 @@ scenario_zec_taker_refund() {
   note "The Maker Node observes the Taker's first lock and is stopped before it can lock its own leg; the Taker must recover its funds"
   zec_step "$swap" maker-down-after-first-lock 1500; stopped_node="$maker_node"
   zec_step "$swap" refund-point
+  # The Node offers the refund once the Taker's claim window has closed with
+  # no Maker lock (the LEZ refund time minus the profile's margin), not before.
   zec_wait "$swap" refund_available 900
   note "The Taker's refund is due with no Maker lock; the Taker desk offers Refund"
   taker_act "$refund_action" "$swap"
@@ -851,6 +857,23 @@ scenario_zec_taker_refund() {
   note "The Maker Node is started again and reconciles the refunded swap"
   zec_step "$swap" maker-up-reconcile 1200; stopped_node=""; wait_desk maker
   maker_wait refunded "$swap"
+}
+scenario_zec_early_refund() {
+  # Issue #182: between the Taker's lock and the Maker's, with the Maker still
+  # in time to lock, the Taker desk shows the swap waiting for the Maker's
+  # lock and offers no Refund (it used to offer one from the Taker's confirmed
+  # lock on, which could not be sent yet). The Maker's lock is withheld by
+  # cutting its view of LEZ (node-e2e.py zec-step maker-lock-withheld), then
+  # released, and the swap completes from both desks.
+  local swap; zec_provision; take swap
+  note "The Maker Node's view of LEZ is cut, so it cannot lock its leg yet; the Taker Node's own lock confirms meanwhile"
+  maker_lock_withheld="$swap"
+  zec_step "$swap" maker-lock-withheld 1500
+  note "The Taker's lock is confirmed and the Maker is still in time to lock: the Taker desk shows the swap waiting for the Maker's lock, with no Refund button"
+  step "Taker desk shows ${swap:0:12} waiting for the Maker's lock and offers no Refund" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=awaiting_maker_lock "INTERACTIVE_SWAP_ID=$swap" INTERACTIVE_EXPECT_NO_ACTION=1
+  note "The Maker Node's view of LEZ is restored; it locks its leg and the swap goes on to the Taker's claim"
+  zec_step "$swap" maker-lock-released 300; maker_lock_withheld=""
+  zec_claim_and_complete "$swap"
 }
 scenario_zec_maker_refund_foreign() {
   # Selling ZEC: both legs locked, the Taker never presses its LEZ claim; at the
@@ -1234,6 +1257,7 @@ run_one() {
     zec-concurrent) [[ "$pair" == Zcash ]] || fail "zec-concurrent needs --pair Zcash"; scenario_zec_concurrent ;;
     zec-concurrent-staggered) [[ "$pair" == Zcash ]] || fail "zec-concurrent-staggered needs --pair Zcash"; scenario_zec_concurrent_staggered ;;
     zec-taker-refund) [[ "$pair" == Zcash ]] || fail "zec-taker-refund needs --pair Zcash"; scenario_zec_taker_refund ;;
+    zec-early-refund) [[ "$pair" == Zcash ]] || fail "zec-early-refund needs --pair Zcash"; scenario_zec_early_refund ;;
     zec-restart-taker) [[ "$pair" == Zcash ]] || fail "zec-restart-taker needs --pair Zcash"; scenario_zec_restart taker ;;
     zec-restart-maker) [[ "$pair" == Zcash ]] || fail "zec-restart-maker needs --pair Zcash"; scenario_zec_restart maker ;;
     zec-survivor) [[ "$pair" == Zcash ]] || fail "zec-survivor needs --pair Zcash"; scenario_zec_survivor ;;

@@ -96,10 +96,10 @@ tier_tests() { # tier_tests <tier>
       for d in "${directions[@]}"; do
         for s in zec-happy zec-dynamic-happy zec-replay zec-wrong-inputs zec-restart-taker zec-restart-maker zec-kill-taker zec-kill-maker \
           zec-survivor zec-concurrent zec-concurrent-kill-maker zec-corrupt-state zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock \
-          zec-offline-after-second-lock zec-offline-after-claim zec-bitcoin-down; do
+          zec-offline-after-second-lock zec-offline-after-claim zec-bitcoin-down zec-early-refund; do
           echo "node:zec:$s:$d"
         done
-        for s in zec-happy zec-concurrent zec-restart-taker zec-restart-maker zec-survivor zec-node-offline; do
+        for s in zec-happy zec-concurrent zec-restart-taker zec-restart-maker zec-survivor zec-node-offline zec-early-refund; do
           echo "ui:zec:$s:$d"
         done
         for s in happy replay wrong-inputs restart-taker restart-maker kill-taker kill-maker survivor late-claim-confirms \

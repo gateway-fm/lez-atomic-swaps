@@ -402,7 +402,17 @@ locked) and `punished` (a Monero swap whose refund window closed with the LEZ
 still locked) are terminal. `awaiting_second_lock` carries
 `available_action: "refund"` only once the Maker's second-lock cutoff
 (`terms.maker_second_lock_cutoff_unix_seconds`) has passed; before it the
-Maker's lock is still awaited and no action is offered. `both_legs_locked` with no
+Maker's lock is still awaited and no action is offered. A Zcash swap reads
+`awaiting_second_lock` with no action from the Taker's confirmed lock until
+the Maker's lock is observed or the Taker's claim window closes (the
+agreement's LEZ refund time minus the profile's required margin; after it no
+claim of the Maker's leg can land, and selling LEZ the Maker no longer
+funds). From then on, with no Maker lock, the row reads `refund_available`
+with `available_action: "refund"`. A `taker_swap_refund_v1` sent before that
+is refused with `-32016` (`taker_action_unavailable`): nothing is admitted,
+the Node keeps observing for the Maker's lock, and the swap can still
+complete. The admitted refund is sent at its own deadline: the LEZ refund
+time selling LEZ, the Zcash refund height selling ZEC. `both_legs_locked` with no
 `available_action` means the claim window has closed (the earlier refund's
 deadline passed): a claim can no longer be included, the Node follows the
 Maker's refund and then offers `refund`; an earlier admitted `claim` no longer
