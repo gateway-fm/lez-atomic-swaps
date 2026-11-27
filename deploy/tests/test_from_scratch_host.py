@@ -49,6 +49,13 @@ class FromScratchHost(unittest.TestCase):
         self.assertIn('docker exec "${LEZ_STACK_PREFIX:-lez}-$role-node" node /ui-tests/verify.mjs', SCRIPT)
         self.assertNotIn('docker exec "lez-$role-node"', SCRIPT)
 
+    def test_the_escrow_step_reads_the_guest_digest_as_the_host_user_and_keeps_its_log(self):
+        step = SCRIPT[SCRIPT.index('build_escrow() {'):SCRIPT.index('# the LEZ v0.2 sidecar, the vault-claim tool')]
+        built, checked = step.rindex('own_provision'), step.rindex('escrow guest ELF digest mismatch')
+        self.assertLess(built, checked)
+        self.assertIn('>/provision/escrow-artifact.log 2>&1', step)
+        self.assertIn('tail -120 /provision/escrow-artifact.log; exit 1', step)
+
 
 if __name__ == '__main__':
     unittest.main()

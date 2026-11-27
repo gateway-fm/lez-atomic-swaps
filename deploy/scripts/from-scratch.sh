@@ -698,7 +698,12 @@ build_escrow() {
       mkdir -p /tmp/lez-risc0-home/toolchains/v1.94.1-rust-aarch64-unknown-linux-gnu && printf '[default_versions]\nrust = \"1.94.1\"\n' > /tmp/lez-risc0-home/settings.toml;
       RUN_ID=arm-rebuild LEZ_NATIVE_TOOLS=1 LEZ_V02_NATIVE_R0VM=/provision/tools-arm/bin/r0vm LEZ_V02_ARTIFACT_TARGET_DIR=/provision/escrow-artifact \
       LEZ_V02_TOOL_DIR=/provision/tools-arm LEZ_V02_SOURCE_DIR=/lez-source CARGO_TARGET_DIR=/cache/target/provisional CARGO_BUILD_JOBS=6 \
-      scripts/verify-lez-v02-provisional.sh 2>&1 | tail -3"
+      scripts/verify-lez-v02-provisional.sh >/provision/escrow-artifact.log 2>&1 \
+        || { echo '--- the escrow artifact build failed; the end of /provision/escrow-artifact.log: ---'; tail -120 /provision/escrow-artifact.log; exit 1; };
+      tail -3 /provision/escrow-artifact.log"
+    # On Linux the builder wrote the artifact as root, the guest ELF readable
+    # by its owner only: hand it to the host user before the digest is read.
+    own_provision
   fi
   [[ "$(shasum -a 256 "$guest_elf" | cut -c1-64)" == "$GUEST_ELF_SHA256" ]] || fail "escrow guest ELF digest mismatch"
 }
