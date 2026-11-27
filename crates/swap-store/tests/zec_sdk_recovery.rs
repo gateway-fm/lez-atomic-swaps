@@ -6427,6 +6427,7 @@ struct StagedMakerZecCompletion {
     reservation_id: RequestId,
     completion_request: RequestId,
     accepted: AcceptedZecAgreementV1,
+    agreement_wire: Vec<u8>,
     actor: MakerActorManifestV1,
 }
 
@@ -6528,6 +6529,7 @@ fn stage_maker_zec_completions(
                 reservation_id,
                 completion_request: request(format!("capacity-completion-{index}")),
                 accepted,
+                agreement_wire: artifacts.agreement_wire.clone(),
                 actor,
             }
         })
@@ -6631,6 +6633,198 @@ fn a_maker_accepts_taker_sells_lez_swaps_up_to_its_capacity_and_again_after_one_
             .count_open_maker_zec_taker_sells_lez_swaps(now)
             .unwrap(),
         2
+    );
+}
+
+/// Issue #178, item 2: an accepted `TakerSellsLez` swap whose Taker never
+/// locks held one of the Maker's places until its LEZ refund time. It holds
+/// it for the profile's Taker-lock window now; then the place goes to the
+/// next taker. A lock confirmed later is funded only if a place is free: the
+/// funding step is admitted in the same transaction order as acceptances, so
+/// the swaps holding a place never exceed the capacity.
+#[test]
+fn an_unfunded_taker_sells_lez_swap_gives_its_place_up_and_a_late_lock_needs_a_free_place() {
+    let data = TempDir::new().expect("temporary maker application store");
+    let path = data.path().join("maker-unfunded.sqlite3");
+    let staged = stage_maker_zec_completions(&path, data.path(), 3);
+    let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
+        &path,
+        Participant::Maker,
+        claim_key("maker-unfunded-key", [0x73; 32]),
+    )
+    .unwrap();
+    let schedule = SqliteSwapStore::open(&path).unwrap();
+    let capacity = |_| 1_usize;
+    let complete = |swap: &StagedMakerZecCompletion, accepted: &AcceptedZecAgreementV1| {
+        recovery_store.complete_maker_zec_negotiation_and_register_actor_within_capacity(
+            &swap.completion_request,
+            &swap.offer_id,
+            2,
+            &swap.reservation_id,
+            accepted,
+            &swap.actor,
+            10,
+            1,
+        )
+    };
+    fn swap_id(swap: &StagedMakerZecCompletion) -> &SwapId {
+        swap.accepted.agreement().coordinator().id()
+    }
+    let count = |now| {
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(now)
+            .unwrap()
+    };
+    let accepted_at = ACCEPTED_AT.value();
+    let deadline =
+        lez_swap_store::maker_zec_taker_lock_deadline(staged[0].accepted.agreement(), accepted_at);
+    let lez_refund_at = staged[0].accepted.agreement().lez_refund_at_ms() / 1_000;
+    assert_eq!(
+        deadline,
+        accepted_at
+            + lez_zec_swap_sdk::ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV3)
+                .taker_lock_window()
+                .value()
+    );
+    assert!(accepted_at < deadline && deadline + 2 < lez_refund_at);
+
+    // The first swap is accepted and its Taker never locks.
+    assert!(
+        !complete(&staged[0], &staged[0].accepted)
+            .unwrap()
+            .was_replay()
+    );
+    assert!(matches!(
+        complete(&staged[1], &staged[1].accepted).unwrap_err(),
+        StoreError::MakerZecTakerSellsLezCapacityReached {
+            open: 1,
+            capacity: 1
+        }
+    ));
+    assert_eq!(
+        count(deadline - 1),
+        1,
+        "it holds its place inside the window"
+    );
+    assert_eq!(
+        count(deadline),
+        0,
+        "unfunded past the Taker-lock window it holds no place, long before the LEZ refund time"
+    );
+
+    // The place goes to the next taker.
+    let later = AcceptedZecAgreementV1::accept_wire_at(
+        &staged[1].agreement_wire,
+        UnixSeconds::new(deadline),
+        Participant::Maker,
+        0,
+    )
+    .unwrap();
+    assert!(!complete(&staged[1], &later).unwrap().was_replay());
+    assert_eq!(count(deadline + 1), 1);
+
+    // The first swap's Taker locks late: every place is taken, so its Zcash
+    // funding is not admitted and nothing of the Maker's is committed.
+    assert_eq!(
+        schedule
+            .admit_maker_zec_funding(swap_id(&staged[0]), deadline + 1, &capacity)
+            .unwrap(),
+        lez_swap_store::MakerZecFundingAdmission::NoFreePlace {
+            open: 1,
+            capacity: 1
+        }
+    );
+    assert!(
+        !schedule
+            .maker_zec_funding_admitted(swap_id(&staged[0]))
+            .unwrap()
+    );
+    assert_eq!(count(deadline + 1), 1);
+
+    // The second swap's Taker locks inside its window: admitted, and it
+    // keeps its place past the window.
+    assert_eq!(
+        schedule
+            .admit_maker_zec_funding(swap_id(&staged[1]), deadline + 1, &capacity)
+            .unwrap(),
+        lez_swap_store::MakerZecFundingAdmission::Admitted
+    );
+    let second_deadline =
+        lez_swap_store::maker_zec_taker_lock_deadline(later.agreement(), deadline);
+    assert!(second_deadline < lez_refund_at);
+    assert_eq!(count(second_deadline), 1, "a funded swap keeps its place");
+    assert_eq!(
+        schedule
+            .admit_maker_zec_funding(swap_id(&staged[0]), second_deadline, &capacity)
+            .unwrap(),
+        lez_swap_store::MakerZecFundingAdmission::NoFreePlace {
+            open: 1,
+            capacity: 1
+        }
+    );
+
+    // The second swap ends: the late lock is served now, and holds the
+    // place again, so a third taker is refused.
+    let mut ending = SqliteSwapStore::open(&path).unwrap();
+    let lease = ending
+        .claim_maker_actor(
+            swap_id(&staged[1]),
+            lez_swap_store::MakerActorLeaseOwner::new([0x7e; 16]).unwrap(),
+            10,
+        )
+        .unwrap()
+        .expect("the second swap's actor is due");
+    ending
+        .resolve_maker_actor_attempt(
+            &lease,
+            lez_swap_store::MakerActorAttemptResolution::Terminal,
+            11,
+        )
+        .unwrap();
+    assert_eq!(count(second_deadline), 0);
+    assert_eq!(
+        schedule
+            .admit_maker_zec_funding(swap_id(&staged[0]), second_deadline, &capacity)
+            .unwrap(),
+        lez_swap_store::MakerZecFundingAdmission::Admitted
+    );
+    assert!(
+        schedule
+            .maker_zec_funding_admitted(swap_id(&staged[0]))
+            .unwrap()
+    );
+    assert_eq!(
+        schedule
+            .admit_maker_zec_funding(swap_id(&staged[0]), lez_refund_at - 1, &capacity)
+            .unwrap(),
+        lez_swap_store::MakerZecFundingAdmission::Admitted,
+        "an admitted swap stays admitted"
+    );
+    assert_eq!(count(second_deadline), 1);
+    let third = AcceptedZecAgreementV1::accept_wire_at(
+        &staged[2].agreement_wire,
+        UnixSeconds::new(second_deadline),
+        Participant::Maker,
+        0,
+    )
+    .unwrap();
+    assert!(matches!(
+        complete(&staged[2], &third).unwrap_err(),
+        StoreError::MakerZecTakerSellsLezCapacityReached {
+            open: 1,
+            capacity: 1
+        }
+    ));
+    // A swap this store holds no Maker agreement for takes no place.
+    assert_eq!(
+        schedule
+            .admit_maker_zec_funding(
+                &SwapId::new("no-such-agreement").unwrap(),
+                second_deadline,
+                &capacity
+            )
+            .unwrap(),
+        lez_swap_store::MakerZecFundingAdmission::Admitted
     );
 }
 

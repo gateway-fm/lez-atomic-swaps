@@ -28,7 +28,8 @@ use lez_zec_swap_sdk::{
     REFUND_RECORD_SCHEMA_V1, RecoveryStore, RefundIntentRecordV1, RefundIntentV1,
     RefundRecoveryStore, RefundTransitionRecordV1, RefundTransitionV1,
     RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, ZcashObservationTracker,
-    ZecMakerAgreementProposalV1, ZecSwapBindingRecordV1,
+    ZecAgreementV1, ZecMakerAgreementProposalV1, ZecProfileId, ZecRefundProfile,
+    ZecSwapBindingRecordV1,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{
     MakerActorKindV1, MakerActorManifestV1, MakerOfferId, MakerOfferV1, SWAP_PAYLOAD_VERSION,
-    StoreError, maker_actor_process::register_maker_actor_in_transaction,
+    SqliteSwapStore, StoreError, maker_actor_process::register_maker_actor_in_transaction,
     maker_actor_process::require_exact_maker_actor_in_transaction, maker_zec_chat_session_id,
     open_configured_connection, open_existing_configured_connection, participant_name,
     revision_from_sql,
@@ -452,8 +453,13 @@ impl SqliteZecRecoveryStore {
 
     /// The Maker's open ZEC `TakerSellsLez` swaps at `now_unix_seconds`: an
     /// accepted Maker agreement in that direction whose actor the schedule has
-    /// not ended (completed or refunded) and whose LEZ refund time is still
-    /// ahead. A swap past its LEZ refund time no longer competes for the
+    /// not ended (completed or refunded), whose LEZ refund time is still
+    /// ahead, and which is funded or may still be: its Zcash funding step was
+    /// admitted ([`SqliteSwapStore::admit_maker_zec_funding`]), or its
+    /// Taker-lock window is open ([`maker_zec_taker_lock_deadline`]). A swap
+    /// whose Taker has not locked by then gives its place up (issue #178): a
+    /// Taker that accepts and never locks holds it for the window, not until
+    /// the LEZ refund time. A swap past its LEZ refund time no longer competes for the
     /// Maker's one-at-a-time LEZ claims: its claim can no longer be included,
     /// so the Maker Node's gate passes over it, waiting or in flight, and its
     /// actor stops it by name (`lez_claim_cannot_land`).
@@ -3353,28 +3359,191 @@ fn count_open_maker_zec_taker_sells_lez(
     connection: &Connection,
     now_unix_seconds: u64,
 ) -> Result<usize, StoreError> {
+    count_open_maker_zec_taker_sells_lez_except(connection, now_unix_seconds, None)
+}
+
+/// As [`count_open_maker_zec_taker_sells_lez`], leaving `except` out: the
+/// swaps another one competes with for a place.
+fn count_open_maker_zec_taker_sells_lez_except(
+    connection: &Connection,
+    now_unix_seconds: u64,
+    except: Option<&SwapId>,
+) -> Result<usize, StoreError> {
     let mut statement = connection.prepare(
-        "SELECT a.agreement_wire
+        "SELECT a.swap_id, a.agreement_wire, a.accepted_at, f.swap_id IS NOT NULL
            FROM zec_sdk_agreements a
            LEFT JOIN maker_actor_processes p ON p.swap_id = a.swap_id
+           LEFT JOIN maker_zec_funding_admissions f ON f.swap_id = a.swap_id
           WHERE a.local_role = 'maker'
             AND (p.schedule_state IS NULL OR p.schedule_state <> 'terminal')",
     )?;
-    let wires = statement
-        .query_map([], |row| row.get::<_, Vec<u8>>(0))?
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, bool>(3)?,
+            ))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
-    let now_ms = now_unix_seconds.saturating_mul(1_000);
-    Ok(wires
-        .iter()
-        .filter_map(|wire| {
-            AcceptedZecAgreementV1::accept_wire_at(wire, UnixSeconds::new(0), Participant::Maker, 0)
-                .ok()
-        })
-        .filter(|accepted| {
-            accepted.agreement().direction() == SwapDirection::TakerSellsLez
-                && accepted.agreement().lez_refund_at_ms() > now_ms
-        })
-        .count())
+    let mut open = 0;
+    for (swap_id, wire, accepted_at, funding_admitted) in rows {
+        if except.is_some_and(|except| except.as_str() == swap_id) {
+            continue;
+        }
+        let Ok(accepted) = AcceptedZecAgreementV1::accept_wire_at(
+            &wire,
+            UnixSeconds::new(0),
+            Participant::Maker,
+            0,
+        ) else {
+            continue;
+        };
+        if maker_zec_taker_sells_lez_holds_place(
+            accepted.agreement(),
+            revision_from_sql(accepted_at)?,
+            funding_admitted,
+            now_unix_seconds,
+        ) {
+            open += 1;
+        }
+    }
+    Ok(open)
+}
+
+/// Whether an accepted, unended Maker agreement holds one of the Maker's
+/// `TakerSellsLez` places at `now_unix_seconds`: that direction, its LEZ
+/// refund time ahead, and either its Zcash funding step admitted
+/// ([`SqliteSwapStore::admit_maker_zec_funding`]) or its Taker-lock window
+/// still open ([`maker_zec_taker_lock_deadline`]).
+fn maker_zec_taker_sells_lez_holds_place(
+    agreement: &ZecAgreementV1,
+    accepted_at_unix_seconds: u64,
+    funding_admitted: bool,
+    now_unix_seconds: u64,
+) -> bool {
+    agreement.direction() == SwapDirection::TakerSellsLez
+        && agreement.lez_refund_at_ms() > now_unix_seconds.saturating_mul(1_000)
+        && (funding_admitted
+            || now_unix_seconds
+                < maker_zec_taker_lock_deadline(agreement, accepted_at_unix_seconds))
+}
+
+/// When a Maker stops keeping a place for a `TakerSellsLez` swap whose
+/// Taker's LEZ lock it has not confirmed (issue #178): its acceptance plus the
+/// profile's Taker-lock window ([`ZecRefundProfile::taker_lock_window`]), Unix
+/// seconds. Past it the swap is not expired: a lock confirmed later is funded
+/// if a place is free then.
+#[must_use]
+pub fn maker_zec_taker_lock_deadline(
+    agreement: &ZecAgreementV1,
+    accepted_at_unix_seconds: u64,
+) -> u64 {
+    accepted_at_unix_seconds.saturating_add(
+        ZecRefundProfile::for_id(agreement.binding().profile_id())
+            .taker_lock_window()
+            .value(),
+    )
+}
+
+/// What [`SqliteSwapStore::admit_maker_zec_funding`] decided.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MakerZecFundingAdmission {
+    /// The swap holds a place: its Zcash funding step may run.
+    Admitted,
+    /// Its Taker-lock window closed with the lock unconfirmed and every place
+    /// is taken now: nothing is funded this attempt.
+    NoFreePlace {
+        /// The other swaps holding a place.
+        open: usize,
+        /// The profile's capacity.
+        capacity: usize,
+    },
+}
+
+impl SqliteSwapStore {
+    /// Admits the Zcash funding step of the Maker's `TakerSellsLez` swap
+    /// `swap_id` at `now_unix_seconds`, in one `BEGIN IMMEDIATE` transaction
+    /// with the count the acceptance of a new swap reads (issue #178).
+    ///
+    /// A swap admitted before stays admitted. Inside its Taker-lock window it
+    /// holds its place and is admitted. Past the window its place was given
+    /// up: it is admitted only while fewer than `capacity(profile)` other
+    /// swaps hold one, and then holds a place again. An admitted swap holds
+    /// its place until its schedule ends or its LEZ refund time passes, so
+    /// the swaps whose Zcash a Maker has funded never exceed the capacity.
+    /// A swap with no accepted Maker agreement in this store, or of the other
+    /// direction, takes no place and is admitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error; nothing is admitted then.
+    pub fn admit_maker_zec_funding(
+        &self,
+        swap_id: &SwapId,
+        now_unix_seconds: u64,
+        capacity: &dyn Fn(ZecProfileId) -> usize,
+    ) -> Result<MakerZecFundingAdmission, StoreError> {
+        let transaction =
+            rusqlite::Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        let admitted: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM maker_zec_funding_admissions WHERE swap_id = ?1)",
+            params![swap_id.as_str()],
+            |row| row.get(0),
+        )?;
+        if admitted {
+            return Ok(MakerZecFundingAdmission::Admitted);
+        }
+        let Some(row) = load_agreement_row(&transaction, "maker", swap_id)? else {
+            return Ok(MakerZecFundingAdmission::Admitted);
+        };
+        let Ok(accepted) = AcceptedZecAgreementV1::accept_wire_at(
+            &row.agreement_wire,
+            UnixSeconds::new(0),
+            Participant::Maker,
+            0,
+        ) else {
+            return Ok(MakerZecFundingAdmission::Admitted);
+        };
+        let agreement = accepted.agreement();
+        if agreement.direction() != SwapDirection::TakerSellsLez {
+            return Ok(MakerZecFundingAdmission::Admitted);
+        }
+        let deadline =
+            maker_zec_taker_lock_deadline(agreement, revision_from_sql(row.accepted_at)?);
+        if now_unix_seconds >= deadline {
+            let capacity = capacity(agreement.binding().profile_id());
+            let open = count_open_maker_zec_taker_sells_lez_except(
+                &transaction,
+                now_unix_seconds,
+                Some(swap_id),
+            )?;
+            if open >= capacity {
+                return Ok(MakerZecFundingAdmission::NoFreePlace { open, capacity });
+            }
+        }
+        transaction.execute(
+            "INSERT INTO maker_zec_funding_admissions (swap_id, admitted_at) VALUES (?1, ?2)",
+            params![swap_id.as_str(), sql_u64(now_unix_seconds)?],
+        )?;
+        transaction.commit()?;
+        Ok(MakerZecFundingAdmission::Admitted)
+    }
+
+    /// Whether the Zcash funding step of the Maker's swap `swap_id` was
+    /// admitted ([`Self::admit_maker_zec_funding`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error.
+    pub fn maker_zec_funding_admitted(&self, swap_id: &SwapId) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM maker_zec_funding_admissions WHERE swap_id = ?1)",
+            params![swap_id.as_str()],
+            |row| row.get(0),
+        )?)
+    }
 }
 
 fn load_agreement_row(

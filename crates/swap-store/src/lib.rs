@@ -94,7 +94,8 @@ pub use xmr_effect_workflow_journal::{
     XmrWorkflowStepScope,
 };
 pub use zec_recovery::{
-    MakerZecAcceptanceCommit, MakerZecAcceptanceReplay, SqliteZecRecoveryStore,
+    MakerZecAcceptanceCommit, MakerZecAcceptanceReplay, MakerZecFundingAdmission,
+    SqliteZecRecoveryStore, maker_zec_taker_lock_deadline,
 };
 
 use lez_swap_core::{
@@ -2019,6 +2020,10 @@ fn migrate_zec_sdk_recovery(transaction: &rusqlite::Transaction<'_>) -> Result<(
             active_revision     INTEGER NOT NULL DEFAULT 0 CHECK (active_revision >= 0),
             PRIMARY KEY (local_role, swap_id),
             CHECK (active_revision >= accepted_revision)
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS maker_zec_funding_admissions (
+            swap_id             TEXT PRIMARY KEY NOT NULL,
+            admitted_at         INTEGER NOT NULL CHECK (admitted_at >= 0)
         ) STRICT;
         CREATE TABLE IF NOT EXISTS zec_sdk_first_lock_intents (
             local_role          TEXT NOT NULL,

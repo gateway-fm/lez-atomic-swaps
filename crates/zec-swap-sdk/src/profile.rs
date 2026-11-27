@@ -447,6 +447,27 @@ impl ZecRefundProfile {
         self.required_margin
     }
 
+    /// How long after it accepted a `TakerSellsLez` swap a Maker keeps a
+    /// place for it while the Taker's LEZ lock is not confirmed: half the
+    /// span in which the Maker may fund Zcash at all (the LEZ refund delay
+    /// less the margin, the claim window's length from the anchor). A Taker
+    /// that locks at once needs the LEZ lock's confirmations; the other half
+    /// stays for the Maker's funding and the Taker's reveal. Derived from the
+    /// signed parameters, not one of them: it changes no agreement, only
+    /// when an unfunded swap stops counting against the Maker's open swaps
+    /// (issue #178). 300 s under `deterministic-local-devnet-v7`, 180 s under
+    /// `-v8`, 45 s under `deterministic-local-v3`, 3,600 s under
+    /// `public-testnet-v3`.
+    #[must_use]
+    pub const fn taker_lock_window(self) -> UnixSeconds {
+        UnixSeconds::new(
+            self.lez_refund_delay
+                .value()
+                .saturating_sub(self.required_margin.value())
+                / 2,
+        )
+    }
+
     /// Transaction expiry delta; independent of the HTLC refund boundary.
     #[must_use]
     pub const fn expiry_delta_blocks(self) -> u32 {
