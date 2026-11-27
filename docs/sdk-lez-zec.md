@@ -192,6 +192,18 @@ most 6.3 s from submission to final on the devnet, three samples on
 been measured, and the swaps whose Zcash a Maker exposes to an unmeasured
 network are limited separately from the queue.
 
+An accepted swap counts against that capacity while its Taker-lock window is
+open, `(LEZ refund delay − M) / 2` from the Maker's acceptance
+(`ZecRefundProfile::taker_lock_window`: 300 s, 180 s, 45 s and 3,600 s under
+the four profiles above), or once the Node admitted its Zcash funding step,
+until it ends or its LEZ refund time passes
+([ADR 0220](architecture/0220-an-unfunded-zec-swap-gives-its-place-up.md)).
+A swap whose Taker has not locked by then gives its place up. If its lock is
+confirmed later, the Maker funds Zcash only while a place is free; otherwise
+the funding is not sent (`zec_funding_waits_for_free_place`), the swap is
+looked at again, and the Taker's settlement is its LEZ refund unless a place
+frees first.
+
 A Node refuses to start while it holds an open `TakerSellsLez` ZEC swap under
 a legacy profile and names the swaps: finish or refund them with the previous
 release first (no upgrade between releases before 1.0.0, issue #133). The

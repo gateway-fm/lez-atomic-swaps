@@ -205,7 +205,8 @@ direction's agreements are byte-identical to those signed before.
   `public-testnet-v3`; [SDK guide](../sdk-lez-zec.md);
   [ADR 0219](0219-one-gate-for-the-maker-accounts-lez-transactions.md) puts
   the account's locks behind the same gate and bounds a submitted claim's
-  hold). The Maker funds
+  hold, [ADR 0220](0220-an-unfunded-zec-swap-gives-its-place-up.md) says
+  which swaps count). The Maker funds
   Zcash only while the claim window is open, `tip + R + C < H_z`, and, under
   a profile with a slowest pace (`public-testnet-v3`), `H_z` can still be
   reached before `T_lez − M` at that pace: `(H_z − tip) × slow ≤ T_lez − M − now`.
