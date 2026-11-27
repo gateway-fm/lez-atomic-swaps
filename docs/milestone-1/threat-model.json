@@ -311,9 +311,9 @@
     },
     {
       "id": "INV-06",
-      "text": "Crashes, restores, and concurrent swaps cannot erase recovery data, reuse one-time signing material, or rearm spent authority.",
+      "text": "Crashes, restores, and concurrent swaps cannot erase recovery data, reuse one-time signing material, or rearm spent authority; the one resend is a BTC swap's exact LEZ claim, whose identical bytes are offered again while it is absent (ADR 0218).",
       "routes": ["lez-btc", "lez-xmr", "lez-zec"],
-      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/README.md"]
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/README.md", "docs/architecture/0218-resend-an-exact-lez-claim-that-did-not-land.md"]
     },
     {
       "id": "INV-07",
@@ -589,9 +589,9 @@
         { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
         { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
       ],
-      "control": "Exact transaction bytes and effect identity are journaled before submission; unknown outcomes reconcile that same effect before retry.",
-      "proofs": ["docs/architecture/0033-persist-public-effects-before-submission.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0181-preserve-exact-refund-miss-uncertainty.md"],
-      "remaining": "Public-network ambiguity, crash, and branch-race matrices remain release gates.",
+      "control": "Exact transaction bytes and effect identity are journaled before submission; unknown outcomes reconcile that same effect before retry. One effect is offered again after an unknown outcome: a BTC swap's exact LEZ claim still absent from the chain, as the same journaled bytes, which the LEZ signer nonce lets the chain include at most once; conflicting chain presence bars it, and the revealing claim is resent only inside its claim window (ADR 0218).",
+      "proofs": ["docs/architecture/0033-persist-public-effects-before-submission.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0181-preserve-exact-refund-miss-uncertainty.md", "docs/architecture/0218-resend-an-exact-lez-claim-that-did-not-land.md", "crates/swap-store/tests/public_effect_journal.rs", "crates/btc-reference-actor/src/issue174_tests.rs"],
+      "remaining": "Public-network ambiguity, crash, and branch-race matrices remain release gates. A LEZ claim the node accepted and the sequencer then dropped is not sent again by the BTC actor.",
       "owner": "coordinator",
       "state": "checking"
     },

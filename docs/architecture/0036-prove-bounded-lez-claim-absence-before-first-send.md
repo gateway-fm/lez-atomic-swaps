@@ -2,7 +2,10 @@
 
 Status: Accepted and GREEN through the reference actor in both actual-node
 happy directions. Equivalent bounded finalized refund absence/presence evidence
-remains active.
+remains active. Amended by
+[ADR 0218](0218-resend-an-exact-lez-claim-that-did-not-land.md): a claim left
+`Started` or `Unknown` by a send that did not land is sent again as the same
+bytes while it is still absent; conflicting presence still ends every send.
 
 ## Context
 
