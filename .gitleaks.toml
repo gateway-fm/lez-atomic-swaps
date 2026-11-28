@@ -49,13 +49,14 @@ regexes = [
 # digest, which both parties and both chains see: it is public by design. The
 # preimage is never written to these files; the scenario fails if it is found.
 [[rules.allowlists]]
-description = "Public hash-lock digests in the zec-maker-early-claim evidence"
+description = "Public hash-lock digests in the Zcash regression evidence"
 condition = "AND"
 regexTarget = "line"
 paths = [
   '''^docs/evidence/regression-[^/]+/early-claim-first-runs/.+$''',
-  '''^docs/evidence/regression-[^/]+/logs/node-zec-zec-maker-early-claim-[^/]+\.log$''',
-  '''^docs/evidence/regression-[^/]+/e2e/zec-maker-early-claim\.json$''',
+  '''^docs/evidence/regression-[^/]+/(?:run-[^/]+/)?logs/node-zec-zec-maker-early-claim-[^/]+\.log$''',
+  '''^docs/evidence/regression-[^/]+/(?:run-[^/]+/)?e2e/zec-maker-early-claim\.json$''',
+  '''^docs/evidence/regression-[^/]+/(?:run-[^/]+/)?e2e/zec-dynamic-happy(?:-foreign)?\.json$''',
 ]
 regexes = [
   '''(?:stored_)?secret_digest["'':= .]+[0-9a-f]{64}''',
