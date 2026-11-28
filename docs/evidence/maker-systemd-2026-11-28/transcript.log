@@ -1,0 +1,522 @@
+
+## VM
+source commit: f98908ec782d1b939b97420fa07575356b604063
+edce78df40f739449c01363a796c07c7a82dcf26b0ca9bef6a50f6a829dcfe7e  lez-maker-node
+d5055da909f07db0d9e3b6576acf3250c02420aa714ae38f421e1ee4ab3ea407  lez-maker-cli
+954db4a5737e26c62f2e5bbc6fd4f80430fed021ab0fa6c115263acc434ad672  lez-zec-maker-actor
+b4ef07ae420eaac9ecef573f7c4f8fb2edcddc2e8684b46aa7ae33517075e5ce  lez-logos-price-worker
+303dae515f9074213a8303be20f5939b7df134c2f7ee289d9597097b6dd6b72f  lez-btc-maker-actor
+d14609d66d1899bf82a4ac049cb56473aaca4783a90988296208596062dd966d  lez-runtime-healthcheck
+d5f7c2c562ec46579e6c4d8353f5c9d849a84ab7f29e9455b46105927c9ea703  lez-taker-node
+3ed4b378225f59bdfa64d88941f046c80625f0174ecd067c0b99e638234e4a0f  lez-taker-cli
+367fa60c4be3c10596d7cd8ad1d1e4a46648ebedaa0881e205da2a8bf9b08cc9  lez-btc-taker-actor
+50ef4bbeb6daa909b99cc54dc77b4797e2dd6207fe76820265fc3a34096d2df7  lez-zec-taker-actor
+baa1b194b21fa110a25a7b5ca65e3f2fd2e0455eb8259182b590ae4c83dd0565  lez-taker-registry-init
+e159c05246938496a8b50e1d998eb3a8c529061876fbf7bd7cdd555fe5fcf7c3  lez-v02-bridge-poc
+cfddfad1d4ef6245919120d9feee854a3980ecb0ca08112b1662e3954ea2c2cc  modules/lez-role-node/node-entrypoint.sh
+$ grep PRETTY_NAME /etc/os-release
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+[exit 0]
+$ uname -r
+6.8.0-147-generic
+[exit 0]
+$ systemctl --version
+systemd 255 (255.4-1ubuntu8.18)
++PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified
+[exit 0]
+
+## Install (docs/maker-systemd-install.md)
+$ useradd --system --no-create-home --shell /usr/sbin/nologin lez-swap
+[exit 0]
+$ env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-maker-node-service.sh
+installed canonical Maker Node artifacts below /
+[exit 0]
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=delivery-signing.key - /etc/lez/maker/credentials/delivery-signing.key.cred
+Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=maker-claim-recovery.key - /etc/lez/maker/credentials/maker-claim-recovery.key.cred
+Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=lez-signer.key - /etc/lez/maker/credentials/lez-signer.key.cred
+Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.
+$ ls -l /etc/lez/maker /etc/lez/maker/credentials
+/etc/lez/maker:
+total 16
+drwx------ 2 root root 4096 Nov 28 00:33 credentials
+-rw------- 1 root root 1498 Nov 28 00:33 env.example
+-rw------- 1 root root  970 Nov 28 00:33 node.json.example
+-rw------- 1 root root 1054 Nov 28 00:33 route-health.json.example
+
+/etc/lez/maker/credentials:
+total 12
+-rw-r--r-- 1 root root 187 Nov 28 00:33 delivery-signing.key.cred
+-rw-r--r-- 1 root root 187 Nov 28 00:33 lez-signer.key.cred
+-rw-r--r-- 1 root root 195 Nov 28 00:33 maker-claim-recovery.key.cred
+[exit 0]
+$ chown lez-swap:lez-swap /etc/lez/maker/node.json
+[exit 0]
+$ chmod 0600 /etc/lez/maker/node.json
+[exit 0]
+$ cat /etc/lez/maker/node.json
+{
+  "schema_version": 1,
+  "arguments": [
+    "--socket", "/run/lez/maker/node.sock",
+    "--database", "/var/lib/lez/maker/maker.sqlite3",
+    "--ready-file", "/run/lez/maker/ready",
+    "--delivery-directory", "/var/lib/lez/maker/delivery",
+    "--delivery-signing-key-file", "/run/credentials/lez-maker-node.service/delivery-signing.key"
+  ]
+}
+[exit 0]
+$ cat /etc/systemd/system/lez-maker-node.service.d/node-only.conf
+[Service]
+EnvironmentFile=
+ExecStart=
+ExecStart=/usr/bin/lez-maker-node --config /etc/lez/maker/node.json
+[exit 0]
+$ systemctl daemon-reload
+[exit 0]
+$ systemctl enable --now lez-maker-node
+Created symlink /etc/systemd/system/multi-user.target.wants/lez-maker-node.service → /usr/lib/systemd/system/lez-maker-node.service.
+[exit 0]
+
+## Unit active and READY via sd_notify
+$ systemctl show -p Type,ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
+Type=notify
+MainPID=1142
+StatusText=maker RPC and durable state are ready
+NRestarts=0
+ActiveState=active
+SubState=running
+[exit 0]
+$ systemctl status --no-pager --lines=0 lez-maker-node
+● lez-maker-node.service - LEZ atomic-swap Maker Node
+     Loaded: loaded (/usr/lib/systemd/system/lez-maker-node.service; enabled; preset: enabled)
+    Drop-In: /etc/systemd/system/lez-maker-node.service.d
+             └─node-only.conf
+     Active: active (running) since Sat 2026-11-28 00:33:23 UTC; 86ms ago
+       Docs: https://github.com/gateway-fm/lez-atomic-swaps
+   Main PID: 1142 (lez-maker-node)
+     Status: "maker RPC and durable state are ready"
+      Tasks: 3 (limit: 4653)
+     Memory: 4.0M (peak: 4.5M)
+        CPU: 149ms
+     CGroup: /system.slice/lez-maker-node.service
+             └─1142 /usr/bin/lez-maker-node --config /etc/lez/maker/node.json
+[exit 0]
+$ journalctl -u lez-maker-node --no-pager -o cat
+Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[exit 0]
+$ find /etc/lez -type f -name *.key
+[exit 0]
+
+## The key the Node read: a systemd credential, root-owned
+$ systemd-run --quiet --wait --pipe -p User=lez-swap -p LoadCredentialEncrypted=delivery-signing.key:/etc/lez/maker/credentials/delivery-signing.key.cred sh -c id; stat -c "%n %U:%G %a" "$CREDENTIALS_DIRECTORY" "$CREDENTIALS_DIRECTORY"/*
+uid=999(lez-swap) gid=988(lez-swap) groups=988(lez-swap)
+/run/credentials/run-u11.service root:root 550
+/run/credentials/run-u11.service/delivery-signing.key root:root 440
+[exit 0]
+
+## Hardening
+$ systemd-analyze security --no-pager lez-maker-node
+  NAME                               DESCRIPTION                        EXPOSURE
+✓ SystemCallFilter=~@swap            System call allow list defined fo… 
+✗ SystemCallFilter=~@resources       System call allow list defined fo…      0.2
+✓ SystemCallFilter=~@reboot          System call allow list defined fo… 
+✓ SystemCallFilter=~@raw-io          System call allow list defined fo… 
+✗ SystemCallFilter=~@privileged      System call allow list defined fo…      0.2
+✓ SystemCallFilter=~@obsolete        System call allow list defined fo… 
+✓ SystemCallFilter=~@mount           System call allow list defined fo… 
+✓ SystemCallFilter=~@module          System call allow list defined fo… 
+✓ SystemCallFilter=~@debug           System call allow list defined fo… 
+✓ SystemCallFilter=~@cpu-emulation   System call allow list defined fo… 
+✓ SystemCallFilter=~@clock           System call allow list defined fo… 
+✓ RemoveIPC=                         Service user cannot leave SysV IP… 
+✗ RootDirectory=/RootImage=          Service runs within the host's ro…      0.1
+✓ User=/DynamicUser=                 Service runs under a static non-r… 
+✓ RestrictRealtime=                  Service realtime scheduling acces… 
+✓ CapabilityBoundingSet=~CAP_SYS_TI… Service processes cannot change t… 
+✓ NoNewPrivileges=                   Service processes cannot acquire … 
+✓ AmbientCapabilities=               Service process does not receive … 
+✓ CapabilityBoundingSet=~CAP_BPF     Service may load BPF programs      
+✓ SystemCallArchitectures=           Service may execute system calls … 
+✗ RestrictSUIDSGID=                  Service may create SUID/SGID files      0.2
+✗ RestrictAddressFamilies=~AF_UNIX   Service may allocate local sockets      0.1
+✗ RestrictAddressFamilies=~AF_(INET… Service may allocate Internet soc…      0.3
+✓ ProtectSystem=                     Service has strict read-only acce… 
+✓ ProtectProc=                       Service has restricted access to … 
+✓ SupplementaryGroups=               Service has no supplementary grou… 
+✓ CapabilityBoundingSet=~CAP_SYS_RA… Service has no raw I/O access      
+✓ CapabilityBoundingSet=~CAP_SYS_PT… Service has no ptrace() debugging… 
+✓ CapabilityBoundingSet=~CAP_SYS_(N… Service has no privileges to chan… 
+✓ CapabilityBoundingSet=~CAP_NET_AD… Service has no network configurat… 
+✓ CapabilityBoundingSet=~CAP_NET_(B… Service has no elevated networkin… 
+✓ CapabilityBoundingSet=~CAP_AUDIT_* Service has no audit subsystem ac… 
+✓ CapabilityBoundingSet=~CAP_SYS_AD… Service has no administrator priv… 
+✓ PrivateTmp=                        Service has no access to other so… 
+✓ ProcSubset=                        Service has no access to non-proc… 
+✓ CapabilityBoundingSet=~CAP_SYSLOG  Service has no access to kernel l… 
+✓ ProtectHome=                       Service has no access to home dir… 
+✓ PrivateDevices=                    Service has no access to hardware… 
+✗ PrivateNetwork=                    Service has access to the host's …      0.5
+✗ PrivateUsers=                      Service has access to other users       0.2
+✗ DeviceAllow=                       Service has a device ACL with som…      0.1
+✓ KeyringMode=                       Service doesn't share key materia… 
+✓ Delegate=                          Service does not maintain its own… 
+✗ IPAddressDeny=                     Service does not define an IP add…      0.2
+✓ NotifyAccess=                      Service child processes cannot al… 
+✓ ProtectClock=                      Service cannot write to the hardw… 
+✓ CapabilityBoundingSet=~CAP_SYS_PA… Service cannot use acct()          
+✓ CapabilityBoundingSet=~CAP_KILL    Service cannot send UNIX signals … 
+✓ ProtectKernelLogs=                 Service cannot read from or write… 
+✓ CapabilityBoundingSet=~CAP_WAKE_A… Service cannot program timers tha… 
+✓ CapabilityBoundingSet=~CAP_(DAC_*… Service cannot override UNIX file… 
+✓ ProtectControlGroups=              Service cannot modify the control… 
+✓ CapabilityBoundingSet=~CAP_LINUX_… Service cannot mark files immutab… 
+✓ CapabilityBoundingSet=~CAP_IPC_LO… Service cannot lock memory into R… 
+✓ ProtectKernelModules=              Service cannot load or read kerne… 
+✓ CapabilityBoundingSet=~CAP_SYS_MO… Service cannot load kernel modules 
+✓ CapabilityBoundingSet=~CAP_SYS_TT… Service cannot issue vhangup()     
+✓ CapabilityBoundingSet=~CAP_SYS_BO… Service cannot issue reboot()      
+✓ CapabilityBoundingSet=~CAP_SYS_CH… Service cannot issue chroot()      
+✓ PrivateMounts=                     Service cannot install system mou… 
+✓ CapabilityBoundingSet=~CAP_BLOCK_… Service cannot establish wake loc… 
+✓ MemoryDenyWriteExecute=            Service cannot create writable ex… 
+✓ RestrictNamespaces=~user           Service cannot create user namesp… 
+✓ RestrictNamespaces=~pid            Service cannot create process nam… 
+✓ RestrictNamespaces=~net            Service cannot create network nam… 
+✓ RestrictNamespaces=~uts            Service cannot create hostname na… 
+✓ RestrictNamespaces=~mnt            Service cannot create file system… 
+✓ CapabilityBoundingSet=~CAP_LEASE   Service cannot create file leases  
+✓ CapabilityBoundingSet=~CAP_MKNOD   Service cannot create device nodes 
+✓ RestrictNamespaces=~cgroup         Service cannot create cgroup name… 
+✓ RestrictNamespaces=~ipc            Service cannot create IPC namespa… 
+✓ ProtectHostname=                   Service cannot change system host… 
+✓ CapabilityBoundingSet=~CAP_(CHOWN… Service cannot change file owners… 
+✓ CapabilityBoundingSet=~CAP_SET(UI… Service cannot change UID/GID ide… 
+✓ LockPersonality=                   Service cannot change ABI persona… 
+✓ ProtectKernelTunables=             Service cannot alter kernel tunab… 
+✓ RestrictAddressFamilies=~AF_PACKET Service cannot allocate packet so… 
+✓ RestrictAddressFamilies=~AF_NETLI… Service cannot allocate netlink s… 
+✓ RestrictAddressFamilies=~…         Service cannot allocate exotic so… 
+✓ CapabilityBoundingSet=~CAP_MAC_*   Service cannot adjust SMACK MAC    
+✓ UMask=                             Files created by service are acce… 
+
+→ Overall exposure level for lez-maker-node.service: 1.6 OK :-)
+[exit 0]
+
+## Owner socket
+$ ls -ld /run/lez /run/lez/maker /var/lib/lez/maker
+drwxr-xr-x 3 root     root       60 Nov 28 00:33 /run/lez
+drwx------ 2 lez-swap lez-swap   80 Nov 28 00:33 /run/lez/maker
+drwx------ 3 lez-swap lez-swap 4096 Nov 28 00:33 /var/lib/lez/maker
+[exit 0]
+$ stat -c %n %F %U:%G %a /run/lez/maker/node.sock
+/run/lez/maker/node.sock socket lez-swap:lez-swap 600
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli health
+{"chat":"disabled","degraded":false,"delivery":"available","ready":true,"routes":[],"schema_version":1}
+[exit 0]
+$ useradd --create-home other-user
+[exit 0]
+$ runuser -u other-user -- /usr/bin/lez-maker-cli health
+Error: connect local RPC socket /run/lez/maker/node.sock
+
+Caused by:
+    Permission denied (os error 13)
+[exit 1]
+
+## Advertise and price (run-local Delivery, no chain)
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli configure-pair --request-id vm-pair-1 --pair zcash --direction taker-sells-lez --enabled false --minimum-foreign-units 10 --maximum-foreign-units 10000 --offer-ttl-seconds 3600
+{"revision":1,"was_replay":false}
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli set-local-price --request-id vm-price-1 --pair zcash --direction taker-sells-lez --lez-units-per-lot 5 --foreign-units-per-lot 2
+{"revision":1,"was_replay":false}
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli configure-pair --request-id vm-pair-2 --expected-revision 1 --pair zcash --direction taker-sells-lez --enabled true --minimum-foreign-units 10 --maximum-foreign-units 10000 --offer-ttl-seconds 3600
+{"revision":2,"was_replay":false}
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli quote --pair zcash --direction taker-sells-lez
+{"observed_at_unix_seconds":1795826005,"price":{"foreign_units_per_lot":2,"lez_units_per_lot":5,"route":{"direction":"TakerSellsLez","pair":"Zcash"}},"source_revision":1}
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli publish-offer --request-id vm-offer-1 --offer-id vm-offer-1 --pair zcash --direction taker-sells-lez
+{"revision":1,"was_replay":false}
+[exit 0]
+$ find /var/lib/lez/maker/delivery -type f
+/var/lib/lez/maker/delivery/vm-offer-1.offer.json
+[exit 0]
+
+## kill -9 of the main process; systemd restarts it
+$ kill -9 1142
+[exit 0]
+$ systemctl show -p ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
+MainPID=1215
+StatusText=maker RPC and durable state are ready
+NRestarts=1
+ActiveState=active
+SubState=running
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli health
+{"chat":"disabled","degraded":false,"delivery":"available","ready":true,"routes":[{"route":{"direction":"TakerSellsLez","pair":"Zcash"},"state":"disabled"}],"schema_version":1}
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli pairs
+[{"revision":2,"value":{"enabled":true,"maximum_foreign_units":10000,"minimum_foreign_units":10,"offer_ttl_seconds":3600,"price_source":"local","route":{"direction":"TakerSellsLez","pair":"Zcash"}}}]
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli prices
+[{"revision":1,"value":{"foreign_units_per_lot":2,"lez_units_per_lot":5,"route":{"direction":"TakerSellsLez","pair":"Zcash"}}}]
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli offers
+[{"offer":{"created_at_unix_seconds":1795826005,"expires_at_unix_seconds":1795829605,"id":"vm-offer-1","pair_configuration":{"enabled":true,"maximum_foreign_units":10000,"minimum_foreign_units":10,"offer_ttl_seconds":3600,"price_source":"local","route":{"direction":"TakerSellsLez","pair":"Zcash"}},"pair_configuration_revision":2,"price":{"foreign_units_per_lot":2,"lez_units_per_lot":5,"route":{"direction":"TakerSellsLez","pair":"Zcash"}},"price_observed_at_unix_seconds":1795826005,"price_source_revision":1},"reservation_id":null,"revision":1,"status":"active","swap_id":null}]
+[exit 0]
+
+## lez-maker-cli stop / start (systemctl through service_control)
+$ /usr/bin/lez-maker-cli stop
+{"action":"stop","active_state":"inactive","schema_version":1,"unit":"lez-maker-node.service"}
+[exit 0]
+$ systemctl show -p ActiveState,NRestarts lez-maker-node
+NRestarts=1
+ActiveState=inactive
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli health
+Error: connect local RPC socket /run/lez/maker/node.sock
+
+Caused by:
+    No such file or directory (os error 2)
+[exit 1]
+$ /usr/bin/lez-maker-cli start
+{"action":"start","active_state":"active","schema_version":1,"unit":"lez-maker-node.service"}
+[exit 0]
+$ systemctl show -p ActiveState,SubState,NRestarts,StatusText lez-maker-node
+StatusText=maker RPC and durable state are ready
+NRestarts=0
+ActiveState=active
+SubState=running
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli health
+{"chat":"disabled","degraded":false,"delivery":"available","ready":true,"routes":[{"route":{"direction":"TakerSellsLez","pair":"Zcash"},"state":"disabled"}],"schema_version":1}
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli offers
+[{"offer":{"created_at_unix_seconds":1795826005,"expires_at_unix_seconds":1795829605,"id":"vm-offer-1","pair_configuration":{"enabled":true,"maximum_foreign_units":10000,"minimum_foreign_units":10,"offer_ttl_seconds":3600,"price_source":"local","route":{"direction":"TakerSellsLez","pair":"Zcash"}},"pair_configuration_revision":2,"price":{"foreign_units_per_lot":2,"lez_units_per_lot":5,"route":{"direction":"TakerSellsLez","pair":"Zcash"}},"price_observed_at_unix_seconds":1795826005,"price_source_revision":1},"reservation_id":null,"revision":1,"status":"active","swap_id":null}]
+[exit 0]
+
+## Taker Node under its own unit
+$ env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-taker-node-service.sh
+installed canonical Taker Node artifacts below /
+[exit 0]
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=lez-signer.key - /etc/lez/taker/credentials/lez-signer.key.cred
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=zcash.key - /etc/lez/taker/credentials/zcash.key.cred
+$ maker_key=$(systemd-run ... lez-maker-cli delivery-identity --signing-key-file "$CREDENTIALS_DIRECTORY/delivery-signing.key")
+{"public_key":"03f4fd3e81937db23c5728147b4e006df8fb46e066df9f1e06fc7dc287903acfea","schema_version":1}
+$ cp /etc/lez/taker/node.json.example /etc/lez/taker/node.json
+[exit 0]
+$ chown lez-swap:lez-swap /etc/lez/taker/node.json /etc/lez/taker/role.json
+[exit 0]
+$ chmod 0600 /etc/lez/taker/node.json /etc/lez/taker/role.json
+[exit 0]
+$ cat /etc/lez/taker/node.json /etc/lez/taker/role.json
+{
+  "schema_version": 1,
+  "arguments": [
+    "--socket", "/run/lez/taker/node.sock",
+    "--ready-file", "/run/lez/taker/ready",
+    "--role-config", "/etc/lez/taker/role.json"
+  ]
+}
+{
+  "schema_version": 1,
+  "delivery_sources": [
+    {"directory": "/var/lib/lez/maker/delivery", "maker_public_key": "03f4fd3e81937db23c5728147b4e006df8fb46e066df9f1e06fc7dc287903acfea", "source_id": "vm-maker"}
+  ],
+  "maximum_offers": 16
+}
+[exit 0]
+$ cat /etc/systemd/system/lez-taker-node.service.d/node-only.conf
+[Service]
+EnvironmentFile=
+ExecStart=
+ExecStart=/usr/bin/lez-taker-node --config /etc/lez/taker/node.json
+[exit 0]
+$ systemctl daemon-reload
+[exit 0]
+$ systemctl start lez-taker-node
+[exit 0]
+$ systemctl show -p Type,ActiveState,SubState,MainPID,StatusText lez-taker-node
+Type=notify
+MainPID=1356
+StatusText=Taker RPC and durable state are ready
+ActiveState=active
+SubState=running
+[exit 0]
+$ systemd-analyze security --no-pager lez-taker-node
+  NAME                               DESCRIPTION                        EXPOSURE
+✓ SystemCallFilter=~@swap            System call allow list defined fo… 
+✗ SystemCallFilter=~@resources       System call allow list defined fo…      0.2
+✓ SystemCallFilter=~@reboot          System call allow list defined fo… 
+✓ SystemCallFilter=~@raw-io          System call allow list defined fo… 
+✗ SystemCallFilter=~@privileged      System call allow list defined fo…      0.2
+✓ SystemCallFilter=~@obsolete        System call allow list defined fo… 
+✓ SystemCallFilter=~@mount           System call allow list defined fo… 
+✓ SystemCallFilter=~@module          System call allow list defined fo… 
+✓ SystemCallFilter=~@debug           System call allow list defined fo… 
+✓ SystemCallFilter=~@cpu-emulation   System call allow list defined fo… 
+✓ SystemCallFilter=~@clock           System call allow list defined fo… 
+✓ RemoveIPC=                         Service user cannot leave SysV IP… 
+✗ RootDirectory=/RootImage=          Service runs within the host's ro…      0.1
+✓ User=/DynamicUser=                 Service runs under a static non-r… 
+✓ RestrictRealtime=                  Service realtime scheduling acces… 
+✓ CapabilityBoundingSet=~CAP_SYS_TI… Service processes cannot change t… 
+✓ NoNewPrivileges=                   Service processes cannot acquire … 
+✓ AmbientCapabilities=               Service process does not receive … 
+✓ CapabilityBoundingSet=~CAP_BPF     Service may load BPF programs      
+✓ SystemCallArchitectures=           Service may execute system calls … 
+✗ RestrictSUIDSGID=                  Service may create SUID/SGID files      0.2
+✗ RestrictAddressFamilies=~AF_UNIX   Service may allocate local sockets      0.1
+✗ RestrictAddressFamilies=~AF_(INET… Service may allocate Internet soc…      0.3
+✓ ProtectSystem=                     Service has strict read-only acce… 
+✓ ProtectProc=                       Service has restricted access to … 
+✓ SupplementaryGroups=               Service has no supplementary grou… 
+✓ CapabilityBoundingSet=~CAP_SYS_RA… Service has no raw I/O access      
+✓ CapabilityBoundingSet=~CAP_SYS_PT… Service has no ptrace() debugging… 
+✓ CapabilityBoundingSet=~CAP_SYS_(N… Service has no privileges to chan… 
+✓ CapabilityBoundingSet=~CAP_NET_AD… Service has no network configurat… 
+✓ CapabilityBoundingSet=~CAP_NET_(B… Service has no elevated networkin… 
+✓ CapabilityBoundingSet=~CAP_AUDIT_* Service has no audit subsystem ac… 
+✓ CapabilityBoundingSet=~CAP_SYS_AD… Service has no administrator priv… 
+✓ PrivateTmp=                        Service has no access to other so… 
+✓ ProcSubset=                        Service has no access to non-proc… 
+✓ CapabilityBoundingSet=~CAP_SYSLOG  Service has no access to kernel l… 
+✓ ProtectHome=                       Service has no access to home dir… 
+✓ PrivateDevices=                    Service has no access to hardware… 
+✗ PrivateNetwork=                    Service has access to the host's …      0.5
+✗ PrivateUsers=                      Service has access to other users       0.2
+✗ DeviceAllow=                       Service has a device ACL with som…      0.1
+✓ KeyringMode=                       Service doesn't share key materia… 
+✓ Delegate=                          Service does not maintain its own… 
+✗ IPAddressDeny=                     Service does not define an IP add…      0.2
+✓ NotifyAccess=                      Service child processes cannot al… 
+✓ ProtectClock=                      Service cannot write to the hardw… 
+✓ CapabilityBoundingSet=~CAP_SYS_PA… Service cannot use acct()          
+✓ CapabilityBoundingSet=~CAP_KILL    Service cannot send UNIX signals … 
+✓ ProtectKernelLogs=                 Service cannot read from or write… 
+✓ CapabilityBoundingSet=~CAP_WAKE_A… Service cannot program timers tha… 
+✓ CapabilityBoundingSet=~CAP_(DAC_*… Service cannot override UNIX file… 
+✓ ProtectControlGroups=              Service cannot modify the control… 
+✓ CapabilityBoundingSet=~CAP_LINUX_… Service cannot mark files immutab… 
+✓ CapabilityBoundingSet=~CAP_IPC_LO… Service cannot lock memory into R… 
+✓ ProtectKernelModules=              Service cannot load or read kerne… 
+✓ CapabilityBoundingSet=~CAP_SYS_MO… Service cannot load kernel modules 
+✓ CapabilityBoundingSet=~CAP_SYS_TT… Service cannot issue vhangup()     
+✓ CapabilityBoundingSet=~CAP_SYS_BO… Service cannot issue reboot()      
+✓ CapabilityBoundingSet=~CAP_SYS_CH… Service cannot issue chroot()      
+✓ PrivateMounts=                     Service cannot install system mou… 
+✓ CapabilityBoundingSet=~CAP_BLOCK_… Service cannot establish wake loc… 
+✓ MemoryDenyWriteExecute=            Service cannot create writable ex… 
+✓ RestrictNamespaces=~user           Service cannot create user namesp… 
+✓ RestrictNamespaces=~pid            Service cannot create process nam… 
+✓ RestrictNamespaces=~net            Service cannot create network nam… 
+✓ RestrictNamespaces=~uts            Service cannot create hostname na… 
+✓ RestrictNamespaces=~mnt            Service cannot create file system… 
+✓ CapabilityBoundingSet=~CAP_LEASE   Service cannot create file leases  
+✓ CapabilityBoundingSet=~CAP_MKNOD   Service cannot create device nodes 
+✓ RestrictNamespaces=~cgroup         Service cannot create cgroup name… 
+✓ RestrictNamespaces=~ipc            Service cannot create IPC namespa… 
+✓ ProtectHostname=                   Service cannot change system host… 
+✓ CapabilityBoundingSet=~CAP_(CHOWN… Service cannot change file owners… 
+✓ CapabilityBoundingSet=~CAP_SET(UI… Service cannot change UID/GID ide… 
+✓ LockPersonality=                   Service cannot change ABI persona… 
+✓ ProtectKernelTunables=             Service cannot alter kernel tunab… 
+✓ RestrictAddressFamilies=~AF_PACKET Service cannot allocate packet so… 
+✓ RestrictAddressFamilies=~AF_NETLI… Service cannot allocate netlink s… 
+✓ RestrictAddressFamilies=~…         Service cannot allocate exotic so… 
+✓ CapabilityBoundingSet=~CAP_MAC_*   Service cannot adjust SMACK MAC    
+✓ UMask=                             Files created by service are acce… 
+
+→ Overall exposure level for lez-taker-node.service: 1.6 OK :-)
+[exit 0]
+$ stat -c %n %F %U:%G %a /run/lez/taker /run/lez/taker/node.sock
+/run/lez/taker directory lez-swap:lez-swap 700
+/run/lez/taker/node.sock socket lez-swap:lez-swap 600
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-taker-cli health
+{"chat":"disabled","degraded":false,"delivery":"available","pair_capabilities":[{"authenticated_offer_browsing":true,"claim":"owner_cli_or_demo","initiation":"owner_cli_or_demo","monitoring":"owner_cli_or_demo","pair":"Bitcoin","refund":"owner_cli_or_demo","supported_direction":"TakerSellsForeign"},{"authenticated_offer_browsing":true,"claim":"effect_checkpoint_only","initiation":"owner_cli_or_demo","monitoring":"owner_cli_or_demo","pair":"Monero","refund":"effect_checkpoint_only","supported_direction":"TakerSellsLez"},{"authenticated_offer_browsing":true,"claim":"not_on_this_node","initiation":"prepared_private_material","monitoring":"not_on_this_node","pair":"Zcash","refund":"not_on_this_node","supported_direction":"TakerSellsLez"},{"authenticated_offer_browsing":true,"claim":"not_on_this_node","initiation":"prepared_private_material","monitoring":"not_on_this_node","pair":"Zcash","refund":"not_on_this_node","supported_direction":"TakerSellsForeign"},{"authenticated_offer_browsing":true,"claim":"owner_cli_or_demo","initiation":"owner_cli_or_demo","monitoring":"owner_cli_or_demo","pair":"Bitcoin","refund":"owner_cli_or_demo","supported_direction":"TakerSellsLez"}],"ready":true,"registered_methods":{"claim":false,"health":true,"initiate":false,"lock":false,"monitor":false,"offer_list":true,"refund":false,"swap_list":false},"schema_version":1}
+[exit 0]
+$ runuser -u other-user -- /usr/bin/lez-taker-cli health
+connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)
+[exit 2]
+$ runuser -u lez-swap -- /usr/bin/lez-taker-cli swap offers
+{"offers":[{"maker_identity":"03f4fd3e81937db23c5728147b4e006df8fb46e066df9f1e06fc7dc287903acfea","offer":{"created_at_unix_seconds":1795826005,"expires_at_unix_seconds":1795829605,"id":"vm-offer-1","pair_configuration":{"enabled":true,"maximum_foreign_units":10000,"minimum_foreign_units":10,"offer_ttl_seconds":3600,"price_source":"local","route":{"direction":"TakerSellsLez","pair":"Zcash"}},"pair_configuration_revision":2,"price":{"foreign_units_per_lot":2,"lez_units_per_lot":5,"route":{"direction":"TakerSellsLez","pair":"Zcash"}},"price_observed_at_unix_seconds":1795826005,"price_source_revision":1},"signed_envelope_sha256":[25,201,13,64,235,9,90,26,28,10,31,84,44,13,28,241,183,100,29,103,107,114,241,233,93,195,167,50,207,182,4,133]}],"schema_version":1}
+[exit 0]
+$ /usr/bin/lez-taker-cli stop
+{"schema_version":1,"action":"stop","unit":"lez-taker-node.service","active_state":"inactive"}
+[exit 0]
+$ journalctl -u lez-taker-node --no-pager -o cat
+Starting lez-taker-node.service - LEZ atomic-swap Taker Node...
+Started lez-taker-node.service - LEZ atomic-swap Taker Node.
+Stopping lez-taker-node.service - LEZ atomic-swap Taker Node...
+lez-taker-node.service: Deactivated successfully.
+Stopped lez-taker-node.service - LEZ atomic-swap Taker Node.
+[exit 0]
+
+## What the journal shows when the Node refuses its key
+$ (umask 022; head -c 32 /dev/urandom >/etc/lez/maker/world-readable.key)
+$ chown lez-swap:lez-swap /etc/lez/maker/world-readable.key
+[exit 0]
+$ cp /etc/lez/maker/node.json /root/node.json.good
+[exit 0]
+$ sed -i s#/run/credentials/lez-maker-node.service/delivery-signing.key#/etc/lez/maker/world-readable.key# /etc/lez/maker/node.json
+[exit 0]
+$ systemctl reset-failed lez-maker-node
+[exit 0]
+$ systemctl restart lez-maker-node
+Job for lez-maker-node.service failed because the control process exited with error code.
+See "systemctl status lez-maker-node.service" and "journalctl -xeu lez-maker-node.service" for details.
+[exit 1]
+$ journalctl -u lez-maker-node --no-pager -o cat -n 6
+Stopped lez-maker-node.service - LEZ atomic-swap Maker Node.
+Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+Error: Delivery signing key must be an owner-owned, single-link mode-0400-or-0600 regular file within its size bound
+lez-maker-node.service: Main process exited, code=exited, status=1/FAILURE
+lez-maker-node.service: Failed with result 'exit-code'.
+Failed to start lez-maker-node.service - LEZ atomic-swap Maker Node.
+[exit 0]
+$ systemctl stop lez-maker-node
+[exit 0]
+$ rm /etc/lez/maker/world-readable.key
+[exit 0]
+$ install -o lez-swap -g lez-swap -m 0600 /root/node.json.good /etc/lez/maker/node.json
+[exit 0]
+$ systemctl reset-failed lez-maker-node
+[exit 0]
+$ systemctl start lez-maker-node
+[exit 0]
+$ systemctl show -p ActiveState,StatusText lez-maker-node
+StatusText=maker RPC and durable state are ready
+ActiveState=active
+[exit 0]
+
+## Journal
+$ journalctl -u lez-maker-node --no-pager -o short-monotonic
+[  108.276836] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  108.643736] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  110.337116] ubuntu systemd[1]: lez-maker-node.service: Main process exited, code=killed, status=9/KILL
+[  110.344793] ubuntu systemd[1]: lez-maker-node.service: Failed with result 'signal'.
+[  115.433056] ubuntu systemd[1]: lez-maker-node.service: Scheduled restart job, restart counter is at 1.
+[  115.449061] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  115.667921] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  116.934113] ubuntu systemd[1]: Stopping lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  116.947231] ubuntu systemd[1]: lez-maker-node.service: Deactivated successfully.
+[  116.947827] ubuntu systemd[1]: Stopped lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  117.117049] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  117.342848] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  124.722813] ubuntu systemd[1]: Stopping lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  124.737547] ubuntu systemd[1]: lez-maker-node.service: Deactivated successfully.
+[  124.739132] ubuntu systemd[1]: Stopped lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  124.772954] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  125.031653] ubuntu lez-maker-node[1387]: Error: Delivery signing key must be an owner-owned, single-link mode-0400-or-0600 regular file within its size bound
+[  125.032482] ubuntu systemd[1]: lez-maker-node.service: Main process exited, code=exited, status=1/FAILURE
+[  125.032699] ubuntu systemd[1]: lez-maker-node.service: Failed with result 'exit-code'.
+[  125.033183] ubuntu systemd[1]: Failed to start lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  125.164462] ubuntu systemd[1]: Stopped lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  125.260605] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  125.538162] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[exit 0]
