@@ -19,7 +19,7 @@
 # :18443, the LEZ sequencer :3040 and the indexer :8779. Lane 1's two Node containers use the
 # same identities, so they are stopped for the run and started again afterwards. Run it under
 # the stack lock (~/m2-work/stack-lock.sh), with the stack up and lane 1 idle. A stack brought
-# up under another LEZ_STACK_PREFIX is found by the same variable.
+# up under another LEZ_STACK_PREFIX and LEZ_STACK_PORT_OFFSET is found by the same variables.
 #
 # LEZ_SWAP_PAIR=zcash runs one Zcash swap instead, Taker sells LEZ, formed at take time
 # (zec_reserve_v1) with the Maker funding Zcash from lane 1's Maker key, which the devnet's
@@ -48,6 +48,9 @@ readonly planner_program="${STAGE_A_PLANNER_PROGRAM:-$(dirname "$sidecar_program
 readonly stack="${LEZ_STACK_DEPLOY_DIR:-}"
 # The stack's container and network prefix, as deploy/ names it (LEZ_STACK_PREFIX).
 readonly stack_prefix="${LEZ_STACK_PREFIX:-lez}"
+# The stack's published ports on this host are moved by LEZ_STACK_PORT_OFFSET, as deploy/ moves them.
+readonly stack_port_offset="${LEZ_STACK_PORT_OFFSET:-0}"
+readonly indexer_port=$((8779 + stack_port_offset)) zebra_port=$((18232 + stack_port_offset))
 readonly stack_network="${LEZ_STACK_NETWORK:-$stack_prefix-swap-chains}"
 readonly lane_nodes=("$stack_prefix-maker-node" "$stack_prefix-taker-node")
 readonly swap_pair="${LEZ_SWAP_PAIR:-bitcoin}"
@@ -121,10 +124,10 @@ balances() {
     account="$(jq -r .account_id "$payload/stack/$role/identity.json")"
     sat="$("${btc_cli[@]}" -rpcwallet="$wallet" getbalances \
       | jq '.mine | [.trusted, .untrusted_pending, .immature] | map(. * 100000000 | round) | add')"
-    lez="$(curl -fsS http://127.0.0.1:8779/ -H 'content-type: application/json' \
+    lez="$(curl -fsS "http://127.0.0.1:$indexer_port/" -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccount\",\"params\":[\"$account\"]}" \
       | jq .result.balance)"
-    zat="$(python3 -I - "$payload/stack/$role/zcash.key" "$payload/stack/zebra-cookie" <<'PY'
+    zat="$(python3 -I - "$payload/stack/$role/zcash.key" "$payload/stack/zebra-cookie" "$zebra_port" <<'PY'
 import base64, hashlib, json, sys, urllib.request
 # The role's transparent Zcash address (regtest P2PKH, prefix 1d25) and Zebra's balance of it.
 P = 2**256 - 2**32 - 977
@@ -148,7 +151,7 @@ alphabet, n, text = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 while n: n, r = divmod(n, 58); text = alphabet[r] + text
 body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getaddressbalance", "params": [{"addresses": [text]}]})
 cookie = open(sys.argv[2]).read().strip()
-request = urllib.request.Request("http://127.0.0.1:18232/", body.encode(), {"content-type": "application/json",
+request = urllib.request.Request(f"http://127.0.0.1:{sys.argv[3]}/", body.encode(), {"content-type": "application/json",
                                  "authorization": "Basic " + base64.b64encode(cookie.encode()).decode()})
 print(text, json.load(urllib.request.urlopen(request, timeout=30))["result"]["balance"])
 PY
