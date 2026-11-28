@@ -1,0 +1,133 @@
+
+[21:57:05] === zec-concurrent (TakerSellsForeign)
+
+[21:57:05] publishing Zcash offer(s) on the running Maker Node (agreed at take time; no Node recreated)
+   [21:57:06]   the Maker's key paid the Taker's: bd03bede8da95920…
+   [21:57:06]   zebra: mined 1 block(s) → height 661 (the payment to the Taker's key)
+   [21:57:07]   zebra: mined 100 block(s) → height 761 (the Taker's payment matures into a funder output)
+   [21:57:08]   the Maker's key paid the Taker's: 3f7767716d06ef70…
+   [21:57:08]   zebra: mined 1 block(s) → height 762 (the payment to the Taker's key)
+   [21:57:08]   zebra: mined 100 block(s) → height 862 (the Taker's payment matures into a funder output)
+   [21:57:09]   Maker CLI published offer-e2e-zectt-179581662602 on its running Node
+   [21:57:09]   Maker CLI published offer-e2e-zectt-179581662602-1 on its running Node
+
+[21:57:09] Taker desk takes an offer (offer-e2e-zectt-179581662602) (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8 not_activated 0 -
+
+[21:57:17] A second Zcash row is on the book: the Taker takes it too, and the Taker Node agrees a second swap with the Maker at take time
+
+[21:57:17] Taker desk takes an offer (offer-e2e-zectt-179581662602-1) (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986 not_activated 0 -
+
+[21:57:25] The Taker Node drives both LEZ locks on its own, their steps interleaving on one account; the Maker Node funds Zcash for each from its own coinbase output while the Maker desk watches both rows
+
+[21:57:25] Maker desk shows zec-9d14ceb6 at awaiting_taker_claim
+
+[21:57:25] driving both Taker ZEC actors on the Node until zec-9d14ceb6 and zec-5e8e87f8 show claim_available
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+   [21:57:26]   take-time agreement: Taker funds bd03bede8da95920…:0, Zcash anchor 863, refund height 871
+   [21:57:26]   receipt: swap zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8, actor config /var/lib/lez/taker/btc/swaps/176f6e773616c63d9400e5f186b7931211a029fc54f738222df66ac990197930/zec-actor/taker/actor-config.json
+   [21:57:26]   take-time agreement: Taker funds 3f7767716d06ef70…:0, Zcash anchor 863, refund height 871
+   [21:57:26]   receipt: swap zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986, actor config /var/lib/lez/taker/btc/swaps/81807b2dbc7426116daf0b51f8892bfc8fc1ae6d3d047dc9fc5c76fcd7c1e7a5/zec-actor/taker/actor-config.json
+   [21:57:26]   taker zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 862
+   [21:57:26]   zebra: mined 1 block(s) → height 863 (mempool had ['72fdcd0d9918'])
+   [21:57:27]   taker zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986: not_activated (gen 0) | actor at - | maker: offered | zebra 863
+   [21:57:27]   [0 s] waiting for 2 swaps to reach claim_available (zec-drive to claim_available): zec-9d14ceb6 awaiting_first_lock (actor at offered); zec-5e8e87f8 not_activated (actor at -) | LEZ finalized 6420, tip 6425 (5 unfinalized) [heartbeat]
+   [21:57:37]   taker zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8: awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 863
+   [21:57:37]   zebra: mined 1 block(s) → height 864 (mempool had ['f01c15e50a56'])
+   [21:57:38]   taker zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 864
+   [21:57:38]   [11 s] waiting for 2 swaps to reach claim_available (zec-drive to claim_available): zec-9d14ceb6 awaiting_second_lock (actor at taker_lock_confirmed); zec-5e8e87f8 awaiting_first_lock (actor at offered) | LEZ finalized 6420, tip 6425 (5 unfinalized) [heartbeat]
+   [21:57:48]   taker zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8: claim_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 864
+   [21:57:49]   taker zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986: awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 864
+   [21:57:49]   zebra: mined 1 block(s) → height 865 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+   [21:57:49]   [22 s] waiting for 2 swaps to reach claim_available (zec-drive to claim_available): zec-9d14ceb6 claim_available (actor at both_legs_locked); zec-5e8e87f8 awaiting_second_lock (actor at taker_lock_confirmed) | LEZ finalized 6420, tip 6425 (5 unfinalized) [heartbeat]
+   [21:58:20]   taker zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986: claim_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 865
+   [21:58:20]   taker zec-9d14ceb6 is claim_available
+   [21:58:20]   taker zec-5e8e87f8 is claim_available
+
+[21:58:20] Maker desk shows zec-5e8e87f8 at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[21:58:22] Taker desk: claim_lez on zec-9d14ceb6
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[21:58:24] Taker desk: claim_lez on zec-5e8e87f8
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[21:58:27] Both Zcash claims revealed their secrets; the Maker Node reads each from its claim on first sight, mempool included, and claims LEZ with it, and both desks watch the two swaps complete
+
+[21:58:27] Taker desk shows zec-9d14ceb6 at completed
+
+[21:58:27] Maker desk shows zec-9d14ceb6 at completed
+
+[21:58:27] driving both Taker ZEC actors on the Node until zec-9d14ceb6 and zec-5e8e87f8 show completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+   [21:58:28]   take-time agreement: Taker funds bd03bede8da95920…:0, Zcash anchor 863, refund height 871
+   [21:58:28]   receipt: swap zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8, actor config /var/lib/lez/taker/btc/swaps/176f6e773616c63d9400e5f186b7931211a029fc54f738222df66ac990197930/zec-actor/taker/actor-config.json
+   [21:58:28]   take-time agreement: Taker funds 3f7767716d06ef70…:0, Zcash anchor 863, refund height 871
+   [21:58:28]   receipt: swap zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986, actor config /var/lib/lez/taker/btc/swaps/81807b2dbc7426116daf0b51f8892bfc8fc1ae6d3d047dc9fc5c76fcd7c1e7a5/zec-actor/taker/actor-config.json
+   [21:58:29]   taker zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 865
+   [21:58:30]   taker zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986: claim_in_progress (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 865
+   [21:58:30]   [1 s] waiting for 2 swaps to reach completed (zec-drive to completed): zec-9d14ceb6 claim_in_progress (actor at claim_evidence_available); zec-5e8e87f8 claim_in_progress (actor at both_legs_locked) | LEZ finalized 6447, tip 6450 (3 unfinalized) [heartbeat]
+   [21:58:40]   zebra: mined 1 block(s) → height 866 (mempool had ['9a697a76624b', 'c72bc735c5e6'])
+   [21:58:40]   taker zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 866
+   [21:58:40]   [11 s] waiting for 2 swaps to reach completed (zec-drive to completed): zec-9d14ceb6 claim_in_progress (actor at claim_evidence_available); zec-5e8e87f8 claim_in_progress (actor at claim_evidence_available) | LEZ finalized 6461, tip 6464 (3 unfinalized) [heartbeat]
+   [21:58:51]   taker zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8: completed (gen 4) | actor at completed | maker: completed | zebra 866
+   [21:58:51]   taker zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986: completed (gen 4) | actor at completed | maker: completed | zebra 866
+   [21:58:51]   taker zec-9d14ceb6 is completed
+   [21:58:51]   taker zec-5e8e87f8 is completed
+
+[21:58:51] Maker desk shows zec-5e8e87f8 at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[21:58:53] Taker desk shows zec-5e8e87f8 at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+[21:58:54]   take-time agreement: Taker funds bd03bede8da95920…:0, Zcash anchor 863, refund height 871
+[21:58:54]   receipt: swap zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8, actor config /var/lib/lez/taker/btc/swaps/176f6e773616c63d9400e5f186b7931211a029fc54f738222df66ac990197930/zec-actor/taker/actor-config.json
+[21:58:55]   ZEC evidence written to <checkout>/deploy/runtime/lanes/2/evidence/zec/zec-9d14ceb66ec01f54d58c23778cf2eae60bcedf6c72033b8b50959a1c1c0525f8.json (taker completed, maker completed, funding 863, spend 866)
+[21:58:55]   take-time agreement: Taker funds 3f7767716d06ef70…:0, Zcash anchor 863, refund height 871
+[21:58:55]   receipt: swap zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986, actor config /var/lib/lez/taker/btc/swaps/81807b2dbc7426116daf0b51f8892bfc8fc1ae6d3d047dc9fc5c76fcd7c1e7a5/zec-actor/taker/actor-config.json
+[21:58:56]   ZEC evidence written to <checkout>/deploy/runtime/lanes/2/evidence/zec/zec-5e8e87f8622f48b291e64ca792bd10e639b3de859ef6cb10d9a74cc2be83e986.json (taker completed, maker completed, funding 864, spend 866)
+
+[21:58:56] === zec-concurrent (TakerSellsForeign): passed in 111s

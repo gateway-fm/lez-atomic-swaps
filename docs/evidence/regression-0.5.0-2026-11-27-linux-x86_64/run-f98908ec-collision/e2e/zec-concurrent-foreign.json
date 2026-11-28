@@ -1,0 +1,62 @@
+{
+  "scenario": "zec-concurrent",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "1795818376",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swaps": [
+    {
+      "swap_id": "zec-ddf824d4ce5bb5405862418fc5cbeda35b0d1814ec57ada4a2463afc6d70bd69",
+      "offer_id": "offer-e2e-zectt-1795818377",
+      "entry": 0,
+      "zcash_funding": {
+        "transaction_id": "206b146574be8164deb73adb66a3cf122b0b3bd898ef645019f525e0c549b1ac",
+        "height": 676
+      },
+      "zcash_claim": {
+        "transaction_id": "8bd2eaf0a7a06d7831e0e888a1ac6fe041484b0d31b4eb1b15c3b7bbd426d8b1",
+        "height": 678
+      },
+      "taker_lez_replans": []
+    },
+    {
+      "swap_id": "zec-e723a3f2ce83b071596bf5fcfc37c6c7d6f217269a38d88888b60167472d7b24",
+      "offer_id": "offer-e2e-zectt-1795818377-1",
+      "entry": 1,
+      "zcash_funding": {
+        "transaction_id": "495b179c69a93453e80ed98f6b433fa540d79f4f9ebdeac860c30a069b69533a",
+        "height": 676
+      },
+      "zcash_claim": {
+        "transaction_id": "1c96913637d3ff79190c00ad11e24a2ad2801e927759ff01d9d4822afcccac13",
+        "height": 679
+      },
+      "taker_lez_replans": []
+    }
+  ],
+  "corridor": "take-time-1795818383",
+  "profile": "deterministic-local-devnet-v5",
+  "killed": null,
+  "result": "passed",
+  "seconds": 81
+}

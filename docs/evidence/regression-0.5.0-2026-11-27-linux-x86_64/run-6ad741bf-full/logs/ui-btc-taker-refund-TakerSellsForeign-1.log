@@ -1,0 +1,48 @@
+
+[23:57:39] === taker-refund (TakerSellsForeign)
+
+[23:57:39] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[23:57:45] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   c4d977cd06f754a7cdcbf9a7624a11a56a134e6e5c52be0bb65541ba82a00e7b awaiting_first_lock 0 -
+
+[23:57:50] The Maker's Basecamp, with its Node, is stopped before it can lock; the Taker locks anyway and must recover its funds later
+
+[23:57:51] Taker desk: lock_btc on c4d977cd06f7
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[23:57:52] The Maker's lock cutoff (100 s after the take) passes with no Maker lock; the desk then offers Refund
+
+[23:57:52] Taker desk: refund_btc on c4d977cd06f7
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  » The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures
+  [32m✓[0m taker: perform refund_btc
+2 passed, 0 failed
+
+[23:59:30] The Maker's Basecamp is started again; its Node reconciles the refunded swap
+
+[23:59:39] Taker desk shows c4d977cd06f7 at refunded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches refunded
+2 passed, 0 failed
+
+[00:02:20] Maker desk shows c4d977cd06f7 at refunded
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunded (refunded)
+  [32m✓[0m maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[00:02:24] === taker-refund (TakerSellsForeign): passed in 285s

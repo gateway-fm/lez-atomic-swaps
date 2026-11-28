@@ -1,0 +1,14 @@
+README.md
+deploy/scripts/node-e2e.py
+docs/architecture/0033-persist-public-effects-before-submission.md
+docs/architecture/system-architecture.md
+docs/m2-acceptance-checklist.md
+docs/m4-acceptance-checklist.md
+docs/m5-acceptance-checklist.md
+docs/requirements-traceability.md
+docs/submission.md
+docs/swap-coordinator.md
+scripts/run-maker-node-systemd-vm.sh
+submission/LIMITATIONS.md
+submission/MILESTONES.md
+submission/README.md

@@ -1,0 +1,44 @@
+[22:27:02] === zec-corrupt-state (stamp 179581842202)
+[22:27:03] preflight: indexer historical reads
+[22:27:05]   indexer serves historical reads at the tip (7498)
+[22:27:05] preflight: LEZ finality check waived by request
+[22:27:05]   the Maker's key paid the Taker's: b594fd74368df366…
+[22:27:05]   zebra: mined 1 block(s) → height 1406 (the payment to the Taker's key)
+[22:27:06]   zebra: mined 100 block(s) → height 1506 (the Taker's payment matures into a funder output)
+[22:27:07]   the Maker's key paid the Taker's: 961f3324d4bf154f…
+[22:27:07]   zebra: mined 1 block(s) → height 1507 (the payment to the Taker's key)
+[22:27:07]   zebra: mined 100 block(s) → height 1607 (the Taker's payment matures into a funder output)
+[22:27:08]   Maker CLI published offer-e2e-zectt-179581842502 on its running Node
+[22:27:08]   Maker CLI published offer-e2e-zectt-179581842502-1 on its running Node
+[22:27:13]   Taker took offer-e2e-zectt-179581842502: swap zec-d12861c1 (not_activated)
+[22:27:20]   Taker took offer-e2e-zectt-179581842502-1: swap zec-1782ef8c (not_activated)
+[22:27:20]   take-time agreement: Taker funds b594fd74368df366…:0, Zcash anchor 1608, refund height 1616
+[22:27:20]   receipt: swap zec-d12861c1a0bfd2c23da21b4ccf8f2c6bffedee949bfcbcb29d80fa45646128af, actor config /var/lib/lez/taker/btc/swaps/0ac25fa379d173d59256e71d64d06c2e59a65a2d8d871f91077f8ee5f64511de/zec-actor/taker/actor-config.json
+[22:27:21]   take-time agreement: Taker funds 961f3324d4bf154f…:0, Zcash anchor 1608, refund height 1616
+[22:27:21]   receipt: swap zec-1782ef8c1bfb3dd077c418c3f7a60fe8b1d2553f3cdd1167cb8a27bbe2ad27d6, actor config /var/lib/lez/taker/btc/swaps/aad740b7c8ebb29b652bb107f87a2dad1f93fdf428007555aca0cf659ca6c2d1/zec-actor/taker/actor-config.json
+[22:27:21]   taker zec-d12861c1a0bfd2c23da21b4ccf8f2c6bffedee949bfcbcb29d80fa45646128af: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 1607
+[22:27:21]   zebra: mined 1 block(s) → height 1608 (mempool had ['310205804c7b'])
+[22:27:22]   taker zec-1782ef8c1bfb3dd077c418c3f7a60fe8b1d2553f3cdd1167cb8a27bbe2ad27d6: not_activated (gen 0) | actor at - | maker: leased | zebra 1608
+[22:27:22]   [1 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered)): zec-d12861c1 awaiting_first_lock (actor at offered); zec-1782ef8c not_activated (actor at -) | LEZ finalized 7503, tip 7508 (5 unfinalized) [heartbeat]
+[22:27:32]   taker zec-d12861c1a0bfd2c23da21b4ccf8f2c6bffedee949bfcbcb29d80fa45646128af: awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 1608
+[22:27:32]   zebra: mined 1 block(s) → height 1609 (mempool had ['0958d8c708a6'])
+[22:27:33]   taker zec-1782ef8c1bfb3dd077c418c3f7a60fe8b1d2553f3cdd1167cb8a27bbe2ad27d6: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 1609
+[22:27:33]   [11 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered)): zec-d12861c1 awaiting_second_lock (actor at taker_lock_confirmed); zec-1782ef8c awaiting_first_lock (actor at offered) | LEZ finalized 7503, tip 7508 (5 unfinalized) [heartbeat]
+[22:27:43]   taker zec-d12861c1a0bfd2c23da21b4ccf8f2c6bffedee949bfcbcb29d80fa45646128af: claim_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 1609
+[22:27:44]   taker zec-1782ef8c1bfb3dd077c418c3f7a60fe8b1d2553f3cdd1167cb8a27bbe2ad27d6: awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 1609
+[22:27:44]   zebra: mined 1 block(s) → height 1610 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[22:27:44]   [22 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered)): zec-d12861c1 claim_available (actor at both_legs_locked); zec-1782ef8c awaiting_second_lock (actor at taker_lock_confirmed) | LEZ finalized 7519, tip 7521 (2 unfinalized) [heartbeat]
+[22:27:54]   taker zec-1782ef8c1bfb3dd077c418c3f7a60fe8b1d2553f3cdd1167cb8a27bbe2ad27d6: claim_available (gen 2) | actor at taker_lock_confirmed | maker: both_legs_locked | zebra 1610
+[22:27:54]   stopping the Taker Node
+[22:27:55]   zec-d12861c1's Zcash role state /var/lib/lez/taker/btc/swaps/0ac25fa379d173d59256e71d64d06c2e59a65a2d8d871f91077f8ee5f64511de/zec-actor/taker/state/actor.sqlite3 replaced by 32 bytes that are not SQLite
+[22:28:02]   zec-d12861c1: monitor -32010 taker_monitor_unavailable, the file untouched; the swap list shows it attention_required (taker_monitor_unavailable) and zec-1782ef8c claim_available
+[22:28:02]   [0 s] waiting for the Taker's zec-1782ef8c to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1610 | LEZ finalized 7528, tip 7535 (7 unfinalized) [heartbeat]
+[22:28:03]   Taker claimed LEZ on zec-1782ef8c (replay=False)
+[22:28:04]   [0 s] waiting for the Taker's zec-1782ef8c to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1610 | LEZ finalized 7528, tip 7535 (7 unfinalized) [heartbeat]
+[22:28:11]   [7 s] waiting for the Taker's zec-1782ef8c to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 1610 | LEZ finalized 7528, tip 7535 (7 unfinalized) [heartbeat]
+[22:28:11]   zebra: mined 1 block(s) → height 1611 (mempool had ['ff193b65fe94'])
+[22:28:18]   [14 s] waiting for the Taker's zec-1782ef8c to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 1611 | LEZ finalized 7528, tip 7535 (7 unfinalized) [heartbeat]
+[22:28:18]   [0 s] waiting for the Taker's zec-1782ef8c to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 7528, tip 7535 (7 unfinalized) [heartbeat]
+[22:28:18]   both Nodes report zec-1782ef8c completed
+[22:28:18]   the other swap zec-1782ef8c completed on both Nodes; zec-d12861c1 still fails closed
+[22:28:18] === zec-corrupt-state: passed in 76s

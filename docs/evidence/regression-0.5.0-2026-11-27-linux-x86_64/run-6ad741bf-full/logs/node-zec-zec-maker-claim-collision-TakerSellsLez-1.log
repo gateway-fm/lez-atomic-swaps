@@ -1,0 +1,42 @@
+[21:50:03] === zec-maker-claim-collision (stamp 179581620302)
+[21:50:03] preflight: indexer historical reads
+[21:50:04]   indexer serves historical reads at the tip (6136)
+[21:50:04] preflight: LEZ finality check waived by request
+[21:50:04]   maker test hook claim-nonce-thefts: cleared
+[21:50:05]   Maker CLI published offer-e2e-zectt-179581620502 on its running Node
+[21:50:06]   Taker took offer-e2e-zectt-179581620502: swap zec-f14a5ac9 (not_activated)
+[21:50:07]   take-time agreement: Maker funds 5fcd556cf2db0956…:0, Zcash anchor 652, refund height 668
+[21:50:07]   receipt: swap zec-f14a5ac949f81a06e50345e034148394d9c20c4f17ef0365fe503da7d9124cf0, actor config /var/lib/lez/taker/btc/swaps/418345ea6646513d914cbe2e65bb393910f0e20a528439a291a54ebe98e79080/zec-actor/taker/actor-config.json
+[21:50:07]   [0 s] waiting for the Taker's zec-f14a5ac9 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 651 | LEZ finalized 6129, tip 6132 (3 unfinalized) [heartbeat]
+[21:50:11]   [3 s] waiting for the Taker's zec-f14a5ac9 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 651 | LEZ finalized 6129, tip 6132 (3 unfinalized) [heartbeat]
+[21:50:30]   [23 s] waiting for the Taker's zec-f14a5ac9 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 651 | LEZ finalized 6141, tip 6147 (6 unfinalized) [heartbeat]
+[21:50:34]   zebra at 651: not mining, the Maker's Zcash funding is not out yet
+[21:50:37]   zebra: mined 1 block(s) → height 652 (mempool had ['f5dad1ff3edc'])
+[21:50:40]   [33 s] waiting for the Taker's zec-f14a5ac9 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 652 | LEZ finalized 6155, tip 6161 (6 unfinalized) [heartbeat]
+[21:50:40]   zebra: mined 1 block(s) → height 653 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[21:50:41]   maker test hook claim-nonce-thefts: 6
+[21:50:41]   Taker claimed Zcash (replay=False); the Maker's LEZ claim is to lose its nonce 6 times
+[21:50:41]   [0 s] waiting for the Taker's zec-f14a5ac9 to reach completed (the Maker's re-planned LEZ claim): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 653 | LEZ finalized 6155, tip 6161 (6 unfinalized) [heartbeat]
+[21:50:41]   zebra: mined 1 block(s) → height 654 (mempool had ['3d7702d7a093'])
+[21:50:45]   [3 s] waiting for the Taker's zec-f14a5ac9 to reach completed (the Maker's re-planned LEZ claim): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 654 | LEZ finalized 6155, tip 6161 (6 unfinalized) [heartbeat]
+[21:51:19]   [38 s] waiting for the Taker's zec-f14a5ac9 to reach completed (the Maker's re-planned LEZ claim): taker completed (gen 4) | actor at completed | maker completed | zebra 654 | LEZ finalized 6185, tip 6189 (4 unfinalized) [heartbeat]
+[21:51:20]   maker test hook claim-nonce-thefts: cleared
+[21:51:20]   [0 s] waiting for the Taker's zec-f14a5ac9 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 6185, tip 6189 (4 unfinalized) [heartbeat]
+[21:51:20]   both Nodes report zec-f14a5ac9 completed
+[21:51:24]   node: actor claim: follow-up LEZ claim superseded (planned nonce 20, live 21); re-plan 1 at nonce 21: 43c2c558abfe46ed6cea5377717d2dca7aeaf479c759f9481e917b4fa4cb6db3 -> 19d027464d07dd7b86f31dae9c3bcd7b7b45eef7656ec8d3dd9383b366e4e44b; 677 s left before the LEZ refu
+[21:51:24]   node: actor claim: follow-up LEZ claim superseded (planned nonce 21, live 22); re-plan 2 at nonce 22: 19d027464d07dd7b86f31dae9c3bcd7b7b45eef7656ec8d3dd9383b366e4e44b -> b52ffeee9d3b4e6cb4ab517652384dab742ffaccf3375ca15b35dd1adb71807c; 671 s left before the LEZ refu
+[21:51:24]   node: actor claim: follow-up LEZ claim superseded (planned nonce 22, live 23); re-plan 3 at nonce 23: b52ffeee9d3b4e6cb4ab517652384dab742ffaccf3375ca15b35dd1adb71807c -> a8fe0c8553279e5cdf23e8a3d7d7ca2a394bc428613b0644aaf10c9762dde173; 667 s left before the LEZ refu
+[21:51:24]   node: actor claim: follow-up LEZ claim superseded (planned nonce 23, live 24); re-plan 4 at nonce 24: a8fe0c8553279e5cdf23e8a3d7d7ca2a394bc428613b0644aaf10c9762dde173 -> a85bf398fb8c58d97a660869ebcc0d48905e3eb22796103027dd4c26bfc72d99; 662 s left before the LEZ refu
+[21:51:24]   node: actor claim: follow-up LEZ claim superseded (planned nonce 24, live 25); re-plan 5 at nonce 25: a85bf398fb8c58d97a660869ebcc0d48905e3eb22796103027dd4c26bfc72d99 -> be3571f1fa12fa2db25a94f1df657e8c572b63d3adc7c8e67f126ea041552d54; 659 s left before the LEZ refu
+[21:51:24]   node: actor claim: follow-up LEZ claim superseded (planned nonce 25, live 26); re-plan 6 at nonce 26: be3571f1fa12fa2db25a94f1df657e8c572b63d3adc7c8e67f126ea041552d54 -> 172d1827a9bc35f196e098b28444f85a06abc8b004c8e178a1e27d4f7aa74954; 653 s left before the LEZ refu
+[21:51:24]   node: actor claim: the LEZ claim was re-planned 6 times: the account's nonce keeps being taken; it is re-planned until the LEZ refund time; needs attention (lez_claim_nonce_contention)
+[21:51:24] FAILED: the Maker's account nonce moved by 6; 6 thefts and the claim move it by 7
+[21:51:24] === zec-maker-claim-collision: failed in 81s
+[21:51:29]   kept maker-container.log: 19883 lines, 80 Delivery dumps dropped, 2 redacted
+[21:51:29]   kept maker-node.log: 1610 lines, 0 Delivery dumps dropped, 0 redacted
+[21:51:29]   kept maker-basecamp.log: 1748 lines, 7 Delivery dumps dropped, 0 redacted
+[21:51:29]   kept maker-health.json: 57 lines, 0 Delivery dumps dropped, 0 redacted
+[21:51:29]   kept taker-container.log: 4941 lines, 0 Delivery dumps dropped, 46 redacted
+[21:51:29]   kept taker-node.log: 215 lines, 0 Delivery dumps dropped, 0 redacted
+[21:51:29]   kept taker-basecamp.log: 586 lines, 0 Delivery dumps dropped, 6 redacted
+[21:51:29]   kept taker-health.json: 114 lines, 0 Delivery dumps dropped, 0 redacted

@@ -1,0 +1,48 @@
+{
+  "scenario": "zec-corrupt-state",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "179581842202",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "corrupt_swap": "zec-d12861c1a0bfd2c23da21b4ccf8f2c6bffedee949bfcbcb29d80fa45646128af",
+  "role_state_db": "/var/lib/lez/taker/btc/swaps/0ac25fa379d173d59256e71d64d06c2e59a65a2d8d871f91077f8ee5f64511de/zec-actor/taker/state/actor.sqlite3",
+  "fails_closed": [
+    {
+      "when": "after the restart",
+      "code": -32010,
+      "category": "taker_monitor_unavailable"
+    },
+    {
+      "when": "once the other swap completed",
+      "code": -32010,
+      "category": "taker_monitor_unavailable"
+    }
+  ],
+  "other_swap": "zec-1782ef8c1bfb3dd077c418c3f7a60fe8b1d2553f3cdd1167cb8a27bbe2ad27d6",
+  "swap_list_after_restart": {
+    "zec-d12861c1a0bfd2c23da21b4ccf8f2c6bffedee949bfcbcb29d80fa45646128af": "attention_required",
+    "zec-1782ef8c1bfb3dd077c418c3f7a60fe8b1d2553f3cdd1167cb8a27bbe2ad27d6": "claim_available"
+  },
+  "result": "passed",
+  "seconds": 76
+}

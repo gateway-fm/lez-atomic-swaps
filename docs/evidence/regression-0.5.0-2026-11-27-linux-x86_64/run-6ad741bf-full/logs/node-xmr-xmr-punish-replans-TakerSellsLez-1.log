@@ -1,0 +1,37 @@
+[19:38:57] === xmr-punish-replans (stamp 1795808337)
+[19:38:57] preflight: indexer historical reads
+[19:38:58]   indexer serves historical reads at the tip (980)
+[19:38:58] preflight: LEZ finality check waived by request
+[19:39:04]   the Maker's Monero wallet holds 1445.152 XMR unlocked
+[19:39:13]   Maker CLI published offer-e2e-xmr-1795808337 on its running Node
+[19:39:31]   Taker took offer-e2e-xmr-1795808337: swap eb942b3a9e40 (not_activated)
+[19:39:31]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[19:39:31]   [0 s] waiting for the Taker's eb942b3a9e40 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 1003, tip 1008 (5 unfinalized) [heartbeat]
+[19:39:38]   [6 s] waiting for the Taker's eb942b3a9e40 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 1003, tip 1008 (5 unfinalized) [heartbeat]
+[19:39:51]   [19 s] waiting for the Taker's eb942b3a9e40 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 1003, tip 1008 (5 unfinalized) [heartbeat]
+[19:40:15]   [43 s] waiting for the Taker's eb942b3a9e40 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 1029, tip 1033 (4 unfinalized) [heartbeat]
+[19:40:15]   the Taker has verified the Maker's Monero; stopping the Taker Node: it neither claims nor refunds
+[19:40:16]   maker test hook punish-nonce-thefts: 6
+[19:40:16]   [0 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker taker_lock_confirmed (schedule leased) | LEZ finalized 1029, tip 1033 (4 unfinalized) [heartbeat]
+[19:40:19]   [3 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1029, tip 1033 (4 unfinalized) [heartbeat]
+[19:41:20]   [64 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1066, tip 1078 (12 unfinalized) [heartbeat]
+[19:42:21]   [125 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1102, tip 1108 (6 unfinalized) [heartbeat]
+[19:43:23]   [187 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1145, tip 1152 (7 unfinalized) [heartbeat]
+[19:44:24]   [248 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1191, tip 1197 (6 unfinalized) [heartbeat]
+[19:45:26]   [310 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1235, tip 1238 (3 unfinalized) [heartbeat]
+[19:46:27]   [371 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1274, tip 1281 (7 unfinalized) [heartbeat]
+[19:47:29]   [433 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1319, tip 1325 (6 unfinalized) [heartbeat]
+[19:48:30]   [494 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1346, tip 1352 (6 unfinalized) [heartbeat]
+[19:49:31]   [555 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1391, tip 1397 (6 unfinalized) [heartbeat]
+[19:50:32]   [616 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1438, tip 1441 (3 unfinalized) [heartbeat]
+[19:51:33]   [677 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1479, tip 1486 (7 unfinalized) [heartbeat]
+[19:52:34]   [738 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1523, tip 1529 (6 unfinalized) [heartbeat]
+[19:53:35]   [799 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1551, tip 1557 (6 unfinalized) [heartbeat]
+[19:54:37]   [861 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1596, tip 1600 (4 unfinalized) [heartbeat]
+[19:55:38]   [922 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker both_legs_locked (schedule leased) | LEZ finalized 1637, tip 1641 (4 unfinalized) [heartbeat]
+[19:56:08]   [952 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker maker_recovery_available (schedule leased) | LEZ finalized 1652, tip 1656 (4 unfinalized) [heartbeat]
+[19:57:10]   [1014 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker maker_recovery_available (schedule leased) | LEZ finalized 1691, tip 1695 (4 unfinalized) [heartbeat]
+[19:57:29]   [1033 s] waiting for the Maker's eb942b3a9e40 to reach a terminal state (the punish time, six taken nonces, then the Maker's tag 17): maker punished (schedule terminal) | LEZ finalized 1707, tip 1709 (2 unfinalized) [heartbeat]
+[19:57:29]   maker test hook punish-nonce-thefts: cleared
+[19:57:35]   6 punish re-plan slots reserved; the Maker's owner signed 7 transactions
+[19:57:36] === xmr-punish-replans: passed in 1118s

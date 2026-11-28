@@ -1,0 +1,89 @@
+
+[21:47:08] === xmr-concurrent (TakerSellsLez)
+   [21:47:14]   the Maker's Monero wallet holds 4606.176 XMR unlocked
+
+[21:47:14] Maker desk publishes TakerSellsLez Monero offers from its form until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[21:47:16] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   63a0d163b6adc49648cba8a818d89fec65248cd94e10b675eb13d2b97e6f4468 awaiting_first_lock 0 -
+
+[21:47:36] A second Monero row is on the book: the Taker takes it too while the first swap's LEZ lock runs
+
+[21:47:36] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   cdd73f75c44e57426dacc323cd1bcf7047eee1702f9e221d7818fd0b8264e0dd awaiting_first_lock 0 -
+
+[21:47:59] The Taker Node locks both swaps' LEZ on its own, one owner transaction at a time; the Maker Node funds Monero for each while the Maker desk watches the rows
+
+[21:47:59] Maker desk shows 63a0d163b6ad funded
+
+[21:47:59] Taker desk: claim_xmr on 63a0d163b6ad
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached awaiting_taker_claim|claiming_lez|completed (awaiting_taker_claim|claiming_lez|completed)
+  [32m✓[0m maker: wait awaiting_taker_claim|claiming_lez|completed reached by the Node
+4 passed, 0 failed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_xmr
+2 passed, 0 failed
+
+[21:48:46] Taker desk: claim_xmr on cdd73f75c44e
+
+[21:48:46] Maker desk shows cdd73f75c44e funded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_xmr
+2 passed, 0 failed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached awaiting_taker_claim|claiming_lez|completed (awaiting_taker_claim|claiming_lez|completed)
+  [32m✓[0m maker: wait awaiting_taker_claim|claiming_lez|completed reached by the Node
+4 passed, 0 failed
+
+[21:49:21] Both claims are authorised: the Maker Node claims both LEZ legs, the Taker Node sweeps both Monero outputs, and both desks watch the two swaps complete
+
+[21:49:21] Taker desk shows 63a0d163b6ad at completed
+
+[21:49:21] Maker desk shows 63a0d163b6ad at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+
+[21:50:41] Maker desk shows cdd73f75c44e at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[21:50:43] Taker desk shows cdd73f75c44e at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+
+[21:50:44] evidence export skipped: a Monero swap's record is node-e2e.py's (node:xmr tests)
+
+[21:50:44] evidence export skipped: a Monero swap's record is node-e2e.py's (node:xmr tests)
+
+[21:50:44] === xmr-concurrent (TakerSellsLez): passed in 216s

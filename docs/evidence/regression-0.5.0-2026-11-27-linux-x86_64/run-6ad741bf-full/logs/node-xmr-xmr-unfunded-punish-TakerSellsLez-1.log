@@ -1,0 +1,162 @@
+[19:17:35] === xmr-unfunded-punish (stamp 179580705503)
+[19:17:35] preflight: indexer historical reads
+[19:17:37]   indexer serves historical reads at the tip (120)
+[19:17:37] preflight: LEZ finality check waived by request
+[19:17:45]   [monero 19:17:44] taker: created its wallet
+[19:17:54]   [monero 19:17:54] maker: created its wallet
+[19:18:20]   [monero 19:18:04] funding: created its wallet
+[19:18:20]   [monero 19:18:13] mined 100 block(s) in 8.8 s → height 100 (coinbase unlocks after 60 blocks; a transfer's ring takes 15 unlocked decoys)
+[19:18:20]   [monero 19:18:17] funding → maker 10 XMR in 828b0b4e5cc895f0a96a030506225b7c2a4462a478a9f02887e1385e32cce237 (fee 2599200000 piconero)
+[19:18:20]   [monero 19:18:18] mined 10 block(s) in 1.0 s → height 110 (the agreement's ten confirmations)
+[19:18:20]   [monero 19:18:20] maker sees it 2.7 s after the transfer: 10 confirmation(s), locked False
+[19:18:20]   funded the Maker's Monero wallet: 828b0b4e5cc895f0…, 10.000 XMR unlocked
+[19:18:28]   Maker CLI published offer-e2e-xmr-179580705503-a on its running Node
+[19:18:49]   Taker took offer-e2e-xmr-179580705503-a: swap c7822b698dbb (not_activated)
+[19:18:49]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[19:18:49]   the Maker's Monero wallet-rpc stopped
+[19:18:50]   [0 s] waiting for the Taker's c7822b698dbb to reach awaiting_second_lock (the Taker's LEZ lock final, no Monero): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 166, tip 172 (6 unfinalized) [heartbeat]
+[19:19:12]   [22 s] waiting for the Taker's c7822b698dbb to reach awaiting_second_lock (the Taker's LEZ lock final, no Monero): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 182, tip 184 (2 unfinalized) [heartbeat]
+[19:19:12]   stopping the Taker Node through [R, P)
+[19:19:13]   [0 s] waiting for the finalized LEZ time to reach P: 965 s to go | LEZ finalized 182, tip 184 (2 unfinalized) [heartbeat]
+[19:20:14]   [61 s] waiting for the finalized LEZ time to reach P: 899 s to go | LEZ finalized 222, tip 225 (3 unfinalized) [heartbeat]
+[19:21:14]   [121 s] waiting for the finalized LEZ time to reach P: 842 s to go | LEZ finalized 263, tip 271 (8 unfinalized) [heartbeat]
+[19:22:15]   [182 s] waiting for the finalized LEZ time to reach P: 790 s to go | LEZ finalized 298, tip 301 (3 unfinalized) [heartbeat]
+[19:23:17]   [244 s] waiting for the finalized LEZ time to reach P: 721 s to go | LEZ finalized 342, tip 344 (2 unfinalized) [heartbeat]
+[19:24:18]   [305 s] waiting for the finalized LEZ time to reach P: 660 s to go | LEZ finalized 382, tip 389 (7 unfinalized) [heartbeat]
+[19:25:18]   [365 s] waiting for the finalized LEZ time to reach P: 597 s to go | LEZ finalized 430, tip 433 (3 unfinalized) [heartbeat]
+[19:26:18]   [425 s] waiting for the finalized LEZ time to reach P: 537 s to go | LEZ finalized 468, tip 473 (5 unfinalized) [heartbeat]
+[19:27:19]   [486 s] waiting for the finalized LEZ time to reach P: 474 s to go | LEZ finalized 515, tip 517 (2 unfinalized) [heartbeat]
+[19:28:20]   [547 s] waiting for the finalized LEZ time to reach P: 423 s to go | LEZ finalized 541, tip 548 (7 unfinalized) [heartbeat]
+[19:29:22]   [609 s] waiting for the finalized LEZ time to reach P: 353 s to go | LEZ finalized 585, tip 588 (3 unfinalized) [heartbeat]
+[19:30:23]   [670 s] waiting for the finalized LEZ time to reach P: 297 s to go | LEZ finalized 629, tip 633 (4 unfinalized) [heartbeat]
+[19:31:24]   [731 s] waiting for the finalized LEZ time to reach P: 235 s to go | LEZ finalized 670, tip 677 (7 unfinalized) [heartbeat]
+[19:32:24]   [791 s] waiting for the finalized LEZ time to reach P: 171 s to go | LEZ finalized 714, tip 718 (4 unfinalized) [heartbeat]
+[19:33:25]   [852 s] waiting for the finalized LEZ time to reach P: 120 s to go | LEZ finalized 753, tip 763 (10 unfinalized) [heartbeat]
+[19:34:25]   [912 s] waiting for the finalized LEZ time to reach P: 50 s to go | LEZ finalized 785, tip 793 (8 unfinalized) [heartbeat]
+[19:35:18]   [965 s] waiting for the finalized LEZ time to reach P: -1 s to go | LEZ finalized 834, tip 838 (4 unfinalized) [heartbeat]
+[19:35:18]   xmr-punish as the Maker, from P, unfunded, Taker away: /usr/local/bin/lez-v02-escrow-claim-probe --effect xmr-punish --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --swap-id c7822b698dbb9ff78c97fbbbd70df6fdc5858cf4fb64412b23b01eca4b80c2f4 --private-key-file /tmp/xmr-probe-lez-signer.key --observe-seconds 30
+[19:35:21]     {
+[19:35:21]       "after": {
+[19:35:21]         "claimant_balance": 2050000,
+[19:35:21]         "claimant_nonce": 2,
+[19:35:21]         "custody_balance": 0,
+[19:35:21]         "sequencer_tip": 845,
+[19:35:21]         "status": "Claimed",
+[19:35:21]         "tip_timestamp_ms": 1795808119905
+[19:35:21]       },
+[19:35:21]       "amount": 50000,
+[19:35:21]       "before": {
+[19:35:21]         "claimant_balance": 2000000,
+[19:35:21]         "claimant_nonce": 1,
+[19:35:21]         "custody_balance": 50000,
+[19:35:21]         "sequencer_tip": 844,
+[19:35:21]         "status": "Funded",
+[19:35:21]         "tip_timestamp_ms": 1795808118273
+[19:35:21]       },
+[19:35:21]       "claimant_account": "80e140b345668bf8b151862db21a54d0e12e328c90b7f43bc23b328a09b8d4e8",
+[19:35:21]       "custody_account": "be5f279ab91fd2583e04cf21356f7477ae4162234b8695bd53f250ee98a4c91a",
+[19:35:21]       "effect": "xmr-punish",
+[19:35:21]       "escrow_kept_custody": false,
+[19:35:21]       "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+[19:35:21]       "included": true,
+[19:35:21]       "included_in_block": 845,
+[19:35:21]       "metadata_account": "a0495b0f9fa12123d1dffefa93a9140689b9d2f612d2f5b1158862231ac8b72e",
+[19:35:21]       "observed_seconds": 2,
+[19:35:21]       "presented_preimage": null,
+[19:35:21]       "presented_preimage_matches_digest": false,
+[19:35:21]       "presented_preimage_sha256": null,
+[19:35:21]       "punish_at_ms": 1795808109000,
+[19:35:21]       "refund_at_ms": 1795807829000,
+[19:35:21]       "schema": "lez_v02_escrow_claim_probe_v1",
+[19:35:21]       "signer_is_claimant": true,
+[19:35:21]       "stored_secret_digest": null,
+[19:35:21]       "submission": {
+[19:35:21]         "decision": "accepted",
+[19:35:21]         "error_code": null,
+[19:35:21]         "error_message": null
+[19:35:21]       },
+[19:35:21]       "submitted_before_punish_at": false,
+[19:35:21]       "submitted_before_refund_at": false,
+[19:35:21]       "swap_id": "c7822b698dbb9ff78c97fbbbd70df6fdc5858cf4fb64412b23b01eca4b80c2f4",
+[19:35:21]       "test_only": true,
+[19:35:21]       "transaction_id": "9ea73909267ff17699deee4c6bc964a187b3cde05cb28c604575995e4d5aa82d"
+[19:35:21]     }
+[19:35:21]   xmr-punish from P, unfunded, Taker away: sequencer accepted, included in block 845; escrow Funded → Claimed, custody 50000 → 0
+[19:35:28]   the Taker, back up, reads punished (None)
+[19:35:28]   [0 s] waiting for LEZ finality to reach block 845 (the punishment): LEZ finalized 834, tip 838 (4 unfinalized) [heartbeat] | LEZ finalized 834, tip 838 (4 unfinalized) [heartbeat]
+[19:35:35]   Maker CLI published offer-e2e-xmr-179580705503-b on its running Node
+[19:35:53]   Taker took offer-e2e-xmr-179580705503-b: swap 2fb4398cf580 (not_activated)
+[19:35:53]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[19:35:53]   the Maker's Monero wallet-rpc stopped
+[19:35:54]   [0 s] waiting for the Taker's 2fb4398cf580 to reach awaiting_second_lock (the Taker's LEZ lock final, no Monero): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 847, tip 852 (5 unfinalized) [heartbeat]
+[19:36:22]   [28 s] waiting for the Taker's 2fb4398cf580 to reach awaiting_second_lock (the Taker's LEZ lock final, no Monero): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 877, tip 881 (4 unfinalized) [heartbeat]
+[19:36:22]   [0 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 877, tip 881 (4 unfinalized) [heartbeat]
+[19:37:22]   [60 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 919, tip 923 (4 unfinalized) [heartbeat]
+[19:38:29]   [126 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 964, tip 966 (2 unfinalized) [heartbeat]
+[19:39:30]   [188 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 989, tip 993 (4 unfinalized) [heartbeat]
+[19:40:32]   [250 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 1029, tip 1033 (4 unfinalized) [heartbeat]
+[19:41:33]   [311 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 1066, tip 1078 (12 unfinalized) [heartbeat]
+[19:42:34]   [371 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 1117, tip 1122 (5 unfinalized) [heartbeat]
+[19:43:41]   [438 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 1157, tip 1167 (10 unfinalized) [heartbeat]
+[19:44:47]   [505 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 1207, tip 1210 (3 unfinalized) [heartbeat]
+[19:45:50]   [568 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 1248, tip 1252 (4 unfinalized) [heartbeat]
+[19:46:52]   [629 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker expired | LEZ finalized 1288, tip 1295 (7 unfinalized) [heartbeat]
+[19:47:39]   [676 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker refund_available (actor refund_available, gen 6) | maker expired | LEZ finalized 1319, tip 1325 (6 unfinalized) [heartbeat]
+[19:47:52]   [689 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker refund_in_progress (actor refund_in_flight, gen 8) | maker expired | LEZ finalized 1334, tip 1338 (4 unfinalized) [heartbeat]
+[19:48:02]   [699 s] waiting for the Taker's 2fb4398cf580 to reach refunded (the Taker Node's own refund from R): taker refunded (actor refunded, gen 9) | maker expired | LEZ finalized 1334, tip 1338 (4 unfinalized) [heartbeat]
+[19:48:02]   [0 s] waiting for the finalized LEZ time to reach P: 262 s to go | LEZ finalized 1334, tip 1338 (4 unfinalized) [heartbeat]
+[19:49:02]   [60 s] waiting for the finalized LEZ time to reach P: 198 s to go | LEZ finalized 1378, tip 1382 (4 unfinalized) [heartbeat]
+[19:50:03]   [121 s] waiting for the finalized LEZ time to reach P: 149 s to go | LEZ finalized 1416, tip 1427 (11 unfinalized) [heartbeat]
+[19:51:04]   [182 s] waiting for the finalized LEZ time to reach P: 77 s to go | LEZ finalized 1450, tip 1456 (6 unfinalized) [heartbeat]
+[19:52:07]   [244 s] waiting for the finalized LEZ time to reach P: 14 s to go | LEZ finalized 1496, tip 1500 (4 unfinalized) [heartbeat]
+[19:52:22]   [259 s] waiting for the finalized LEZ time to reach P: -2 s to go | LEZ finalized 1512, tip 1515 (3 unfinalized) [heartbeat]
+[19:52:22]   xmr-punish as the Maker, from P, after the Node's refund: /usr/local/bin/lez-v02-escrow-claim-probe --effect xmr-punish --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --swap-id 2fb4398cf580b46ed9de7675f71c5d5b183c6abf7e8c1f6c4b663db15862e841 --private-key-file /tmp/xmr-probe-lez-signer.key --observe-seconds 30
+[19:52:52]     {
+[19:52:52]       "after": {
+[19:52:52]         "claimant_balance": 2050000,
+[19:52:52]         "claimant_nonce": 2,
+[19:52:52]         "custody_balance": 0,
+[19:52:52]         "sequencer_tip": 1542,
+[19:52:52]         "status": "Refunded",
+[19:52:52]         "tip_timestamp_ms": 1795809171974
+[19:52:52]       },
+[19:52:52]       "amount": 50000,
+[19:52:52]       "before": {
+[19:52:52]         "claimant_balance": 2050000,
+[19:52:52]         "claimant_nonce": 2,
+[19:52:52]         "custody_balance": 0,
+[19:52:52]         "sequencer_tip": 1521,
+[19:52:52]         "status": "Refunded",
+[19:52:52]         "tip_timestamp_ms": 1795809140986
+[19:52:52]       },
+[19:52:52]       "claimant_account": "80e140b345668bf8b151862db21a54d0e12e328c90b7f43bc23b328a09b8d4e8",
+[19:52:52]       "custody_account": "c85165135bc5c0bc2e7f8af63603c71dc5c7ced353936bfbda4ad489e715d1c1",
+[19:52:52]       "effect": "xmr-punish",
+[19:52:52]       "escrow_kept_custody": true,
+[19:52:52]       "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+[19:52:52]       "included": false,
+[19:52:52]       "included_in_block": null,
+[19:52:52]       "metadata_account": "c7b7f35ade93fe6f06bf5bbd0bc3d8d66b847d008580c726d0d908b815015380",
+[19:52:52]       "observed_seconds": 30,
+[19:52:52]       "presented_preimage": null,
+[19:52:52]       "presented_preimage_matches_digest": false,
+[19:52:52]       "presented_preimage_sha256": null,
+[19:52:52]       "punish_at_ms": 1795809136000,
+[19:52:52]       "refund_at_ms": 1795808856000,
+[19:52:52]       "schema": "lez_v02_escrow_claim_probe_v1",
+[19:52:52]       "signer_is_claimant": true,
+[19:52:52]       "stored_secret_digest": null,
+[19:52:52]       "submission": {
+[19:52:52]         "decision": "accepted",
+[19:52:52]         "error_code": null,
+[19:52:52]         "error_message": null
+[19:52:52]       },
+[19:52:52]       "submitted_before_punish_at": false,
+[19:52:52]       "submitted_before_refund_at": false,
+[19:52:52]       "swap_id": "2fb4398cf580b46ed9de7675f71c5d5b183c6abf7e8c1f6c4b663db15862e841",
+[19:52:52]       "test_only": true,
+[19:52:52]       "transaction_id": "fc30e0eac2099f102832863feb2db474f81398bcd7912af14cec2d07499ef85a"
+[19:52:52]     }
+[19:52:52]   xmr-punish from P, after the Node's refund: sequencer accepted, not included; escrow Refunded → Refunded, custody 0 → 0
+[19:52:53]   the Maker's Monero wallet-rpc started
+[19:52:53] === xmr-unfunded-punish: passed in 2118s

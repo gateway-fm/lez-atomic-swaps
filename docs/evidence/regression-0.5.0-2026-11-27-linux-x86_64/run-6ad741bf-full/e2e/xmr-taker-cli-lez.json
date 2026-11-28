@@ -1,0 +1,64 @@
+{
+  "scenario": "xmr-taker-cli",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "179581557502",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "357529dafd2799eebd82995a2257edfe6d993e1b39dc20d3783f306a23e3fecb",
+  "offer_id": "offer-e2e-xmr-179581557502",
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "lez_before": {
+    "maker": 2552000,
+    "taker": 1448001
+  },
+  "lez_deltas": {
+    "maker": 50000,
+    "taker": -50000
+  },
+  "outcome": "completed",
+  "taker_monero_before": {
+    "address": "49Qxo4nf9sfB1BdLo8gP8CjJW7AF6GS1s71ETU49yeupdo47GgfsAtd9dCjRVZAh2cWCjxRMWksfKTkZhBjEcWNKPBFsMND",
+    "balance_piconero": 3174328756725970,
+    "daemon_height": 370,
+    "state": "available",
+    "unlocked_piconero": 3174328756725970
+  },
+  "taker_monero_after": {
+    "address": "49Qxo4nf9sfB1BdLo8gP8CjJW7AF6GS1s71ETU49yeupdo47GgfsAtd9dCjRVZAh2cWCjxRMWksfKTkZhBjEcWNKPBFsMND",
+    "balance_piconero": 3526914203087886,
+    "daemon_height": 390,
+    "state": "available",
+    "unlocked_piconero": 3175326948325970
+  },
+  "taker_monero_sweep": {
+    "txid": "1f9531df74e925a7e05686d1ab2bd7b56ee62120b49b96423c0f41e8324a561e",
+    "amount": 998191600000,
+    "height": 381
+  },
+  "result": "passed",
+  "seconds": 182
+}

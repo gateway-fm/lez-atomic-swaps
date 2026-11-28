@@ -1,0 +1,23 @@
+[22:46:16] === taker-cli (stamp 1795819576)
+[22:46:16] preflight: indexer historical reads
+[22:46:17]   indexer serves historical reads at the tip (8204)
+[22:46:17] preflight: LEZ finality check waived by request
+[22:46:18]   Maker published offer-e2e-1795819576
+[22:46:21]   lez-taker-cli swap take: exit 0 after 3 s
+[22:46:21]   Taker took offer-e2e-1795819576: swap cee6344e9f21 (not_activated)
+[22:46:23]   lez-taker-cli swap lock: exit 0 after 2 s
+[22:46:23]   Taker locked lez: a02957bcfab6 (replay=False)
+[22:46:23]   [0 s] waiting for the Taker's cee6344e9f21 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 8199, tip 8202 (3 unfinalized) [heartbeat]
+[22:46:37]   [13 s] waiting for the Taker's cee6344e9f21 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 8213, tip 8215 (2 unfinalized) [heartbeat]
+[22:46:47]   [23 s] waiting for the Taker's cee6344e9f21 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 8213, tip 8215 (2 unfinalized) [heartbeat]
+[22:46:47]   lez-taker-cli swap claim: exit 0 after 0 s
+[22:46:47]   Taker claimed Bitcoin (replay=False)
+[22:46:47]   [0 s] waiting for the Taker's cee6344e9f21 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 8213, tip 8215 (2 unfinalized) [heartbeat]
+[22:47:03]   [16 s] waiting for the Taker's cee6344e9f21 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 8219, tip 8228 (9 unfinalized) [heartbeat]
+[22:47:04]   both Nodes report cee6344e9f21 completed
+[22:47:04]   the Bitcoin claim e29cc293d851 is a Taproot key-path spend: one 64-byte signature, no script
+[22:47:05]   lez-taker-cli swap list: cee6344e9f21 completed, the owner RPC's row, among 1 swap(s)
+[22:47:05]   lez-taker-cli health: ready, degraded false, delivery and chat available
+[22:47:05]   lez-taker-cli balances: Core wallet lez-taker (available, 524998930160 sat trusted), LEZ 901006 units as the indexer holds
+[22:47:06]   as uid 65534 all 9 owner-RPC commands of lez-taker-cli are refused connecting to /run/lez/taker/node.sock (600 lez)
+[22:47:07] === taker-cli: passed in 50s

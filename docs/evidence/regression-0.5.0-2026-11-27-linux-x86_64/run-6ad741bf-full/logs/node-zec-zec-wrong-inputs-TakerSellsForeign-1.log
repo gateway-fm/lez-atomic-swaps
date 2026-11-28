@@ -1,0 +1,34 @@
+[22:24:14] === zec-wrong-inputs (stamp 179581825402)
+[22:24:14] preflight: indexer historical reads
+[22:24:15]   indexer serves historical reads at the tip (7396)
+[22:24:15] preflight: LEZ finality check waived by request
+[22:24:16]   the Maker's key paid the Taker's: 0e198fe23edfa9e1…
+[22:24:16]   zebra: mined 1 block(s) → height 1198 (the payment to the Taker's key)
+[22:24:16]   zebra: mined 100 block(s) → height 1298 (the Taker's payment matures into a funder output)
+[22:24:17]   Maker CLI published offer-e2e-zectt-179581825502 on its running Node
+[22:24:17]   rejected as expected: reusing a publish request id for another offer (maker offer request ID conflicts with its durable mutation)
+[22:24:18]   rejected as expected: withdrawing with a stale revision (stale maker offer revision: expected 6, actual 1)
+[22:24:18]   rejected as expected: taking with a mismatched envelope hash (initiation_selection_mismatch)
+[22:24:18]   rejected as expected: taking an off-preset amount (initiation_selection_mismatch)
+[22:24:18]   rejected as expected: taking with a wrong LEZ quote (initiation_selection_mismatch)
+[22:24:18]   rejected as expected: claiming an unknown swap (swap_not_found)
+[22:24:19]   rejected as expected: refunding an unknown swap (swap_not_found)
+[22:24:25]   Taker took offer-e2e-zectt-179581825502: swap zec-1ac00516 (not_activated)
+[22:24:25]   rejected as expected: claiming before the Maker funded (taker_action_unavailable)
+[22:24:27]   rejected as expected: taking the consumed lot again (initiation_selection_mismatch)
+[22:24:27]   consumed lot left Delivery and cannot be taken again
+[22:24:28]   take-time agreement: Taker funds 0e198fe23edfa9e1…:0, Zcash anchor 1299, refund height 1307
+[22:24:28]   receipt: swap zec-1ac00516847a34bdc559e05fc865c2970fa09117884265634370c2d390c159db, actor config /var/lib/lez/taker/btc/swaps/fdd9683ea8ffb37116757f81d291c8514b15d67bca6777c7259d5b0d96e07e8d/zec-actor/taker/actor-config.json
+[22:24:28]   [0 s] waiting for the Taker's zec-1ac00516 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 1298 | LEZ finalized 7397, tip 7400 (3 unfinalized) [heartbeat]
+[22:24:35]   zebra: mined 1 block(s) → height 1299 (mempool had ['9c935ca4c809'])
+[22:24:38]   [10 s] waiting for the Taker's zec-1ac00516 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 1299 | LEZ finalized 7409, tip 7413 (4 unfinalized) [heartbeat]
+[22:24:41]   zebra: mined 1 block(s) → height 1300 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[22:25:01]   [33 s] waiting for the Taker's zec-1ac00516 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1300 | LEZ finalized 7421, tip 7426 (5 unfinalized) [heartbeat]
+[22:25:03]   Taker claimed LEZ on zec-1ac00516 (replay=False)
+[22:25:06]   [2 s] waiting for the Taker's zec-1ac00516 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker claim_evidence_available | zebra 1300 | LEZ finalized 7421, tip 7426 (5 unfinalized) [heartbeat]
+[22:25:09]   [6 s] waiting for the Taker's zec-1ac00516 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 1300 | LEZ finalized 7421, tip 7426 (5 unfinalized) [heartbeat]
+[22:25:09]   zebra: mined 1 block(s) → height 1301 (mempool had ['3044b48dda69'])
+[22:25:13]   [9 s] waiting for the Taker's zec-1ac00516 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 1301 | LEZ finalized 7421, tip 7426 (5 unfinalized) [heartbeat]
+[22:25:13]   [0 s] waiting for the Taker's zec-1ac00516 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 7421, tip 7426 (5 unfinalized) [heartbeat]
+[22:25:13]   both Nodes report zec-1ac00516 completed
+[22:25:13] === zec-wrong-inputs: passed in 59s

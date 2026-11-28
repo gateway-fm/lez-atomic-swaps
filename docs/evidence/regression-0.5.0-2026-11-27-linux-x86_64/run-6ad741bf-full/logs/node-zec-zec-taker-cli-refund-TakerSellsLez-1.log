@@ -1,0 +1,41 @@
+[23:19:16] === zec-taker-cli-refund (stamp 179582155602)
+[23:19:16] preflight: indexer historical reads
+[23:19:17]   indexer serves historical reads at the tip (9561)
+[23:19:17] preflight: LEZ finality check waived by request
+[23:19:18]   Maker CLI published offer-e2e-zectt-179582155702 on its running Node
+[23:19:19]   lez-taker-cli swap take: exit 0 after 1 s
+[23:19:19]   Taker took offer-e2e-zectt-179582155702: swap zec-47ca201f (not_activated)
+[23:19:19]   take-time agreement: Maker funds 8eed048d7bedabeb…:0, Zcash anchor 648, refund height 664
+[23:19:19]   receipt: swap zec-47ca201fa73ff19e511f96aee8660d59ce13e8ec0a2b54f7f2966eab58ae54e9, actor config /var/lib/lez/taker/btc/swaps/62f2a84527b3dd042ab707227e4ba7f577f207a9f8c54ce75c14cb453e1bc3b7/zec-actor/taker/actor-config.json
+[23:19:19]   cutting the Maker Node's zebra route: it will observe the Taker's lock but cannot fund Zcash
+[23:19:20]   [0 s] waiting for the Taker actor of zec-47ca201f to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker not_activated | actor at - | maker leased | zebra 647 | LEZ finalized 9551, tip 9554 (3 unfinalized) [heartbeat]
+[23:19:26]   [6 s] waiting for the Taker actor of zec-47ca201f to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker awaiting_first_lock | actor at offered | maker offered | zebra 647 | LEZ finalized 9566, tip 9569 (3 unfinalized) [heartbeat]
+[23:19:44]   [23 s] waiting for the Taker actor of zec-47ca201f to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker awaiting_second_lock | actor at offered | maker offered | zebra 647 | LEZ finalized 9566, tip 9569 (3 unfinalized) [heartbeat]
+[23:19:47]   [27 s] waiting for the Taker actor of zec-47ca201f to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Taker LEZ lock confirmed, Maker without zebra): taker awaiting_second_lock | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 647 | LEZ finalized 9580, tip 9583 (3 unfinalized) [heartbeat]
+[23:19:47]   [0 s] waiting for the Maker's zec-47ca201f to reach awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (Maker observing the Taker's LEZ lock without zebra): maker taker_lock_confirmed (schedule leased) | LEZ finalized 9580, tip 9583 (3 unfinalized) [heartbeat]
+[23:19:47]   the Maker observed the Taker's LEZ lock; stopping the Maker Node so it never funds Zcash
+[23:19:48]   waiting 464s for the agreement's LEZ refund time (the profile's delay after provisioning)
+[23:19:48]   [0 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 9580, tip 9583 (3 unfinalized) [heartbeat]
+[23:20:48]   [60 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 9607, tip 9614 (7 unfinalized) [heartbeat]
+[23:21:48]   [120 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 9644, tip 9660 (16 unfinalized) [heartbeat]
+[23:22:48]   [180 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 9697, tip 9704 (7 unfinalized) [heartbeat]
+[23:23:48]   [240 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 9747, tip 9750 (3 unfinalized) [heartbeat]
+[23:24:48]   [300 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 9793, tip 9797 (4 unfinalized) [heartbeat]
+[23:25:48]   [360 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 9821, tip 9827 (6 unfinalized) [heartbeat]
+[23:26:48]   [420 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 9871, tip 9873 (2 unfinalized) [heartbeat]
+[23:27:32]   the Taker's LEZ lock is confirmed, the Maker is down and the LEZ refund time has passed
+[23:27:33]   [0 s] waiting for the Taker's refund of zec-47ca201f to reach refunded: taker refund_available (generation 1) | maker unreachable | LEZ finalized 9898, tip 9903 (5 unfinalized) [heartbeat]
+[23:27:36]   lez-taker-cli swap refund: exit 0 after 4 s
+[23:27:36]   refund request admitted (attempt 1, taker refund_available | maker: unreachable)
+[23:27:42]   [9 s] waiting for the Taker's refund of zec-47ca201f to reach refunded: taker refund_in_progress (generation 1) | maker unreachable | LEZ finalized 9915, tip 9917 (2 unfinalized) [heartbeat]
+[23:27:44]   lez-taker-cli swap refund: exit 0 after 2 s
+[23:27:49]   [16 s] waiting for the Taker's refund of zec-47ca201f to reach refunded: taker refunded (generation 2) | maker unreachable | LEZ finalized 9915, tip 9917 (2 unfinalized) [heartbeat]
+[23:27:49]   Taker refunded its LEZ escrow
+[23:27:56]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-47ca201fa73ff19e511f96aee8660d59ce13e8ec0a2b54f7f2966eab58ae54e9", "action": "refund", "requested_after_generation": 16, "
+[23:27:56]   [0 s] waiting for the Maker's zec-47ca201f to reach a terminal state (reconciling the refunded LEZ leg): maker taker_lock_confirmed (schedule leased) | LEZ finalized 9915, tip 9917 (2 unfinalized) [heartbeat]
+[23:28:05]   [9 s] waiting for the Maker's zec-47ca201f to reach a terminal state (reconciling the refunded LEZ leg): maker refunded (schedule terminal) | LEZ finalized 9925, tip 9931 (6 unfinalized) [heartbeat]
+[23:28:05]   zebra: the provisioned coinbase outpoint 8eed048d7bed:0 is still unspent; Maker ended refunded
+[23:28:06]   [0 s] waiting for LEZ finality to reach block 9934 (the swap's last LEZ transaction): LEZ finalized 9925, tip 9931 (6 unfinalized) [heartbeat] | LEZ finalized 9925, tip 9931 (6 unfinalized) [heartbeat]
+[23:28:26]   LEZ is final through block 9934 after 20s
+[23:28:26]   settled refunded: LEZ moved {'maker': 0, 'taker': 0} as both Nodes say
+[23:28:26] === zec-taker-cli-refund: passed in 550s

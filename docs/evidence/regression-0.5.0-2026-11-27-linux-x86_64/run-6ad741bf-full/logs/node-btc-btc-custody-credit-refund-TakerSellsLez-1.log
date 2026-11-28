@@ -1,0 +1,31 @@
+[00:02:31] === btc-custody-credit-refund (stamp 1795824151)
+[00:02:31] preflight: indexer historical reads
+[00:02:32]   indexer serves historical reads at the tip (11316)
+[00:02:32] preflight: LEZ finality check waived by request
+[00:02:32]   custody credit: waiting for the taker's escrow to be funded, then 1 unit(s) from heartbeat-echo-02: /usr/local/bin/lez-v02-custody-credit-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --depositor 7gj3P9pU7sXqQbMVyApzKavnzb1EcqBgxvVN6zKsKZpt --private-key-file /tmp/custody-credit-probe.key --amount 1 --wait-funded-seconds 3600 --observe-seconds 60
+[00:02:33]   Maker published offer-e2e-1795824151
+[00:02:35]   Taker took offer-e2e-1795824151: swap c303cee57e6b (not_activated)
+[00:02:35]   stopping the Maker Node so it never locks Bitcoin
+[00:02:36]   Taker locked lez: d3b9e850149d (replay=False)
+[00:02:37]   mined 124 blocks past the lock; the Maker cutoff is 100s after the take, the Taker's refund opens 245s after it
+[00:02:37]   [0 s] waiting for the Taker's refund of c303cee57e6b to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 11316, tip 11323 (7 unfinalized) [heartbeat]
+[00:02:37]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[00:02:41]   custody credit: 1 unit(s) to d96d818e8f2b… in block 11328; custody 1000 → 1001 (lot 1000), escrow Funded
+[00:02:47]   [10 s] waiting for the Taker's refund of c303cee57e6b to land: taker awaiting_first_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 11316, tip 11323 (7 unfinalized) [heartbeat]
+[00:03:08]   [31 s] waiting for the Taker's refund of c303cee57e6b to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 11325, tip 11337 (12 unfinalized) [heartbeat]
+[00:03:30]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[00:04:11]   [94 s] waiting for the Taker's refund of c303cee57e6b to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 11376, tip 11384 (8 unfinalized) [heartbeat]
+[00:04:22]   refund request admitted (attempt 11, state awaiting_second_lock)
+[00:04:32]   [115 s] waiting for the Taker's refund of c303cee57e6b to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 11392, tip 11399 (7 unfinalized) [heartbeat]
+[00:05:20]   refund request replayed (attempt 16, state refund_in_progress)
+[00:05:43]   [186 s] waiting for the Taker's refund of c303cee57e6b to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 11437, tip 11443 (6 unfinalized) [heartbeat]
+[00:06:20]   refund request replayed (attempt 21, state refund_in_progress)
+[00:06:53]   [256 s] waiting for the Taker's refund of c303cee57e6b to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 11499, tip 11503 (4 unfinalized) [heartbeat]
+[00:07:07]   Taker refunded; Taker Node balances {'btc_trusted_sat': 524997918860, 'lez_units': 902008} → {'btc_trusted_sat': 524997918860, 'lez_units': 902009}
+[00:07:17]   [0 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker offered (schedule backoff) | LEZ finalized 11512, tip 11518 (6 unfinalized) [heartbeat]
+[00:07:22]   [5 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker offered (schedule leased) | LEZ finalized 11512, tip 11518 (6 unfinalized) [heartbeat]
+[00:07:33]   Maker reconciled to refunded
+[00:07:33]   [0 s] waiting for LEZ finality to reach block 11533 (the swap's last LEZ transaction): LEZ finalized 11528, tip 11533 (5 unfinalized) [heartbeat] | LEZ finalized 11528, tip 11533 (5 unfinalized) [heartbeat]
+[00:07:55]   LEZ is final through block 11533 after 22s
+[00:07:55]   settled refunded: LEZ moved {'maker': 0, 'taker': 1} as both Nodes say
+[00:07:55] === btc-custody-credit-refund: passed in 324s

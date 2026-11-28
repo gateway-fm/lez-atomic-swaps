@@ -1,0 +1,22 @@
+[22:47:24] === btc-custody-credit (stamp 179581964403)
+[22:47:24] preflight: indexer historical reads
+[22:47:24]   indexer serves historical reads at the tip (8245)
+[22:47:24] preflight: LEZ finality check waived by request
+[22:47:25]   custody credit: waiting for the taker's escrow to be funded, then 1 unit(s) from heartbeat-echo-02: /usr/local/bin/lez-v02-custody-credit-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --depositor Gufd9uJwGt5Rt1tUzuNcj196PNYq3FZeLPAcaaAtY63L --private-key-file /tmp/custody-credit-probe.key --amount 1 --wait-funded-seconds 3600 --observe-seconds 60
+[22:47:25]   Maker published offer-e2e-179581964403
+[22:47:26]   Taker took offer-e2e-179581964403: swap facd52c9f224 (not_activated)
+[22:47:27]   Taker locked lez: 227296c9e875 (replay=False)
+[22:47:27]   [0 s] waiting for the Taker's facd52c9f224 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 8237, tip 8242 (5 unfinalized) [heartbeat]
+[22:47:32]   custody credit: 1 unit(s) to 07229d3d217d… in block 8253; custody 1000 → 1001 (lot 1000), escrow Funded
+[22:47:44]   [17 s] waiting for the Taker's facd52c9f224 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 8251, tip 8255 (4 unfinalized) [heartbeat]
+[22:47:51]   [23 s] waiting for the Taker's facd52c9f224 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 8251, tip 8255 (4 unfinalized) [heartbeat]
+[22:47:51]   Taker claimed Bitcoin (replay=False)
+[22:47:52]   [0 s] waiting for the Taker's facd52c9f224 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 8251, tip 8255 (4 unfinalized) [heartbeat]
+[22:48:09]   [17 s] waiting for the Taker's facd52c9f224 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 8263, tip 8269 (6 unfinalized) [heartbeat]
+[22:48:09]   both Nodes report facd52c9f224 completed
+[22:48:09]   the Bitcoin claim d081dc5f362d is a Taproot key-path spend: one 64-byte signature, no script
+[22:48:10]   [0 s] waiting for LEZ finality to reach block 8277 (the swap's last LEZ transaction): LEZ finalized 8263, tip 8269 (6 unfinalized) [heartbeat] | LEZ finalized 8263, tip 8269 (6 unfinalized) [heartbeat]
+[22:48:20]   [10 s] waiting for LEZ finality to reach block 8277 (the swap's last LEZ transaction): LEZ finalized 8276, tip 8282 (6 unfinalized) [heartbeat] | LEZ finalized 8276, tip 8282 (6 unfinalized) [heartbeat]
+[22:48:42]   LEZ is final through block 8277 after 32s
+[22:48:42]   settled completed: LEZ moved {'maker': 1001, 'taker': -1000} as both Nodes say
+[22:48:42] === btc-custody-credit: passed in 78s

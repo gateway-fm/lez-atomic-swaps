@@ -1,0 +1,22 @@
+Full regression of 6ad741bf (0.5.0) on Linux x86_64 (Ubuntu 24.04, Docker Engine),
+2026-11-27 19:16Z -> 2026-11-28 00:17Z, UTC
+
+Every test of `deploy/scripts/regress.sh full` (200: `regress.sh list full`) on images built from
+6ad741bf with the devnet test hooks (LEZ_TEST_HOOKS=1), Monero regtest up (LEZ_MONERO=1), three lanes
+at a time (LEZ_LANES=3), starting on a fresh chain. One operator ran both parties, Maker and Taker,
+on one host. Escrow ImageID ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98.
+See README.md and PROVENANCE.md.
+
+Result on 6ad741bf: 199 of 200 passed, each on its first try, in 295 min. 0 frozen tries, 0
+NOT-EXERCISED, 0 timeouts. The 1 failure is node:zec:zec-maker-claim-collision:TakerSellsLez: the
+scenario read the Maker's account nonce from the indexer once, before the block of the Maker's
+re-planned claim was final. The Maker had re-planned the claim six times and both Nodes completed
+the swap.
+
+On f98908ec (6ad741bf plus the scenario's wait, the VM script's stack prefix and documents; no
+image input differs): that test, run again in a separate invocation, passed on its first try.
+
+  node:zec:zec-maker-claim-collision:TakerSellsLez    6ad741bf FAILED 86 s   f98908ec PASSED 111 s
+
+By kind: node:btc 62, node:zec 70, node:xmr 23, ui:btc 17, ui:zec 24, ui:xmr 4. Test time summed
+over lanes in the full invocation: 49,823 s.

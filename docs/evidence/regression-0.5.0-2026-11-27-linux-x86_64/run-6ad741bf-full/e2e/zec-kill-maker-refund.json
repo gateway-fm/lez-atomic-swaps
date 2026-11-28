@@ -1,0 +1,76 @@
+{
+  "scenario": "zec-kill-maker-refund",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179582178403",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-22ea5a4e7e8a11dd826304056cc020730a7b1d862437b545162cff4f79108f2c",
+  "corridor": "take-time-1795821786",
+  "profile": "deterministic-local-devnet-v8",
+  "zcash_funding": {
+    "transaction_id": "afc3d6ade193129237534daba46c799ed952b4712b112a988a96be7a182a3845",
+    "height": 799
+  },
+  "zcash_refund": {
+    "transaction_id": "4ef2eef8f17d64eae8c2bfb12dbd7d8978c637a0311c2b116a55b9432b56af66",
+    "height": 816
+  },
+  "zcash_refund_height": 815,
+  "zcash_refund_before_lez_refund_time": true,
+  "maker_terminal_phase": "refunded",
+  "taker_terminal_state": "refunded",
+  "role": "maker",
+  "kill": [
+    {
+      "point": "both legs locked, refund times running",
+      "taker_state": "claim_available",
+      "maker_phase": "both_legs_locked",
+      "taker_effects": [],
+      "container": "lezm5-l3-maker-node",
+      "exit_code": 137,
+      "oom_killed": false,
+      "finished_at": "2026-11-27T23:23:51.747521556Z"
+    },
+    {
+      "point": "refund admitted",
+      "taker_state": "refund_in_progress",
+      "maker_phase": "maker_leg_refunded",
+      "taker_effects": [],
+      "container": "lezm5-l3-maker-node",
+      "exit_code": 137,
+      "oom_killed": false,
+      "finished_at": "2026-11-27T23:31:23.606353059Z"
+    }
+  ],
+  "lez_before": {
+    "maker": 1902002,
+    "taker": 2048001
+  },
+  "lez_deltas": {
+    "maker": 0,
+    "taker": 0
+  },
+  "outcome": "refunded",
+  "result": "passed",
+  "seconds": 556
+}

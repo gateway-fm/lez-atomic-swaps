@@ -1,0 +1,274 @@
+{
+  "scenario": "taker-cli",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsLez",
+  "stamp": "1795819576",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "cee6344e9f21d3c0299e19ccf4714648a89ba0ff8b8c62e7df72643c19de021a",
+  "bitcoin_claim": "e29cc293d851fabc6a8b6fbedf339107ffb2a48fdaab9968b9b4f5eded3e9d98",
+  "owner_reads": {
+    "swap_list_row": {
+      "available_action": null,
+      "effects": [
+        {
+          "chain": "Lez",
+          "confirmations": 1,
+          "kind": "taker_lock",
+          "revision": 1,
+          "transaction_id": "a02957bcfab61d41dedcfbc8650f8d46017fb4599f6a4503a0378e63583ded36"
+        },
+        {
+          "chain": "Bitcoin",
+          "confirmations": 2,
+          "kind": "maker_lock",
+          "revision": 2,
+          "transaction_id": "530d41b5604c8c936d36187cf204081f763b52b0f9cdd6ac2c372c1578f0381f"
+        },
+        {
+          "chain": "Bitcoin",
+          "confirmations": 2,
+          "kind": "revealing_claim",
+          "revision": 3,
+          "transaction_id": "e29cc293d851fabc6a8b6fbedf339107ffb2a48fdaab9968b9b4f5eded3e9d98"
+        },
+        {
+          "chain": "Lez",
+          "confirmations": 1,
+          "kind": "followup_claim",
+          "revision": 4,
+          "transaction_id": "32eb6d0667f4be560bced92b19bbc30eab3d0cd4803d074100fa1535103a2e2a"
+        }
+      ],
+      "foreign_units": 1000000,
+      "lez_units": 1000,
+      "offer_id": "offer-e2e-1795819576",
+      "privacy_guidance": null,
+      "progress_generation": 4,
+      "route": {
+        "direction": "TakerSellsLez",
+        "pair": "Bitcoin"
+      },
+      "schema_version": 1,
+      "state": "completed",
+      "swap_id": "cee6344e9f21d3c0299e19ccf4714648a89ba0ff8b8c62e7df72643c19de021a",
+      "terms": {
+        "bitcoin_refund_height": 7457,
+        "bitcoin_value_sat": 1000000,
+        "earlier_refund_latest_unix_seconds": 1795819998,
+        "later_refund_earliest_unix_seconds": 1795820418,
+        "lez_amount": 1000,
+        "maker_second_lock_cutoff_unix_seconds": 1795819818,
+        "required_bitcoin_confirmations": 1
+      }
+    },
+    "health": {
+      "chat": "available",
+      "degraded": false,
+      "delivery": "available",
+      "lez_chain": {
+        "degraded": false,
+        "finalized_advanced_at_unix_seconds": 1795819625,
+        "finalized_block_id": 8235,
+        "finalized_flat_seconds": 0,
+        "observed_at_unix_seconds": 1795819625,
+        "stall_threshold_seconds": 60,
+        "tip_block_id": 8238
+      },
+      "pair_capabilities": [
+        {
+          "authenticated_offer_browsing": true,
+          "claim": "full_lifecycle",
+          "initiation": "prepared_private_material",
+          "monitoring": "receipt_bound",
+          "pair": "Bitcoin",
+          "refund": "full_lifecycle",
+          "supported_direction": "TakerSellsForeign"
+        },
+        {
+          "authenticated_offer_browsing": true,
+          "claim": "full_lifecycle",
+          "initiation": "prepared_private_material",
+          "monitoring": "receipt_bound",
+          "pair": "Monero",
+          "refund": "full_lifecycle",
+          "supported_direction": "TakerSellsLez"
+        },
+        {
+          "authenticated_offer_browsing": true,
+          "claim": "full_lifecycle",
+          "initiation": "prepared_private_material",
+          "monitoring": "receipt_bound",
+          "pair": "Zcash",
+          "refund": "full_lifecycle",
+          "supported_direction": "TakerSellsLez"
+        },
+        {
+          "authenticated_offer_browsing": true,
+          "claim": "full_lifecycle",
+          "initiation": "prepared_private_material",
+          "monitoring": "receipt_bound",
+          "pair": "Zcash",
+          "refund": "full_lifecycle",
+          "supported_direction": "TakerSellsForeign"
+        },
+        {
+          "authenticated_offer_browsing": true,
+          "claim": "full_lifecycle",
+          "initiation": "prepared_private_material",
+          "monitoring": "receipt_bound",
+          "pair": "Bitcoin",
+          "refund": "full_lifecycle",
+          "supported_direction": "TakerSellsLez"
+        }
+      ],
+      "ready": true,
+      "registered_methods": {
+        "claim": true,
+        "health": true,
+        "initiate": true,
+        "lock": true,
+        "monitor": true,
+        "offer_list": true,
+        "refund": true,
+        "swap_list": true
+      },
+      "routes": [
+        {
+          "route": {
+            "direction": "TakerSellsForeign",
+            "pair": "Bitcoin"
+          },
+          "state": "available"
+        },
+        {
+          "route": {
+            "direction": "TakerSellsLez",
+            "pair": "Monero"
+          },
+          "state": "available"
+        },
+        {
+          "route": {
+            "direction": "TakerSellsLez",
+            "pair": "Zcash"
+          },
+          "state": "available"
+        },
+        {
+          "route": {
+            "direction": "TakerSellsForeign",
+            "pair": "Zcash"
+          },
+          "state": "available"
+        },
+        {
+          "route": {
+            "direction": "TakerSellsLez",
+            "pair": "Bitcoin"
+          },
+          "state": "available"
+        }
+      ],
+      "schema_version": 1
+    },
+    "balances": {
+      "bitcoin": {
+        "immature_sat": 0,
+        "network": "regtest",
+        "state": "available",
+        "trusted_sat": 524998930160,
+        "untrusted_pending_sat": 0,
+        "wallet": "lez-taker"
+      },
+      "lez": {
+        "balance_atomic_units": 901006,
+        "nonce": 124,
+        "owner_account_base58": "7gj3P9pU7sXqQbMVyApzKavnzb1EcqBgxvVN6zKsKZpt",
+        "owner_account_hex": "63534f211ba0f879351577bc874fc4f4f617b6b52261beaf771173ee25affa49",
+        "state": "available"
+      },
+      "schema_version": 1
+    }
+  },
+  "wrong_owner": [
+    {
+      "socket": "600 lez"
+    },
+    {
+      "command": "health",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "balances",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap offers",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap list",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap take --request-id e2e-other-take-{stamp} --offer-id {offer} --foreign-units 1",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap monitor --swap-id {swap}",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap lock --swap-id {swap}",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap claim --swap-id {swap} --request-id e2e-other-claim-{stamp} --expected-generation 0",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    },
+    {
+      "command": "swap refund --swap-id {swap} --request-id e2e-other-refund-{stamp} --expected-generation 0",
+      "exit": 2,
+      "refused_at_socket": true,
+      "stderr": "connect local RPC socket /run/lez/taker/node.sock: Permission denied (os error 13)"
+    }
+  ],
+  "result": "passed",
+  "seconds": 50
+}

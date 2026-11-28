@@ -1,0 +1,26 @@
+[22:24:05] === zec-replay (stamp 179581824503)
+[22:24:05] preflight: indexer historical reads
+[22:24:06]   indexer serves historical reads at the tip (7389)
+[22:24:06] preflight: LEZ finality check waived by request
+[22:24:07]   the Maker's key paid the Taker's: 55d0b6af3a8c0c3e…
+[22:24:07]   zebra: mined 1 block(s) → height 1192 (the payment to the Taker's key)
+[22:24:08]   zebra: mined 100 block(s) → height 1292 (the Taker's payment matures into a funder output)
+[22:24:09]   Maker CLI published offer-e2e-zectt-179581824603 on its running Node
+[22:24:09]   offer publication replayed
+[22:24:17]   take replayed for zec-3040b548
+[22:24:17]   take-time agreement: Taker funds 55d0b6af3a8c0c3e…:0, Zcash anchor 1293, refund height 1301
+[22:24:18]   receipt: swap zec-3040b5480931e990b3158b7268c0d482462a9b1250ce673edb727f09f07e7ca4, actor config /var/lib/lez/taker/btc/swaps/9194e22b4cd85d4983579d3bb447a125bc95dc5d68bf1ddd6913869ed2556133/zec-actor/taker/actor-config.json
+[22:24:18]   [0 s] waiting for the Taker's zec-3040b548 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 1292 | LEZ finalized 7397, tip 7400 (3 unfinalized) [heartbeat]
+[22:24:25]   [7 s] waiting for the Taker's zec-3040b548 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 1292 | LEZ finalized 7397, tip 7400 (3 unfinalized) [heartbeat]
+[22:24:28]   zebra: mined 1 block(s) → height 1293 (mempool had ['4768abdab1f1'])
+[22:24:35]   [17 s] waiting for the Taker's zec-3040b548 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 1293 | LEZ finalized 7397, tip 7400 (3 unfinalized) [heartbeat]
+[22:24:41]   zebra: mined 1 block(s) → height 1294 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[22:24:45]   [27 s] waiting for the Taker's zec-3040b548 to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1294 | LEZ finalized 7409, tip 7413 (4 unfinalized) [heartbeat]
+[22:24:46]   claim replayed
+[22:24:46]   [0 s] waiting for the Taker's zec-3040b548 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1294 | LEZ finalized 7409, tip 7413 (4 unfinalized) [heartbeat]
+[22:24:53]   [7 s] waiting for the Taker's zec-3040b548 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 1294 | LEZ finalized 7409, tip 7413 (4 unfinalized) [heartbeat]
+[22:24:53]   zebra: mined 1 block(s) → height 1295 (mempool had ['7c32864578eb'])
+[22:24:57]   [10 s] waiting for the Taker's zec-3040b548 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 1295 | LEZ finalized 7409, tip 7413 (4 unfinalized) [heartbeat]
+[22:24:57]   [0 s] waiting for the Taker's zec-3040b548 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 7409, tip 7413 (4 unfinalized) [heartbeat]
+[22:24:57]   both Nodes report zec-3040b548 completed
+[22:24:57] === zec-replay: passed in 52s

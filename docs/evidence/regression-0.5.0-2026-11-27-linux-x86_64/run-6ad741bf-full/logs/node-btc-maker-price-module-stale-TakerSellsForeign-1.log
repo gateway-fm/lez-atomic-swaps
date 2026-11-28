@@ -1,0 +1,14 @@
+[22:47:14] === maker-price-module-stale (stamp 1795819634)
+[22:47:14] preflight: indexer historical reads
+[22:47:17]   indexer serves historical reads at the tip (8240)
+[22:47:17] preflight: LEZ finality check waived by request
+[22:47:31]   Maker's Basecamp recreated with price module /var/lib/lez/maker/price-module/lez-test-price-fixture-ok.so
+[22:47:31]   Bitcoin TakerSellsForeign: quote 5/2 at revision 1795819651; offer-e2e-stale-bitcoin-1795819634 published under identity 5a45ba416eab853b… and listed by the Taker
+[22:47:32]   Zcash TakerSellsLez: quote 5/2 at revision 1795819652; offer-e2e-stale-zcash-1795819634 published under identity 5a45ba416eab853b… and listed by the Taker
+[22:47:44]   Maker's Basecamp recreated with price module /var/lib/lez/maker/price-module/lez-test-price-fixture-stale.so
+[22:47:45]   Bitcoin TakerSellsForeign, the module's quote 61 s old: quote and publish-offer answer -32603 'external price source failed validation'; no offer left; offer-e2e-stale-bitcoin-1795819634 still active and listed by the Taker
+[22:47:45]   Zcash TakerSellsLez, the module's quote 61 s old: quote and publish-offer answer -32603 'external price source failed validation'; no offer left; offer-e2e-stale-zcash-1795819634 still active and listed by the Taker
+[22:47:57]   Maker's Basecamp recreated with price module /var/lib/lez/maker/price-module/lez-test-price-fixture-ok.so
+[22:47:57]   the first build back: the quote answers again, revision 1795819677
+[22:48:09]   Maker's Basecamp recreated with no price module
+[22:48:09] === maker-price-module-stale: passed in 55s

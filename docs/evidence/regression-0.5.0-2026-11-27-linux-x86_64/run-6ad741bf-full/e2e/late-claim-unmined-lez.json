@@ -1,0 +1,73 @@
+{
+  "scenario": "late-claim-unmined",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsLez",
+  "stamp": "179581012502",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "52d1de1cfff515e2ceb005089e3a34e5f960e733abcd5be95afeebccf3cb52e0",
+  "claim": "9b8b5fdee63fac70198865d6a6d1454f4aafbdb05b3f764cdb5130bd5141f83d",
+  "maker_refund_height": 1952,
+  "maker_refund_request": {
+    "schema_version": 1,
+    "swap_id": "52d1de1cfff515e2ceb005089e3a34e5f960e733abcd5be95afeebccf3cb52e0",
+    "action": "refund",
+    "requested_after_generation": 280,
+    "was_replay": false
+  },
+  "claim_mined_at_height": 1953,
+  "taker_terminal_state": "completed",
+  "maker_terminal_phase": "completed",
+  "balances_before": {
+    "maker": {
+      "btc_sat": 370000000000,
+      "lez_units": 2400000
+    },
+    "taker": {
+      "btc_sat": 525000000000,
+      "lez_units": 1600000
+    }
+  },
+  "balances_after": {
+    "maker": {
+      "btc_sat": 369998996900,
+      "lez_units": 2401000
+    },
+    "taker": {
+      "btc_sat": 525000999000,
+      "lez_units": 1599000
+    }
+  },
+  "deltas": {
+    "maker": {
+      "btc_sat": -1003100,
+      "lez_units": 1000
+    },
+    "taker": {
+      "btc_sat": 999000,
+      "lez_units": -1000
+    }
+  },
+  "outcome": "completed",
+  "result": "passed",
+  "seconds": 634
+}

@@ -1,0 +1,95 @@
+{
+  "scenario": "maker-price-module-stale",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "1795819634",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "offers": {
+    "bitcoin": "offer-e2e-stale-bitcoin-1795819634",
+    "zcash": "offer-e2e-stale-zcash-1795819634"
+  },
+  "module_sha256": "5a45ba416eab853be2bac58a080727c3e06f2bce3d1200f97010d26b5ef9df26",
+  "quotes": {
+    "bitcoin": {
+      "observed_at_unix_seconds": 1795819646,
+      "price": {
+        "foreign_units_per_lot": 2,
+        "lez_units_per_lot": 5,
+        "route": {
+          "direction": "TakerSellsForeign",
+          "pair": "Bitcoin"
+        }
+      },
+      "source_revision": 1795819651
+    },
+    "zcash": {
+      "observed_at_unix_seconds": 1795819647,
+      "price": {
+        "foreign_units_per_lot": 2,
+        "lez_units_per_lot": 5,
+        "route": {
+          "direction": "TakerSellsLez",
+          "pair": "Zcash"
+        }
+      },
+      "source_revision": 1795819652
+    }
+  },
+  "stale": {
+    "module_sha256": "d39d8d2519e51cc3394ffe11c760fe777c6df6abed72501662ebbe4a64b6b6a4",
+    "bitcoin": {
+      "quote": {
+        "code": -32603,
+        "message": "external price source failed validation"
+      },
+      "publish": {
+        "code": -32603,
+        "message": "external price source failed validation"
+      }
+    },
+    "zcash": {
+      "quote": {
+        "code": -32603,
+        "message": "external price source failed validation"
+      },
+      "publish": {
+        "code": -32603,
+        "message": "external price source failed validation"
+      }
+    }
+  },
+  "quote_after": {
+    "observed_at_unix_seconds": 1795819672,
+    "price": {
+      "foreign_units_per_lot": 2,
+      "lez_units_per_lot": 5,
+      "route": {
+        "direction": "TakerSellsForeign",
+        "pair": "Bitcoin"
+      }
+    },
+    "source_revision": 1795819677
+  },
+  "result": "passed",
+  "seconds": 55
+}

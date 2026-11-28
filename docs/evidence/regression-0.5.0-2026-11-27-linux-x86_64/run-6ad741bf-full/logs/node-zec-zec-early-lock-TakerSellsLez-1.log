@@ -1,0 +1,30 @@
+[22:12:09] === zec-early-lock (stamp 179581752903)
+[22:12:09] preflight: indexer historical reads
+[22:12:10]   indexer serves historical reads at the tip (6960)
+[22:12:10] preflight: LEZ finality check waived by request
+[22:12:11]   Maker CLI published offer-e2e-zectt-179581753003 on its running Node
+[22:12:12]   Taker took offer-e2e-zectt-179581753003: swap zec-2b800670 (not_activated)
+[22:12:12]   take-time agreement: Maker funds ac97a951d32f28b7…:0, Zcash anchor 1082, refund height 1098
+[22:12:12]   receipt: swap zec-2b8006700473bdfb90bb38fe38163631cc5a5c0602d3f797a125fde4d62e95aa, actor config /var/lib/lez/taker/btc/swaps/aa1bd52124f533d30c3796624f031e2c711639354d817d44bfad8e2c2a05a737/zec-actor/taker/actor-config.json
+[22:12:12]   cutting the Maker's indexer forwarder, its only source of LEZ finality; its sequencer forwarder stays
+[22:12:13]   [0 s] waiting for the Taker actor of zec-2b800670 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker not_activated | actor at - | maker leased | zebra 1081 | LEZ finalized 6960, tip 6962 (2 unfinalized) [heartbeat]
+[22:12:17]   [3 s] waiting for the Taker actor of zec-2b800670 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker awaiting_first_lock | actor at offered | maker offered | zebra 1081 | LEZ finalized 6960, tip 6962 (2 unfinalized) [heartbeat]
+[22:12:35]   [22 s] waiting for the Taker actor of zec-2b800670 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker awaiting_second_lock | actor at offered | maker offered | zebra 1081 | LEZ finalized 6968, tip 6975 (7 unfinalized) [heartbeat]
+[22:12:39]   [25 s] waiting for the Taker actor of zec-2b800670 to reach phase awaiting_maker_confirmations/both_legs_locked/taker_lock_confirmed (the Taker's LEZ lock, the Maker without finality): taker awaiting_second_lock | actor at taker_lock_confirmed | maker offered | zebra 1081 | LEZ finalized 6968, tip 6975 (7 unfinalized) [heartbeat]
+[22:12:39]   the Taker's view lists no LEZ lock effect; its actor at taker_lock_confirmed is what says it is in
+[22:12:39]   the Maker cannot read LEZ finality; watching it for 90s
+[22:14:12]   the Maker stayed at offered for 90s and funded nothing: outpoint ac97a951d32f:0 unspent, zebra's mempool empty
+[22:14:12]   the Maker can read LEZ finality again; it may now fund Zcash
+[22:14:13]   [0 s] waiting for the Taker's zec-2b800670 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 1081 | LEZ finalized 7022, tip 7028 (6 unfinalized) [heartbeat]
+[22:14:13]   zebra at 1081: not mining, the Maker's Zcash funding is not out yet
+[22:14:20]   zebra: mined 1 block(s) → height 1082 (mempool had ['20c1a8223b7c'])
+[22:14:23]   [10 s] waiting for the Taker's zec-2b800670 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1082 | LEZ finalized 7038, tip 7041 (3 unfinalized) [heartbeat]
+[22:14:23]   zebra: mined 1 block(s) → height 1083 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[22:14:23]   Taker claimed Zcash on zec-2b800670 (replay=False)
+[22:14:24]   [0 s] waiting for the Taker's zec-2b800670 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 1083 | LEZ finalized 7038, tip 7041 (3 unfinalized) [heartbeat]
+[22:14:24]   zebra: mined 1 block(s) → height 1084 (mempool had ['f13ddc780c15'])
+[22:14:31]   [7 s] waiting for the Taker's zec-2b800670 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 1084 | LEZ finalized 7038, tip 7041 (3 unfinalized) [heartbeat]
+[22:14:34]   [10 s] waiting for the Taker's zec-2b800670 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 1084 | LEZ finalized 7038, tip 7041 (3 unfinalized) [heartbeat]
+[22:14:35]   [0 s] waiting for the Taker's zec-2b800670 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 7038, tip 7041 (3 unfinalized) [heartbeat]
+[22:14:35]   both Nodes report zec-2b800670 completed
+[22:14:35] === zec-early-lock: passed in 146s

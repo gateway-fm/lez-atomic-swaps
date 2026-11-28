@@ -1,0 +1,32 @@
+[21:40:09] === xmr-custody-credit (stamp 179581560903)
+[21:40:09] preflight: indexer historical reads
+[21:40:10]   indexer serves historical reads at the tip (5769)
+[21:40:10] preflight: LEZ finality check waived by request
+[21:40:11]   custody credit: waiting for the taker's escrow to be funded, then 1 unit(s) from heartbeat-echo-02: /usr/local/bin/lez-v02-custody-credit-probe --sequencer-url http://127.0.0.1:3040/ --escrow-program-id ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98 --depositor Gufd9uJwGt5Rt1tUzuNcj196PNYq3FZeLPAcaaAtY63L --private-key-file /tmp/custody-credit-probe.key --amount 1 --wait-funded-seconds 3600 --observe-seconds 60
+[21:40:17]   the Maker's Monero wallet holds 708.513 XMR unlocked
+[21:40:29]   Maker CLI published offer-e2e-xmr-179581560903 on its running Node
+[21:40:49]   Taker took offer-e2e-xmr-179581560903: swap e7bf0f8bb659 (not_activated)
+[21:40:49]   windows: the Maker funds by +320 s, the Taker refunds from +720 s, the Maker punishes from +1000 s
+[21:40:49]   [0 s] waiting for the Taker's e7bf0f8bb659 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker leased | LEZ finalized 5787, tip 5792 (5 unfinalized) [heartbeat]
+[21:40:56]   [6 s] waiting for the Taker's e7bf0f8bb659 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker offered | LEZ finalized 5787, tip 5792 (5 unfinalized) [heartbeat]
+[21:41:02]   custody credit: 1 unit(s) to f080ac387852… in block 5804; custody 50000 → 50001 (lot 50000), escrow Funded
+[21:41:09]   [19 s] waiting for the Taker's e7bf0f8bb659 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_first_lock (actor lez_locking, gen 0) | maker taker_lock_confirmed | LEZ finalized 5798, tip 5805 (7 unfinalized) [heartbeat]
+[21:41:12]   [23 s] waiting for the Taker's e7bf0f8bb659 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker awaiting_second_lock (actor taker_lock_confirmed, gen 2) | maker taker_lock_confirmed | LEZ finalized 5798, tip 5805 (7 unfinalized) [heartbeat]
+[21:41:23]   [33 s] waiting for the Taker's e7bf0f8bb659 to reach claim_available (Taker LEZ lock → Maker Monero funding at depth): taker claim_available (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 5798, tip 5805 (7 unfinalized) [heartbeat]
+[21:41:23]   Taker claimed Monero (replay=False)
+[21:41:23]   [0 s] waiting for the Taker's e7bf0f8bb659 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor both_legs_locked, gen 3) | maker taker_lock_confirmed | LEZ finalized 5798, tip 5805 (7 unfinalized) [heartbeat]
+[21:41:34]   [11 s] waiting for the Taker's e7bf0f8bb659 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor claim_authorizing, gen 4) | maker both_legs_locked | LEZ finalized 5814, tip 5816 (2 unfinalized) [heartbeat]
+[21:41:46]   [23 s] waiting for the Taker's e7bf0f8bb659 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor awaiting_maker_claim, gen 5) | maker both_legs_locked | LEZ finalized 5825, tip 5829 (4 unfinalized) [heartbeat]
+[21:42:09]   [46 s] waiting for the Taker's e7bf0f8bb659 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker claim_in_progress (actor sweeping, gen 11) | maker completed | LEZ finalized 5839, tip 5843 (4 unfinalized) [heartbeat]
+[21:42:36]   [73 s] waiting for the Taker's e7bf0f8bb659 to reach completed (tag 14 → the Maker's LEZ claim → the Taker's sweep): taker completed (actor completed, gen 12) | maker completed | LEZ finalized 5852, tip 5857 (5 unfinalized) [heartbeat]
+[21:42:37]   [0 s] waiting for the Taker's e7bf0f8bb659 to reach completed (Maker follow-up claim): taker completed (gen 12) | maker completed | LEZ finalized 5852, tip 5857 (5 unfinalized) [heartbeat]
+[21:42:37]   both Nodes report e7bf0f8bb659 completed
+[21:42:37]   [0 s] waiting for LEZ finality to reach block 5862 (the swap's last LEZ transaction): LEZ finalized 5852, tip 5857 (5 unfinalized) [heartbeat] | LEZ finalized 5852, tip 5857 (5 unfinalized) [heartbeat]
+[21:42:51]   LEZ is final through block 5862 after 14s
+[21:42:51]   settled completed: LEZ moved {'maker': 50001, 'taker': -50000} as both Nodes say
+[21:42:52]   the Taker's Monero balance moved 352.699466 XMR with coinbase
+[21:42:56]   the Taker's Monero wallet received [('9eba89bc1d76bee8', 0.9981916)] during the swap (lot 1 XMR)
+[21:42:56]   [0 s] waiting for LEZ finality to reach block 5876 (the swap's last LEZ transaction): LEZ finalized 5866, tip 5872 (6 unfinalized) [heartbeat] | LEZ finalized 5866, tip 5872 (6 unfinalized) [heartbeat]
+[21:43:12]   LEZ is final through block 5876 after 16s
+[21:43:13]   settled completed: LEZ moved {'maker': 50001, 'taker': -50000} as both Nodes say
+[21:43:13] === xmr-custody-credit: passed in 184s

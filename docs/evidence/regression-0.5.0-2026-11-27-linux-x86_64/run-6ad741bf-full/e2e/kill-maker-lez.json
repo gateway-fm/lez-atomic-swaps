@@ -1,0 +1,326 @@
+{
+  "scenario": "kill-maker",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsLez",
+  "stamp": "1795809464",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "role": "maker",
+  "points": [
+    {
+      "swap_id": "97c76de38f2aaf64f4d78ae2a4fb25dc7d024d0b34a6d41ff4081b4639e2deed",
+      "kill": {
+        "point": "taken",
+        "taker_state": "awaiting_first_lock",
+        "maker_phase": "leased",
+        "taker_effects": [],
+        "container": "lezm5-maker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-27T19:57:50.201264989Z"
+      },
+      "balances_before": {
+        "maker": {
+          "btc_sat": 337500000000,
+          "lez_units": 2399994
+        },
+        "taker": {
+          "btc_sat": 525000000000,
+          "lez_units": 1600006
+        }
+      },
+      "balances_after": {
+        "maker": {
+          "btc_sat": 337498996900,
+          "lez_units": 2400994
+        },
+        "taker": {
+          "btc_sat": 525000999000,
+          "lez_units": 1599006
+        }
+      },
+      "deltas": {
+        "maker": {
+          "btc_sat": -1003100,
+          "lez_units": 1000
+        },
+        "taker": {
+          "btc_sat": 999000,
+          "lez_units": -1000
+        }
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "4135e50f3d503f05dcaba6dbd6bc422b5a3ff0a26d0fa58140accce0dae546c7",
+      "kill": {
+        "point": "first lock sent",
+        "taker_state": "awaiting_first_lock",
+        "maker_phase": "leased",
+        "taker_effects": [],
+        "container": "lezm5-maker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-27T19:58:49.048282932Z"
+      },
+      "balances_before": {
+        "maker": {
+          "btc_sat": 337498996900,
+          "lez_units": 2400994
+        },
+        "taker": {
+          "btc_sat": 525000999000,
+          "lez_units": 1599006
+        }
+      },
+      "balances_after": {
+        "maker": {
+          "btc_sat": 337497993800,
+          "lez_units": 2401994
+        },
+        "taker": {
+          "btc_sat": 525001998000,
+          "lez_units": 1598006
+        }
+      },
+      "deltas": {
+        "maker": {
+          "btc_sat": -1003100,
+          "lez_units": 1000
+        },
+        "taker": {
+          "btc_sat": 999000,
+          "lez_units": -1000
+        }
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "92300f3cf8a2df27402641a69e42bd1bdb981ec29c8dce4f5dae36a5f3ee86ce",
+      "kill": {
+        "point": "first lock final",
+        "taker_state": "awaiting_second_lock",
+        "maker_phase": "taker_lock_confirmed",
+        "taker_effects": [
+          "taker_lock"
+        ],
+        "container": "lezm5-maker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-27T19:59:49.959589862Z"
+      },
+      "balances_before": {
+        "maker": {
+          "btc_sat": 337497993800,
+          "lez_units": 2401994
+        },
+        "taker": {
+          "btc_sat": 525001998000,
+          "lez_units": 1598006
+        }
+      },
+      "balances_after": {
+        "maker": {
+          "btc_sat": 337496990700,
+          "lez_units": 2402994
+        },
+        "taker": {
+          "btc_sat": 525002997000,
+          "lez_units": 1597006
+        }
+      },
+      "deltas": {
+        "maker": {
+          "btc_sat": -1003100,
+          "lez_units": 1000
+        },
+        "taker": {
+          "btc_sat": 999000,
+          "lez_units": -1000
+        }
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "bffea07f994dd536083e6f0475617b73d87ed742561c46154caea6be2af7a2a7",
+      "kill": {
+        "point": "both legs locked",
+        "taker_state": "claim_available",
+        "maker_phase": "taker_lock_confirmed",
+        "taker_effects": [
+          "taker_lock",
+          "maker_lock"
+        ],
+        "container": "lezm5-maker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-27T20:01:07.85574777Z"
+      },
+      "balances_before": {
+        "maker": {
+          "btc_sat": 337496990700,
+          "lez_units": 2402994
+        },
+        "taker": {
+          "btc_sat": 525002997000,
+          "lez_units": 1597006
+        }
+      },
+      "balances_after": {
+        "maker": {
+          "btc_sat": 337495987600,
+          "lez_units": 2403994
+        },
+        "taker": {
+          "btc_sat": 525003996000,
+          "lez_units": 1596006
+        }
+      },
+      "deltas": {
+        "maker": {
+          "btc_sat": -1003100,
+          "lez_units": 1000
+        },
+        "taker": {
+          "btc_sat": 999000,
+          "lez_units": -1000
+        }
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "657da28bf8b8a00d222fca161b7ec55dba63b7e661739e38f8612e9c681e0e1a",
+      "kill": {
+        "point": "claim sent",
+        "taker_state": "claim_in_progress",
+        "maker_phase": "both_legs_locked",
+        "taker_effects": [
+          "taker_lock",
+          "maker_lock",
+          "revealing_claim"
+        ],
+        "container": "lezm5-maker-node",
+        "exit_code": 137,
+        "oom_killed": false,
+        "finished_at": "2026-11-27T20:02:14.691787813Z"
+      },
+      "balances_before": {
+        "maker": {
+          "btc_sat": 337495987600,
+          "lez_units": 2403994
+        },
+        "taker": {
+          "btc_sat": 525003996000,
+          "lez_units": 1596006
+        }
+      },
+      "balances_after": {
+        "maker": {
+          "btc_sat": 337494984500,
+          "lez_units": 2404994
+        },
+        "taker": {
+          "btc_sat": 525004995000,
+          "lez_units": 1595006
+        }
+      },
+      "deltas": {
+        "maker": {
+          "btc_sat": -1003100,
+          "lez_units": 1000
+        },
+        "taker": {
+          "btc_sat": 999000,
+          "lez_units": -1000
+        }
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "0488dd13aa9ba83de779309122cb72a02670333fea868c3984a39b269c73afe3",
+      "bitcoin_refund": "496ed9fbc198d91d8f04e935869ffe6350c48b29b8f413508e17cae1b4c508c9",
+      "kill": [
+        {
+          "point": "both legs locked, refund times running",
+          "taker_state": "claim_available",
+          "maker_phase": "both_legs_locked",
+          "taker_effects": [
+            "taker_lock",
+            "maker_lock"
+          ],
+          "container": "lezm5-maker-node",
+          "exit_code": 137,
+          "oom_killed": false,
+          "finished_at": "2026-11-27T20:03:02.989662032Z"
+        },
+        {
+          "point": "refund admitted",
+          "taker_state": "refund_in_progress",
+          "maker_phase": "maker_leg_refunded",
+          "taker_effects": [
+            "taker_lock",
+            "maker_lock",
+            "maker_refund",
+            "taker_refund"
+          ],
+          "container": "lezm5-maker-node",
+          "exit_code": 137,
+          "oom_killed": false,
+          "finished_at": "2026-11-27T20:17:15.120082626Z"
+        }
+      ],
+      "balances_before": {
+        "maker": {
+          "btc_sat": 337494984500,
+          "lez_units": 2404994
+        },
+        "taker": {
+          "btc_sat": 525004995000,
+          "lez_units": 1595006
+        }
+      },
+      "balances_after": {
+        "maker": {
+          "btc_sat": 337494980400,
+          "lez_units": 2404994
+        },
+        "taker": {
+          "btc_sat": 525004995000,
+          "lez_units": 1595006
+        }
+      },
+      "deltas": {
+        "maker": {
+          "btc_sat": -4100,
+          "lez_units": 0
+        },
+        "taker": {
+          "btc_sat": 0,
+          "lez_units": 0
+        }
+      },
+      "outcome": "refunded"
+    }
+  ],
+  "result": "passed",
+  "seconds": 1195
+}

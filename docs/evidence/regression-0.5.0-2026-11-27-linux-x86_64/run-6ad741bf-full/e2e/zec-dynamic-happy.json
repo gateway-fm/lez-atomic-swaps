@@ -1,0 +1,72 @@
+{
+  "scenario": "zec-dynamic-happy",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179581726602",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-842a393559872fa0a23cc3992327f83f746693f8931665eb0d7605f433b4090f",
+  "corridor": "take-time-1795817268",
+  "profile": "deterministic-local-devnet-v7",
+  "offer_id": "offer-e2e-zecdyn-179581726602",
+  "maker_restart_after_completion": "completed",
+  "maker_funding_attempt_count": 2,
+  "maker_taker_lock_projections": 1,
+  "taker_lez_replans": [],
+  "zcash_funding": {
+    "transaction_id": "2879190c27f557f92e6f3de7148a1f0206e9b909212cf61da0e026f8e7b1fa14",
+    "height": 1075
+  },
+  "zcash_claim": {
+    "transaction_id": "356c6781e3bbc89ecfd7e70b9da4defbcffb8de64de05cdfbd4d2c430fd951a8",
+    "height": 1077
+  },
+  "maker_claim_operations": [
+    "lez_followup_claim"
+  ],
+  "zcash_refund_height": 1091,
+  "take_time_agreement": true,
+  "secret_custody": {
+    "taker_request_fields": [
+      "foreign_units",
+      "offer_id",
+      "reservation_id",
+      "schema_version",
+      "signed_offer_envelope",
+      "taker_funding",
+      "taker_lez_account",
+      "taker_secret_digest",
+      "taker_zcash_public_key"
+    ],
+    "secret_digest": "0f3c296e5799c3fb7df4843b38cfb004ca25c63bbb536a05d7060936981551cc",
+    "taker_record_carries_preimage": false,
+    "maker_swap_files": [
+      "actor-config.json",
+      "claim-recovery.key",
+      "draft.borsh",
+      "state"
+    ],
+    "maker_holds_preimage": false
+  },
+  "result": "passed",
+  "seconds": 64
+}

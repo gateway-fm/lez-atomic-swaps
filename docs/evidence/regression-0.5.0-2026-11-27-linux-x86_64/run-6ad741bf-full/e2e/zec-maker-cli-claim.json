@@ -1,0 +1,161 @@
+{
+  "scenario": "zec-maker-cli-claim",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179581514103",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "points": [
+    {
+      "swap_id": "zec-0e9f214406972ca6ceb87fed66975ce3ce3c048fec42511a629c105a3a55a780",
+      "corridor": "take-time-1795815144",
+      "profile": "deterministic-local-devnet-v7",
+      "held": {
+        "point": "claim preparation held",
+        "hook": "hold-claim-preparations",
+        "claim_attempts_held": 1,
+        "admitted": {
+          "action": "claim",
+          "requested_after_generation": 15,
+          "schema_version": 1,
+          "swap_id": "zec-0e9f214406972ca6ceb87fed66975ce3ce3c048fec42511a629c105a3a55a780",
+          "was_replay": false
+        },
+        "second_request": {
+          "code": -32009,
+          "message": "maker actor already has a pending manual action"
+        },
+        "manual_action_while_held": {
+          "action": "claim",
+          "lease_generation": null,
+          "request_id": "e2e-cli-claim-179581514103c0",
+          "requested_after_generation": 15,
+          "state": "queued"
+        },
+        "taker_state": "claim_in_progress",
+        "maker_phase": "claim_evidence_available"
+      },
+      "maker_cli": {
+        "phase": "completed",
+        "manual_action": {
+          "action": "claim",
+          "lease_generation": null,
+          "request_id": "e2e-cli-claim-179581514103c0",
+          "requested_after_generation": 15,
+          "state": "completed"
+        },
+        "history": {
+          "direction": "TakerSellsLez",
+          "highest_alert_severity": null,
+          "id": "zec-0e9f214406972ca6ceb87fed66975ce3ce3c048fec42511a629c105a3a55a780",
+          "pair": "Zcash",
+          "pending_alerts": 0,
+          "phase": "Completed",
+          "requires_attention": false
+        }
+      },
+      "maker_claim_operations": [
+        "lez_followup_claim"
+      ],
+      "claim_after_completion": {
+        "code": -32602,
+        "message": "maker actor manual action is unavailable"
+      },
+      "lez_before": {
+        "maker": 2050000,
+        "taker": 1950000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "outcome": "completed"
+    },
+    {
+      "swap_id": "zec-9c467b1a9f74be7d1a028abfdebefdc6e672413fe81e9d03a67168815e4598ef",
+      "corridor": "take-time-1795815274",
+      "profile": "deterministic-local-devnet-v7",
+      "held": {
+        "point": "claim submission in flight",
+        "hook": "hold-claim-submissions",
+        "claim_attempts_held": 1,
+        "admitted": {
+          "action": "claim",
+          "requested_after_generation": 14,
+          "schema_version": 1,
+          "swap_id": "zec-9c467b1a9f74be7d1a028abfdebefdc6e672413fe81e9d03a67168815e4598ef",
+          "was_replay": false
+        },
+        "second_request": {
+          "code": -32009,
+          "message": "maker actor already has a pending manual action"
+        },
+        "manual_action_while_held": {
+          "action": "claim",
+          "lease_generation": null,
+          "request_id": "e2e-cli-claim-179581514103c1",
+          "requested_after_generation": 14,
+          "state": "queued"
+        },
+        "taker_state": "claim_in_progress",
+        "maker_phase": "claim_evidence_available"
+      },
+      "maker_cli": {
+        "phase": "completed",
+        "manual_action": {
+          "action": "claim",
+          "lease_generation": null,
+          "request_id": "e2e-cli-claim-179581514103c1",
+          "requested_after_generation": 14,
+          "state": "completed"
+        },
+        "history": {
+          "direction": "TakerSellsLez",
+          "highest_alert_severity": null,
+          "id": "zec-9c467b1a9f74be7d1a028abfdebefdc6e672413fe81e9d03a67168815e4598ef",
+          "pair": "Zcash",
+          "pending_alerts": 0,
+          "phase": "Completed",
+          "requires_attention": false
+        }
+      },
+      "maker_claim_operations": [
+        "lez_followup_claim"
+      ],
+      "claim_after_completion": {
+        "code": -32602,
+        "message": "maker actor manual action is unavailable"
+      },
+      "lez_before": {
+        "maker": 2100000,
+        "taker": 1900000
+      },
+      "lez_deltas": {
+        "maker": 50000,
+        "taker": -50000
+      },
+      "outcome": "completed"
+    }
+  ],
+  "result": "passed",
+  "seconds": 239
+}

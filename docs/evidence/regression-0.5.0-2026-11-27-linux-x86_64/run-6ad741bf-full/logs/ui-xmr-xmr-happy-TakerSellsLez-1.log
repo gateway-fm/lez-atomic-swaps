@@ -1,0 +1,51 @@
+
+[21:46:46] === xmr-happy (TakerSellsLez)
+   [21:46:50]   the Maker's Monero wallet holds 1445.159 XMR unlocked
+
+[21:46:51] Maker desk publishes TakerSellsLez Monero offers from its form until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[21:46:56] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   1bfd7341c98087cbef4d7218fb2fdf9f38a35d7481d4fb79053a5274d48fd1f7 awaiting_first_lock 0 -
+
+[21:47:16] The Taker Node locks its LEZ on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Monero
+
+
+[21:47:16] Taker desk: claim_xmr on 1bfd7341c980
+[21:47:16] Maker desk shows 1bfd7341c980 funded
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_xmr
+2 passed, 0 failed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached awaiting_taker_claim|claiming_lez|completed (awaiting_taker_claim|claiming_lez|completed)
+  [32m✓[0m maker: wait awaiting_taker_claim|claiming_lez|completed reached by the Node
+4 passed, 0 failed
+
+[21:48:10] The Maker Node claims the LEZ; its claim signature lets the Taker recover the Monero spend key, the Taker Node sweeps the Monero, and both desks watch the swap complete
+
+[21:48:10] Taker desk shows 1bfd7341c980 at completed
+
+[21:48:10] Maker desk shows 1bfd7341c980 at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+
+[21:49:10] evidence export skipped: a Monero swap's record is node-e2e.py's (node:xmr tests)
+
+[21:49:10] === xmr-happy (TakerSellsLez): passed in 144s

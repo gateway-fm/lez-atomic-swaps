@@ -1,0 +1,26 @@
+[22:43:04] === outage-before-take (stamp 179581938402)
+[22:43:04] preflight: indexer historical reads
+[22:43:05]   indexer serves historical reads at the tip (8088)
+[22:43:05] preflight: LEZ finality check waived by request
+[22:43:06]   Maker published offer-e2e-179581938402
+[22:43:06]   cutting Logos Chat and Delivery before the take
+[22:43:06]   the Taker's side (uid 4713) is refused: connect EACCES, list Delivery EACCES, 0 descriptors into it
+[22:43:07]   both Nodes report chat and delivery unavailable, and degraded; the Maker holds no Chat connection
+[22:43:07]   lez-maker-cli health: ready, degraded true, delivery and chat unavailable
+[22:43:07]   lez-taker-cli health: ready, degraded true, delivery and chat unavailable
+[22:43:08]   publish-offer under the outage: -32603 'Delivery directory must be an owner-owned non-symlink directory with mode 0700'; the Maker lists offer-e2e-outage-179581938402 active (revision 1); the Taker's offer list is refused (authenticated_delivery_unavailable)
+[22:43:08]   the Taker refused the take: Taker dependency unavailable (authenticated_delivery_unavailable)
+[22:43:08]   no swap on either Node: none in the Taker's list for offer-e2e-179581938402, the Maker's offer record unchanged (active, revision 1) and its history too
+[22:43:11]   the cut held: 2 samples of the Maker's Chat socket, none with a connection; the Taker's side still refused
+[22:43:12]   both dependencies are back and neither Node is degraded
+[22:43:13]   restored, offer-e2e-outage-179581938402 reached the Taker with no second publish; the repeated publish is a replay; withdrawn
+[22:43:15]   restored, the same request e2e-take-179581938402 took offer-e2e-179581938402: swap 7c77ecded676 (not_activated, replay=False)
+[22:43:15]   Taker locked bitcoin: ea105a5c6e3c (replay=False)
+[22:43:15]   [0 s] waiting for the Taker's 7c77ecded676 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 8090, tip 8094 (4 unfinalized) [heartbeat]
+[22:43:18]   [3 s] waiting for the Taker's 7c77ecded676 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 8090, tip 8094 (4 unfinalized) [heartbeat]
+[22:43:58]   [43 s] waiting for the Taker's 7c77ecded676 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 8120, tip 8122 (2 unfinalized) [heartbeat]
+[22:44:00]   Taker claimed LEZ (replay=False)
+[22:44:00]   [0 s] waiting for the Taker's 7c77ecded676 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 8120, tip 8122 (2 unfinalized) [heartbeat]
+[22:44:16]   [15 s] waiting for the Taker's 7c77ecded676 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 8128, tip 8135 (7 unfinalized) [heartbeat]
+[22:44:16]   both Nodes report 7c77ecded676 completed
+[22:44:16] === outage-before-take: passed in 72s

@@ -1,0 +1,75 @@
+[21:32:21] === zec-maker-cli-claim (stamp 179581514103)
+[21:32:21] preflight: indexer historical reads
+[21:32:22]   indexer serves historical reads at the tip (5455)
+[21:32:22] preflight: LEZ finality check waived by request
+[21:32:22]   maker test hook hold-claim-preparations: cleared
+[21:32:22]   maker test hook hold-claim-submissions: cleared
+[21:32:23]   Maker CLI published offer-e2e-zectt-179581514203 on its running Node
+[21:32:24]   Taker took offer-e2e-zectt-179581514203: swap zec-0e9f2144 (not_activated)
+[21:32:25]   take-time agreement: Maker funds 0695b0c2f02fac0a…:0, Zcash anchor 631, refund height 647
+[21:32:25]   receipt: swap zec-0e9f214406972ca6ceb87fed66975ce3ce3c048fec42511a629c105a3a55a780, actor config /var/lib/lez/taker/btc/swaps/e14be30604494f4ec7f1fd6237f5e1df8615c8d2334141b2a58b773067c43800/zec-actor/taker/actor-config.json
+[21:32:25]   [0 s] waiting for the Taker's zec-0e9f2144 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 630 | LEZ finalized 5455, tip 5458 (3 unfinalized) [heartbeat]
+[21:32:29]   [3 s] waiting for the Taker's zec-0e9f2144 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 630 | LEZ finalized 5455, tip 5458 (3 unfinalized) [heartbeat]
+[21:32:46]   [20 s] waiting for the Taker's zec-0e9f2144 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_second_lock (gen 1) | actor at offered | maker taker_lock_confirmed | zebra 630 | LEZ finalized 5469, tip 5472 (3 unfinalized) [heartbeat]
+[21:32:49]   [24 s] waiting for the Taker's zec-0e9f2144 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 630 | LEZ finalized 5469, tip 5472 (3 unfinalized) [heartbeat]
+[21:32:49]   zebra: mined 1 block(s) → height 631 (mempool had ['a246a3ef11dd'])
+[21:32:53]   [27 s] waiting for the Taker's zec-0e9f2144 to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 631 | LEZ finalized 5469, tip 5472 (3 unfinalized) [heartbeat]
+[21:32:53]   zebra: mined 1 block(s) → height 632 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[21:32:53]   maker test hook hold-claim-preparations: 100
+[21:32:53]   Taker claimed Zcash (replay=False); the Maker's LEZ claim is to wait in its sidecar's hold-claim-preparations
+[21:32:54]   [0 s] waiting for the Maker's sidecar to take the hold hold-claim-preparations on zec-0e9f2144: maker both_legs_locked, hook 100 | LEZ finalized 5469, tip 5472 (3 unfinalized) [heartbeat]
+[21:32:57]   the Maker's own LEZ claim waits in its sidecar (claim preparation held); lez-maker-cli monitor: schedule leased, generation 15, maker claim_evidence_available
+[21:32:57]   lez-maker-cli claim: ok after 0 s
+[21:32:58]   lez-maker-cli claim: ok after 0 s
+[21:32:58]   lez-maker-cli claim: refused after 0 s: {"code": -32009, "message": "maker actor already has a pending manual action"}
+[21:32:58]   lez-maker-cli claim admitted after generation 15 with the Maker's claim held (1 attempt(s) held so far); its repeat is a replay, a second request is refused: maker actor already has a pending manual action; clearing the hold
+[21:32:59]   maker test hook hold-claim-preparations: cleared
+[21:32:59]   [0 s] waiting for the Taker's zec-0e9f2144 to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker claim_evidence_available | zebra 632 | LEZ finalized 5469, tip 5472 (3 unfinalized) [heartbeat]
+[21:32:59]   zebra: mined 1 block(s) → height 633 (mempool had ['6b888c91f658'])
+[21:33:02]   [3 s] waiting for the Taker's zec-0e9f2144 to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 633 | LEZ finalized 5469, tip 5472 (3 unfinalized) [heartbeat]
+[21:34:03]   [63 s] waiting for the Taker's zec-0e9f2144 to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 633 | LEZ finalized 5510, tip 5517 (7 unfinalized) [heartbeat]
+[21:34:03]   [0 s] waiting for the Maker's zec-0e9f2144 to reach a terminal state (the claim the operator asked for): maker completed (schedule terminal) | LEZ finalized 5510, tip 5517 (7 unfinalized) [heartbeat]
+[21:34:03]   [0 s] waiting for the Taker's zec-0e9f2144 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 5510, tip 5517 (7 unfinalized) [heartbeat]
+[21:34:03]   both Nodes report zec-0e9f2144 completed
+[21:34:03]   lez-maker-cli monitor: zec-0e9f2144 terminal at completed, the claim request e2e-cli-claim-179581514103c0 completed; history lists it Completed
+[21:34:04]   [0 s] waiting for LEZ finality to reach block 5528 (the swap's last LEZ transaction): LEZ finalized 5510, tip 5517 (7 unfinalized) [heartbeat] | LEZ finalized 5510, tip 5517 (7 unfinalized) [heartbeat]
+[21:34:10]   [6 s] waiting for LEZ finality to reach block 5528 (the swap's last LEZ transaction): LEZ finalized 5524, tip 5532 (8 unfinalized) [heartbeat] | LEZ finalized 5524, tip 5532 (8 unfinalized) [heartbeat]
+[21:34:32]   LEZ is final through block 5528 after 28s
+[21:34:32]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[21:34:33]   lez-maker-cli claim: refused after 0 s: {"code": -32602, "message": "maker actor manual action is unavailable"}
+[21:34:33]   zec-0e9f2144 completed once: the LEZ lot moved to the Maker to the unit, and a further claim request is refused: maker actor manual action is unavailable
+[21:34:33]   Maker CLI published offer-e2e-zectt-179581527303 on its running Node
+[21:34:35]   Taker took offer-e2e-zectt-179581527303: swap zec-9c467b1a (not_activated)
+[21:34:35]   take-time agreement: Maker funds 46c80d087627c2aa…:0, Zcash anchor 634, refund height 650
+[21:34:35]   receipt: swap zec-9c467b1a9f74be7d1a028abfdebefdc6e672413fe81e9d03a67168815e4598ef, actor config /var/lib/lez/taker/btc/swaps/bfec9ce685111a00ae468cf9e3b820f637b091fcc95b33017e3be179864e51b8/zec-actor/taker/actor-config.json
+[21:34:36]   [0 s] waiting for the Taker's zec-9c467b1a to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 633 | LEZ finalized 5543, tip 5547 (4 unfinalized) [heartbeat]
+[21:34:39]   [3 s] waiting for the Taker's zec-9c467b1a to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 633 | LEZ finalized 5543, tip 5547 (4 unfinalized) [heartbeat]
+[21:34:56]   [20 s] waiting for the Taker's zec-9c467b1a to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker awaiting_second_lock (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 633 | LEZ finalized 5559, tip 5562 (3 unfinalized) [heartbeat]
+[21:34:56]   zebra: mined 1 block(s) → height 634 (mempool had ['3ac0a26c8e50'])
+[21:34:59]   [23 s] waiting for the Taker's zec-9c467b1a to reach claim_available (Taker LEZ lock → Maker Zcash funding → the Taker's revealing Zcash claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 634 | LEZ finalized 5559, tip 5562 (3 unfinalized) [heartbeat]
+[21:34:59]   zebra: mined 1 block(s) → height 635 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[21:34:59]   maker test hook hold-claim-submissions: 100
+[21:35:00]   Taker claimed Zcash (replay=False); the Maker's LEZ claim is to wait in its sidecar's hold-claim-submissions
+[21:35:00]   [0 s] waiting for the Maker's sidecar to take the hold hold-claim-submissions on zec-9c467b1a: maker both_legs_locked, hook 100 | LEZ finalized 5559, tip 5562 (3 unfinalized) [heartbeat]
+[21:35:04]   [3 s] waiting for the Maker's sidecar to take the hold hold-claim-submissions on zec-9c467b1a: maker claim_evidence_available, hook 100 | LEZ finalized 5559, tip 5562 (3 unfinalized) [heartbeat]
+[21:35:07]   the Maker's own LEZ claim waits in its sidecar (claim submission in flight); lez-maker-cli monitor: schedule leased, generation 14, maker claim_evidence_available
+[21:35:08]   lez-maker-cli claim: ok after 0 s
+[21:35:08]   lez-maker-cli claim: ok after 0 s
+[21:35:08]   lez-maker-cli claim: refused after 0 s: {"code": -32009, "message": "maker actor already has a pending manual action"}
+[21:35:09]   lez-maker-cli claim admitted after generation 14 with the Maker's claim held (1 attempt(s) held so far); its repeat is a replay, a second request is refused: maker actor already has a pending manual action; clearing the hold
+[21:35:09]   maker test hook hold-claim-submissions: cleared
+[21:35:09]   [0 s] waiting for the Taker's zec-9c467b1a to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker claim_evidence_available | zebra 635 | LEZ finalized 5559, tip 5562 (3 unfinalized) [heartbeat]
+[21:35:09]   zebra: mined 1 block(s) → height 636 (mempool had ['f143e7d960c3'])
+[21:35:16]   [7 s] waiting for the Taker's zec-9c467b1a to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 636 | LEZ finalized 5572, tip 5576 (4 unfinalized) [heartbeat]
+[21:36:13]   [63 s] waiting for the Taker's zec-9c467b1a to reach completed (claim inclusion): taker completed (gen 4) | actor at claim_evidence_available | maker completed | zebra 636 | LEZ finalized 5600, tip 5605 (5 unfinalized) [heartbeat]
+[21:36:13]   [0 s] waiting for the Maker's zec-9c467b1a to reach a terminal state (the claim the operator asked for): maker completed (schedule terminal) | LEZ finalized 5600, tip 5605 (5 unfinalized) [heartbeat]
+[21:36:13]   [0 s] waiting for the Taker's zec-9c467b1a to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 5600, tip 5605 (5 unfinalized) [heartbeat]
+[21:36:13]   both Nodes report zec-9c467b1a completed
+[21:36:13]   lez-maker-cli monitor: zec-9c467b1a terminal at completed, the claim request e2e-cli-claim-179581514103c1 completed; history lists it Completed
+[21:36:14]   [0 s] waiting for LEZ finality to reach block 5617 (the swap's last LEZ transaction): LEZ finalized 5600, tip 5605 (5 unfinalized) [heartbeat] | LEZ finalized 5600, tip 5605 (5 unfinalized) [heartbeat]
+[21:36:20]   LEZ is final through block 5617 after 6s
+[21:36:20]   settled completed: LEZ moved {'maker': 50000, 'taker': -50000} as both Nodes say
+[21:36:21]   lez-maker-cli claim: refused after 0 s: {"code": -32602, "message": "maker actor manual action is unavailable"}
+[21:36:21]   zec-9c467b1a completed once: the LEZ lot moved to the Maker to the unit, and a further claim request is refused: maker actor manual action is unavailable
+[21:36:21]   lez-maker-cli claim admitted at claim preparation held → completed; claim submission in flight → completed
+[21:36:21] === zec-maker-cli-claim: passed in 239s

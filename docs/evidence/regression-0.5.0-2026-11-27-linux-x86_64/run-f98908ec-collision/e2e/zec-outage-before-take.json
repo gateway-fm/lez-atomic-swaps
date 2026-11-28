@@ -1,0 +1,117 @@
+{
+  "scenario": "zec-outage-before-take",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "1795819419",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-a0f2e54737d3b4add63da9fa3599babcb2d18412cee81748c1285e87fa49d760",
+  "corridor": "take-time-1795819428",
+  "outage": {
+    "refused": {
+      "code": -32010,
+      "category": "authenticated_delivery_unavailable"
+    },
+    "cut": {
+      "chat_samples": 2,
+      "chat_connections_seen": 0,
+      "taker_probe_at_end": {
+        "chat": "EACCES",
+        "delivery": "EACCES",
+        "delivery_fds": 0,
+        "uid": 4713
+      }
+    },
+    "maker_offer_status": "active",
+    "maker_offer_revision": 1,
+    "request_id": "e2e-take-1795819419",
+    "cli_health_under_cut": {
+      "maker": {
+        "ready": true,
+        "degraded": true,
+        "delivery": "unavailable",
+        "chat": "unavailable"
+      },
+      "taker": {
+        "ready": true,
+        "degraded": true,
+        "delivery": "unavailable",
+        "chat": "unavailable"
+      }
+    },
+    "publish_under_cut": {
+      "error": {
+        "code": -32603,
+        "message": "Delivery directory must be an owner-owned non-symlink directory with mode 0700"
+      },
+      "status": "active",
+      "revision": 1,
+      "taker_offer_list": {
+        "code": -32010,
+        "category": "authenticated_delivery_unavailable"
+      }
+    },
+    "published_offer_id": "offer-e2e-outage-1795819419",
+    "publish_after_restore": {
+      "discovered_envelope_sha256": [
+        180,
+        202,
+        116,
+        116,
+        233,
+        113,
+        173,
+        130,
+        148,
+        105,
+        22,
+        54,
+        5,
+        5,
+        204,
+        102,
+        27,
+        169,
+        74,
+        158,
+        240,
+        186,
+        197,
+        91,
+        8,
+        201,
+        76,
+        165,
+        117,
+        236,
+        163,
+        19
+      ],
+      "replay": {
+        "revision": 1,
+        "was_replay": true
+      }
+    }
+  },
+  "result": "passed",
+  "seconds": 73
+}

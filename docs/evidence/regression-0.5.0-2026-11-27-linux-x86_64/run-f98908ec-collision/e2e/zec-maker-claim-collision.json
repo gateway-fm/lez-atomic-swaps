@@ -1,0 +1,55 @@
+{
+  "scenario": "zec-maker-claim-collision",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "1795824942",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-9ad64e513259291e20d95ed703a8967fac19b4a156950a4f9e8a51a852eacb59",
+  "corridor": "take-time-1795824945",
+  "profile": "deterministic-local-devnet-v7",
+  "claim_nonce_thefts": 6,
+  "maker_account_nonce_moved": 7,
+  "claim_supersessions": [
+    "actor claim: follow-up LEZ claim superseded (planned nonce 1, live 2); re-plan 1 at nonce 2: a2987761ed121e3b94b6e68054487887e0de7feb139e11a1566789840e474ea6 -> c2d419f2554ca67aa8799c1763d264fbec713f52e14ab62c8518a14b7973128a; 667 s left before the LEZ refund time",
+    "actor claim: follow-up LEZ claim superseded (planned nonce 2, live 3); re-plan 2 at nonce 3: c2d419f2554ca67aa8799c1763d264fbec713f52e14ab62c8518a14b7973128a -> 3587d177e5bf023d0641bdb420d96b87f9040b9c09f9f4377369133ea7cf9e3f; 663 s left before the LEZ refund time",
+    "actor claim: follow-up LEZ claim superseded (planned nonce 3, live 4); re-plan 3 at nonce 4: 3587d177e5bf023d0641bdb420d96b87f9040b9c09f9f4377369133ea7cf9e3f -> 46490eb721ea9f96784136f77d66569a1074aaede9db6459b50af1c7a08527d1; 660 s left before the LEZ refund time",
+    "actor claim: follow-up LEZ claim superseded (planned nonce 4, live 5); re-plan 4 at nonce 5: 46490eb721ea9f96784136f77d66569a1074aaede9db6459b50af1c7a08527d1 -> c9595a3198f8f7122bed048e27079529dbc87202d16cf28a7ce0dd461a39fef9; 657 s left before the LEZ refund time",
+    "actor claim: follow-up LEZ claim superseded (planned nonce 5, live 6); re-plan 5 at nonce 6: c9595a3198f8f7122bed048e27079529dbc87202d16cf28a7ce0dd461a39fef9 -> 8c2711cee4b8ace9143eebe8658d63291146a9bdd0436bbd95b2cd4ae1100faf; 654 s left before the LEZ refund time",
+    "actor claim: follow-up LEZ claim superseded (planned nonce 6, live 7); re-plan 6 at nonce 7: 8c2711cee4b8ace9143eebe8658d63291146a9bdd0436bbd95b2cd4ae1100faf -> 6a725c66c77c8938bcdaca1ed32b55c75a2ef006fe1b88a2bfac410a7185f017; 650 s left before the LEZ refund time"
+  ],
+  "claim_nonce_contention": "actor claim: the LEZ claim was re-planned 6 times: the account's nonce keeps being taken; it is re-planned until the LEZ refund time; needs attention (lez_claim_nonce_contention)",
+  "maker_claim_operations": [
+    "lez_followup_claim"
+  ],
+  "lez_before": {
+    "maker": 2000000,
+    "taker": 2000000
+  },
+  "lez_deltas": {
+    "maker": 49994,
+    "taker": -49994
+  },
+  "outcome": "completed",
+  "result": "passed",
+  "seconds": 111
+}

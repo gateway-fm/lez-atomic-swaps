@@ -1,0 +1,226 @@
+{
+  "scenario": "zebra-down",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsLez",
+  "stamp": "1795818176",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "33c853afbdb1f2ac174f44b384090f82f683dd468b2f3fbac164d07bcf71b870",
+  "bitcoin_claim": "faa266f574138eb53cb1c8932b02d477c30e55baec0e3eb65873c5c6f7d8754a",
+  "stopped": [
+    "lezm5-zebra"
+  ],
+  "health_while_down": [
+    {
+      "maker": {
+        "ready": true,
+        "degraded": true,
+        "zcash": [
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      },
+      "taker": {
+        "ready": true,
+        "degraded": true,
+        "zcash": [
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "maker": {
+        "ready": true,
+        "degraded": true,
+        "zcash": [
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      },
+      "taker": {
+        "ready": true,
+        "degraded": true,
+        "zcash": [
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "maker": {
+        "ready": true,
+        "degraded": true,
+        "zcash": [
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      },
+      "taker": {
+        "ready": true,
+        "degraded": true,
+        "zcash": [
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "maker": {
+        "ready": true,
+        "degraded": true,
+        "zcash": [
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          }
+        ]
+      },
+      "taker": {
+        "ready": true,
+        "degraded": true,
+        "zcash": [
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsLez"
+            },
+            "state": "unavailable"
+          },
+          {
+            "route": {
+              "pair": "Zcash",
+              "direction": "TakerSellsForeign"
+            },
+            "state": "unavailable"
+          }
+        ]
+      }
+    }
+  ],
+  "zcash_after_restart": {
+    "swap_id": "zec-6e5385a299752b2e3b51dd64c61f09b4b3f98e0c31cc97f3d73eb65a4dcdb29a",
+    "corridor": "take-time-1795818258",
+    "profile": "deterministic-local-devnet-v7",
+    "offer_id": "offer-e2e-zectt-1795818256",
+    "maker_restart_after_completion": "completed",
+    "maker_funding_attempt_count": 2,
+    "maker_taker_lock_projections": 1,
+    "taker_lez_replans": [],
+    "zcash_funding": {
+      "transaction_id": "69ede9a1efbdc691d76a7a9bd15962edcc56e6e289898bbb1933c8d02712f550",
+      "height": 367
+    },
+    "zcash_claim": {
+      "transaction_id": "e3f1dbe09fabf714477b9e10d06b77d4df8f6dd34e4501e6a3c96e2aba10742d",
+      "height": 369
+    },
+    "maker_claim_operations": [
+      "lez_followup_claim"
+    ],
+    "zcash_refund_height": 383
+  },
+  "result": "passed",
+  "seconds": 134
+}

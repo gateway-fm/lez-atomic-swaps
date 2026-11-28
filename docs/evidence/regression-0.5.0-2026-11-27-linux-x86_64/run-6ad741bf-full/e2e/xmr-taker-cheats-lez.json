@@ -1,0 +1,66 @@
+{
+  "scenario": "xmr-taker-cheats",
+  "pair": "Monero",
+  "direction": "TakerSellsLez",
+  "stamp": "179580848702",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "refunded_swap": "789f1b01391fdf4817cc6b2a7faebab84c848d57bbb9540df11fc31f1cdb2ac4",
+  "completed_swap": "eb3452ef6b20dcdc5ae751c4ffa2350a269d45c2f485e49ae3a0796d7312dd9f",
+  "windows": {
+    "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS": 320,
+    "LEZ_XMR_REFUND_SECONDS": 720,
+    "LEZ_XMR_PUNISH_SECONDS": 1000
+  },
+  "completed_settlement": {
+    "lez_before": {
+      "maker": 2350000,
+      "taker": 1650000
+    },
+    "lez_deltas": {
+      "maker": 50000,
+      "taker": -50000
+    },
+    "outcome": "completed",
+    "taker_monero_before": {
+      "address": "49Qxo4nf9sfB1BdLo8gP8CjJW7AF6GS1s71ETU49yeupdo47GgfsAtd9dCjRVZAh2cWCjxRMWksfKTkZhBjEcWNKPBFsMND",
+      "balance_piconero": 2469037146114414,
+      "daemon_height": 270,
+      "state": "available",
+      "unlocked_piconero": 1765661428682993
+    },
+    "taker_monero_after": {
+      "address": "49Qxo4nf9sfB1BdLo8gP8CjJW7AF6GS1s71ETU49yeupdo47GgfsAtd9dCjRVZAh2cWCjxRMWksfKTkZhBjEcWNKPBFsMND",
+      "balance_piconero": 2821689658538048,
+      "daemon_height": 290,
+      "state": "available",
+      "unlocked_piconero": 2118354186884171
+    },
+    "taker_monero_sweep": {
+      "txid": "dfe38f6062d0747212a6c41234e6839a9ce928e59c6f8f32ac251a92bc6d1fdb",
+      "amount": 998191600000,
+      "height": 281
+    }
+  },
+  "result": "passed",
+  "seconds": 1630
+}

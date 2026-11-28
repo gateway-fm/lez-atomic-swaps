@@ -1,0 +1,88 @@
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1795824530
+  forgetting swaps that referenced the old chain
+[reset 00:08:54] done: swaps forgotten; the Nodes stay stopped
+  [time 00:08:54] forget the old chain's swaps (reset-swaps.sh --offline): 4 s (4 s since up.sh started)
+[reset 00:09:00] done: swaps forgotten (open ones archived as .reset-archive/20261128T000856Z); the Nodes stay stopped
+[lanes 00:09:00] lane 2 stopped
+  [time 00:09:03] stop the old chain: 9 s (13 s since up.sh started)
+  [time 00:09:03] move the old chain's state aside: 0 s (13 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1795824543 (2026-11-28T00:09:03Z), root fa857b38a0dd6e779acb1bb7590533d19663f0b3f02768762b8518362c819fc4
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmT86zzStuvyP275XJwVQMsUPeoPvrRoF9h): runtime/zebra/zebrad-module.json
+Monero: runtime/monero (monerod and the funding, Maker and Taker wallet-rpc)
+runtime generated at runtime
+  [time 00:09:04] runtime config: 1 s (14 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 00:09:05] images: 1 s (15 s since up.sh started)
+[3/6] starting chains…
+ Container lezm5-bitcoin-core  Running
+ Container lezm5-btc-miner  Running
+ Container lezm5-monerod  Running
+ Container lezm5-zebra  Running
+ Container lezm5-taker-xmr-wallet  Running
+ Container lezm5-maker-xmr-wallet  Running
+ Container lezm5-xmr-funding-wallet  Running
+ Container lezm5-network  Starting
+ Container lezm5-bitcoin-core  Waiting
+ Container lezm5-network  Started
+ Container lezm5-network  Waiting
+ Container lezm5-bitcoin-core  Healthy
+ Container lezm5-network  Healthy
+ Container lezm5-sequencer  Starting
+ Container lezm5-sequencer  Started
+  [time 00:09:10] start the chains (compose up): 5 s (20 s since up.sh started)
+  [time 00:09:16] chains healthy: 6 s (26 s since up.sh started)
+  the new LEZ chain finalizes (1 -> 4)
+  [time 00:09:26] the new chain finalizes: 10 s (36 s since up.sh started)
+  [time 00:09:29] indexer check (repair-indexer.sh): 3 s (39 s since up.sh started)
+Regtest wallets ready; Maker 3375.019283 BTC, Taker 5249.9791886 BTC spendable.
+  [time 00:09:30] Bitcoin Core wallets (seed-btc-wallets.py): 1 s (40 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+taker-lane03: claimed 2000000 into Gufd9uJwGt5Rt1tUzuNcj196PNYq3FZeLPAcaaAtY63L (2d3ed3a6b44b939e69798ce364fa5372023538892924de2319ee3a32d2dba2fe)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+  [time 00:09:58] market bootstrap: 28 s (68 s since up.sh started)
+[5/6] Nodes…
+ Container lezm5-zebra  Running
+ Container lezm5-bitcoin-core  Running
+ Container lezm5-network  Running
+ Container lezm5-sequencer  Running
+ Container lezm5-maker-node  Recreate
+ Container lezm5-maker-node  Recreated
+ Container lezm5-network  Waiting
+ Container lezm5-network  Healthy
+ Container lezm5-sequencer  Waiting
+ Container lezm5-bitcoin-core  Waiting
+ Container lezm5-network  Waiting
+ Container lezm5-sequencer  Healthy
+ Container lezm5-network  Healthy
+ Container lezm5-bitcoin-core  Healthy
+ Container lezm5-maker-node  Starting
+ Container lezm5-maker-node  Started
+ Container lezm5-taker-node  Recreate
+ Container lezm5-taker-node  Recreated
+ Container lezm5-taker-node  Starting
+ Container lezm5-taker-node  Started
+  [time 00:10:03] start the Nodes (compose up): 5 s (73 s since up.sh started)
+  [time 00:10:09] Nodes healthy: 6 s (79 s since up.sh started)
+  [time 00:10:10] Nodes answer owner health: 1 s (80 s since up.sh started)
+[lanes 00:10:31] lane 2 up: lezm5-l2-{maker,taker}-node (maker-basel-02, taker-limmat-02), Zebra on 127.0.0.1:20242, VNC 7911/7912
+  [time 00:10:31] lanes 2..2 (lanes.sh up): 21 s (101 s since up.sh started)
+15/15 market checks passed
+  [time 00:10:33] market check (verify-market.py): 2 s (103 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lezm5-network  Running
+ Container lezm5-sequencer  Running
+ Container lezm5-heartbeat  Running
+ Container lezm5-network  Waiting
+ Container lezm5-network  Healthy
+ Container lezm5-network  Waiting
+ Container lezm5-sequencer  Waiting
+ Container lezm5-sequencer  Healthy
+ Container lezm5-network  Healthy
+  [time 00:10:34] finality heartbeat: 1 s (104 s since up.sh started)
+[6/6] the parties' desks…
+  [time 00:10:34] desk suites: 0 s (104 s since up.sh started)

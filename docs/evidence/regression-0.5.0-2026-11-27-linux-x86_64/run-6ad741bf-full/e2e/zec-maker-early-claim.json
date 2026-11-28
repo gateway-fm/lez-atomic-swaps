@@ -1,0 +1,123 @@
+{
+  "scenario": "zec-maker-early-claim",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179582243402",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-579eb72728585a46324ea32762362cda1b87b1e87632eba2973b7f321580fa9f",
+  "corridor": "take-time-1795822437",
+  "profile": "deterministic-local-devnet-v8",
+  "onchain_swap_id": "ac57609254e8bcda315752d78f6c0bb7b1205dfe965415a7cd9eecd08b30f69e",
+  "escrow_program_id": "ca66e0dc4118597e0a9010670fd49aec923bba9c332e9e6a26d9208dbdf6af98",
+  "secret_digest": "5cb6782f2ef2c0399bd3052163ae5b4c464c0a4d9f8ffbd37348fcaa2d5e2b51",
+  "maker_search": {
+    "roots": [
+      "/var/lib/lez/maker",
+      "/var/lib/lez/zec",
+      "/run/lez/maker"
+    ],
+    "files": 370,
+    "bytes": 44794959,
+    "preimage_files": [],
+    "digest_files": [
+      "/var/lib/lez/maker/btc/swaps/cd287e7b07dfccd2650ce2a6f21b6f7384e9850c7e663bd0edfaa98bbde0183a/zec/draft.borsh",
+      "/var/lib/lez/maker/maker.sqlite3-wal",
+      "/var/lib/lez/zec/actors/8fbb5d2eec9dc0566514757a593cfa627b35ca91369f61a6f916394dd4d4625e/maker/state/actor.sqlite3",
+      "/var/lib/lez/zec/actors/8fbb5d2eec9dc0566514757a593cfa627b35ca91369f61a6f916394dd4d4625e/shared/agreement-v2.borsh"
+    ]
+  },
+  "taker_control_preimage_files": [
+    "/var/lib/lez/taker/btc/swaps/cd287e7b07dfccd2650ce2a6f21b6f7384e9850c7e663bd0edfaa98bbde0183a/zec/claim-preimage.key"
+  ],
+  "claim_probes": {
+    "a zero preimage": {
+      "transaction_id": "a7fe17186b951c4faf52be94589066f810417bea7a58ff7402779cb4ed72fafd",
+      "submission": {
+        "decision": "accepted",
+        "error_code": null,
+        "error_message": null
+      },
+      "included": false,
+      "included_in_block": null,
+      "before": {
+        "sequencer_tip": 10192,
+        "tip_timestamp_ms": 1795822467445,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2699995,
+        "claimant_nonce": 89
+      },
+      "after": {
+        "sequencer_tip": 10213,
+        "tip_timestamp_ms": 1795822496954,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2699995,
+        "claimant_nonce": 89
+      },
+      "escrow_kept_custody": true,
+      "submitted_before_refund_at": true
+    },
+    "the digest as the preimage": {
+      "transaction_id": "49c1bb744f3640aa393d740a33745628fdbd7c076e612db66172a38dfc3346c1",
+      "submission": {
+        "decision": "accepted",
+        "error_code": null,
+        "error_message": null
+      },
+      "included": false,
+      "included_in_block": null,
+      "before": {
+        "sequencer_tip": 10213,
+        "tip_timestamp_ms": 1795822496954,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2699995,
+        "claimant_nonce": 89
+      },
+      "after": {
+        "sequencer_tip": 10235,
+        "tip_timestamp_ms": 1795822528051,
+        "status": "Funded",
+        "custody_balance": 50000,
+        "claimant_balance": 2699995,
+        "claimant_nonce": 89
+      },
+      "escrow_kept_custody": true,
+      "submitted_before_refund_at": true
+    }
+  },
+  "taker_terminal_state": "refunded",
+  "maker_terminal_phase": "refunded",
+  "zcash_funding_outpoint_unspent": true,
+  "lez_balances_before": {
+    "maker": 2699995,
+    "taker": 1250007
+  },
+  "lez_balances_after": {
+    "maker": 2699995,
+    "taker": 1250007
+  },
+  "result": "passed",
+  "seconds": 543
+}

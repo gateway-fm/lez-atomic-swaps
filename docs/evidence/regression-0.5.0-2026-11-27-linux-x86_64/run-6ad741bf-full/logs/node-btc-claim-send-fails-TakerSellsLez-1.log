@@ -1,0 +1,23 @@
+[22:44:23] === claim-send-fails (stamp 179581946302)
+[22:44:23] preflight: indexer historical reads
+[22:44:24]   indexer serves historical reads at the tip (8128)
+[22:44:24] preflight: LEZ finality check waived by request
+[22:44:24]   maker test hook fail-claim-submissions: cleared
+[22:44:25]   Maker published offer-e2e-179581946302
+[22:44:26]   Taker took offer-e2e-179581946302: swap f101c4081323 (not_activated)
+[22:44:27]   Taker locked lez: 8c33be4ce5bd (replay=False)
+[22:44:27]   [0 s] waiting for the Taker's f101c4081323 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 8128, tip 8135 (7 unfinalized) [heartbeat]
+[22:44:47]   [19 s] waiting for the Taker's f101c4081323 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 8143, tip 8148 (5 unfinalized) [heartbeat]
+[22:44:54]   [26 s] waiting for the Taker's f101c4081323 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 8143, tip 8148 (5 unfinalized) [heartbeat]
+[22:44:54]   maker test hook fail-claim-submissions: 2
+[22:44:54]   [0 s] waiting for the Taker's f101c4081323 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 8143, tip 8148 (5 unfinalized) [heartbeat]
+[22:44:55]   Taker claimed Bitcoin (replay=False)
+[22:44:55]   [0 s] waiting for the maker's sidecar to refuse the LEZ claim of f101c4081323 2 times: hook 2, taker claim_in_progress, maker both_legs_locked | LEZ finalized 8143, tip 8148 (5 unfinalized) [heartbeat]
+[22:44:59]   [4 s] waiting for the maker's sidecar to refuse the LEZ claim of f101c4081323 2 times: hook 1, taker claim_in_progress, maker claim_evidence_available | LEZ finalized 8152, tip 8163 (11 unfinalized) [heartbeat]
+[22:45:10]   the maker's sidecar refused the LEZ claim's send 2 times; taker claim_in_progress, maker claim_evidence_available
+[22:45:10]   maker test hook fail-claim-submissions: cleared
+[22:45:11]   [0 s] waiting for the Taker's f101c4081323 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 8152, tip 8163 (11 unfinalized) [heartbeat]
+[22:45:29]   [18 s] waiting for the Taker's f101c4081323 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 8172, tip 8176 (4 unfinalized) [heartbeat]
+[22:45:29]   both Nodes report f101c4081323 completed
+[22:45:29]   the Bitcoin claim 373b2a07f05d is a Taproot key-path spend: one 64-byte signature, no script
+[22:45:29] === claim-send-fails: passed in 66s

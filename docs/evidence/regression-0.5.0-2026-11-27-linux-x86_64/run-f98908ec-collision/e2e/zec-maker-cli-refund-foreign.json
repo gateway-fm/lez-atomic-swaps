@@ -1,0 +1,71 @@
+{
+  "scenario": "zec-maker-cli-refund",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "1795821553",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-78074d416df70e7885ba561fdb8c2c26a123849ef49eb35f270423ffa079f21d",
+  "corridor": "take-time-1795821556",
+  "profile": "deterministic-local-devnet-v6",
+  "zcash_funding": {
+    "transaction_id": "173e6ada06a652b1cd3c9646082a440566398dea10e907e422f1cc9213efd641",
+    "height": 323
+  },
+  "zcash_refund": {
+    "transaction_id": "292757fa5d97926ffbd2485f71f994fb1ce8b4c5a7ad5ee2b66458a7505695bb",
+    "height": 332
+  },
+  "zcash_refund_height": 331,
+  "maker_terminal_phase": "refunded",
+  "taker_terminal_state": "refunded",
+  "maker_cli": {
+    "phase": "refunded",
+    "manual_action": {
+      "action": "refund",
+      "lease_generation": null,
+      "request_id": "e2e-zec-maker-refund-1795821553",
+      "requested_after_generation": 124,
+      "state": "completed"
+    },
+    "history": {
+      "direction": "TakerSellsForeign",
+      "highest_alert_severity": null,
+      "id": "zec-78074d416df70e7885ba561fdb8c2c26a123849ef49eb35f270423ffa079f21d",
+      "pair": "Zcash",
+      "pending_alerts": 0,
+      "phase": "Refunded",
+      "requires_attention": false
+    }
+  },
+  "lez_before": {
+    "maker": 3047994,
+    "taker": 902007
+  },
+  "lez_deltas": {
+    "maker": 0,
+    "taker": 0
+  },
+  "outcome": "refunded",
+  "result": "passed",
+  "seconds": 313
+}

@@ -1,0 +1,39 @@
+{
+  "scenario": "zec-claim-collision",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "179581553703",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "1",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_a": "zec-01d899ca44b5decd3065af1fca3865aa4a0e1ac37919ea0f4e66063ecc971d4c",
+  "swap_c": "zec-593b12441e404e72631dd0049f04d1543060662c497638093e0ca6fc144dc194",
+  "corridor": "take-time-1795815543",
+  "claim_supersessions": [
+    "actor claim: revealing LEZ claim superseded (planned nonce 48, live 49); re-plan 1 at nonce 49: 64a44f9b16ccf57b70076d36923f93f77f22b8d30ef066d8370c4849cc808935 -> b960e14ffe02bda16632421f3ee2289fef801dcd5b5702a1ce1f9eed654eb251; 679 s left before the LEZ refund time"
+  ],
+  "c_first_lock_replans": [
+    "taker actor zec-593b12441e404e72631dd0049f04d1543060662c497638093e0ca6fc144dc194: drive \u2192 submitted lez_fund (phase offered, revision 0, next create_and_fund_lez) re-planned [1 lez_fund nonce 49\u219250 tx 8518f587b049142353ec46c90623bc6071a80593858a1642fe7a4e1f4bd21666\u2192b84f92cc94570521c60239d16c92ef4d762ca9232f3fbf72145faad03f16eb5b]"
+  ],
+  "claim_press_delay_seconds": 0.6,
+  "result": "passed",
+  "seconds": 62
+}
