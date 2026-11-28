@@ -3,6 +3,8 @@
 # cargo-fuzz only ever execute inside the container; the repository is mounted read-only and copied
 # into the work directory (cargo-fuzz writes into its fuzz dir), which also holds the toolchain,
 # target dir, working corpus, log and any crash artifacts.
+# deploy/runtime is left out of the copy: it is a devnet stack's state, no fuzz target reads it,
+# and a running stack rewrites it while tar reads it.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -70,7 +72,7 @@ docker run --rm \
   "$image" \
   bash -euo pipefail -c '
     rm -rf /work/src && mkdir /work/src
-    tar -C /workspace --exclude=./.git --exclude=./target -cf - . | tar -C /work/src -xf -
+    tar -C /workspace --exclude=./.git --exclude=./target --exclude=./deploy/runtime -cf - . | tar -C /work/src -xf -
     cd /work/src
     rustup toolchain install --no-self-update --profile minimal "$1"
     export CARGO_HOME=/work/cargo
