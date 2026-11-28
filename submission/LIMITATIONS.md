@@ -392,7 +392,10 @@ Evidence:
   ([`maker-systemd-2026-11-28`](../docs/evidence/maker-systemd-2026-11-28/README.md))
   is one run of each of four cases on debug builds from the host, not on a
   release package.
-- The evidence set of the fuzz runs of 2026-11-27 is not committed yet.
+- The fuzz runs of 0.5.0
+  ([`fuzz-0.5.0-2026-11-28`](../docs/evidence/fuzz-0.5.0-2026-11-28/README.md))
+  are 20 minutes for each coordinator target and 5 minutes for each decoder,
+  with 2 jobs on a loaded host.
 - A release bundle leaves 12 of the 200 tests out: 10 need the devnet test
   hooks, which no release image carries (among them `claim-send-fails`,
   `zec-maker-claim-collision` and `zec-maker-cli-claim`), and 2 compile the
@@ -494,11 +497,11 @@ The fuzz harness:
 - The two coordinator targets drive the state machine and two swaps through
   one `SqliteSwapStore`. They do not drive the actors, the sidecar or a
   chain.
-- The runs of 2026-11-27 were 1,212 s for each coordinator target on one
-  x86_64 host with 2 jobs, made before the #174 journal change was in the
-  store the `coordinator_store` target links. The `xmr_reserve_wire` run
-  left one timeout artifact, its own seed `stage-a`, under a 2 s timeout;
-  `scripts/run-fuzz.sh` now runs that target with 20 s.
+- The runs of 2026-11-28 were about 1,200 s for each coordinator target and
+  300 s for each decoder, on one x86_64 host with 2 jobs. None reported a
+  crash, a timeout or an out-of-memory. `xmr_reserve_wire` runs with a 20 s
+  per-input timeout, because its own Stage-A seeds take about 4 s each in
+  the instrumented build.
 - The weekly workflow runs each of the six targets for 120 seconds.
 
 Zcash at take time:
