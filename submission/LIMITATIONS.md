@@ -389,9 +389,9 @@ Evidence:
   on its first try at `f98908ec`; it has that one passing run.
 - No full regression of 0.5.0 has run on arm64 or on macOS.
 - The systemd evidence
-  ([`maker-systemd-2026-11-12`](../docs/evidence/maker-systemd-2026-11-12/README.md))
-  is from commits before ADR 0216 and before 0.3.5. The VM run on the 0.5.0
-  tree has not run yet.
+  ([`maker-systemd-2026-11-28`](../docs/evidence/maker-systemd-2026-11-28/README.md))
+  is one run of each of four cases on debug builds from the host, not on a
+  release package.
 - The evidence set of the fuzz runs of 2026-11-27 is not committed yet.
 - A release bundle leaves 12 of the 200 tests out: 10 need the devnet test
   hooks, which no release image carries (among them `claim-send-fails`,

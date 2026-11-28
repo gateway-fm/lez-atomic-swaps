@@ -2,7 +2,7 @@
 
 Every command below except the Monero section ran as root in an Ubuntu 24.04 VM (systemd 255) under
 `scripts/run-maker-node-systemd-vm.sh`, which also executed a Bitcoin and a Zcash swap between the
-two units against the devnet's chains; record: `docs/evidence/maker-systemd-2026-11-12/`.
+two units against the devnet's chains; record: `docs/evidence/maker-systemd-2026-11-28/`.
 This is the standalone mode; [maker-install.md](maker-install.md) describes it beside the Maker
 hosted by Logos core, and [cli-reference.md](cli-reference.md) lists every CLI command.
 
