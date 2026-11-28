@@ -444,7 +444,8 @@ requires the swap completed on both Nodes, six `follow-up LEZ claim
 superseded` lines and the actor's `lez_claim_nonce_contention` line in the
 Maker's log (past five re-plans), the hook's count at zero, the Maker's
 account nonce moved by seven or more, and the LEZ lot paid to the Maker less
-the six units. Not run yet: it was written without a stack.
+the six units. The nonce is read from the indexer, which serves final blocks
+only, so the scenario waits up to 180 s for it.
 
 The hooks are files in `<state>/test-hooks` (`LEZ_TEST_HOOKS_DIR`, which the
 entrypoint exports before it starts the Node, which starts each swap's

@@ -26,8 +26,9 @@ checkpoint; they do not widen the current claim.
 - M5 (version 0.5.0: the Maker daemon, both CLIs, the swap coordinator, the
   price source, the outage handling and the fuzz harness) is mapped in
   [`docs/m5-acceptance-checklist.md`](../docs/m5-acceptance-checklist.md) and
-  bounded in the [M5 boundary](#m5-boundary) below. Its full regression has
-  not run yet, and Logos has not accepted it.
+  bounded in the [M5 boundary](#m5-boundary) below. Its full regression is
+  [`regression-0.5.0-2026-11-27-linux-x86_64`](../docs/evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md).
+  Logos has not accepted it.
 
 ## Source and Gateway portability
 
@@ -380,13 +381,13 @@ proof are in
 
 Evidence:
 
-- The full regression of the tree at `6ad741bf` has not run yet. No test of
-  the 200 in the full tier has a recorded run at that commit, and no
-  regression evidence set for 0.5.0 is committed.
-- Pre-runs of 2026-11-27 on images of the earlier commit `6a5535db`, which
-  has the fix for #174 and thirteen of the new tests and has neither the
-  fixes for #175, #176, #178 and #182 nor the removal of the prepared Zcash
-  catalog, are not evidence of `6ad741bf` and are not committed.
+- The full regression
+  ([`regression-0.5.0-2026-11-27-linux-x86_64`](../docs/evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md))
+  is one run on one x86_64 Linux host, three lanes, with one operator as both
+  parties. 199 of the 200 tests passed on their first try at `6ad741bf`.
+  `zec-maker-claim-collision` failed there on its own last check and passed
+  on its first try at `f98908ec`; it has that one passing run.
+- No full regression of 0.5.0 has run on arm64 or on macOS.
 - The systemd evidence
   ([`maker-systemd-2026-11-12`](../docs/evidence/maker-systemd-2026-11-12/README.md))
   is from commits before ADR 0216 and before 0.3.5. The VM run on the 0.5.0

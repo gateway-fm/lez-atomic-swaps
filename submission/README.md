@@ -20,7 +20,10 @@ deliverables are mapped in
 [the M5 section](MILESTONES.md#m5--maker-daemon-clis-swap-coordinator-fuzz-harness)
 and, with the proof for each, in
 [`docs/m5-acceptance-checklist.md`](../docs/m5-acceptance-checklist.md); its
-full regression has not run yet.
+full regression is
+[`regression-0.5.0-2026-11-27-linux-x86_64`](../docs/evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md):
+199 of 200 tests passed on their first try at `6ad741bf`, and the one that
+failed on its own check passed at `f98908ec`.
 The deck, walkthrough and manifest below predate all three and show the BTC
 pair.
 
@@ -75,7 +78,8 @@ checkboxes remain unchecked. The pack does not claim public-network deployment
 formal cryptographic audit, or M7 mainnet readiness. M5 is mapped in
 [the M5 section](MILESTONES.md#m5--maker-daemon-clis-swap-coordinator-fuzz-harness)
 within the [M5 boundary](LIMITATIONS.md#m5-boundary); the full regression of
-version 0.5.0 has not run yet.
+version 0.5.0 is
+[`regression-0.5.0-2026-11-27-linux-x86_64`](../docs/evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md).
 
 The historical milestone checkpoints are recorded by commit identity. The
 default branch now includes the complete buildable source workspace directly;

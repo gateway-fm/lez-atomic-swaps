@@ -48,19 +48,19 @@ release image carries, and 2 compile the repository's test price module.
 well as on arm64 (`deploy/tests/test_from_scratch_host.py`).
 
 **The state of the regression.** The full regression of the tree at
-`6ad741bf` has not run yet. No test named on this page has a recorded run at
-that commit, and no evidence set for 0.5.0 is committed. What exists are
-pre-runs of 2026-11-27 on an x86_64 Linux host, three lanes, on images built
-from `6a5535db`, an earlier commit of this version that has the fix for #174
-and the thirteen CLI, outage, price-module and refund-path kill tests, and
-has neither the fixes for #175, #176, #178 and #182 nor the removal of the
-prepared Zcash catalog. On those images the thirteen tests passed 13 of 13,
-each on its first try; `claim-send-fails` passed 2 of 2, each on its first
-try; a rehearsal of the tier was stopped after 21 tests, all 21 passed on
-their first try; and `node:btc:maker-cli:TakerSellsForeign` failed once on a
-defect of the test (it enabled its route before pricing it) and passed after
-the test was fixed. These pre-runs are not evidence of `6ad741bf` and are not
-committed. The crate tests named below were not run for this page.
+`6ad741bf` ran on 2026-11-27 on an x86_64 Linux host, three lanes, on images
+built from that commit:
+[regression-0.5.0-2026-11-27-linux-x86_64](evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md).
+199 of the 200 tests passed, each on its first try, in 295 minutes, with no
+frozen try, no NOT-EXERCISED and no timeout. The one failure is
+`node:zec:zec-maker-claim-collision:TakerSellsLez`, on a defect of the test:
+it read the Maker's account nonce from the indexer once, before the block of
+the Maker's re-planned claim was final. The Maker had re-planned its claim six
+times, reported `lez_claim_nonce_contention` and claimed, and both Nodes had
+completed the swap. With the check waiting for the indexer (`d2e736be`), the
+test passed on its first try at `f98908ec`, in a separate invocation on the
+same images. Nothing else was rerun. Where this page says a devnet test
+passes, that set records it.
 
 ## Where M5 stands
 
@@ -109,8 +109,10 @@ whoever ran the set-up; the two Nodes are to prepare the swap at take time,
 the Taker's Node creating the secret and sending only its hash, and each Node
 creating its own Zcash key.
 
-No scenario in the Proof column has a recorded run at `6ad741bf`; the column
-says what each scenario asserts when it runs.
+Every devnet scenario in the Proof column ran in
+[regression-0.5.0-2026-11-27-linux-x86_64](evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md)
+and passed on its first try, `zec-maker-claim-collision` at `f98908ec` after
+its check was fixed; the column says what each scenario asserts.
 
 | # | Deliverable (rfp#125) | Artefact | Proof | Where it stops |
 |---|---|---|---|---|
@@ -125,8 +127,11 @@ says what each scenario asserts when it runs.
 
 ## The issues closed in this version
 
-Each is fixed in the tree. A devnet scenario named here has no recorded run
-at `6ad741bf` yet.
+Each is fixed in the tree. The devnet scenarios named here ran in
+[regression-0.5.0-2026-11-27-linux-x86_64](evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md):
+each passed on its first try at `6ad741bf`, except `zec-maker-claim-collision`
+(#176), which failed there on its own last check and passed on its first try
+at `f98908ec`.
 
 | Issue | What was wrong | The fix | Tests | Devnet scenario | What remains |
 |---|---|---|---|---|---|
@@ -188,13 +193,14 @@ tested commit, checked against each Node container's
 the chains made during the run), `README.md` (what the tree is, the result,
 every try, what is not covered) and `results.tsv` with `regress.log`.
 
-The set for 0.5.0 is not committed yet, because the full regression of
-`6ad741bf` has not run yet. The pre-runs of 2026-11-27 named at the top of
-this page were made on images of `6a5535db`, are not evidence of `6ad741bf`
-and are not committed. The latest committed regression set is M4's,
+The set for 0.5.0 is
+[regression-0.5.0-2026-11-27-linux-x86_64](evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md):
+invocation 1 is `regress.sh full` at `6ad741bf` (200 tests, 199 passed on
+their first try), invocation 2 is the one failed test again at `f98908ec`
+(passed on its first try). Its `PROVENANCE.md` records the build-source check
+in all six Node containers. The set before it is M4's,
 [regression-0.4.0-2026-11-25-macos-arm64-zebra-module](evidence/regression-0.4.0-2026-11-25-macos-arm64-zebra-module/)
-at `23e54486`; it holds none of the twenty tests that joined the tier in this
-version.
+at `23e54486`, with 180 tests.
 
 The fuzz runs of 2026-11-27 were made with `scripts/run-fuzz.sh` on an x86_64
 host with 2 jobs, on the harness as it is at `6a337127` (the same `fuzz/`
@@ -222,5 +228,5 @@ run yet.
 As for M2, M3 and M4: no "accepted" until Logos says so, no "audited" (the
 construction has had no third-party review; S12 and S13 are M7), no
 "mainnet-ready". A scenario is said to pass only where a committed evidence
-set records the run; for 0.5.0 none does yet. A fix is said to be in the tree
+set records the run; for 0.5.0 that is the set above. A fix is said to be in the tree
 with its tests, and its limit is stated beside it.

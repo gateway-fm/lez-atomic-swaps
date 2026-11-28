@@ -143,10 +143,13 @@ checklist and the traceability matrix file them there.
 | Added by issue #162 and the reviewer's comment on rfp#125, under the swap-coordinator deliverable: ZEC swaps prepared by the two Nodes at take time | The rounds `zec_reserve_v1`, `zec_chat_propose_v1`, `zec_chat_complete_v1`: the Taker's Node makes the secret and sends only its SHA-256, each Node signs with its own Zcash key; the prepared catalog, its fixture, the dealer tools and the options that named a prepared swap are removed ([`docs/sdk-lez-zec.md`](../docs/sdk-lez-zec.md)) | Included. The devnet's `gen-config.sh` still mints both lane-1 Zcash keys; the Maker's Zcash key is also its Delivery key and funding key; the public Zcash lane has not run on a public network |
 
 The full tier holds 200 tests at 0.5.0, twenty more than at 0.4.0. The full
-regression of the tree at `6ad741bf` has not run yet, and no regression
-evidence set for 0.5.0 is committed. Pre-runs of 2026-11-27 on images of the
-earlier commit `6a5535db` are described in the checklist; they are not
-evidence of `6ad741bf` and are not committed.
+regression of the tree at `6ad741bf` ran on 2026-11-27 on an x86_64 Linux
+host, three lanes:
+[`regression-0.5.0-2026-11-27-linux-x86_64`](../docs/evidence/regression-0.5.0-2026-11-27-linux-x86_64/README.md).
+199 of the 200 passed, each on its first try. The one failure,
+`zec-maker-claim-collision`, was a defect of the test's last check; the test
+passed on its first try at `f98908ec`, in a separate invocation on the same
+images.
 
 ## M3 — BTC/LEZ leg
 
@@ -191,4 +194,5 @@ Imported checkpoint: `m6-poc-complete` / `78f9842465462715a913dde37105b77c4fd880
 
 The daemon, service, storage and runner components of M5 are exercised by the
 live stack, and M5 is mapped deliverable by deliverable in the M5 section
-above. Its full regression has not run yet, and Logos has not accepted it.
+above. Its full regression is the set named in that section. Logos has not accepted
+it.
